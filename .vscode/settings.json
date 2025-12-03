@@ -1,5 +1,5 @@
 {
-  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.check.command": "clippy",
   "rust-analyzer.cargo.allFeatures": true,
   "rust-analyzer.workspace.symbol.search.scope": "workspace",
   "[rust]": {
@@ -7,4 +7,3 @@
     "editor.formatOnSave": true
   }
 }
-
