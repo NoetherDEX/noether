@@ -1,9 +1,8 @@
 #![no_std]
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
-    token::TokenClient,
-};
 use noether_common::Error;
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, token::TokenClient, Address, Env, Symbol,
+};
 
 // ============================================================================
 // Storage Keys
@@ -12,6 +11,7 @@ use noether_common::Error;
 const ADMIN: Symbol = symbol_short!("ADMIN");
 const USDC_TOKEN: Symbol = symbol_short!("USDC");
 const GLP_SUPPLY: Symbol = symbol_short!("GLP_SUP");
+const MARKET_ADDR: Symbol = symbol_short!("MARKET");
 const INIT: Symbol = symbol_short!("INIT");
 
 /// Storage keys for persistent data
@@ -48,8 +48,12 @@ impl NoetherVault {
         env.storage().instance().set(&INIT, &true);
 
         // Initialize PnL tracking
-        env.storage().persistent().set(&DataKey::GlobalShortPnl, &0_i128);
-        env.storage().persistent().set(&DataKey::GlobalLongPnl, &0_i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::GlobalShortPnl, &0_i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::GlobalLongPnl, &0_i128);
 
         Ok(())
     }
@@ -62,7 +66,10 @@ impl NoetherVault {
         }
 
         // Get USDC token address
-        let usdc_token: Address = env.storage().instance().get(&USDC_TOKEN)
+        let usdc_token: Address = env
+            .storage()
+            .instance()
+            .get(&USDC_TOKEN)
             .ok_or(Error::NotInitialized)?;
 
         // 1. Transfer USDC from user to vault
@@ -73,8 +80,7 @@ impl NoetherVault {
         let aum = Self::calculate_aum(&env)?;
 
         // 3. Calculate GLP mint amount
-        let glp_supply: i128 = env.storage().instance().get(&GLP_SUPPLY)
-            .unwrap_or(0);
+        let glp_supply: i128 = env.storage().instance().get(&GLP_SUPPLY).unwrap_or(0);
 
         let glp_amount = if glp_supply == 0 {
             // First deposit: 1:1 ratio
@@ -89,7 +95,8 @@ impl NoetherVault {
         let new_supply = glp_supply + glp_amount;
         env.storage().instance().set(&GLP_SUPPLY, &new_supply);
 
-        let current_balance: i128 = env.storage()
+        let current_balance: i128 = env
+            .storage()
             .persistent()
             .get(&DataKey::GlpBalance(user.clone()))
             .unwrap_or(0);
@@ -109,7 +116,8 @@ impl NoetherVault {
         }
 
         // 1. Verify user has enough GLP
-        let user_balance: i128 = env.storage()
+        let user_balance: i128 = env
+            .storage()
             .persistent()
             .get(&DataKey::GlpBalance(user.clone()))
             .unwrap_or(0);
@@ -120,7 +128,10 @@ impl NoetherVault {
 
         // 2. Calculate USDC amount to return
         let aum = Self::calculate_aum(&env)?;
-        let glp_supply: i128 = env.storage().instance().get(&GLP_SUPPLY)
+        let glp_supply: i128 = env
+            .storage()
+            .instance()
+            .get(&GLP_SUPPLY)
             .ok_or(Error::NotInitialized)?;
 
         if glp_supply == 0 {
@@ -140,7 +151,10 @@ impl NoetherVault {
             .set(&DataKey::GlpBalance(user.clone()), &new_balance);
 
         // 4. Transfer USDC from vault to user
-        let usdc_token: Address = env.storage().instance().get(&USDC_TOKEN)
+        let usdc_token: Address = env
+            .storage()
+            .instance()
+            .get(&USDC_TOKEN)
             .ok_or(Error::NotInitialized)?;
         let token_client = TokenClient::new(&env, &usdc_token);
         token_client.transfer(&env.current_contract_address(), &user, &usdc_amount);
@@ -151,7 +165,10 @@ impl NoetherVault {
     /// Update global PnL (can only be called by admin or market contract)
     pub fn update_global_pnl(env: Env, short_pnl: i128, long_pnl: i128) -> Result<(), Error> {
         // Check authorization - admin or market contract can call this
-        let admin: Address = env.storage().instance().get(&ADMIN)
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
@@ -168,7 +185,8 @@ impl NoetherVault {
 
     /// Get user's GLP balance
     pub fn get_glp_balance(env: Env, user: Address) -> Result<i128, Error> {
-        Ok(env.storage()
+        Ok(env
+            .storage()
             .persistent()
             .get(&DataKey::GlpBalance(user))
             .unwrap_or(0))
@@ -176,10 +194,7 @@ impl NoetherVault {
 
     /// Get total GLP supply
     pub fn get_glp_supply(env: Env) -> Result<i128, Error> {
-        Ok(env.storage()
-            .instance()
-            .get(&GLP_SUPPLY)
-            .unwrap_or(0))
+        Ok(env.storage().instance().get(&GLP_SUPPLY).unwrap_or(0))
     }
 
     /// Get AUM (Assets Under Management)
@@ -189,11 +204,13 @@ impl NoetherVault {
 
     /// Get global PnL values
     pub fn get_global_pnl(env: Env) -> Result<(i128, i128), Error> {
-        let short_pnl: i128 = env.storage()
+        let short_pnl: i128 = env
+            .storage()
             .persistent()
             .get(&DataKey::GlobalShortPnl)
             .unwrap_or(0);
-        let long_pnl: i128 = env.storage()
+        let long_pnl: i128 = env
+            .storage()
             .persistent()
             .get(&DataKey::GlobalLongPnl)
             .unwrap_or(0);
@@ -215,6 +232,57 @@ impl NoetherVault {
             .get(&ADMIN)
             .ok_or(Error::NotInitialized)
     }
+
+    /// Set market contract address (admin only)
+    /// This allows the market contract to withdraw trader PnL
+    pub fn set_market_address(env: Env, market: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        env.storage().instance().set(&MARKET_ADDR, &market);
+        Ok(())
+    }
+
+    /// Withdraw trader PnL (only callable by market contract)
+    /// Security Critical: Only the stored MarketAddress can call this
+    pub fn withdraw_trader_pnl(env: Env, to: Address, amount: i128) -> Result<(), Error> {
+        if amount <= 0 {
+            return Err(Error::InvalidInput);
+        }
+
+        // Security check: Only market contract can call this
+        let market_addr: Address = env
+            .storage()
+            .instance()
+            .get(&MARKET_ADDR)
+            .ok_or(Error::Unauthorized)?;
+        market_addr.require_auth();
+
+        // Get USDC token address
+        let usdc_token: Address = env
+            .storage()
+            .instance()
+            .get(&USDC_TOKEN)
+            .ok_or(Error::NotInitialized)?;
+
+        // Transfer USDC from vault to trader
+        let token_client = TokenClient::new(&env, &usdc_token);
+        token_client.transfer(&env.current_contract_address(), &to, &amount);
+
+        Ok(())
+    }
+
+    /// Get market contract address
+    pub fn get_market_address(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&MARKET_ADDR)
+            .ok_or(Error::NotInitialized)
+    }
 }
 
 // ============================================================================
@@ -228,7 +296,10 @@ impl NoetherVault {
     ///       If PnL is positive (gains), it decreases AUM
     fn calculate_aum(env: &Env) -> Result<i128, Error> {
         // Get USDC token address
-        let usdc_token: Address = env.storage().instance().get(&USDC_TOKEN)
+        let usdc_token: Address = env
+            .storage()
+            .instance()
+            .get(&USDC_TOKEN)
             .ok_or(Error::NotInitialized)?;
 
         // Get USDC balance of vault
@@ -236,11 +307,13 @@ impl NoetherVault {
         let vault_balance = token_client.balance(&env.current_contract_address());
 
         // Get global PnL
-        let short_pnl: i128 = env.storage()
+        let short_pnl: i128 = env
+            .storage()
             .persistent()
             .get(&DataKey::GlobalShortPnl)
             .unwrap_or(0);
-        let long_pnl: i128 = env.storage()
+        let long_pnl: i128 = env
+            .storage()
             .persistent()
             .get(&DataKey::GlobalLongPnl)
             .unwrap_or(0);
@@ -263,16 +336,12 @@ impl NoetherVault {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{
-        symbol_short,
-        testutils::Address as _,
-        Address, Env,
-    };
-    use soroban_token_sdk::testutils::Token;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
-    fn create_token(env: &Env) -> Address {
-        let admin = Address::generate(env);
-        Token::create(env, &admin, &admin, &symbol_short!("USDC"), &7u32)
+    fn create_mock_token(env: &Env) -> Address {
+        // For tests that don't require actual token operations,
+        // use a generated address as a mock token
+        Address::generate(env)
     }
 
     #[test]
@@ -282,7 +351,7 @@ mod test {
         let client = NoetherVaultClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        let usdc_token = create_token(&env);
+        let usdc_token = create_mock_token(&env);
 
         client.initialize(&admin, &usdc_token);
 
@@ -300,7 +369,7 @@ mod test {
         let client = NoetherVaultClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        let usdc_token = create_token(&env);
+        let usdc_token = create_mock_token(&env);
 
         client.initialize(&admin, &usdc_token);
         client.update_global_pnl(&-100_000, &50_000); // Short loss: -1 USDC, Long gain: +0.5 USDC
@@ -319,11 +388,11 @@ mod test {
         let client = NoetherVaultClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        let usdc_token = create_token(&env);
+        let usdc_token = create_mock_token(&env);
 
         // Initialize vault
         client.initialize(&admin, &usdc_token);
-        
+
         // Set negative PnL (losses) - should increase AUM when there are assets
         client.update_global_pnl(&-50_000, &0); // -0.5 USDC loss
 
@@ -340,11 +409,11 @@ mod test {
         let client = NoetherVaultClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        let usdc_token = create_token(&env);
+        let usdc_token = create_mock_token(&env);
         let user = Address::generate(&env);
 
         client.initialize(&admin, &usdc_token);
-        
+
         // New user should have 0 GLP balance
         assert_eq!(client.get_glp_balance(&user), 0);
     }

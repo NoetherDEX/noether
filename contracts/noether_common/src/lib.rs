@@ -22,6 +22,8 @@ pub enum Direction {
 #[contracttype]
 pub struct Position {
     pub owner: Address,
+    pub asset: Asset,
+    pub direction: Direction,
     pub collateral: i128,
     pub size: i128,
     pub entry_price: i128,
