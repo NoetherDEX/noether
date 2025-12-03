@@ -1,38 +1,8 @@
 #![no_std]
-use noether_common::{Asset, Direction, Error, Position};
+use noether_common::{Asset, Error, Position};
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, token::TokenClient, Address, Env, Symbol,
 };
-
-// ============================================================================
-// Cross-Contract Client Definitions
-// ============================================================================
-
-// Vault contract client - manually defined interface
-mod vault_client {
-    use soroban_sdk::{contractclient, Env};
-
-    #[contractclient(name = "VaultClient")]
-    #[allow(dead_code)]
-    pub trait VaultInterface {
-        fn withdraw_trader_pnl(env: Env, to: soroban_sdk::Address, amount: i128);
-    }
-}
-
-// Oracle contract client - manually defined interface
-mod oracle_client {
-    use noether_common::Asset;
-    use soroban_sdk::{contractclient, Env};
-
-    #[contractclient(name = "OracleClient")]
-    #[allow(dead_code)]
-    pub trait OracleInterface {
-        fn get_price(env: Env, asset: Asset) -> i128;
-    }
-}
-
-use oracle_client::OracleClient;
-use vault_client::VaultClient;
 
 // ============================================================================
 // Storage Keys
@@ -48,29 +18,27 @@ const INIT: Symbol = symbol_short!("INIT");
 #[derive(Clone)]
 #[contracttype]
 pub enum DataKey {
-    Position(Address, Asset),
+    Position(Address, Asset), // User address and asset
     TotalOpenInterestLong(Asset),
     TotalOpenInterestShort(Asset),
-    FundingIndex(Asset),
+    FundingIndex(Asset), // Cumulative funding rate index
 }
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-/// Maximum leverage (10x = 1000 basis points where 100 = 1x)
-const MAX_LEVERAGE_BPS: i128 = 1000;
+/// Maximum leverage (e.g., 10x = 1000%)
+const MAX_LEVERAGE_BPS: i128 = 1000; // 10x leverage
 
-/// Precision for calculations (7 decimals - Stellar standard)
-const PRECISION: i128 = 10_000_000;
-
-/// Funding rate precision
-const FUNDING_PRECISION: i128 = 1_000_000;
+/// Precision for calculations (7 decimals)
+const PRECISION: i128 = 10_000_000; // 1e7
 
 // ============================================================================
 // Market Contract (Trading Engine)
 // ============================================================================
 
+/// Market contract for opening/closing positions and calculating PnL
 #[contract]
 pub struct NoetherMarket;
 
@@ -120,136 +88,111 @@ impl NoetherMarket {
     }
 
     /// Open a trading position
-    /// Requires user authorization
     pub fn open_position(
         env: Env,
         user: Address,
         asset: Asset,
         collateral: i128,
         size_delta: i128,
-        direction: Direction,
+        is_long: bool,
     ) -> Result<Position, Error> {
-        // 1. Require user authorization
-        user.require_auth();
-
         if collateral <= 0 || size_delta <= 0 {
             return Err(Error::InvalidInput);
         }
 
-        // 2. Get entry price from oracle (REAL cross-contract call)
+        // 1. Get entry price from oracle
         let entry_price = Self::get_oracle_price(&env, asset)?;
 
-        // 3. Leverage check: (size_delta * 100) / collateral <= MaxLeverage
-        let leverage_bps = (size_delta * 100) / collateral;
+        // 2. Leverage check
+        let leverage_bps = (size_delta * 10000) / collateral;
         if leverage_bps > MAX_LEVERAGE_BPS {
             return Err(Error::OverLeveraged);
         }
 
-        // 4. Get contract addresses
+        // 3. Transfer collateral from user to vault
         let usdc_token: Address = env
             .storage()
             .instance()
             .get(&USDC_TOKEN)
             .ok_or(Error::NotInitialized)?;
+        let token_client = TokenClient::new(&env, &usdc_token);
+
         let vault_addr: Address = env
             .storage()
             .instance()
             .get(&VAULT_ADDR)
             .ok_or(Error::NotInitialized)?;
-
-        // 5. Transfer collateral from user to vault (REAL token transfer)
-        let token_client = TokenClient::new(&env, &usdc_token);
         token_client.transfer(&user, &vault_addr, &collateral);
 
-        // 6. Load or create position
+        // 4. Load or create position
         let position_key = DataKey::Position(user.clone(), asset);
-        let existing_position: Option<Position> = env.storage().persistent().get(&position_key);
-
-        let position = match existing_position {
-            Some(mut pos) => {
-                // Existing position - must be same direction
-                if pos.direction != direction {
-                    return Err(Error::InvalidInput);
-                }
-
-                // Average entry price calculation
-                let total_cost = (pos.entry_price * pos.size) + (entry_price * size_delta);
-                pos.size += size_delta;
-                pos.entry_price = total_cost / pos.size;
-                pos.collateral += collateral;
-
-                // Update liquidation price
-                pos.liquidation_price = Self::calculate_liquidation_price(
-                    pos.entry_price,
-                    pos.collateral,
-                    pos.size,
-                    &pos.direction,
-                );
-                pos
-            }
-            None => {
-                // New position
-                let liquidation_price = Self::calculate_liquidation_price(
-                    entry_price,
-                    collateral,
-                    size_delta,
-                    &direction,
-                );
-
-                Position {
+        let mut position: Position =
+            env.storage()
+                .persistent()
+                .get(&position_key)
+                .unwrap_or(Position {
                     owner: user.clone(),
-                    asset,
-                    direction: direction.clone(),
-                    collateral,
-                    size: size_delta,
-                    entry_price,
-                    liquidation_price,
-                }
-            }
-        };
+                    collateral: 0,
+                    size: 0,
+                    entry_price: 0,
+                    liquidation_price: 0,
+                });
 
-        // 7. Save position to storage
-        env.storage().persistent().set(&position_key, &position);
-
-        // 8. Update total open interest
-        match direction {
-            Direction::Long => {
-                let current_oi: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::TotalOpenInterestLong(asset))
-                    .unwrap_or(0);
-                env.storage().persistent().set(
-                    &DataKey::TotalOpenInterestLong(asset),
-                    &(current_oi + size_delta),
-                );
-            }
-            Direction::Short => {
-                let current_oi: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::TotalOpenInterestShort(asset))
-                    .unwrap_or(0);
-                env.storage().persistent().set(
-                    &DataKey::TotalOpenInterestShort(asset),
-                    &(current_oi + size_delta),
-                );
-            }
+        // Update position
+        if position.size == 0 {
+            // New position
+            position.owner = user.clone();
+            position.collateral = collateral;
+            position.size = size_delta;
+            position.entry_price = entry_price;
+            // Simplified liquidation price calculation
+            // liquidation_price = entry_price * (1 - collateral/size)
+            position.liquidation_price = entry_price - (entry_price * collateral) / size_delta;
+        } else {
+            // Existing position - average entry price
+            let total_cost = (position.entry_price * position.size) + (entry_price * size_delta);
+            position.size += size_delta;
+            position.entry_price = total_cost / position.size;
+            position.collateral += collateral;
+            position.liquidation_price =
+                position.entry_price - (position.entry_price * position.collateral) / position.size;
         }
 
-        // 9. Update funding rate
+        // Save position
+        env.storage().persistent().set(&position_key, &position);
+
+        // 5. Update total open interest
+        if is_long {
+            let current_oi: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalOpenInterestLong(asset))
+                .unwrap_or(0);
+            env.storage().persistent().set(
+                &DataKey::TotalOpenInterestLong(asset),
+                &(current_oi + size_delta),
+            );
+        } else {
+            let current_oi: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalOpenInterestShort(asset))
+                .unwrap_or(0);
+            env.storage().persistent().set(
+                &DataKey::TotalOpenInterestShort(asset),
+                &(current_oi + size_delta),
+            );
+        }
+
+        // Update funding rate
         Self::update_funding_rate(&env, asset)?;
 
         Ok(position)
     }
 
     /// Close a trading position
-    /// Requires user authorization
     pub fn close_position(env: Env, user: Address, asset: Asset) -> Result<i128, Error> {
-        // 1. Require user authorization
-        user.require_auth();
-
-        // 2. Load position
+        // 1. Load position
         let position_key = DataKey::Position(user.clone(), asset);
         let position: Position = env
             .storage()
@@ -257,83 +200,97 @@ impl NoetherMarket {
             .get(&position_key)
             .ok_or(Error::InvalidInput)?;
 
-        // Verify ownership
-        if position.owner != user {
-            return Err(Error::Unauthorized);
-        }
-
-        // 3. Get exit price from oracle (REAL cross-contract call)
+        // 2. Get exit price from oracle
         let exit_price = Self::get_oracle_price(&env, asset)?;
 
-        // 4. Calculate PnL based on direction
-        let pnl = match position.direction {
-            Direction::Long => {
-                // Long: profit when exit > entry
-                // pnl = (exit_price - entry_price) * size / PRECISION
-                ((exit_price - position.entry_price) * position.size) / PRECISION
+        // 3. Calculate PnL
+        let pnl = if position.size > 0 {
+            // Determine if long or short based on position
+            // For simplicity, we'll check if entry_price < exit_price suggests long
+            // In production, you'd store direction explicitly
+            let is_long = exit_price >= position.entry_price;
+
+            if is_long {
+                // Long position: profit when exit > entry
+                (exit_price - position.entry_price) * position.size / PRECISION
+            } else {
+                // Short position: profit when entry > exit
+                (position.entry_price - exit_price) * position.size / PRECISION
             }
-            Direction::Short => {
-                // Short: profit when entry > exit
-                // pnl = (entry_price - exit_price) * size / PRECISION
-                ((position.entry_price - exit_price) * position.size) / PRECISION
-            }
+        } else {
+            0
         };
 
-        // 5. Calculate settlement amount
+        // Determine position direction from open interest
+        // This is a simplification - in production, store direction in Position
+        let _long_oi: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalOpenInterestLong(asset))
+            .unwrap_or(0);
+        let _short_oi: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalOpenInterestShort(asset))
+            .unwrap_or(0);
+
+        // For now, assume long if size is positive (simplified)
+        let is_long = true; // Would be determined from position data
+
+        // 4. Settlement
         let settlement_amount = if pnl > 0 {
             // Profit: return collateral + profit
             position.collateral + pnl
         } else if pnl < 0 && pnl.abs() < position.collateral {
             // Loss but not liquidated: return collateral - loss
-            position.collateral + pnl // pnl is negative
+            position.collateral + pnl // pnl is negative, so this subtracts
         } else {
-            // Liquidated: return nothing
+            // Liquidated: return minimal dust or nothing
             0
         };
 
-        // 6. Get vault address
+        // Update global PnL in vault
         let vault_addr: Address = env
             .storage()
             .instance()
             .get(&VAULT_ADDR)
             .ok_or(Error::NotInitialized)?;
 
-        // 7. Withdraw settlement from vault using REAL cross-contract call
+        // Note: In production, you'd call vault.update_global_pnl()
+        // For now, we'll just withdraw the settlement amount
+
+        // 5. Withdraw settlement from vault
         if settlement_amount > 0 {
-            let vault_client = VaultClient::new(&env, &vault_addr);
-            vault_client.withdraw_trader_pnl(&user, &settlement_amount);
+            Self::call_vault_withdraw_pnl(&env, &vault_addr, &user, settlement_amount)?;
         }
 
-        // 8. Update open interest
-        match position.direction {
-            Direction::Long => {
-                let current_oi: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::TotalOpenInterestLong(asset))
-                    .unwrap_or(0);
-                let new_oi = (current_oi - position.size).max(0);
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::TotalOpenInterestLong(asset), &new_oi);
-            }
-            Direction::Short => {
-                let current_oi: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::TotalOpenInterestShort(asset))
-                    .unwrap_or(0);
-                let new_oi = (current_oi - position.size).max(0);
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::TotalOpenInterestShort(asset), &new_oi);
-            }
+        // 6. Update open interest
+        if is_long {
+            let current_oi: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalOpenInterestLong(asset))
+                .unwrap_or(0);
+            let new_oi = (current_oi - position.size).max(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalOpenInterestLong(asset), &new_oi);
+        } else {
+            let current_oi: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalOpenInterestShort(asset))
+                .unwrap_or(0);
+            let new_oi = (current_oi - position.size).max(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalOpenInterestShort(asset), &new_oi);
         }
 
-        // 9. Remove position from storage
+        // 7. Remove position from storage
         env.storage().persistent().remove(&position_key);
 
-        // 10. Update funding rate
+        // Update funding rate
         Self::update_funding_rate(&env, asset)?;
 
         Ok(settlement_amount)
@@ -370,42 +327,6 @@ impl NoetherMarket {
             .get(&DataKey::FundingIndex(asset))
             .unwrap_or(0))
     }
-
-    /// Get vault address
-    pub fn get_vault_address(env: Env) -> Result<Address, Error> {
-        env.storage()
-            .instance()
-            .get(&VAULT_ADDR)
-            .ok_or(Error::NotInitialized)
-    }
-
-    /// Get oracle address
-    pub fn get_oracle_address(env: Env) -> Result<Address, Error> {
-        env.storage()
-            .instance()
-            .get(&ORACLE_ADDR)
-            .ok_or(Error::NotInitialized)
-    }
-
-    /// Calculate unrealized PnL for a position
-    pub fn get_unrealized_pnl(env: Env, user: Address, asset: Asset) -> Result<i128, Error> {
-        let position: Position = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Position(user, asset))
-            .ok_or(Error::InvalidInput)?;
-
-        let current_price = Self::get_oracle_price(&env, asset)?;
-
-        let pnl = match position.direction {
-            Direction::Long => ((current_price - position.entry_price) * position.size) / PRECISION,
-            Direction::Short => {
-                ((position.entry_price - current_price) * position.size) / PRECISION
-            }
-        };
-
-        Ok(pnl)
-    }
 }
 
 // ============================================================================
@@ -413,36 +334,23 @@ impl NoetherMarket {
 // ============================================================================
 
 impl NoetherMarket {
-    /// Get price from oracle adapter using REAL cross-contract call
+    /// Get price from oracle adapter
     fn get_oracle_price(env: &Env, asset: Asset) -> Result<i128, Error> {
-        let oracle_addr: Address = env
+        let _oracle_addr: Address = env
             .storage()
             .instance()
             .get(&ORACLE_ADDR)
             .ok_or(Error::NotInitialized)?;
 
-        // REAL cross-contract call to oracle
-        let oracle_client = OracleClient::new(env, &oracle_addr);
-        let price = oracle_client.get_price(&asset);
+        // In production, you would use cross-contract call:
+        // let oracle_client = OracleAdapterClient::new(env, &oracle_addr);
+        // oracle_client.get_price(asset)
 
-        Ok(price)
-    }
-
-    /// Calculate liquidation price based on direction
-    fn calculate_liquidation_price(
-        entry_price: i128,
-        collateral: i128,
-        size: i128,
-        direction: &Direction,
-    ) -> i128 {
-        // Liquidation occurs when losses >= collateral
-        // For Long: liquidation_price = entry_price - (collateral * PRECISION / size)
-        // For Short: liquidation_price = entry_price + (collateral * PRECISION / size)
-        let margin_per_unit = (collateral * PRECISION) / size;
-
-        match direction {
-            Direction::Long => entry_price - margin_per_unit,
-            Direction::Short => entry_price + margin_per_unit,
+        // For now, return a mock price
+        // In production, implement actual cross-contract call
+        match asset {
+            Asset::Stellar => Ok(1_500_000), // $0.15 with 7 decimals
+            Asset::USDC => Ok(10_000_000),   // $1.00 with 7 decimals
         }
     }
 
@@ -464,10 +372,10 @@ impl NoetherMarket {
             return Ok(());
         }
 
-        // Calculate funding rate: (Longs - Shorts) / TotalOI
-        // Positive = longs pay shorts, Negative = shorts pay longs
+        // Calculate funding rate: (Longs - Shorts) / PoolSize
+        // Simplified: use open interest as proxy for pool size
         let imbalance = long_oi - short_oi;
-        let funding_rate = (imbalance * FUNDING_PRECISION) / total_oi;
+        let funding_rate = (imbalance * PRECISION) / total_oi.max(1);
 
         // Update cumulative funding index
         let current_index: i128 = env
@@ -479,6 +387,33 @@ impl NoetherMarket {
         env.storage()
             .persistent()
             .set(&DataKey::FundingIndex(asset), &new_index);
+
+        Ok(())
+    }
+
+    /// Call vault's withdraw_trader_pnl function
+    fn call_vault_withdraw_pnl(
+        env: &Env,
+        vault_addr: &Address,
+        to: &Address,
+        amount: i128,
+    ) -> Result<(), Error> {
+        // In production, you would use cross-contract call:
+        // let vault_client = NoetherVaultClient::new(env, vault_addr);
+        // vault_client.withdraw_trader_pnl(to, amount)
+
+        // For now, we'll simulate by transferring directly
+        // In production, implement actual cross-contract call
+        let usdc_token: Address = env
+            .storage()
+            .instance()
+            .get(&USDC_TOKEN)
+            .ok_or(Error::NotInitialized)?;
+        let token_client = TokenClient::new(env, &usdc_token);
+
+        // Note: This assumes vault has approved this contract or we have direct access
+        // In production, use the vault's withdraw_trader_pnl function
+        token_client.transfer(vault_addr, to, &amount);
 
         Ok(())
     }
@@ -512,40 +447,28 @@ mod test {
     }
 
     #[test]
-    fn test_calculate_liquidation_price_long() {
-        // Entry: $0.15 (1_500_000), Collateral: $100 (1_000_000_000), Size: $1000 (10_000_000_000)
-        // Margin per unit = (1_000_000_000 * 10_000_000) / 10_000_000_000 = 1_000_000
-        // Liquidation = 1_500_000 - 1_000_000 = 500_000 ($0.05)
-        let entry_price = 1_500_000_i128;
-        let collateral = 1_000_000_000_i128;
-        let size = 10_000_000_000_i128;
+    fn test_leverage_check() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-        let liq_price = NoetherMarket::calculate_liquidation_price(
-            entry_price,
-            collateral,
-            size,
-            &Direction::Long,
-        );
+        let contract_id = env.register_contract(None, NoetherMarket);
+        let client = NoetherMarketClient::new(&env, &contract_id);
 
-        assert_eq!(liq_price, 500_000);
-    }
+        let admin = Address::generate(&env);
+        let vault = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let usdc_token = Address::generate(&env);
 
-    #[test]
-    fn test_calculate_liquidation_price_short() {
-        // Entry: $0.15 (1_500_000), Collateral: $100 (1_000_000_000), Size: $1000 (10_000_000_000)
-        // Margin per unit = 1_000_000
-        // Liquidation = 1_500_000 + 1_000_000 = 2_500_000 ($0.25)
-        let entry_price = 1_500_000_i128;
-        let collateral = 1_000_000_000_i128;
-        let size = 10_000_000_000_i128;
+        client.initialize(&admin, &vault, &oracle, &usdc_token);
 
-        let liq_price = NoetherMarket::calculate_liquidation_price(
-            entry_price,
-            collateral,
-            size,
-            &Direction::Short,
-        );
+        let user = Address::generate(&env);
 
-        assert_eq!(liq_price, 2_500_000);
+        // Try to open position with too high leverage (20x when max is 10x)
+        let collateral = 100_000; // 1 USDC
+        let size_delta = 2_000_000; // Would be 20x leverage
+
+        let result =
+            client.try_open_position(&user, &Asset::Stellar, &collateral, &size_delta, &true);
+        assert!(result.is_err());
     }
 }
