@@ -463,9 +463,9 @@ initialize_contracts() {
 
     local CLI=$(get_cli)
 
-    # Mock oracle addresses for Futurenet
-    local MOCK_BAND="CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-    local MOCK_DIA="CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+    # External Oracle Contract IDs (Band & DIA on Stellar)
+    local BAND_ORACLE="CBRV5ZEQSSCQ4FFO64OF46I3UASBVEJNE5C2MCFWVIXL4Z7DMD7PJJMF"
+    local DIA_ORACLE="CAEDPEZDRCEJCF73ASC5JGNKCIJDV2QJQSW6DJ6B74MYALBNKCJ5IFP4"
 
     # 5A: Initialize Oracle Adapter
     print_step "Initializing Oracle Adapter..."
@@ -476,8 +476,8 @@ initialize_contracts() {
         -- \
         initialize \
         --admin "$ADMIN_PUBLIC_KEY" \
-        --band "$MOCK_BAND" \
-        --dia "$MOCK_DIA" 2>&1 || print_warning "Oracle may already be initialized"
+        --band "$BAND_ORACLE" \
+        --dia "$DIA_ORACLE" 2>&1 || print_warning "Oracle may already be initialized"
 
     print_substep "Oracle Adapter initialized"
 
