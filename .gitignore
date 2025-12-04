@@ -30,4 +30,7 @@ Thumbs.db
 # Environment
 .env
 
+# Soroban local config
+.soroban/
+
 

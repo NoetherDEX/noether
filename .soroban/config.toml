@@ -1,8 +1,0 @@
-# Soroban configuration
-network_passphrase = "Test SDF Future Network ; October 2022"
-default_network = "futurenet"
-
-[contracts_dir]
-path = "contracts"
-
-
