@@ -106,7 +106,6 @@ export function useMarket(): UseMarketReturn {
         // Sign with Freighter
         const signedXdr = await signTx(
           prepared.toXDR(),
-          NETWORK.name,
           NETWORK.passphrase
         );
 
@@ -205,7 +204,6 @@ export function useMarket(): UseMarketReturn {
         ).build();
         const signedXdr = await signTx(
           prepared.toXDR(),
-          NETWORK.name,
           NETWORK.passphrase
         );
 

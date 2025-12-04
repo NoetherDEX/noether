@@ -98,7 +98,6 @@ export function useVault(): UseVaultReturn {
         ).build();
         const signedXdr = await signTx(
           prepared.toXDR(),
-          NETWORK.name,
           NETWORK.passphrase
         );
 
@@ -195,7 +194,6 @@ export function useVault(): UseVaultReturn {
         ).build();
         const signedXdr = await signTx(
           prepared.toXDR(),
-          NETWORK.name,
           NETWORK.passphrase
         );
 

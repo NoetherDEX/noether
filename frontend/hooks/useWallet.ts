@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  isConnected as checkIsConnected,
-  getPublicKey,
+  isConnected as checkIsConnectedApi,
+  getAddress,
   signTransaction,
-  isAllowed,
-  setAllowed,
+  isAllowed as checkIsAllowedApi,
+  requestAccess,
 } from "@stellar/freighter-api";
 
 export interface WalletState {
@@ -19,7 +19,7 @@ export interface WalletState {
 export interface UseWalletReturn extends WalletState {
   connect: () => Promise<void>;
   disconnect: () => void;
-  signTx: (xdr: string, network: string, networkPassphrase: string) => Promise<string>;
+  signTx: (xdr: string, networkPassphrase: string) => Promise<string>;
 }
 
 export function useWallet(): UseWalletReturn {
@@ -34,22 +34,22 @@ export function useWallet(): UseWalletReturn {
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        const connected = await checkIsConnected();
-        
+        const { isConnected: connected } = await checkIsConnectedApi();
+
         if (connected) {
-          const allowed = await isAllowed();
+          const { isAllowed: allowed } = await checkIsAllowedApi();
           if (allowed) {
-            const publicKey = await getPublicKey();
+            const { address } = await getAddress();
             setState({
               isConnected: true,
               isLoading: false,
-              address: publicKey,
+              address: address,
               error: null,
             });
             return;
           }
         }
-        
+
         setState((prev) => ({ ...prev, isLoading: false }));
       } catch (error) {
         console.error("Error checking wallet connection:", error);
@@ -71,22 +71,23 @@ export function useWallet(): UseWalletReturn {
 
     try {
       // Check if Freighter is installed
-      const connected = await checkIsConnected();
-      
+      const { isConnected: connected } = await checkIsConnectedApi();
+
       if (!connected) {
         throw new Error("Freighter wallet is not installed. Please install it from freighter.app");
       }
 
-      // Request permission to access the wallet
-      await setAllowed();
-      
-      // Get the public key
-      const publicKey = await getPublicKey();
+      // Request access - this will prompt the user to allow the connection
+      const { address, error } = await requestAccess();
+
+      if (error) {
+        throw new Error(error);
+      }
 
       setState({
         isConnected: true,
         isLoading: false,
-        address: publicKey,
+        address: address,
         error: null,
       });
     } catch (error) {
@@ -113,23 +114,28 @@ export function useWallet(): UseWalletReturn {
 
   // Sign a transaction
   const signTx = useCallback(
-    async (xdr: string, network: string, networkPassphrase: string): Promise<string> => {
+    async (xdr: string, networkPassphrase: string): Promise<string> => {
       if (!state.isConnected) {
         throw new Error("Wallet not connected");
       }
 
       try {
-        const result = await signTransaction(xdr, {
-          network,
+        const { signedTxXdr, error } = await signTransaction(xdr, {
           networkPassphrase,
+          address: state.address || undefined,
         });
-        return result;
+
+        if (error) {
+          throw new Error(error);
+        }
+
+        return signedTxXdr;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Failed to sign transaction";
         throw new Error(errorMessage);
       }
     },
-    [state.isConnected]
+    [state.isConnected, state.address]
   );
 
   return {
@@ -146,5 +152,3 @@ export function formatAddress(address: string | null, chars: number = 4): string
   if (address.length <= chars * 2 + 3) return address;
   return `${address.slice(0, chars)}...${address.slice(-chars)}`;
 }
-
-
