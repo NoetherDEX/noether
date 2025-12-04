@@ -4,8 +4,9 @@ import { useState, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
-import { ChevronDown, Info, AlertTriangle, Loader2 } from "lucide-react"
+import { ChevronDown, Info, AlertTriangle, Loader2, Wallet, ExternalLink } from "lucide-react"
 import { useWalletContext } from "@/components/providers/wallet-provider"
+import { useBalances } from "@/hooks/useBalances"
 import { useMarket } from "@/hooks/useMarket"
 import { toast } from "sonner"
 
@@ -13,18 +14,48 @@ type OrderSide = "long" | "short"
 type OrderType = "market" | "limit" | "stop"
 
 export function OrderForm() {
-  const { isConnected, connect } = useWalletContext()
+  const { isConnected, connect, network } = useWalletContext()
+  const { usdc, xlm, isLoading: balancesLoading, error: balanceError, fundWithFriendbot } = useBalances()
   const { openPosition, isLoading: isSubmitting, error: marketError } = useMarket()
-  
+
   const [side, setSide] = useState<OrderSide>("long")
   const [orderType, setOrderType] = useState<OrderType>("market")
   const [leverage, setLeverage] = useState([5])
   const [collateral, setCollateral] = useState("")
   const [size, setSize] = useState("")
   const [limitPrice, setLimitPrice] = useState("")
+  const [isFunding, setIsFunding] = useState(false)
 
   const currentPrice = 98420
-  const userBalance = 1240
+
+  // Use real USDC balance, fall back to XLM if no USDC
+  const userBalance = usdc?.balanceNum ?? 0
+  const hasBalance = userBalance > 0
+  const needsFunding = xlm.balanceNum === 0 && !balancesLoading
+
+  // Handle Friendbot funding
+  const handleFundWithFriendbot = async () => {
+    if (network !== "testnet" && network !== "futurenet") {
+      toast.error("Friendbot is only available on testnet/futurenet")
+      return
+    }
+
+    setIsFunding(true)
+    toast.loading("Requesting testnet XLM from Friendbot...", { id: "friendbot" })
+
+    try {
+      const success = await fundWithFriendbot()
+      if (success) {
+        toast.success("Account funded! You received 10,000 XLM", { id: "friendbot" })
+      } else {
+        toast.error("Friendbot funding failed. Try again.", { id: "friendbot" })
+      }
+    } catch (err) {
+      toast.error("Friendbot funding failed", { id: "friendbot" })
+    } finally {
+      setIsFunding(false)
+    }
+  }
 
   // Handle order submission
   const handleSubmitOrder = async () => {
@@ -46,9 +77,14 @@ export function OrderForm() {
       return
     }
 
+    if (collateralValue > userBalance) {
+      toast.error(`Insufficient balance. You have ${userBalance.toFixed(2)} USDC`)
+      return
+    }
+
     try {
       toast.loading("Submitting order...", { id: "order" })
-      
+
       const txHash = await openPosition(
         collateralValue,
         sizeValue * currentPrice, // Convert BTC size to USD position value
@@ -104,7 +140,16 @@ export function OrderForm() {
 
   // Percentage buttons for collateral
   const handlePercentage = (pct: number) => {
-    setCollateral(((userBalance * pct) / 100).toFixed(2))
+    if (userBalance > 0) {
+      setCollateral(((userBalance * pct) / 100).toFixed(2))
+    }
+  }
+
+  // Handle Max button
+  const handleMax = () => {
+    if (userBalance > 0) {
+      setCollateral(userBalance.toFixed(2))
+    }
   }
 
   return (
@@ -115,6 +160,63 @@ export function OrderForm() {
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
+        {/* Wallet Not Connected State */}
+        {!isConnected && (
+          <div className="p-4 rounded-lg bg-secondary/30 border border-white/10 text-center space-y-3">
+            <Wallet className="h-8 w-8 mx-auto text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              Connect your wallet to start trading
+            </p>
+            <Button
+              onClick={() => connect()}
+              className="bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6] text-white"
+            >
+              Connect Wallet
+            </Button>
+          </div>
+        )}
+
+        {/* Account Needs Funding State */}
+        {isConnected && needsFunding && (
+          <div className="p-4 rounded-lg bg-[#f59e0b]/10 border border-[#f59e0b]/30 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-[#f59e0b] flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-foreground">Account Not Funded</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Your account needs XLM to activate and pay for transactions.
+                </p>
+              </div>
+            </div>
+            {(network === "testnet" || network === "futurenet") && (
+              <Button
+                onClick={handleFundWithFriendbot}
+                disabled={isFunding}
+                className="w-full bg-[#f59e0b] hover:bg-[#f59e0b]/90 text-black font-semibold"
+              >
+                {isFunding ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Funding...
+                  </>
+                ) : (
+                  "Fund with Friendbot (Free)"
+                )}
+              </Button>
+            )}
+            {network === "mainnet" && (
+              <a
+                href="https://www.stellar.org/lumens"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 text-sm text-[#3b82f6] hover:underline"
+              >
+                Get XLM <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+          </div>
+        )}
+
         {/* Long/Short Tabs */}
         <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden border border-white/10">
           <button
@@ -209,11 +311,24 @@ export function OrderForm() {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
-              Balance: <span className="font-mono text-foreground">{userBalance.toLocaleString()}</span> USDC
+              Balance:{" "}
+              <span className={cn(
+                "font-mono",
+                balancesLoading ? "text-muted-foreground" : hasBalance ? "text-foreground" : "text-[#f59e0b]"
+              )}>
+                {balancesLoading ? "..." : userBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>{" "}
+              USDC
             </span>
             <button
-              onClick={() => setCollateral(userBalance.toString())}
-              className="text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+              onClick={handleMax}
+              disabled={!hasBalance}
+              className={cn(
+                "text-xs font-medium transition-colors",
+                hasBalance
+                  ? "text-primary hover:text-primary/80"
+                  : "text-muted-foreground/50 cursor-not-allowed"
+              )}
             >
               Max
             </button>
@@ -224,7 +339,13 @@ export function OrderForm() {
               <button
                 key={pct}
                 onClick={() => handlePercentage(pct)}
-                className="py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-secondary/30 hover:bg-secondary/60 rounded border border-white/5 hover:border-white/10 transition-all"
+                disabled={!hasBalance}
+                className={cn(
+                  "py-1.5 text-xs font-medium rounded border transition-all",
+                  hasBalance
+                    ? "text-muted-foreground hover:text-foreground bg-secondary/30 hover:bg-secondary/60 border-white/5 hover:border-white/10"
+                    : "text-muted-foreground/30 bg-secondary/10 border-white/5 cursor-not-allowed"
+                )}
               >
                 {pct}%
               </button>
@@ -396,7 +517,7 @@ export function OrderForm() {
         {/* CTA Button */}
         <Button
           onClick={handleSubmitOrder}
-          disabled={isSubmitting || (!isConnected && false) || (!collateral || Number.parseFloat(collateral) <= 0)}
+          disabled={isSubmitting || (isConnected && (!collateral || Number.parseFloat(collateral) <= 0))}
           className={cn(
             "w-full h-14 text-base font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed",
             !isConnected
@@ -417,6 +538,11 @@ export function OrderForm() {
             <>{side === "long" ? "Buy / Long" : "Sell / Short"} BTC</>
           )}
         </Button>
+
+        {/* Balance Error */}
+        {balanceError && (
+          <p className="text-xs text-[#f59e0b] text-center">{balanceError}</p>
+        )}
 
         {/* TP/SL Link */}
         <button className="w-full text-xs text-muted-foreground hover:text-primary transition-colors py-1">

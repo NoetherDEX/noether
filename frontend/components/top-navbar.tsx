@@ -2,11 +2,12 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ChevronDown, Wallet, LayoutGrid, Layout, LogOut, Loader2 } from "lucide-react"
+import { ChevronDown, Wallet, LayoutGrid, Layout, LogOut, Loader2, RefreshCw, Copy, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { useWalletContext, formatAddress } from "@/components/providers/wallet-provider"
+import { useBalances } from "@/hooks/useBalances"
 import { toast } from "sonner"
 
 interface TopNavbarProps {
@@ -14,9 +15,20 @@ interface TopNavbarProps {
   onViewModeChange?: (mode: "pro" | "basic") => void
 }
 
+// Network display config
+const NETWORK_CONFIG = {
+  testnet: { label: "Stellar Testnet", color: "#22c55e" },
+  futurenet: { label: "Stellar Futurenet", color: "#f59e0b" },
+  mainnet: { label: "Stellar Mainnet", color: "#3b82f6" },
+  unknown: { label: "Unknown Network", color: "#ef4444" },
+} as const
+
 export function TopNavbar({ viewMode = "pro", onViewModeChange }: TopNavbarProps) {
   const pathname = usePathname()
-  const { isConnected, isLoading, address, connect, disconnect, error } = useWalletContext()
+  const { isConnected, isLoading, address, network, connect, disconnect } = useWalletContext()
+  const { xlm, usdc, refresh: refreshBalances, isLoading: balancesLoading } = useBalances()
+
+  const networkConfig = NETWORK_CONFIG[network] || NETWORK_CONFIG.unknown
 
   const handleConnect = async () => {
     try {
@@ -32,8 +44,21 @@ export function TopNavbar({ viewMode = "pro", onViewModeChange }: TopNavbarProps
     toast.info("Wallet disconnected")
   }
 
+  const handleCopyAddress = () => {
+    if (address) {
+      navigator.clipboard.writeText(address)
+      toast.success("Address copied to clipboard")
+    }
+  }
+
+  const handleRefreshBalances = async () => {
+    toast.loading("Refreshing balances...", { id: "refresh" })
+    await refreshBalances()
+    toast.success("Balances updated", { id: "refresh" })
+  }
+
   const navItems = [
-    { label: "Trade", href: "/" },
+    { label: "Trade", href: "/trade" },
     { label: "Portfolio", href: "/portfolio" },
     { label: "Earn/Vault", href: "/earn" },
     { label: "Leaderboard", href: "/leaderboard" },
@@ -58,7 +83,7 @@ export function TopNavbar({ viewMode = "pro", onViewModeChange }: TopNavbarProps
           </Link>
 
           {/* Market Selector - Only show on trade page */}
-          {pathname === "/" && (
+          {pathname === "/trade" && (
             <>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -145,10 +170,16 @@ export function TopNavbar({ viewMode = "pro", onViewModeChange }: TopNavbarProps
           {/* Network Status */}
           <div className="flex items-center gap-2 text-sm">
             <div className="relative">
-              <div className="h-2 w-2 rounded-full bg-[#22c55e]" />
-              <div className="absolute inset-0 h-2 w-2 rounded-full bg-[#22c55e] animate-ping opacity-75" />
+              <div
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: networkConfig.color }}
+              />
+              <div
+                className="absolute inset-0 h-2 w-2 rounded-full animate-ping opacity-75"
+                style={{ backgroundColor: networkConfig.color }}
+              />
             </div>
-            <span className="text-muted-foreground">Stellar Testnet</span>
+            <span className="text-muted-foreground">{networkConfig.label}</span>
           </div>
 
           {/* Connect Wallet Button */}
@@ -163,12 +194,61 @@ export function TopNavbar({ viewMode = "pro", onViewModeChange }: TopNavbarProps
                   </Button>
                 </div>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48 bg-card border-white/10">
-                <DropdownMenuItem className="font-mono text-xs text-muted-foreground">
-                  {formatAddress(address, 8)}
+              <DropdownMenuContent align="end" className="w-64 bg-card border-white/10">
+                {/* Address with copy */}
+                <DropdownMenuItem
+                  onClick={handleCopyAddress}
+                  className="font-mono text-xs text-muted-foreground cursor-pointer"
+                >
+                  <span className="flex-1">{formatAddress(address, 8)}</span>
+                  <Copy className="h-3 w-3" />
                 </DropdownMenuItem>
+
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleDisconnect} className="text-[#ef4444]">
+
+                {/* Balances */}
+                <div className="px-2 py-2 space-y-1">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">XLM Balance</span>
+                    <span className="font-mono text-foreground">
+                      {balancesLoading ? "..." : xlm.balance}
+                    </span>
+                  </div>
+                  {usdc && (
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-muted-foreground">USDC Balance</span>
+                      <span className="font-mono text-foreground">{usdc.balance}</span>
+                    </div>
+                  )}
+                </div>
+
+                <DropdownMenuSeparator />
+
+                {/* Actions */}
+                <DropdownMenuItem
+                  onClick={handleRefreshBalances}
+                  className="cursor-pointer"
+                  disabled={balancesLoading}
+                >
+                  <RefreshCw className={cn("h-4 w-4 mr-2", balancesLoading && "animate-spin")} />
+                  Refresh Balances
+                </DropdownMenuItem>
+
+                <DropdownMenuItem asChild>
+                  <a
+                    href={`https://stellar.expert/explorer/testnet/account/${address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="cursor-pointer"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    View on Explorer
+                  </a>
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
+                <DropdownMenuItem onClick={handleDisconnect} className="text-[#ef4444] cursor-pointer">
                   <LogOut className="h-4 w-4 mr-2" />
                   Disconnect
                 </DropdownMenuItem>
@@ -176,7 +256,7 @@ export function TopNavbar({ viewMode = "pro", onViewModeChange }: TopNavbarProps
             </DropdownMenu>
           ) : (
             <div className="relative p-[1px] rounded-lg bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6]">
-              <Button 
+              <Button
                 onClick={handleConnect}
                 disabled={isLoading}
                 className="bg-[#0a0a0a] hover:bg-[#111] text-foreground rounded-[7px] px-4 gap-2"
