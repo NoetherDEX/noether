@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ============================================================================
-# Noether Protocol - Zero-Setup Futurenet Deployment Script
+# Noether Protocol - Zero-Setup Testnet Deployment Script
 # Phase 7: Complete Automated Deployment
 # ============================================================================
 #
@@ -70,7 +70,7 @@ print_banner() {
     echo -e "${MAGENTA}║${NC}    ${CYAN}██║ ╚████║╚██████╔╝███████╗   ██║   ██║  ██║███████╗██║  ██║${NC}       ${MAGENTA}║${NC}"
     echo -e "${MAGENTA}║${NC}    ${CYAN}╚═╝  ╚═══╝ ╚═════╝ ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝${NC}       ${MAGENTA}║${NC}"
     echo -e "${MAGENTA}║                                                                          ║${NC}"
-    echo -e "${MAGENTA}║${NC}              ${YELLOW}Futurenet Zero-Setup Deployment Script${NC}                    ${MAGENTA}║${NC}"
+    echo -e "${MAGENTA}║${NC}              ${YELLOW}Testnet Zero-Setup Deployment Script${NC}                      ${MAGENTA}║${NC}"
     echo -e "${MAGENTA}║                                                                          ║${NC}"
     echo -e "${MAGENTA}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -157,11 +157,15 @@ Then edit .env and add your credentials:
     fi
 
     # Set defaults if not provided
-    NETWORK="${NETWORK:-futurenet}"
-    NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE:-Test SDF Future Network ; October 2022}"
-    RPC_URL="${RPC_URL:-https://rpc-futurenet.stellar.org}"
-    HORIZON_URL="${HORIZON_URL:-https://horizon-futurenet.stellar.org}"
+    NETWORK="${NETWORK:-testnet}"
+    NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}"
+    RPC_URL="${RPC_URL:-https://soroban-testnet.stellar.org}"
+    HORIZON_URL="${HORIZON_URL:-https://horizon-testnet.stellar.org}"
     IDENTITY_NAME="${IDENTITY_NAME:-noether_admin}"
+
+    # Oracle contract IDs (from .env or defaults for Testnet)
+    BAND_ORACLE_ID="${BAND_ORACLE_ID:-CBRV5ZEQSSCQ4FFO64OF46I3UASBVEJNE5C2MCFWVIXL4Z7DMD7PJJMF}"
+    DIA_ORACLE_ID="${DIA_ORACLE_ID:-CAEDPEZDRCEJCF73ASC5JGNKCIJDV2QJQSW6DJ6B74MYALBNKCJ5IFP4}"
 
     # Set friendbot URL based on network
     if [ "$NETWORK" == "futurenet" ]; then
@@ -290,7 +294,7 @@ deploy_mock_usdc() {
     print_header "STEP 4A: Deploy Mock USDC Token"
 
     local CLI=$(get_cli)
-    local ASSET_CODE="FUSDC"  # Futurenet USDC
+    local ASSET_CODE="NUSDC"  # Noether Test USDC
 
     print_step "Deploying SAC-wrapped Mock USDC..."
     print_substep "Asset: $ASSET_CODE:${ADMIN_PUBLIC_KEY:0:10}..."
@@ -463,12 +467,11 @@ initialize_contracts() {
 
     local CLI=$(get_cli)
 
-    # External Oracle Contract IDs (Band & DIA on Stellar)
-    local BAND_ORACLE="CBRV5ZEQSSCQ4FFO64OF46I3UASBVEJNE5C2MCFWVIXL4Z7DMD7PJJMF"
-    local DIA_ORACLE="CAEDPEZDRCEJCF73ASC5JGNKCIJDV2QJQSW6DJ6B74MYALBNKCJ5IFP4"
-
-    # 5A: Initialize Oracle Adapter
+    # 5A: Initialize Oracle Adapter (using Band & DIA from .env)
     print_step "Initializing Oracle Adapter..."
+    print_substep "Band Oracle: ${BAND_ORACLE_ID:0:10}...${BAND_ORACLE_ID: -6}"
+    print_substep "DIA Oracle: ${DIA_ORACLE_ID:0:10}...${DIA_ORACLE_ID: -6}"
+
     $CLI contract invoke \
         --id "$ORACLE_CONTRACT_ID" \
         --network "$NETWORK" \
@@ -476,8 +479,8 @@ initialize_contracts() {
         -- \
         initialize \
         --admin "$ADMIN_PUBLIC_KEY" \
-        --band "$BAND_ORACLE" \
-        --dia "$DIA_ORACLE" 2>&1 || print_warning "Oracle may already be initialized"
+        --band "$BAND_ORACLE_ID" \
+        --dia "$DIA_ORACLE_ID" 2>&1 || print_warning "Oracle may already be initialized"
 
     print_substep "Oracle Adapter initialized"
 
@@ -620,7 +623,7 @@ print_summary() {
     echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GREEN}║${NC}  ${CYAN}NEXT STEPS:${NC}                                                          ${GREEN}║${NC}"
     echo -e "${GREEN}║${NC}    1. cd frontend && npm run dev                                        ${GREEN}║${NC}"
-    echo -e "${GREEN}║${NC}    2. Connect Freighter wallet (switch to Futurenet)                    ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}    2. Connect Freighter wallet (switch to Testnet)                      ${GREEN}║${NC}"
     echo -e "${GREEN}║${NC}    3. Start trading!                                                    ${GREEN}║${NC}"
     echo -e "${GREEN}║${NC}                                                                          ${GREEN}║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
