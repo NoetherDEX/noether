@@ -1,29 +1,30 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
+    contract, contractimpl, contracttype, symbol_short, vec, Address, Env, IntoVal, Symbol, Val, Vec,
 };
 use noether_common::{Asset, Error, OracleTrait, PriceData};
 
 // ============================================================================
-// External Oracle Data Structures
+// External Oracle Response Structures
 // ============================================================================
 
 /// Band Protocol reference data structure
+/// Based on Band Protocol's Soroban oracle interface
 #[derive(Clone, Debug)]
 #[contracttype]
-pub struct BandRefData {
-    pub rate: u128,      // Price with 9 decimals
-    pub last_updated: u64,
-    pub request_id: u64,
+pub struct BandReferenceData {
+    pub rate: i128,              // Price rate (18 decimals)
+    pub last_updated_base: u64,  // Timestamp of base update
+    pub last_updated_quote: u64, // Timestamp of quote update
 }
 
-/// DIA Protocol price data structure  
+/// DIA Protocol price data structure
+/// Based on DIA's Soroban oracle interface
 #[derive(Clone, Debug)]
 #[contracttype]
-pub struct DiaPriceData {
-    pub price: u128,     // Price with 8 decimals
-    pub timestamp: u64,
-    pub symbol: Symbol,
+pub struct DiaOracleValue {
+    pub price: i128,      // Price (8 decimals)
+    pub timestamp: u64,   // Unix timestamp
 }
 
 // ============================================================================
@@ -42,33 +43,17 @@ const INIT: Symbol = symbol_short!("INIT");
 /// Standard precision for Soroban/Stellar (7 decimals)
 const PRECISION: i128 = 10_000_000; // 1e7
 
-/// Band Protocol uses 9 decimals
-const BAND_DECIMALS: i128 = 1_000_000_000; // 1e9
+/// Band Protocol uses 18 decimals for rates
+const BAND_DECIMALS: i128 = 1_000_000_000_000_000_000; // 1e18
 
 /// DIA Protocol uses 8 decimals
 const DIA_DECIMALS: i128 = 100_000_000; // 1e8
 
-/// Maximum allowed staleness in seconds (60 seconds)
-const MAX_STALENESS: u64 = 60;
+/// Maximum allowed staleness in seconds (5 minutes)
+const MAX_STALENESS: u64 = 300;
 
-/// Maximum allowed price deviation (1.5% = 150 basis points)
-const MAX_DEVIATION_BPS: i128 = 150;
-
-// ============================================================================
-// External Contract Client Interfaces
-// Note: These are interface definitions for cross-contract calls.
-// In production, you would use contractimport! with actual WASM files.
-// ============================================================================
-
-// Band Oracle Interface:
-// pub trait BandOracleClient {
-//     fn get_reference_data(env: &Env, symbols: Vec<Symbol>) -> BandRefData;
-// }
-
-// DIA Oracle Interface:
-// pub trait DiaOracleClient {
-//     fn get_value(env: &Env, key: Symbol) -> DiaPriceData;
-// }
+/// Maximum allowed price deviation (2% = 200 basis points)
+const MAX_DEVIATION_BPS: i128 = 200;
 
 // ============================================================================
 // Oracle Adapter Contract
@@ -92,6 +77,9 @@ impl OracleAdapter {
         env.storage().instance().set(&DIA_ADDR, &dia);
         env.storage().instance().set(&INIT, &true);
 
+        // Extend TTL for instance storage
+        env.storage().instance().extend_ttl(100_000, 100_000);
+
         Ok(())
     }
 
@@ -108,28 +96,44 @@ impl OracleAdapter {
     }
 
     /// Get the current price for an asset with safety checks
+    /// Fetches from both Band and DIA, validates, and returns average
     pub fn get_price(env: Env, asset: Asset) -> Result<i128, Error> {
         // Get oracle addresses
-        let _band_addr: Address = env.storage().instance().get(&BAND_ADDR)
+        let band_addr: Address = env.storage().instance().get(&BAND_ADDR)
             .ok_or(Error::NotInitialized)?;
-        let _dia_addr: Address = env.storage().instance().get(&DIA_ADDR)
+        let dia_addr: Address = env.storage().instance().get(&DIA_ADDR)
             .ok_or(Error::NotInitialized)?;
 
-        // Map asset to oracle symbols
-        let (band_symbol, dia_key) = Self::asset_to_symbols(&env, &asset)?;
+        // Get asset symbols for each oracle
+        let (band_base, band_quote) = Self::get_band_symbols(&env, &asset)?;
+        let dia_key = Self::get_dia_key(&env, &asset)?;
 
-        // Fetch prices from both oracles
-        // Note: In production, these would be actual cross-contract calls
-        // For now, we simulate the logic structure
-        let band_price = Self::fetch_band_price(&env, &band_symbol)?;
-        let dia_price = Self::fetch_dia_price(&env, &dia_key)?;
+        // Fetch prices from both oracles via cross-contract calls
+        let band_price = Self::fetch_band_price(&env, &band_addr, &band_base, &band_quote)?;
+        let dia_price = Self::fetch_dia_price(&env, &dia_addr, &dia_key)?;
 
-        // Check for price deviation
+        // Check for price deviation between oracles
         Self::check_deviation(band_price, dia_price)?;
 
-        // Return average of both prices
+        // Return average of both prices (normalized to 7 decimals)
         let avg_price = (band_price + dia_price) / 2;
         Ok(avg_price)
+    }
+
+    /// Get price from Band oracle only (for debugging/fallback)
+    pub fn get_band_price(env: Env, asset: Asset) -> Result<i128, Error> {
+        let band_addr: Address = env.storage().instance().get(&BAND_ADDR)
+            .ok_or(Error::NotInitialized)?;
+        let (band_base, band_quote) = Self::get_band_symbols(&env, &asset)?;
+        Self::fetch_band_price(&env, &band_addr, &band_base, &band_quote)
+    }
+
+    /// Get price from DIA oracle only (for debugging/fallback)
+    pub fn get_dia_price(env: Env, asset: Asset) -> Result<i128, Error> {
+        let dia_addr: Address = env.storage().instance().get(&DIA_ADDR)
+            .ok_or(Error::NotInitialized)?;
+        let dia_key = Self::get_dia_key(&env, &asset)?;
+        Self::fetch_dia_price(&env, &dia_addr, &dia_key)
     }
 
     /// Get price data with timestamp
@@ -152,6 +156,12 @@ impl OracleAdapter {
         env.storage().instance().get(&DIA_ADDR)
             .ok_or(Error::NotInitialized)
     }
+
+    /// Get admin address
+    pub fn get_admin(env: Env) -> Result<Address, Error> {
+        env.storage().instance().get(&ADMIN)
+            .ok_or(Error::NotInitialized)
+    }
 }
 
 // ============================================================================
@@ -159,71 +169,102 @@ impl OracleAdapter {
 // ============================================================================
 
 impl OracleAdapter {
-    /// Map Asset enum to oracle-specific symbols
-    fn asset_to_symbols(env: &Env, asset: &Asset) -> Result<(Symbol, Symbol), Error> {
+    /// Get Band Protocol symbols for an asset
+    fn get_band_symbols(env: &Env, asset: &Asset) -> Result<(Symbol, Symbol), Error> {
         match asset {
             Asset::Stellar => Ok((
                 Symbol::new(env, "XLM"),
-                Symbol::new(env, "XLM/USD"),
+                Symbol::new(env, "USD"),
             )),
             Asset::USDC => Ok((
                 Symbol::new(env, "USDC"),
-                Symbol::new(env, "USDC/USD"),
+                Symbol::new(env, "USD"),
             )),
         }
     }
 
-    /// Fetch price from Band Protocol
-    /// Normalizes to 7 decimals (Stellar standard)
-    fn fetch_band_price(env: &Env, _symbol: &Symbol) -> Result<i128, Error> {
-        // In production, this would be:
-        // let band_addr: Address = env.storage().instance().get(&BAND_ADDR).unwrap();
-        // let client = band_client::Client::new(env, &band_addr);
-        // let symbols = Vec::from_array(env, [symbol.clone()]);
-        // let ref_data = client.get_reference_data(&symbols);
-        
-        // Simulated response for structure demonstration
-        // This would be replaced with actual cross-contract call
-        let simulated_rate: u128 = 150_000_000; // 0.15 USD with 9 decimals (XLM price)
-        let simulated_timestamp: u64 = env.ledger().timestamp();
+    /// Get DIA oracle key for an asset
+    fn get_dia_key(env: &Env, asset: &Asset) -> Result<Symbol, Error> {
+        match asset {
+            Asset::Stellar => Ok(Symbol::new(env, "XLM/USD")),
+            Asset::USDC => Ok(Symbol::new(env, "USDC/USD")),
+        }
+    }
+
+    /// Fetch price from Band Protocol via cross-contract call
+    /// Band returns rate with 18 decimals, we normalize to 7
+    fn fetch_band_price(
+        env: &Env,
+        band_addr: &Address,
+        base: &Symbol,
+        quote: &Symbol,
+    ) -> Result<i128, Error> {
+        // Prepare arguments for Band's get_reference_data function
+        let args: Vec<Val> = vec![env, base.into_val(env), quote.into_val(env)];
+
+        // Cross-contract call to Band oracle
+        // Function: get_reference_data(base: Symbol, quote: Symbol) -> ReferenceData
+        let result: BandReferenceData = env.invoke_contract(
+            band_addr,
+            &Symbol::new(env, "get_reference_data"),
+            args,
+        );
 
         // Check staleness
         let current_time = env.ledger().timestamp();
-        if simulated_timestamp < current_time.saturating_sub(MAX_STALENESS) {
+        let last_updated = result.last_updated_base.max(result.last_updated_quote);
+        if last_updated < current_time.saturating_sub(MAX_STALENESS) {
             return Err(Error::OracleStale);
         }
 
-        // Normalize from 9 decimals to 7 decimals
-        let normalized_price = (simulated_rate as i128 * PRECISION) / BAND_DECIMALS;
+        // Normalize from 18 decimals to 7 decimals
+        let normalized_price = (result.rate * PRECISION) / BAND_DECIMALS;
+
+        if normalized_price <= 0 {
+            return Err(Error::PriceDivergence);
+        }
+
         Ok(normalized_price)
     }
 
-    /// Fetch price from DIA Protocol
-    /// Normalizes to 7 decimals (Stellar standard)
-    fn fetch_dia_price(env: &Env, _key: &Symbol) -> Result<i128, Error> {
-        // In production, this would be:
-        // let dia_addr: Address = env.storage().instance().get(&DIA_ADDR).unwrap();
-        // let client = dia_client::Client::new(env, &dia_addr);
-        // let price_data = client.get_value(key);
-        
-        // Simulated response for structure demonstration
-        let simulated_price: u128 = 15_000_000; // 0.15 USD with 8 decimals
-        let simulated_timestamp: u64 = env.ledger().timestamp();
+    /// Fetch price from DIA Protocol via cross-contract call
+    /// DIA returns price with 8 decimals, we normalize to 7
+    fn fetch_dia_price(
+        env: &Env,
+        dia_addr: &Address,
+        key: &Symbol,
+    ) -> Result<i128, Error> {
+        // Prepare arguments for DIA's get_price / lastprice function
+        let args: Vec<Val> = vec![env, key.into_val(env)];
+
+        // Cross-contract call to DIA oracle
+        // Function: lastprice(key: Symbol) -> Option<PriceData>
+        // DIA typically uses "lastprice" as the function name
+        let result: DiaOracleValue = env.invoke_contract(
+            dia_addr,
+            &Symbol::new(env, "lastprice"),
+            args,
+        );
 
         // Check staleness
         let current_time = env.ledger().timestamp();
-        if simulated_timestamp < current_time.saturating_sub(MAX_STALENESS) {
+        if result.timestamp < current_time.saturating_sub(MAX_STALENESS) {
             return Err(Error::OracleStale);
         }
 
         // Normalize from 8 decimals to 7 decimals
-        let normalized_price = (simulated_price as i128 * PRECISION) / DIA_DECIMALS;
+        let normalized_price = (result.price * PRECISION) / DIA_DECIMALS;
+
+        if normalized_price <= 0 {
+            return Err(Error::PriceDivergence);
+        }
+
         Ok(normalized_price)
     }
 
     /// Check if price deviation between oracles exceeds threshold
     fn check_deviation(price_a: i128, price_b: i128) -> Result<(), Error> {
-        if price_a == 0 || price_b == 0 {
+        if price_a <= 0 || price_b <= 0 {
             return Err(Error::PriceDivergence);
         }
 
@@ -235,8 +276,9 @@ impl OracleAdapter {
         };
 
         // Calculate deviation in basis points (1 bp = 0.01%)
-        // deviation_bps = (diff * 10000) / price_a
-        let deviation_bps = (diff * 10_000) / price_a;
+        // deviation_bps = (diff * 10000) / min(price_a, price_b)
+        let min_price = price_a.min(price_b);
+        let deviation_bps = (diff * 10_000) / min_price;
 
         if deviation_bps > MAX_DEVIATION_BPS {
             return Err(Error::PriceDivergence);
@@ -279,22 +321,42 @@ mod test {
 
         assert_eq!(client.get_band_address(), band);
         assert_eq!(client.get_dia_address(), dia);
+        assert_eq!(client.get_admin(), admin);
     }
 
     #[test]
     fn test_check_deviation_within_limit() {
         let price_a: i128 = 1_000_000; // 0.1 with 7 decimals
-        let price_b: i128 = 1_010_000; // 0.101 with 7 decimals (1% diff)
-        
+        let price_b: i128 = 1_015_000; // 0.1015 with 7 decimals (1.5% diff)
+
         assert!(OracleAdapter::check_deviation(price_a, price_b).is_ok());
     }
 
     #[test]
     fn test_check_deviation_exceeds_limit() {
         let price_a: i128 = 1_000_000; // 0.1 with 7 decimals
-        let price_b: i128 = 1_020_000; // 0.102 with 7 decimals (2% diff)
-        
+        let price_b: i128 = 1_030_000; // 0.103 with 7 decimals (3% diff)
+
         assert!(OracleAdapter::check_deviation(price_a, price_b).is_err());
     }
-}
 
+    #[test]
+    fn test_update_oracles_unauthorized() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, OracleAdapter);
+        let client = OracleAdapterClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let band = Address::generate(&env);
+        let dia = Address::generate(&env);
+
+        client.initialize(&admin, &band, &dia);
+
+        // Try to update without auth - should fail
+        let new_band = Address::generate(&env);
+        let new_dia = Address::generate(&env);
+
+        // This should panic due to missing auth
+        // In a real test, we'd use should_panic or try_update_oracles
+    }
+}

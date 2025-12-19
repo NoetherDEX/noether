@@ -1,7 +1,7 @@
 #![no_std]
 use noether_common::{Asset, Error, Position};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token::TokenClient, Address, Env, Symbol,
+    contract, contractimpl, contracttype, symbol_short, vec, token::TokenClient, Address, Env, IntoVal, Symbol, Val, Vec,
 };
 
 // ============================================================================
@@ -22,6 +22,7 @@ pub enum DataKey {
     TotalOpenInterestLong(Asset),
     TotalOpenInterestShort(Asset),
     FundingIndex(Asset), // Cumulative funding rate index
+    PositionDirection(Address, Asset), // Store if position is long or short
 }
 
 // ============================================================================
@@ -62,6 +63,9 @@ impl NoetherMarket {
         env.storage().instance().set(&USDC_TOKEN, &usdc_token);
         env.storage().instance().set(&INIT, &true);
 
+        // Extend TTL for instance storage
+        env.storage().instance().extend_ttl(100_000, 100_000);
+
         // Initialize open interest for each asset
         env.storage()
             .persistent()
@@ -96,11 +100,14 @@ impl NoetherMarket {
         size_delta: i128,
         is_long: bool,
     ) -> Result<Position, Error> {
+        // Require user authorization
+        user.require_auth();
+
         if collateral <= 0 || size_delta <= 0 {
             return Err(Error::InvalidInput);
         }
 
-        // 1. Get entry price from oracle
+        // 1. Get entry price from oracle (REAL price from Band/DIA)
         let entry_price = Self::get_oracle_price(&env, asset)?;
 
         // 2. Leverage check
@@ -126,6 +133,7 @@ impl NoetherMarket {
 
         // 4. Load or create position
         let position_key = DataKey::Position(user.clone(), asset);
+        let direction_key = DataKey::PositionDirection(user.clone(), asset);
         let mut position: Position =
             env.storage()
                 .persistent()
@@ -145,17 +153,32 @@ impl NoetherMarket {
             position.collateral = collateral;
             position.size = size_delta;
             position.entry_price = entry_price;
-            // Simplified liquidation price calculation
-            // liquidation_price = entry_price * (1 - collateral/size)
-            position.liquidation_price = entry_price - (entry_price * collateral) / size_delta;
+            // Calculate liquidation price based on direction
+            if is_long {
+                // Long: liquidated when price drops
+                position.liquidation_price = entry_price - (entry_price * collateral) / size_delta;
+            } else {
+                // Short: liquidated when price rises
+                position.liquidation_price = entry_price + (entry_price * collateral) / size_delta;
+            }
+            // Store direction
+            env.storage().persistent().set(&direction_key, &is_long);
         } else {
             // Existing position - average entry price
             let total_cost = (position.entry_price * position.size) + (entry_price * size_delta);
             position.size += size_delta;
             position.entry_price = total_cost / position.size;
             position.collateral += collateral;
-            position.liquidation_price =
-                position.entry_price - (position.entry_price * position.collateral) / position.size;
+
+            // Recalculate liquidation price
+            let stored_is_long: bool = env.storage().persistent().get(&direction_key).unwrap_or(true);
+            if stored_is_long {
+                position.liquidation_price =
+                    position.entry_price - (position.entry_price * position.collateral) / position.size;
+            } else {
+                position.liquidation_price =
+                    position.entry_price + (position.entry_price * position.collateral) / position.size;
+            }
         }
 
         // Save position
@@ -192,52 +215,38 @@ impl NoetherMarket {
 
     /// Close a trading position
     pub fn close_position(env: Env, user: Address, asset: Asset) -> Result<i128, Error> {
+        // Require user authorization
+        user.require_auth();
+
         // 1. Load position
         let position_key = DataKey::Position(user.clone(), asset);
+        let direction_key = DataKey::PositionDirection(user.clone(), asset);
         let position: Position = env
             .storage()
             .persistent()
             .get(&position_key)
             .ok_or(Error::InvalidInput)?;
 
-        // 2. Get exit price from oracle
+        // 2. Get exit price from oracle (REAL price from Band/DIA)
         let exit_price = Self::get_oracle_price(&env, asset)?;
 
-        // 3. Calculate PnL
-        let pnl = if position.size > 0 {
-            // Determine if long or short based on position
-            // For simplicity, we'll check if entry_price < exit_price suggests long
-            // In production, you'd store direction explicitly
-            let is_long = exit_price >= position.entry_price;
+        // 3. Get position direction
+        let is_long: bool = env.storage().persistent().get(&direction_key).unwrap_or(true);
 
+        // 4. Calculate PnL
+        let pnl = if position.size > 0 {
             if is_long {
                 // Long position: profit when exit > entry
-                (exit_price - position.entry_price) * position.size / PRECISION
+                ((exit_price - position.entry_price) * position.size) / PRECISION
             } else {
                 // Short position: profit when entry > exit
-                (position.entry_price - exit_price) * position.size / PRECISION
+                ((position.entry_price - exit_price) * position.size) / PRECISION
             }
         } else {
             0
         };
 
-        // Determine position direction from open interest
-        // This is a simplification - in production, store direction in Position
-        let _long_oi: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalOpenInterestLong(asset))
-            .unwrap_or(0);
-        let _short_oi: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalOpenInterestShort(asset))
-            .unwrap_or(0);
-
-        // For now, assume long if size is positive (simplified)
-        let is_long = true; // Would be determined from position data
-
-        // 4. Settlement
+        // 5. Settlement
         let settlement_amount = if pnl > 0 {
             // Profit: return collateral + profit
             position.collateral + pnl
@@ -245,26 +254,21 @@ impl NoetherMarket {
             // Loss but not liquidated: return collateral - loss
             position.collateral + pnl // pnl is negative, so this subtracts
         } else {
-            // Liquidated: return minimal dust or nothing
+            // Liquidated: return nothing (loss exceeded collateral)
             0
         };
 
-        // Update global PnL in vault
-        let vault_addr: Address = env
-            .storage()
-            .instance()
-            .get(&VAULT_ADDR)
-            .ok_or(Error::NotInitialized)?;
-
-        // Note: In production, you'd call vault.update_global_pnl()
-        // For now, we'll just withdraw the settlement amount
-
-        // 5. Withdraw settlement from vault
+        // 6. Withdraw settlement from vault via cross-contract call
         if settlement_amount > 0 {
+            let vault_addr: Address = env
+                .storage()
+                .instance()
+                .get(&VAULT_ADDR)
+                .ok_or(Error::NotInitialized)?;
             Self::call_vault_withdraw_pnl(&env, &vault_addr, &user, settlement_amount)?;
         }
 
-        // 6. Update open interest
+        // 7. Update open interest
         if is_long {
             let current_oi: i128 = env
                 .storage()
@@ -287,8 +291,9 @@ impl NoetherMarket {
                 .set(&DataKey::TotalOpenInterestShort(asset), &new_oi);
         }
 
-        // 7. Remove position from storage
+        // 8. Remove position from storage
         env.storage().persistent().remove(&position_key);
+        env.storage().persistent().remove(&direction_key);
 
         // Update funding rate
         Self::update_funding_rate(&env, asset)?;
@@ -301,6 +306,14 @@ impl NoetherMarket {
         env.storage()
             .persistent()
             .get(&DataKey::Position(user, asset))
+            .ok_or(Error::InvalidInput)
+    }
+
+    /// Get position direction (true = long, false = short)
+    pub fn get_position_direction(env: Env, user: Address, asset: Asset) -> Result<bool, Error> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PositionDirection(user, asset))
             .ok_or(Error::InvalidInput)
     }
 
@@ -327,6 +340,35 @@ impl NoetherMarket {
             .get(&DataKey::FundingIndex(asset))
             .unwrap_or(0))
     }
+
+    /// Get current price from oracle (public function for UI)
+    pub fn get_current_price(env: Env, asset: Asset) -> Result<i128, Error> {
+        Self::get_oracle_price(&env, asset)
+    }
+
+    /// Get vault address
+    pub fn get_vault(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&VAULT_ADDR)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// Get oracle address
+    pub fn get_oracle(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&ORACLE_ADDR)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// Get admin address
+    pub fn get_admin(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&ADMIN)
+            .ok_or(Error::NotInitialized)
+    }
 }
 
 // ============================================================================
@@ -334,24 +376,31 @@ impl NoetherMarket {
 // ============================================================================
 
 impl NoetherMarket {
-    /// Get price from oracle adapter
+    /// Get price from Oracle Adapter via cross-contract call
+    /// This calls the real Band/DIA oracle through our adapter
     fn get_oracle_price(env: &Env, asset: Asset) -> Result<i128, Error> {
-        let _oracle_addr: Address = env
+        let oracle_addr: Address = env
             .storage()
             .instance()
             .get(&ORACLE_ADDR)
             .ok_or(Error::NotInitialized)?;
 
-        // In production, you would use cross-contract call:
-        // let oracle_client = OracleAdapterClient::new(env, &oracle_addr);
-        // oracle_client.get_price(asset)
+        // Prepare arguments for oracle's get_price function
+        let args: Vec<Val> = vec![env, asset.into_val(env)];
 
-        // For now, return a mock price
-        // In production, implement actual cross-contract call
-        match asset {
-            Asset::Stellar => Ok(1_500_000), // $0.15 with 7 decimals
-            Asset::USDC => Ok(10_000_000),   // $1.00 with 7 decimals
+        // Cross-contract call to Oracle Adapter
+        // Function: get_price(asset: Asset) -> Result<i128, Error>
+        let price: i128 = env.invoke_contract(
+            &oracle_addr,
+            &Symbol::new(env, "get_price"),
+            args,
+        );
+
+        if price <= 0 {
+            return Err(Error::PriceDivergence);
         }
+
+        Ok(price)
     }
 
     /// Update funding rate based on long/short imbalance
@@ -372,10 +421,9 @@ impl NoetherMarket {
             return Ok(());
         }
 
-        // Calculate funding rate: (Longs - Shorts) / PoolSize
-        // Simplified: use open interest as proxy for pool size
+        // Calculate funding rate: (Longs - Shorts) / TotalOI
         let imbalance = long_oi - short_oi;
-        let funding_rate = (imbalance * PRECISION) / total_oi.max(1);
+        let funding_rate = (imbalance * PRECISION) / total_oi;
 
         // Update cumulative funding index
         let current_index: i128 = env
@@ -391,29 +439,23 @@ impl NoetherMarket {
         Ok(())
     }
 
-    /// Call vault's withdraw_trader_pnl function
+    /// Call vault's withdraw_trader_pnl function via cross-contract call
     fn call_vault_withdraw_pnl(
         env: &Env,
         vault_addr: &Address,
         to: &Address,
         amount: i128,
     ) -> Result<(), Error> {
-        // In production, you would use cross-contract call:
-        // let vault_client = NoetherVaultClient::new(env, vault_addr);
-        // vault_client.withdraw_trader_pnl(to, amount)
+        // Prepare arguments for vault's withdraw_trader_pnl function
+        let args: Vec<Val> = vec![env, to.into_val(env), amount.into_val(env)];
 
-        // For now, we'll simulate by transferring directly
-        // In production, implement actual cross-contract call
-        let usdc_token: Address = env
-            .storage()
-            .instance()
-            .get(&USDC_TOKEN)
-            .ok_or(Error::NotInitialized)?;
-        let token_client = TokenClient::new(env, &usdc_token);
-
-        // Note: This assumes vault has approved this contract or we have direct access
-        // In production, use the vault's withdraw_trader_pnl function
-        token_client.transfer(vault_addr, to, &amount);
+        // Cross-contract call to Vault
+        // Function: withdraw_trader_pnl(to: Address, amount: i128) -> Result<(), Error>
+        let _result: () = env.invoke_contract(
+            vault_addr,
+            &Symbol::new(env, "withdraw_trader_pnl"),
+            args,
+        );
 
         Ok(())
     }
@@ -444,6 +486,9 @@ mod test {
         let (long_oi, short_oi) = client.get_open_interest(&Asset::Stellar);
         assert_eq!(long_oi, 0);
         assert_eq!(short_oi, 0);
+        assert_eq!(client.get_vault(), vault);
+        assert_eq!(client.get_oracle(), oracle);
+        assert_eq!(client.get_admin(), admin);
     }
 
     #[test]

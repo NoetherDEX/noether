@@ -26,9 +26,45 @@ Thumbs.db
 # Build artifacts
 *.wasm
 *.wasm.hash
+*.tsbuildinfo
 
 # Environment
 .env
+# Keep .env.example as a template
+!.env.example
 
 # Soroban local config
 .soroban/
+
+# Auto-generated contract files
+frontend/lib/deployed_contracts.json
+frontend/public/contracts.json
+
+# Next.js / Turbopack
+.turbo/
+.vercel/
+
+# Package manager locks (optional - uncomment if you want to ignore them)
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock
+
+# Test snapshots (auto-generated)
+**/test_snapshots/**/*.json
+**/test_snapshots/
+
+# Editor directories
+.vscode/settings.json
+.vscode/launch.json
+*.code-workspace
+# Keep .vscode/tasks.json for rust-analyzer, but ignore other auto-generated files
+.vscode/extensions.json
+.vscode/.ropeproject
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Old/unused directories
+web/

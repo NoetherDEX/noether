@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useEffect } from "react"
 import { XAxis, YAxis, ResponsiveContainer, Tooltip, Area, AreaChart } from "recharts"
 import { ChartContainer } from "@/components/ui/chart"
 import { TrendingUp } from "lucide-react"
@@ -8,15 +8,22 @@ import { TrendingUp } from "lucide-react"
 const timeframes = ["1D", "1W", "1M", "All"] as const
 type Timeframe = (typeof timeframes)[number]
 
-// Generate realistic PnL data
-const generateData = (timeframe: Timeframe) => {
+type DataPoint = { time: string; pnl: number }
+
+// Generate realistic PnL data (seeded for consistency)
+const generateData = (timeframe: Timeframe, seed: number): DataPoint[] => {
   const points = timeframe === "1D" ? 24 : timeframe === "1W" ? 7 : timeframe === "1M" ? 30 : 90
-  const data = []
+  const data: DataPoint[] = []
   let value = 10000
 
+  // Simple seeded random for consistency
+  const seededRandom = (i: number) => {
+    const x = Math.sin(seed + i * 9999) * 10000
+    return x - Math.floor(x)
+  }
+
   for (let i = 0; i < points; i++) {
-    // Create volatility with general upward trend
-    const change = (Math.random() - 0.45) * 300
+    const change = (seededRandom(i) - 0.45) * 300
     value = Math.max(8000, value + change)
 
     let label = ""
@@ -41,13 +48,55 @@ const generateData = (timeframe: Timeframe) => {
 
 export function PortfolioPnlChart() {
   const [timeframe, setTimeframe] = useState<Timeframe>("1M")
+  const [data, setData] = useState<DataPoint[]>([])
+  const [mounted, setMounted] = useState(false)
 
-  const data = useMemo(() => generateData(timeframe), [timeframe])
-  const startValue = data[0]?.pnl || 0
-  const endValue = data[data.length - 1]?.pnl || 0
+  // Generate data only on client side to avoid hydration mismatch
+  useEffect(() => {
+    setMounted(true)
+    // Use a fixed seed based on timeframe for consistent rendering
+    const seed = timeframe === "1D" ? 1 : timeframe === "1W" ? 2 : timeframe === "1M" ? 3 : 4
+    setData(generateData(timeframe, seed))
+  }, [timeframe])
+  const startValue = data[0]?.pnl || 10000
+  const endValue = data[data.length - 1]?.pnl || 10000
   const change = endValue - startValue
-  const changePercent = ((change / startValue) * 100).toFixed(2)
+  const changePercent = startValue > 0 ? ((change / startValue) * 100).toFixed(2) : "0.00"
   const isPositive = change >= 0
+
+  // Show loading skeleton during SSR/initial mount
+  if (!mounted) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-card p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-[#8b5cf6]" />
+              <span className="font-semibold text-foreground">PnL History</span>
+            </div>
+            <div className="flex items-center gap-2 pl-3 border-l border-white/10">
+              <span className="font-mono text-lg font-bold text-muted-foreground">--</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 bg-secondary/50 rounded-lg p-1">
+            {timeframes.map((tf) => (
+              <button
+                key={tf}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                  timeframe === tf ? "bg-[#8b5cf6] text-white" : "text-muted-foreground"
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="h-[280px] w-full flex items-center justify-center">
+          <div className="animate-pulse text-muted-foreground">Loading chart...</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="rounded-xl border border-white/10 bg-card p-4">

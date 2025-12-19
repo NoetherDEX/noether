@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import {
   TrendingUp,
   Maximize2,
@@ -17,33 +17,22 @@ import {
   MousePointer,
   Minus,
   ChevronDown,
+  RefreshCw,
+  Loader2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { usePrice, PriceData } from "@/hooks/usePrice"
 
 type ChartMode = "candles" | "area" | "column"
 
-const generatePriceData = () => {
-  const data = []
-  let price = 141
-  for (let i = 0; i < 80; i++) {
-    const change = (Math.random() - 0.48) * 3
-    const open = price
-    const close = price + change
-    const high = Math.max(open, close) + Math.random() * 0.8
-    const low = Math.min(open, close) - Math.random() * 0.8
-    const volume = Math.random() * 700 + 200
-    data.push({ open, close, high, low, volume, isGreen: close >= open })
-    price = close
-  }
-  return data
-}
+function CandlestickChartView({ data }: { data: PriceData[] }) {
+  if (data.length === 0) return null
 
-function CandlestickChartView({ data }: { data: ReturnType<typeof generatePriceData> }) {
   const chartHeight = 80
   const volumeHeight = 20
 
-  const minPrice = Math.min(...data.map((d) => d.low)) - 1
-  const maxPrice = Math.max(...data.map((d) => d.high)) + 1
+  const minPrice = Math.min(...data.map((d) => d.low)) * 0.999
+  const maxPrice = Math.max(...data.map((d) => d.high)) * 1.001
   const priceRange = maxPrice - minPrice
   const maxVolume = Math.max(...data.map((d) => d.volume))
 
@@ -108,10 +97,12 @@ function CandlestickChartView({ data }: { data: ReturnType<typeof generatePriceD
   )
 }
 
-function AreaChartView({ data }: { data: ReturnType<typeof generatePriceData> }) {
+function AreaChartView({ data }: { data: PriceData[] }) {
+  if (data.length === 0) return null
+
   const prices = data.map((d) => d.close)
-  const minPrice = Math.min(...prices) - 1
-  const maxPrice = Math.max(...prices) + 1
+  const minPrice = Math.min(...prices) * 0.999
+  const maxPrice = Math.max(...prices) * 1.001
   const range = maxPrice - minPrice
   const points = prices.map((price, i) => ({
     x: (i / (prices.length - 1)) * 100,
@@ -161,7 +152,9 @@ function AreaChartView({ data }: { data: ReturnType<typeof generatePriceData> })
   )
 }
 
-function ColumnChartView({ data }: { data: ReturnType<typeof generatePriceData> }) {
+function ColumnChartView({ data }: { data: PriceData[] }) {
+  if (data.length === 0) return null
+
   const prices = data.map((d) => d.close)
   const minPrice = Math.min(...prices)
   const maxPrice = Math.max(...prices)
@@ -201,17 +194,25 @@ function FullscreenChart({
   setChartMode,
   priceData,
   currentOHLC,
+  currentPrice,
+  changePercent,
   selectedTimeframe,
   setSelectedTimeframe,
   onClose,
+  isLoading,
+  onRefresh,
 }: {
   chartMode: ChartMode
   setChartMode: (mode: ChartMode) => void
-  priceData: ReturnType<typeof generatePriceData>
+  priceData: PriceData[]
   currentOHLC: { open: string; high: string; low: string; close: string; volume: string }
+  currentPrice: number
+  changePercent: number
   selectedTimeframe: string
   setSelectedTimeframe: (tf: string) => void
   onClose: () => void
+  isLoading: boolean
+  onRefresh: () => void
 }) {
   const chartModes: { mode: ChartMode; icon: typeof CandlestickChart; label: string }[] = [
     { mode: "candles", icon: CandlestickChart, label: "Candles" },
@@ -219,7 +220,7 @@ function FullscreenChart({
     { mode: "column", icon: BarChart3, label: "Column" },
   ]
 
-  const timeframes = ["1m", "5m", "15m", "1H", "4H", "1D", "1W"]
+  const timeframes = ["1D", "7D", "14D", "30D", "90D"]
 
   const drawingTools = [
     { icon: MousePointer, label: "Cursor" },
@@ -231,6 +232,15 @@ function FullscreenChart({
     { icon: Minus, label: "Horizontal Line" },
   ]
 
+  // Generate dynamic price scale
+  const priceScale = useMemo(() => {
+    if (priceData.length === 0) return []
+    const min = Math.min(...priceData.map(d => d.low))
+    const max = Math.max(...priceData.map(d => d.high))
+    const step = (max - min) / 10
+    return Array.from({ length: 11 }, (_, i) => Math.round(max - step * i))
+  }, [priceData])
+
   return (
     <div className="fixed inset-0 z-50 bg-[#0a0a0a] flex flex-col">
       {/* Top Toolbar */}
@@ -240,10 +250,15 @@ function FullscreenChart({
           <div className="flex items-center gap-2">
             <span className="text-lg font-bold text-foreground">BTC-PERP</span>
             <span className="text-xs px-1.5 py-0.5 bg-white/10 rounded text-muted-foreground">Perpetual</span>
+            <span className="text-xs px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">LIVE</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xl font-bold font-mono text-foreground">$98,420.00</span>
-            <span className="text-sm font-mono text-[#14b8a6]">+2.34%</span>
+            <span className="text-xl font-bold font-mono text-foreground">
+              ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className={`text-sm font-mono ${changePercent >= 0 ? "text-[#14b8a6]" : "text-[#f87171]"}`}>
+              {changePercent >= 0 ? "+" : ""}{changePercent.toFixed(2)}%
+            </span>
           </div>
         </div>
 
@@ -286,11 +301,12 @@ function FullscreenChart({
 
           <Button
             variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs text-muted-foreground hover:text-foreground gap-1"
+            size="icon"
+            onClick={onRefresh}
+            disabled={isLoading}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
           >
-            <ChevronDown className="h-3 w-3" />
-            Indicators
+            <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           </Button>
 
           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
@@ -346,7 +362,7 @@ function FullscreenChart({
               C <span className="text-[#14b8a6]">{currentOHLC.close}</span>
             </span>
             <span className="text-muted-foreground">
-              Vol <span className="text-foreground">{currentOHLC.volume}K</span>
+              Vol <span className="text-foreground">{currentOHLC.volume}</span>
             </span>
           </div>
 
@@ -356,9 +372,9 @@ function FullscreenChart({
               <span className="text-[10px] font-medium text-white bg-[#3b82f6] px-1.5 py-0.5 rounded">High</span>
               <span className="text-xs font-mono text-muted-foreground">{currentOHLC.high}</span>
             </div>
-            {[144, 142, 140, 138, 136, 134, 132, 130, 128, 126].map((p) => (
-              <span key={p} className="text-xs font-mono text-muted-foreground">
-                {p}
+            {priceScale.slice(1, -1).map((p, i) => (
+              <span key={i} className="text-xs font-mono text-muted-foreground">
+                {p.toLocaleString()}
               </span>
             ))}
             <div className="flex items-center gap-2">
@@ -369,9 +385,17 @@ function FullscreenChart({
 
           {/* Chart */}
           <div className="absolute inset-8 right-20 bottom-8">
-            {chartMode === "candles" && <CandlestickChartView data={priceData} />}
-            {chartMode === "area" && <AreaChartView data={priceData} />}
-            {chartMode === "column" && <ColumnChartView data={priceData} />}
+            {isLoading ? (
+              <div className="w-full h-full flex items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <>
+                {chartMode === "candles" && <CandlestickChartView data={priceData} />}
+                {chartMode === "area" && <AreaChartView data={priceData} />}
+                {chartMode === "column" && <ColumnChartView data={priceData} />}
+              </>
+            )}
           </div>
 
           {/* Current Price Line */}
@@ -387,23 +411,53 @@ function FullscreenChart({
   )
 }
 
+// Map UI timeframe to API days
+const timeframeToDays: Record<string, number> = {
+  "1D": 1,
+  "7D": 7,
+  "14D": 14,
+  "30D": 30,
+  "90D": 90,
+}
+
 export function TradingChart() {
   const [chartMode, setChartMode] = useState<ChartMode>("candles")
-  const [selectedTimeframe, setSelectedTimeframe] = useState("15m")
+  const [selectedTimeframe, setSelectedTimeframe] = useState("7D")
   const [isFullscreen, setIsFullscreen] = useState(false)
 
-  const priceData = useMemo(() => generatePriceData(), [])
+  // Use real price data from CoinGecko
+  const { currentPrice, historicalData, isLoading, setTimeframe, refresh } = usePrice("bitcoin")
+
+  // Update timeframe when selection changes
+  useEffect(() => {
+    const days = timeframeToDays[selectedTimeframe] || 7
+    setTimeframe(days)
+  }, [selectedTimeframe, setTimeframe])
+
   const currentOHLC = useMemo(() => {
-    const lastCandle = priceData[priceData.length - 1]
-    const totalVolume = priceData.reduce((sum, d) => sum + d.volume, 0)
-    return {
-      open: priceData[0].open.toFixed(2),
-      high: Math.max(...priceData.map((d) => d.high)).toFixed(2),
-      low: Math.min(...priceData.map((d) => d.low)).toFixed(2),
-      close: lastCandle.close.toFixed(2),
-      volume: (totalVolume / 1000).toFixed(3),
+    if (historicalData.length === 0) {
+      return { open: "0.00", high: "0.00", low: "0.00", close: "0.00", volume: "0" }
     }
-  }, [priceData])
+    const firstCandle = historicalData[0]
+    const lastCandle = historicalData[historicalData.length - 1]
+    const totalVolume = historicalData.reduce((sum, d) => sum + d.volume, 0)
+    return {
+      open: firstCandle.open.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      high: Math.max(...historicalData.map((d) => d.high)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      low: Math.min(...historicalData.map((d) => d.low)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      close: lastCandle.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      volume: (totalVolume / 1000).toFixed(1) + "K",
+    }
+  }, [historicalData])
+
+  // Generate dynamic price scale
+  const priceScale = useMemo(() => {
+    if (historicalData.length === 0) return []
+    const min = Math.min(...historicalData.map(d => d.low))
+    const max = Math.max(...historicalData.map(d => d.high))
+    const step = (max - min) / 10
+    return Array.from({ length: 11 }, (_, i) => Math.round(max - step * i))
+  }, [historicalData])
 
   const chartModes: { mode: ChartMode; icon: typeof CandlestickChart; label: string }[] = [
     { mode: "candles", icon: CandlestickChart, label: "Candles" },
@@ -411,7 +465,10 @@ export function TradingChart() {
     { mode: "column", icon: BarChart3, label: "Column" },
   ]
 
-  const timeframes = ["15m", "1H", "4H", "1D"]
+  const timeframes = ["1D", "7D", "14D", "30D"]
+
+  const displayPrice = currentPrice?.price || 0
+  const changePercent = currentPrice?.changePercent24h || 0
 
   return (
     <>
@@ -419,11 +476,15 @@ export function TradingChart() {
         <FullscreenChart
           chartMode={chartMode}
           setChartMode={setChartMode}
-          priceData={priceData}
+          priceData={historicalData}
           currentOHLC={currentOHLC}
+          currentPrice={displayPrice}
+          changePercent={changePercent}
           selectedTimeframe={selectedTimeframe}
           setSelectedTimeframe={setSelectedTimeframe}
           onClose={() => setIsFullscreen(false)}
+          isLoading={isLoading}
+          onRefresh={refresh}
         />
       )}
 
@@ -431,24 +492,36 @@ export function TradingChart() {
       <div className="flex-[1.5] min-h-0 rounded-lg border border-white/10 bg-card overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
           {/* Left: Timeframe Pill Tabs */}
-          <div className="flex items-center gap-1 bg-white/5 rounded-full p-0.5">
-            {timeframes.map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setSelectedTimeframe(tf)}
-                className={`px-3 py-1 text-xs font-medium rounded-full transition-all ${
-                  tf === selectedTimeframe
-                    ? "bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6] text-white shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {tf}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 bg-white/5 rounded-full p-0.5">
+              {timeframes.map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => setSelectedTimeframe(tf)}
+                  className={`px-3 py-1 text-xs font-medium rounded-full transition-all ${
+                    tf === selectedTimeframe
+                      ? "bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6] text-white shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">LIVE</span>
           </div>
 
           {/* Right: Chart Type Toggles + Expand */}
           <div className="flex items-center gap-2">
+            <button
+              onClick={refresh}
+              disabled={isLoading}
+              className="p-1.5 rounded text-muted-foreground hover:text-foreground transition-all"
+              title="Refresh"
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+            </button>
+
             {/* Chart Type Toggle Group */}
             <div className="flex items-center bg-white/5 rounded-md p-0.5">
               {chartModes.map(({ mode, icon: Icon, label }) => (
@@ -495,13 +568,13 @@ export function TradingChart() {
               C<span className="text-[#14b8a6] ml-1">{currentOHLC.close}</span>
             </span>
             <span className="text-muted-foreground">
-              Vol<span className="text-foreground ml-1">{currentOHLC.volume}K</span>
+              Vol<span className="text-foreground ml-1">{currentOHLC.volume}</span>
             </span>
           </div>
 
           {chartMode === "candles" && (
             <div className="absolute top-2 left-2 mt-8 text-[10px] font-mono text-muted-foreground z-20">
-              Volume <span className="text-[#14b8a6] ml-1">{currentOHLC.volume}K</span>
+              Volume <span className="text-[#14b8a6] ml-1">{currentOHLC.volume}</span>
             </div>
           )}
 
@@ -511,15 +584,11 @@ export function TradingChart() {
               <span className="text-[10px] font-medium text-white bg-[#3b82f6] px-1.5 py-0.5 rounded">High</span>
               <span className="text-[11px] font-mono text-muted-foreground">{currentOHLC.high}</span>
             </div>
-            <span className="text-[11px] font-mono text-muted-foreground">142</span>
-            <span className="text-[11px] font-mono text-muted-foreground">140</span>
-            <span className="text-[11px] font-mono text-muted-foreground">138</span>
-            <span className="text-[11px] font-mono text-muted-foreground">136</span>
-            <span className="text-[11px] font-mono text-muted-foreground">134</span>
-            <span className="text-[11px] font-mono text-muted-foreground">132</span>
-            <span className="text-[11px] font-mono text-muted-foreground">130</span>
-            <span className="text-[11px] font-mono text-muted-foreground">128</span>
-            <span className="text-[11px] font-mono text-muted-foreground">126</span>
+            {priceScale.slice(1, -1).map((p, i) => (
+              <span key={i} className="text-[11px] font-mono text-muted-foreground">
+                {p.toLocaleString()}
+              </span>
+            ))}
             <div className="flex items-center gap-1">
               <span className="text-[10px] font-medium text-white bg-[#3b82f6] px-1.5 py-0.5 rounded">Low</span>
               <span className="text-[11px] font-mono text-muted-foreground">{currentOHLC.low}</span>
@@ -528,21 +597,31 @@ export function TradingChart() {
 
           {/* Chart Container */}
           <div className="absolute inset-8 right-16 bottom-8">
-            {chartMode === "candles" && <CandlestickChartView data={priceData} />}
-            {chartMode === "area" && <AreaChartView data={priceData} />}
-            {chartMode === "column" && <ColumnChartView data={priceData} />}
+            {isLoading && historicalData.length === 0 ? (
+              <div className="w-full h-full flex items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <>
+                {chartMode === "candles" && <CandlestickChartView data={historicalData} />}
+                {chartMode === "area" && <AreaChartView data={historicalData} />}
+                {chartMode === "column" && <ColumnChartView data={historicalData} />}
+              </>
+            )}
           </div>
 
           {/* Current Price Line */}
-          <div className="absolute left-8 right-16 top-[35%] flex items-center z-10 pointer-events-none">
-            <div
-              className="flex-1 border-t-2 border-dashed"
-              style={{ borderColor: "rgba(20, 184, 166, 0.5)", borderWidth: "1px" }}
-            />
-            <div className="px-2 py-0.5 bg-[#14b8a6] rounded-sm text-[11px] font-mono text-white ml-1">
-              {currentOHLC.close}
+          {historicalData.length > 0 && (
+            <div className="absolute left-8 right-16 top-[35%] flex items-center z-10 pointer-events-none">
+              <div
+                className="flex-1 border-t-2 border-dashed"
+                style={{ borderColor: "rgba(20, 184, 166, 0.5)", borderWidth: "1px" }}
+              />
+              <div className="px-2 py-0.5 bg-[#14b8a6] rounded-sm text-[11px] font-mono text-white ml-1">
+                {currentOHLC.close}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </>

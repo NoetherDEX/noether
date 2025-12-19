@@ -7,7 +7,7 @@ A GMX-style Perpetual DEX built on Stellar Futurenet using the Soroban SDK.
 This is a monorepo containing:
 
 - **Contracts** (`contracts/`): Rust smart contracts using Soroban SDK
-- **Frontend** (`web/`): Next.js + TypeScript + Tailwind CSS
+- **Frontend** (`frontend/`): Next.js + TypeScript + Tailwind CSS
 - **Shared** (`shared/`): Shared types and error definitions
 
 ## Development
@@ -29,7 +29,7 @@ soroban contract build
 ### Frontend
 
 ```bash
-cd web
+cd frontend
 npm install
 npm run dev
 ```
@@ -56,5 +56,3 @@ npm run dev
 ## License
 
 MIT
-
-

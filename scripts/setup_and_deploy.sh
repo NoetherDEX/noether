@@ -191,41 +191,14 @@ setup_identity() {
     local CLI=$(get_cli)
     print_step "Using CLI: $CLI"
 
-    # Check if identity already exists with correct address
-    if $CLI keys address "$IDENTITY_NAME" &> /dev/null 2>&1; then
-        local existing_addr=$($CLI keys address "$IDENTITY_NAME" 2>/dev/null)
-        if [ "$existing_addr" == "$ADMIN_PUBLIC_KEY" ]; then
-            print_substep "Identity '$IDENTITY_NAME' already configured correctly"
-        else
-            print_substep "Removing old identity with different address..."
-            $CLI keys rm "$IDENTITY_NAME" 2>/dev/null || true
-        fi
-    fi
+    # For Stellar CLI v23+, we'll use the secret key directly in commands
+    # This is more reliable than trying to configure identities
 
-    # Add identity from secret key (loaded from .env)
-    print_step "Configuring identity '$IDENTITY_NAME' from secret key..."
+    # Set global variable to use secret key directly
+    USE_SECRET_KEY_DIRECTLY=true
 
-    # Use the secret key from environment variable
-    echo "$ADMIN_SECRET_KEY" | $CLI keys add "$IDENTITY_NAME" --secret-key 2>/dev/null || {
-        print_warning "Identity may already exist, continuing..."
-    }
-
-    # Verify identity
-    local addr=$($CLI keys address "$IDENTITY_NAME" 2>/dev/null) || true
-
-    if [ -z "$addr" ]; then
-        # Try alternative method
-        print_substep "Trying alternative identity setup..."
-        $CLI keys add "$IDENTITY_NAME" --secret-key <<< "$ADMIN_SECRET_KEY" 2>/dev/null || true
-        addr=$($CLI keys address "$IDENTITY_NAME" 2>/dev/null) || true
-    fi
-
-    if [ "$addr" != "$ADMIN_PUBLIC_KEY" ]; then
-        print_warning "Identity address mismatch. Using provided public key."
-        addr="$ADMIN_PUBLIC_KEY"
-    fi
-
-    print_substep "Identity Address: ${addr:0:10}...${addr: -6}"
+    print_substep "Will use secret key directly in deployment commands"
+    print_substep "Public Key: ${ADMIN_PUBLIC_KEY:0:10}...${ADMIN_PUBLIC_KEY: -6}"
 
     # Fund account via Friendbot
     print_step "Funding account via Friendbot..."
@@ -311,7 +284,7 @@ deploy_mock_usdc() {
         local deploy_output=$($CLI contract asset deploy \
             --asset "$ASSET_CODE:$ADMIN_PUBLIC_KEY" \
             --network "$NETWORK" \
-            --source "$IDENTITY_NAME" 2>&1) || true
+            --source-account "$ADMIN_SECRET_KEY" 2>&1) || true
 
         USDC_CONTRACT_ID=$(echo "$deploy_output" | grep -oE "C[A-Z0-9]{55}" | head -1)
 
@@ -335,7 +308,7 @@ deploy_mock_usdc() {
     $CLI contract invoke \
         --id "$USDC_CONTRACT_ID" \
         --network "$NETWORK" \
-        --source "$IDENTITY_NAME" \
+        --source-account "$ADMIN_SECRET_KEY" \
         -- \
         mint \
         --to "$ADMIN_PUBLIC_KEY" \
@@ -370,7 +343,7 @@ deploy_oracle_adapter() {
     local deploy_output=$($CLI contract deploy \
         --wasm "$WASM" \
         --network "$NETWORK" \
-        --source "$IDENTITY_NAME" 2>&1)
+        --source-account "$ADMIN_SECRET_KEY" 2>&1)
 
     ORACLE_CONTRACT_ID=$(echo "$deploy_output" | grep -oE "C[A-Z0-9]{55}" | head -1)
 
@@ -408,7 +381,7 @@ deploy_vault() {
     local deploy_output=$($CLI contract deploy \
         --wasm "$WASM" \
         --network "$NETWORK" \
-        --source "$IDENTITY_NAME" 2>&1)
+        --source-account "$ADMIN_SECRET_KEY" 2>&1)
 
     VAULT_CONTRACT_ID=$(echo "$deploy_output" | grep -oE "C[A-Z0-9]{55}" | head -1)
 
@@ -446,7 +419,7 @@ deploy_market() {
     local deploy_output=$($CLI contract deploy \
         --wasm "$WASM" \
         --network "$NETWORK" \
-        --source "$IDENTITY_NAME" 2>&1)
+        --source-account "$ADMIN_SECRET_KEY" 2>&1)
 
     MARKET_CONTRACT_ID=$(echo "$deploy_output" | grep -oE "C[A-Z0-9]{55}" | head -1)
 
@@ -475,7 +448,7 @@ initialize_contracts() {
     $CLI contract invoke \
         --id "$ORACLE_CONTRACT_ID" \
         --network "$NETWORK" \
-        --source "$IDENTITY_NAME" \
+        --source-account "$ADMIN_SECRET_KEY" \
         -- \
         initialize \
         --admin "$ADMIN_PUBLIC_KEY" \
@@ -489,7 +462,7 @@ initialize_contracts() {
     $CLI contract invoke \
         --id "$VAULT_CONTRACT_ID" \
         --network "$NETWORK" \
-        --source "$IDENTITY_NAME" \
+        --source-account "$ADMIN_SECRET_KEY" \
         -- \
         initialize \
         --admin "$ADMIN_PUBLIC_KEY" \
@@ -502,7 +475,7 @@ initialize_contracts() {
     $CLI contract invoke \
         --id "$MARKET_CONTRACT_ID" \
         --network "$NETWORK" \
-        --source "$IDENTITY_NAME" \
+        --source-account "$ADMIN_SECRET_KEY" \
         -- \
         initialize \
         --admin "$ADMIN_PUBLIC_KEY" \
@@ -517,7 +490,7 @@ initialize_contracts() {
     $CLI contract invoke \
         --id "$VAULT_CONTRACT_ID" \
         --network "$NETWORK" \
-        --source "$IDENTITY_NAME" \
+        --source-account "$ADMIN_SECRET_KEY" \
         -- \
         set_market_address \
         --market "$MARKET_CONTRACT_ID" 2>&1 || print_warning "Market may already be authorized"
