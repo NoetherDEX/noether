@@ -146,7 +146,7 @@ export default function Home() {
               </div>
               <h3 className="text-2xl font-semibold mb-3">For Liquidity Providers</h3>
               <p className="text-neutral-500 mb-6">
-                Earn yield by providing liquidity to the protocol's GLP pool.
+                Earn yield by providing liquidity to the protocol&apos;s GLP pool.
               </p>
               <ul className="space-y-3">
                 <ListItem text="Earn from trading fees and trader losses" />
