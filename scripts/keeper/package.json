@@ -1,0 +1,32 @@
+{
+  "name": "noether-keeper",
+  "version": "1.0.0",
+  "description": "Liquidation keeper bot for Noether PerpDex",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/index.ts",
+    "start:prod": "node dist/index.js",
+    "dev": "ts-node-dev --respawn src/index.ts"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^11.2.2",
+    "@creit-tech/stellar-sep-0040": "^1.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "ts-node": "^10.9.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.2.2"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "defi",
+    "perpetuals",
+    "liquidation"
+  ],
+  "author": "Noether Team",
+  "license": "MIT"
+}
