@@ -1,0 +1,126 @@
+import {
+  Contract,
+  SorobanRpc,
+  Horizon,
+  TransactionBuilder,
+  Networks,
+  BASE_FEE,
+  xdr,
+  Address,
+  nativeToScVal,
+  scValToNative,
+} from '@stellar/stellar-sdk';
+import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
+
+// Horizon server for account queries (balances, etc.)
+const horizonServer = new Horizon.Server(NETWORK.HORIZON_URL);
+
+// Soroban RPC client
+export const rpc = new SorobanRpc.Server(NETWORK.RPC_URL);
+
+// Contract instances
+export const marketContract = new Contract(CONTRACTS.MARKET);
+export const vaultContract = new Contract(CONTRACTS.VAULT);
+export const oracleContract = new Contract(CONTRACTS.ORACLE_ADAPTER);
+
+/**
+ * Build a transaction for a contract call
+ */
+export async function buildTransaction(
+  sourcePublicKey: string,
+  contract: Contract,
+  method: string,
+  args: xdr.ScVal[]
+): Promise<string> {
+  const account = await rpc.getAccount(sourcePublicKey);
+
+  const operation = contract.call(method, ...args);
+
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK.PASSPHRASE,
+  })
+    .addOperation(operation)
+    .setTimeout(30)
+    .build();
+
+  // Simulate to get the proper footprint and fees
+  const simulated = await rpc.simulateTransaction(transaction);
+
+  if (SorobanRpc.Api.isSimulationError(simulated)) {
+    throw new Error(`Simulation failed: ${simulated.error}`);
+  }
+
+  // Prepare the transaction with the simulation results
+  const prepared = SorobanRpc.assembleTransaction(transaction, simulated).build();
+
+  return prepared.toXDR();
+}
+
+/**
+ * Submit a signed transaction
+ */
+export async function submitTransaction(signedXdr: string): Promise<SorobanRpc.Api.GetTransactionResponse> {
+  const transaction = TransactionBuilder.fromXDR(signedXdr, NETWORK.PASSPHRASE);
+
+  const response = await rpc.sendTransaction(transaction);
+
+  if (response.status === 'ERROR') {
+    throw new Error(`Transaction failed: ${response.errorResult}`);
+  }
+
+  // Wait for confirmation
+  let result = await rpc.getTransaction(response.hash);
+  while (result.status === 'NOT_FOUND') {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    result = await rpc.getTransaction(response.hash);
+  }
+
+  if (result.status === 'FAILED') {
+    throw new Error('Transaction failed');
+  }
+
+  return result;
+}
+
+/**
+ * Convert native types to ScVal
+ */
+export function toScVal(value: unknown, type: string): xdr.ScVal {
+  switch (type) {
+    case 'address':
+      return new Address(value as string).toScVal();
+    case 'symbol':
+      return nativeToScVal(value as string, { type: 'symbol' });
+    case 'i128':
+      return nativeToScVal(BigInt(value as number | bigint), { type: 'i128' });
+    case 'u32':
+      return nativeToScVal(value as number, { type: 'u32' });
+    case 'u64':
+      return nativeToScVal(BigInt(value as number), { type: 'u64' });
+    default:
+      return nativeToScVal(value);
+  }
+}
+
+/**
+ * Convert ScVal to native types
+ */
+export function fromScVal(scVal: xdr.ScVal): unknown {
+  return scValToNative(scVal);
+}
+
+/**
+ * Get account XLM balance using Horizon
+ */
+export async function getAccountBalance(publicKey: string): Promise<number> {
+  try {
+    const account = await horizonServer.loadAccount(publicKey);
+    const xlmBalance = account.balances.find(
+      (b): b is Horizon.HorizonApi.BalanceLineNative => b.asset_type === 'native'
+    );
+    return xlmBalance ? parseFloat(xlmBalance.balance) : 0;
+  } catch {
+    return 0;
+  }
+}

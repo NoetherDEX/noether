@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 export default function Home() {
   return (
     <main className="min-h-screen bg-[#09090b] text-white overflow-x-hidden">
@@ -16,9 +18,9 @@ export default function Home() {
             <a href="#roadmap" className="text-neutral-500 hover:text-white transition-colors">Roadmap</a>
             <a href="#faq" className="text-neutral-500 hover:text-white transition-colors">FAQ</a>
           </div>
-          <button className="px-5 py-2.5 bg-white text-black hover:bg-neutral-200 rounded-lg font-medium transition-all">
+          <Link href="/trade" className="px-5 py-2.5 bg-white text-black hover:bg-neutral-200 rounded-lg font-medium transition-all">
             Launch App
-          </button>
+          </Link>
         </div>
       </nav>
 
@@ -44,13 +46,13 @@ export default function Home() {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-20">
-            <button className="group px-8 py-4 bg-white text-black hover:bg-neutral-100 rounded-xl font-medium text-lg transition-all">
+            <Link href="/trade" className="group px-8 py-4 bg-white text-black hover:bg-neutral-100 rounded-xl font-medium text-lg transition-all">
               Start Trading
               <span className="inline-block ml-2 transition-transform group-hover:translate-x-1">→</span>
-            </button>
-            <button className="px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-xl font-medium text-lg transition-all">
-              Read Documentation
-            </button>
+            </Link>
+            <Link href="/vault" className="px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-xl font-medium text-lg transition-all">
+              Provide Liquidity
+            </Link>
           </div>
 
           {/* Stats */}

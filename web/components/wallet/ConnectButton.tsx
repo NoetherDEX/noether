@@ -1,0 +1,234 @@
+'use client';
+
+import { useState } from 'react';
+import { Wallet, ChevronDown, LogOut, Copy, ExternalLink, Check, RefreshCw, ArrowLeftRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Button } from '@/components/ui';
+import { useWallet } from '@/lib/hooks/useWallet';
+import { useWalletContext } from './WalletProvider';
+import { truncateAddress, formatNumber } from '@/lib/utils';
+import { cn } from '@/lib/utils/cn';
+
+export function ConnectButton() {
+  const { isReady, hasFreighter, refreshBalance } = useWalletContext();
+  const {
+    isConnected,
+    isConnecting,
+    address,
+    xlmBalance,
+    connect,
+    disconnect,
+  } = useWallet();
+
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleConnect = async () => {
+    try {
+      await connect();
+    } catch (error) {
+      console.error('Connection failed:', error);
+    }
+  };
+
+  const handleCopyAddress = async () => {
+    if (address) {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleDisconnect = () => {
+    disconnect();
+    setIsDropdownOpen(false);
+  };
+
+  const handleSwitchWallet = async () => {
+    // Disconnect current wallet and prompt for new connection
+    // This allows users to switch to a different account in Freighter
+    disconnect();
+    setIsDropdownOpen(false);
+
+    // Small delay to ensure disconnect is processed
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Prompt for new connection
+    try {
+      await connect();
+    } catch (error) {
+      console.error('Failed to switch wallet:', error);
+    }
+  };
+
+  const handleRefreshBalance = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshBalance();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Loading state
+  if (!isReady) {
+    return (
+      <Button variant="secondary" disabled>
+        <Wallet className="w-4 h-4 mr-2" />
+        Loading...
+      </Button>
+    );
+  }
+
+  // Freighter not installed
+  if (!hasFreighter) {
+    return (
+      <a
+        href="https://freighter.app"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <Button variant="primary">
+          <Wallet className="w-4 h-4 mr-2" />
+          Install Freighter
+        </Button>
+      </a>
+    );
+  }
+
+  // Not connected
+  if (!isConnected) {
+    return (
+      <Button
+        variant="primary"
+        onClick={handleConnect}
+        isLoading={isConnecting}
+      >
+        <Wallet className="w-4 h-4 mr-2" />
+        Connect Wallet
+      </Button>
+    );
+  }
+
+  // Connected - show dropdown
+  return (
+    <div className="relative">
+      <Button
+        variant="secondary"
+        onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+        className="gap-2"
+      >
+        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        <span className="hidden sm:inline">{truncateAddress(address!, 4, 4)}</span>
+        <span className="sm:hidden">{truncateAddress(address!, 2, 2)}</span>
+        <ChevronDown
+          className={cn(
+            'w-4 h-4 transition-transform',
+            isDropdownOpen && 'rotate-180'
+          )}
+        />
+      </Button>
+
+      <AnimatePresence>
+        {isDropdownOpen && (
+          <>
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setIsDropdownOpen(false)}
+            />
+
+            {/* Dropdown */}
+            <motion.div
+              initial={{ opacity: 0, y: 8, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.95 }}
+              transition={{ duration: 0.15 }}
+              className="absolute right-0 mt-2 w-72 p-4 bg-[#0a0a0c] border border-white/10 rounded-xl shadow-2xl z-50"
+            >
+              {/* Network Badge */}
+              <div className="flex items-center gap-2 mb-3">
+                <div className="px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded-md">
+                  <span className="text-xs font-medium text-amber-400">Testnet</span>
+                </div>
+                <span className="text-xs text-neutral-500">Stellar Network</span>
+              </div>
+
+              {/* Address */}
+              <div className="mb-4">
+                <p className="text-xs text-neutral-500 mb-1">Connected Address</p>
+                <div className="flex items-center gap-2">
+                  <code className="text-sm text-white font-mono">
+                    {truncateAddress(address!, 8, 8)}
+                  </code>
+                  <button
+                    onClick={handleCopyAddress}
+                    className="p-1 text-neutral-400 hover:text-white transition-colors"
+                  >
+                    {copied ? (
+                      <Check className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Balance */}
+              <div className="mb-4 p-3 bg-white/5 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs text-neutral-500">XLM Balance</p>
+                  <button
+                    onClick={handleRefreshBalance}
+                    disabled={isRefreshing}
+                    className="p-1 text-neutral-400 hover:text-white transition-colors disabled:opacity-50"
+                    title="Refresh balance"
+                  >
+                    <RefreshCw className={cn('w-3 h-3', isRefreshing && 'animate-spin')} />
+                  </button>
+                </div>
+                <p className="text-lg font-semibold text-white">
+                  {formatNumber(xlmBalance, 2)} XLM
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={handleSwitchWallet}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                >
+                  <ArrowLeftRight className="w-4 h-4" />
+                  Switch Wallet
+                </button>
+                <a
+                  href={`https://stellar.expert/explorer/testnet/account/${address}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  View on Explorer
+                </a>
+                <div className="border-t border-white/5 my-1" />
+                <button
+                  onClick={handleDisconnect}
+                  className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Disconnect
+                </button>
+              </div>
+
+              {/* Hint */}
+              <p className="mt-3 text-xs text-neutral-600 text-center">
+                Account changes auto-detected
+              </p>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

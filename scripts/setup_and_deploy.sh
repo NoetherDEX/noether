@@ -154,34 +154,32 @@ echo ""
 echo -e "${YELLOW}[3/4] Deploying to Stellar Testnet${NC}"
 echo "───────────────────────────────────────────────────────────────────────────────"
 
-# Setup identity
-IDENTITY="noether_admin"
-$CLI keys add "$IDENTITY" --secret-key "$ADMIN_SECRET_KEY" 2>/dev/null || true
-ADMIN_PUBLIC_KEY=$($CLI keys address "$IDENTITY")
+# Use secret key directly (avoiding interactive identity prompt)
 echo "  Admin: $ADMIN_PUBLIC_KEY"
+SOURCE_ARG="--source-account $ADMIN_SECRET_KEY"
 
-# Fund if needed
+# Fund account using public key directly
 echo -n "  Funding account... "
-$CLI keys fund "$IDENTITY" --network testnet 2>/dev/null && echo -e "${GREEN}✓${NC}" || echo "already funded"
+curl -s "https://friendbot.stellar.org?addr=$ADMIN_PUBLIC_KEY" > /dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo "already funded or error"
 
 # Deploy contracts
 echo ""
 echo "  Deploying contracts..."
 
 echo -n "    Mock Oracle... "
-MOCK_ORACLE_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/mock_oracle.wasm" --source "$IDENTITY" --network testnet 2>/dev/null)
+MOCK_ORACLE_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/mock_oracle.wasm" $SOURCE_ARG --network testnet 2>/dev/null)
 echo -e "${GREEN}✓${NC}"
 
 echo -n "    Oracle Adapter... "
-ORACLE_ADAPTER_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/oracle_adapter.wasm" --source "$IDENTITY" --network testnet 2>/dev/null)
+ORACLE_ADAPTER_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/oracle_adapter.wasm" $SOURCE_ARG --network testnet 2>/dev/null)
 echo -e "${GREEN}✓${NC}"
 
 echo -n "    Vault... "
-VAULT_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/vault.wasm" --source "$IDENTITY" --network testnet 2>/dev/null)
+VAULT_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/vault.wasm" $SOURCE_ARG --network testnet 2>/dev/null)
 echo -e "${GREEN}✓${NC}"
 
 echo -n "    Market... "
-MARKET_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/market.wasm" --source "$IDENTITY" --network testnet 2>/dev/null)
+MARKET_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/market.wasm" $SOURCE_ARG --network testnet 2>/dev/null)
 echo -e "${GREEN}✓${NC}"
 
 echo ""
@@ -195,19 +193,19 @@ echo "────────────────────────�
 
 # Initialize Mock Oracle
 echo -n "  Initializing Mock Oracle... "
-$CLI contract invoke --id "$MOCK_ORACLE_ID" --source "$IDENTITY" --network testnet \
+$CLI contract invoke --id "$MOCK_ORACLE_ID" $SOURCE_ARG --network testnet \
     -- initialize --admin "$ADMIN_PUBLIC_KEY" >/dev/null 2>&1
 echo -e "${GREEN}✓${NC}"
 
 # Set initial price
 echo -n "  Setting XLM price (\$0.15)... "
-$CLI contract invoke --id "$MOCK_ORACLE_ID" --source "$IDENTITY" --network testnet \
+$CLI contract invoke --id "$MOCK_ORACLE_ID" $SOURCE_ARG --network testnet \
     -- set_price --asset XLM --price 1500000 >/dev/null 2>&1
 echo -e "${GREEN}✓${NC}"
 
 # Initialize Oracle Adapter
 echo -n "  Initializing Oracle Adapter... "
-$CLI contract invoke --id "$ORACLE_ADAPTER_ID" --source "$IDENTITY" --network testnet \
+$CLI contract invoke --id "$ORACLE_ADAPTER_ID" $SOURCE_ARG --network testnet \
     -- initialize \
     --admin "$ADMIN_PUBLIC_KEY" \
     --primary_oracle "$MOCK_ORACLE_ID" \
@@ -216,12 +214,15 @@ $CLI contract invoke --id "$ORACLE_ADAPTER_ID" --source "$IDENTITY" --network te
     --max_deviation_bps 500 >/dev/null 2>&1
 echo -e "${GREEN}✓${NC}"
 
-# For testnet, use mock token
-USDC_TOKEN_ID="NATIVE"
+# For testnet, use native XLM as collateral (via Stellar Asset Contract)
+echo -n "  Getting XLM SAC address... "
+USDC_TOKEN_ID=$($CLI contract id asset --asset native --network testnet 2>/dev/null || $CLI contract asset id --asset native --network testnet 2>/dev/null)
+echo -e "${GREEN}✓${NC}"
+echo "    XLM SAC: $USDC_TOKEN_ID"
 
 # Initialize Vault
 echo -n "  Initializing Vault... "
-$CLI contract invoke --id "$VAULT_ID" --source "$IDENTITY" --network testnet \
+$CLI contract invoke --id "$VAULT_ID" $SOURCE_ARG --network testnet \
     -- initialize \
     --admin "$ADMIN_PUBLIC_KEY" \
     --usdc_token "$USDC_TOKEN_ID" \
@@ -233,7 +234,7 @@ echo -e "${GREEN}✓${NC}"
 # Initialize Market (with config struct)
 echo -n "  Initializing Market... "
 CONFIG='{"min_collateral":100000000,"max_leverage":10,"maintenance_margin_bps":100,"liquidation_fee_bps":500,"trading_fee_bps":10,"base_funding_rate_bps":1,"max_position_size":1000000000000,"max_price_staleness":60,"max_oracle_deviation_bps":100}'
-$CLI contract invoke --id "$MARKET_ID" --source "$IDENTITY" --network testnet \
+$CLI contract invoke --id "$MARKET_ID" $SOURCE_ARG --network testnet \
     -- initialize \
     --admin "$ADMIN_PUBLIC_KEY" \
     --oracle_adapter "$ORACLE_ADAPTER_ID" \
