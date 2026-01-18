@@ -16,6 +16,7 @@ export function ConnectButton() {
     isConnecting,
     address,
     xlmBalance,
+    usdcBalance,
     connect,
     disconnect,
   } = useWallet();
@@ -175,22 +176,56 @@ export function ConnectButton() {
                 </div>
               </div>
 
-              {/* Balance */}
-              <div className="mb-4 p-3 bg-white/5 rounded-lg">
+              {/* Balances */}
+              <div className="mb-4 space-y-2">
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs text-neutral-500">XLM Balance</p>
+                  <p className="text-xs text-neutral-500">Balances</p>
                   <button
                     onClick={handleRefreshBalance}
                     disabled={isRefreshing}
                     className="p-1 text-neutral-400 hover:text-white transition-colors disabled:opacity-50"
-                    title="Refresh balance"
+                    title="Refresh balances"
                   >
                     <RefreshCw className={cn('w-3 h-3', isRefreshing && 'animate-spin')} />
                   </button>
                 </div>
-                <p className="text-lg font-semibold text-white">
-                  {formatNumber(xlmBalance, 2)} XLM
-                </p>
+
+                {/* USDC Balance - Primary for Trading */}
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center">
+                        <span className="text-[10px] font-bold text-white">$</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-white">
+                          {formatNumber(usdcBalance, 2)} USDC
+                        </p>
+                        <p className="text-[10px] text-emerald-400">Trading Collateral</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* XLM Balance - For Gas */}
+                <div className="p-3 bg-white/5 border border-white/10 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center">
+                        <span className="text-[10px] font-bold text-white">★</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-white">
+                          {formatNumber(xlmBalance, 2)} XLM
+                        </p>
+                        <p className="text-[10px] text-neutral-500">Gas Fees</p>
+                      </div>
+                    </div>
+                    {xlmBalance < 1 && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded">Low</span>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Actions */}

@@ -1,6 +1,6 @@
-import { oracleContract, toScVal, rpc } from './client';
+import { oracleContract, toScVal, rpc as sorobanRpc } from './client';
 import type { PriceData } from '@/types';
-import { SorobanRpc, scValToNative, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk';
+import { rpc, scValToNative, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk';
 import { NETWORK } from '@/lib/utils/constants';
 
 /**
@@ -11,7 +11,7 @@ export async function getPrice(
   asset: string
 ): Promise<PriceData | null> {
   try {
-    const account = await rpc.getAccount(publicKey);
+    const account = await sorobanRpc.getAccount(publicKey);
     const operation = oracleContract.call('get_price', toScVal(asset, 'symbol'));
 
     const transaction = new TransactionBuilder(account, {
@@ -22,9 +22,9 @@ export async function getPrice(
       .setTimeout(30)
       .build();
 
-    const result = await rpc.simulateTransaction(transaction);
+    const result = await sorobanRpc.simulateTransaction(transaction);
 
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
       return scValToNative(result.result.retval) as PriceData;
     }
 

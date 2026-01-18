@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Settings, Clock } from 'lucide-react';
 import { Card, Tabs } from '@/components/ui';
 import { Header } from '@/components/layout';
@@ -16,6 +16,8 @@ import {
 import { useWallet } from '@/lib/hooks/useWallet';
 import { TIMEFRAMES } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
+import { getPositions, toDisplayPosition, closePosition } from '@/lib/stellar/market';
+import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import type { DisplayPosition } from '@/types';
 
 function TradePage() {
@@ -23,8 +25,9 @@ function TradePage() {
   const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
   const [positions, setPositions] = useState<DisplayPosition[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
+  const [isClosingPosition, setIsClosingPosition] = useState(false);
 
-  const { isConnected, publicKey } = useWallet();
+  const { isConnected, publicKey, sign, refreshBalances } = useWallet();
 
   // Fetch positions when connected
   useEffect(() => {
@@ -36,10 +39,33 @@ function TradePage() {
     const fetchPositions = async () => {
       setIsLoadingPositions(true);
       try {
-        // TODO: Fetch from contract
-        // const contractPositions = await getPositions(publicKey);
-        // setPositions(contractPositions.map(p => toDisplayPosition(p, currentPrice)));
-        setPositions([]);
+        // Fetch positions from contract
+        const contractPositions = await getPositions(publicKey);
+
+        if (contractPositions.length === 0) {
+          setPositions([]);
+          return;
+        }
+
+        // Fetch current prices for all unique assets
+        const uniqueAssets = [...new Set(contractPositions.map(p => p.asset))];
+        const priceMap: Record<string, number> = {};
+
+        await Promise.all(
+          uniqueAssets.map(async (asset) => {
+            const priceData = await getPrice(publicKey, asset);
+            if (priceData) {
+              priceMap[asset] = priceToDisplay(priceData.price);
+            }
+          })
+        );
+
+        // Convert to display positions
+        const displayPositions = contractPositions.map(p =>
+          toDisplayPosition(p, priceMap[p.asset] || 0)
+        );
+
+        setPositions(displayPositions);
       } catch (error) {
         console.error('Failed to fetch positions:', error);
       } finally {
@@ -53,8 +79,38 @@ function TradePage() {
   }, [isConnected, publicKey]);
 
   const handleClosePosition = async (positionId: number) => {
-    // TODO: Implement close position
-    console.log('Closing position:', positionId);
+    if (!publicKey || isClosingPosition) return;
+
+    setIsClosingPosition(true);
+    try {
+      const result = await closePosition(publicKey, sign, positionId);
+      console.log('Position closed:', result);
+
+      // Refresh positions and balances
+      const contractPositions = await getPositions(publicKey);
+      const uniqueAssets = [...new Set(contractPositions.map(p => p.asset))];
+      const priceMap: Record<string, number> = {};
+
+      await Promise.all(
+        uniqueAssets.map(async (asset) => {
+          const priceData = await getPrice(publicKey, asset);
+          if (priceData) {
+            priceMap[asset] = priceToDisplay(priceData.price);
+          }
+        })
+      );
+
+      const displayPositions = contractPositions.map(p =>
+        toDisplayPosition(p, priceMap[p.asset] || 0)
+      );
+
+      setPositions(displayPositions);
+      refreshBalances();
+    } catch (error) {
+      console.error('Failed to close position:', error);
+    } finally {
+      setIsClosingPosition(false);
+    }
   };
 
   const handleAddCollateral = async (positionId: number, amount: number) => {

@@ -7,7 +7,7 @@
 import {
   Keypair,
   Contract,
-  SorobanRpc,
+  rpc,
   TransactionBuilder,
   Networks,
   Operation,
@@ -15,16 +15,17 @@ import {
   Address,
   scValToNative,
   nativeToScVal,
+  Account,
 } from '@stellar/stellar-sdk';
 import { KeeperConfig } from './config';
 
 export class StellarClient {
-  private server: SorobanRpc.Server;
+  private server: rpc.Server;
   private keypair: Keypair;
   private networkPassphrase: string;
 
   constructor(config: KeeperConfig) {
-    this.server = new SorobanRpc.Server(config.rpcUrl);
+    this.server = new rpc.Server(config.rpcUrl);
     this.keypair = Keypair.fromSecret(config.secretKey);
     this.networkPassphrase = config.networkPassphrase;
   }
@@ -39,7 +40,7 @@ export class StellarClient {
   /**
    * Get account info
    */
-  async getAccount(): Promise<SorobanRpc.Api.GetAccountResponse> {
+  async getAccount(): Promise<Account> {
     return this.server.getAccount(this.keypair.publicKey());
   }
 
@@ -64,7 +65,7 @@ export class StellarClient {
 
     const response = await this.server.simulateTransaction(tx);
 
-    if (SorobanRpc.Api.isSimulationError(response)) {
+    if (rpc.Api.isSimulationError(response)) {
       throw new Error(`Simulation failed: ${response.error}`);
     }
 
@@ -98,12 +99,12 @@ export class StellarClient {
     // Simulate to get fees and resources
     const simResponse = await this.server.simulateTransaction(tx);
 
-    if (SorobanRpc.Api.isSimulationError(simResponse)) {
+    if (rpc.Api.isSimulationError(simResponse)) {
       throw new Error(`Simulation failed: ${simResponse.error}`);
     }
 
     // Prepare transaction with resources from simulation
-    tx = SorobanRpc.assembleTransaction(tx, simResponse).build();
+    tx = rpc.assembleTransaction(tx, simResponse).build();
 
     // Sign
     tx.sign(this.keypair);

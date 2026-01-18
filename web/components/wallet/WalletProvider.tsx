@@ -4,6 +4,7 @@ import { ReactNode, createContext, useContext, useEffect, useState, useRef, useC
 import { isConnected as checkIsConnected, getPublicKey, getNetwork } from '@stellar/freighter-api';
 import { useWalletStore } from '@/lib/store';
 import { NETWORK } from '@/lib/utils/constants';
+import { getUSDCBalance } from '@/lib/stellar/token';
 
 // Horizon Testnet URL for balance fetching
 const HORIZON_TESTNET_URL = 'https://horizon-testnet.stellar.org';
@@ -77,8 +78,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
     const currentPublicKey = useWalletStore.getState().publicKey;
     if (!currentPublicKey) return;
 
-    const xlmBalance = await fetchXLMBalance(currentPublicKey);
-    setBalances(xlmBalance, 0); // GLP balance would come from contract
+    const [xlmBalance, usdcBalance] = await Promise.all([
+      fetchXLMBalance(currentPublicKey),
+      getUSDCBalance(currentPublicKey),
+    ]);
+    setBalances(xlmBalance, usdcBalance, 0); // GLP balance would come from contract
   }, [setBalances]);
 
   // Initial setup - check for Freighter and existing connection
@@ -102,9 +106,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
               setConnected(pubKey, pubKey);
               previousPublicKeyRef.current = pubKey;
 
-              // Fetch initial balance
-              const xlmBalance = await fetchXLMBalance(pubKey);
-              setBalances(xlmBalance, 0);
+              // Fetch initial balances
+              const [xlmBalance, usdcBalance] = await Promise.all([
+                fetchXLMBalance(pubKey),
+                getUSDCBalance(pubKey),
+              ]);
+              setBalances(xlmBalance, usdcBalance, 0);
             }
           } catch {
             // Not connected or not allowed
@@ -142,13 +149,19 @@ export function WalletProvider({ children }: WalletProviderProps) {
             // Update store with new account
             setConnected(currentPubKey, currentPubKey);
 
-            // Fetch new balance
-            const xlmBalance = await fetchXLMBalance(currentPubKey);
-            setBalances(xlmBalance, 0);
+            // Fetch new balances
+            const [xlmBalance, usdcBalance] = await Promise.all([
+              fetchXLMBalance(currentPubKey),
+              getUSDCBalance(currentPubKey),
+            ]);
+            setBalances(xlmBalance, usdcBalance, 0);
           } else if (storeState.isConnected && storeState.publicKey) {
             // Refresh balance periodically even if account didn't change
-            const xlmBalance = await fetchXLMBalance(storeState.publicKey);
-            setBalances(xlmBalance, 0);
+            const [xlmBalance, usdcBalance] = await Promise.all([
+              fetchXLMBalance(storeState.publicKey),
+              getUSDCBalance(storeState.publicKey),
+            ]);
+            setBalances(xlmBalance, usdcBalance, 0);
           }
         } else if (useWalletStore.getState().isConnected) {
           // Was connected but now disconnected

@@ -1,8 +1,9 @@
 import {
   Contract,
-  SorobanRpc,
+  rpc,
   Horizon,
   TransactionBuilder,
+  Transaction,
   Networks,
   BASE_FEE,
   xdr,
@@ -16,7 +17,7 @@ import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 const horizonServer = new Horizon.Server(NETWORK.HORIZON_URL);
 
 // Soroban RPC client
-export const rpc = new SorobanRpc.Server(NETWORK.RPC_URL);
+export const sorobanRpc = new rpc.Server(NETWORK.RPC_URL);
 
 // Contract instances
 export const marketContract = new Contract(CONTRACTS.MARKET);
@@ -32,7 +33,7 @@ export async function buildTransaction(
   method: string,
   args: xdr.ScVal[]
 ): Promise<string> {
-  const account = await rpc.getAccount(sourcePublicKey);
+  const account = await sorobanRpc.getAccount(sourcePublicKey);
 
   const operation = contract.call(method, ...args);
 
@@ -45,41 +46,57 @@ export async function buildTransaction(
     .build();
 
   // Simulate to get the proper footprint and fees
-  const simulated = await rpc.simulateTransaction(transaction);
+  const simulated = await sorobanRpc.simulateTransaction(transaction);
 
-  if (SorobanRpc.Api.isSimulationError(simulated)) {
+  if (rpc.Api.isSimulationError(simulated)) {
     throw new Error(`Simulation failed: ${simulated.error}`);
   }
 
   // Prepare the transaction with the simulation results
-  const prepared = SorobanRpc.assembleTransaction(transaction, simulated).build();
+  const prepared = rpc.assembleTransaction(transaction, simulated).build();
 
-  return prepared.toXDR();
+  // Convert to XDR string for Freighter
+  // Use toXDR() which returns base64 string in browser environment
+  const xdrString = prepared.toXDR();
+
+  console.log('[DEBUG] Built transaction XDR (first 100 chars):', xdrString.substring(0, 100));
+
+  return xdrString;
 }
 
 /**
  * Submit a signed transaction
  */
-export async function submitTransaction(signedXdr: string): Promise<SorobanRpc.Api.GetTransactionResponse> {
-  const transaction = TransactionBuilder.fromXDR(signedXdr, NETWORK.PASSPHRASE);
+export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetTransactionResponse> {
+  console.log('[DEBUG] Submitting signed XDR (first 100 chars):', signedXdr.substring(0, 100));
+  console.log('[DEBUG] Full signed XDR length:', signedXdr.length);
 
-  const response = await rpc.sendTransaction(transaction);
+  // Parse the signed XDR using TransactionBuilder.fromXDR
+  const transaction = TransactionBuilder.fromXDR(signedXdr, NETWORK.PASSPHRASE) as Transaction;
+  console.log('[DEBUG] Parsed transaction successfully');
+
+  const response = await sorobanRpc.sendTransaction(transaction);
+
+  console.log('[DEBUG] Send response:', response.status, response.hash);
 
   if (response.status === 'ERROR') {
+    console.error('[DEBUG] Transaction error:', response.errorResult);
     throw new Error(`Transaction failed: ${response.errorResult}`);
   }
 
   // Wait for confirmation
-  let result = await rpc.getTransaction(response.hash);
+  let result = await sorobanRpc.getTransaction(response.hash);
   while (result.status === 'NOT_FOUND') {
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    result = await rpc.getTransaction(response.hash);
+    result = await sorobanRpc.getTransaction(response.hash);
   }
 
   if (result.status === 'FAILED') {
+    console.error('[DEBUG] Transaction failed on-chain');
     throw new Error('Transaction failed');
   }
 
+  console.log('[DEBUG] Transaction successful!');
   return result;
 }
 
@@ -98,6 +115,11 @@ export function toScVal(value: unknown, type: string): xdr.ScVal {
       return nativeToScVal(value as number, { type: 'u32' });
     case 'u64':
       return nativeToScVal(BigInt(value as number), { type: 'u64' });
+    case 'direction':
+      // Direction enum is encoded as u32: Long = 0, Short = 1
+      // (confirmed via: stellar contract invoke ... -- open_position --help)
+      const dirValue = (value as string) === 'Long' ? 0 : 1;
+      return nativeToScVal(dirValue, { type: 'u32' });
     default:
       return nativeToScVal(value);
   }
@@ -124,3 +146,6 @@ export async function getAccountBalance(publicKey: string): Promise<number> {
     return 0;
   }
 }
+
+// Re-export rpc for other modules
+export { sorobanRpc as rpc };

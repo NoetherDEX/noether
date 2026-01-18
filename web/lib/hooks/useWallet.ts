@@ -11,6 +11,7 @@ import {
 } from '@stellar/freighter-api';
 import { useWalletStore } from '@/lib/store';
 import { NETWORK } from '@/lib/utils/constants';
+import { getUSDCBalance } from '@/lib/stellar/token';
 
 // Horizon Testnet URL for balance fetching
 const HORIZON_TESTNET_URL = 'https://horizon-testnet.stellar.org';
@@ -43,11 +44,13 @@ export function useWallet() {
     address,
     publicKey,
     xlmBalance,
+    usdcBalance,
     glpBalance,
     setConnected,
     setDisconnected,
     setConnecting,
     setBalances,
+    setUsdcBalance,
   } = useWalletStore();
 
   const connect = useCallback(async () => {
@@ -82,9 +85,12 @@ export function useWallet() {
       // Set connected state
       setConnected(pubKey, pubKey);
 
-      // Fetch and set balance immediately after connecting
-      const xlmBal = await fetchXLMBalance(pubKey);
-      setBalances(xlmBal, 0);
+      // Fetch balances in parallel
+      const [xlmBal, usdcBal] = await Promise.all([
+        fetchXLMBalance(pubKey),
+        getUSDCBalance(pubKey),
+      ]);
+      setBalances(xlmBal, usdcBal, 0);
 
       return pubKey;
     } catch (error) {
@@ -104,14 +110,43 @@ export function useWallet() {
         throw new Error('Wallet not connected');
       }
 
-      const signedXdr = await signTransaction(xdr, {
+      console.log('[DEBUG] Sending to Freighter XDR (first 100 chars):', xdr.substring(0, 100));
+
+      const result = await signTransaction(xdr, {
         networkPassphrase: NETWORK.PASSPHRASE,
       });
+
+      console.log('[DEBUG] Freighter returned:', typeof result, result);
+
+      // Freighter API returns the signed XDR as a string
+      // Some versions may return an object with signedTxXdr property
+      let signedXdr: string;
+      if (typeof result === 'string') {
+        signedXdr = result;
+      } else if (result && typeof result === 'object' && 'signedTxXdr' in result) {
+        signedXdr = (result as { signedTxXdr: string }).signedTxXdr;
+      } else {
+        console.error('[DEBUG] Unexpected Freighter response format:', result);
+        throw new Error('Unexpected response format from Freighter');
+      }
+
+      console.log('[DEBUG] Signed XDR (first 100 chars):', signedXdr.substring(0, 100));
 
       return signedXdr;
     },
     [isConnected]
   );
+
+  // Refresh balances
+  const refreshBalances = useCallback(async () => {
+    if (!publicKey) return;
+
+    const [xlmBal, usdcBal] = await Promise.all([
+      fetchXLMBalance(publicKey),
+      getUSDCBalance(publicKey),
+    ]);
+    setBalances(xlmBal, usdcBal, glpBalance);
+  }, [publicKey, glpBalance, setBalances]);
 
   return {
     isConnected,
@@ -119,10 +154,13 @@ export function useWallet() {
     address,
     publicKey,
     xlmBalance,
+    usdcBalance,
     glpBalance,
     connect,
     disconnect,
     sign,
+    refreshBalances,
     setBalances,
+    setUsdcBalance,
   };
 }

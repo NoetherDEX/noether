@@ -32,6 +32,10 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
               'w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-neutral-600',
               'focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/20',
               'transition-all duration-200',
+              // Remove browser default number input spinners
+              '[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
+              '[&::-webkit-outer-spin-button]:m-0 [&::-webkit-inner-spin-button]:m-0',
+              '[appearance:textfield]', // Firefox
               prefix && 'pl-10',
               suffix && 'pr-16',
               error && 'border-red-500/50 focus:border-red-500',

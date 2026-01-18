@@ -1,7 +1,7 @@
-import { marketContract, buildTransaction, submitTransaction, toScVal, rpc } from './client';
+import { marketContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
 import type { Position, DisplayPosition, MarketConfig, Direction } from '@/types';
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
-import { SorobanRpc, scValToNative } from '@stellar/stellar-sdk';
+import { rpc, scValToNative } from '@stellar/stellar-sdk';
 
 /**
  * Open a new leveraged position
@@ -16,12 +16,14 @@ export async function openPosition(
     direction: Direction;
   }
 ): Promise<Position> {
+  // Build arguments matching contract signature:
+  // open_position(trader: Address, asset: Symbol, collateral: i128, leverage: u32, direction: Direction)
   const args = [
-    toScVal(signerPublicKey, 'address'),
-    toScVal(params.asset, 'symbol'),
-    toScVal(params.collateral, 'i128'),
-    toScVal(params.leverage, 'u32'),
-    toScVal(params.direction === 'Long' ? { Long: {} } : { Short: {} }, 'symbol'),
+    toScVal(signerPublicKey, 'address'),  // trader: Address
+    toScVal(params.asset, 'symbol'),       // asset: Symbol (e.g., "XLM", "BTC")
+    toScVal(params.collateral, 'i128'),    // collateral: i128 (7 decimals)
+    toScVal(params.leverage, 'u32'),       // leverage: u32 (1-10)
+    toScVal(params.direction, 'direction'), // direction: Direction enum (Long=0, Short=1)
   ];
 
   const xdr = await buildTransaction(signerPublicKey, marketContract, 'open_position', args);
@@ -43,9 +45,10 @@ export async function closePosition(
   signTransaction: (xdr: string) => Promise<string>,
   positionId: number
 ): Promise<{ pnl: bigint; fee: bigint }> {
+  // Contract signature: close_position(trader: Address, position_id: u64)
   const args = [
-    toScVal(signerPublicKey, 'address'),
-    toScVal(positionId, 'u32'),
+    toScVal(signerPublicKey, 'address'),  // trader: Address
+    toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
   ];
 
   const xdr = await buildTransaction(signerPublicKey, marketContract, 'close_position', args);
@@ -68,10 +71,11 @@ export async function addCollateral(
   positionId: number,
   amount: bigint
 ): Promise<void> {
+  // Contract signature: add_collateral(trader: Address, position_id: u64, amount: i128)
   const args = [
-    toScVal(signerPublicKey, 'address'),
-    toScVal(positionId, 'u32'),
-    toScVal(amount, 'i128'),
+    toScVal(signerPublicKey, 'address'),  // trader: Address
+    toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
+    toScVal(amount, 'i128'),               // amount: i128
   ];
 
   const xdr = await buildTransaction(signerPublicKey, marketContract, 'add_collateral', args);
@@ -86,11 +90,11 @@ export async function getPositions(traderPublicKey: string): Promise<Position[]>
   try {
     const args = [toScVal(traderPublicKey, 'address')];
 
-    const result = await rpc.simulateTransaction(
+    const result = await sorobanRpc.simulateTransaction(
       await buildSimulateTransaction(traderPublicKey, 'get_positions', args)
     );
 
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
       return scValToNative(result.result.retval) as Position[];
     }
 
@@ -109,13 +113,14 @@ export async function getPositionPnL(
   positionId: number
 ): Promise<bigint> {
   try {
-    const args = [toScVal(positionId, 'u32')];
+    // Contract signature: get_position_pnl(position_id: u64)
+    const args = [toScVal(positionId, 'u64')];
 
-    const result = await rpc.simulateTransaction(
+    const result = await sorobanRpc.simulateTransaction(
       await buildSimulateTransaction(traderPublicKey, 'get_position_pnl', args)
     );
 
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
       return scValToNative(result.result.retval) as bigint;
     }
 
@@ -130,11 +135,11 @@ export async function getPositionPnL(
  */
 export async function getMarketConfig(publicKey: string): Promise<MarketConfig | null> {
   try {
-    const result = await rpc.simulateTransaction(
+    const result = await sorobanRpc.simulateTransaction(
       await buildSimulateTransaction(publicKey, 'get_config', [])
     );
 
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
       return scValToNative(result.result.retval) as MarketConfig;
     }
 
@@ -155,7 +160,7 @@ async function buildSimulateTransaction(
   const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
   const { NETWORK } = await import('@/lib/utils/constants');
 
-  const account = await rpc.getAccount(publicKey);
+  const account = await sorobanRpc.getAccount(publicKey);
   const operation = marketContract.call(method, ...args);
 
   return new TransactionBuilder(account, {

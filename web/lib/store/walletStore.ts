@@ -10,13 +10,15 @@ interface WalletState {
 
   // Balances
   xlmBalance: number;
+  usdcBalance: number;
   glpBalance: number;
 
   // Actions
   setConnected: (address: string, publicKey: string) => void;
   setDisconnected: () => void;
   setConnecting: (isConnecting: boolean) => void;
-  setBalances: (xlm: number, glp: number) => void;
+  setBalances: (xlm: number, usdc: number, glp: number) => void;
+  setUsdcBalance: (usdc: number) => void;
 }
 
 export const useWalletStore = create<WalletState>()(
@@ -27,6 +29,7 @@ export const useWalletStore = create<WalletState>()(
       address: null,
       publicKey: null,
       xlmBalance: 0,
+      usdcBalance: 0,
       glpBalance: 0,
 
       setConnected: (address, publicKey) =>
@@ -44,13 +47,16 @@ export const useWalletStore = create<WalletState>()(
           address: null,
           publicKey: null,
           xlmBalance: 0,
+          usdcBalance: 0,
           glpBalance: 0,
         }),
 
       setConnecting: (isConnecting) => set({ isConnecting }),
 
-      setBalances: (xlmBalance, glpBalance) =>
-        set({ xlmBalance, glpBalance }),
+      setBalances: (xlmBalance, usdcBalance, glpBalance) =>
+        set({ xlmBalance, usdcBalance, glpBalance }),
+
+      setUsdcBalance: (usdcBalance) => set({ usdcBalance }),
     }),
     {
       name: 'noether-wallet',
