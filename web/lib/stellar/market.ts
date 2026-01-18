@@ -4,6 +4,53 @@ import { fromPrecision, calculatePnL } from '@/lib/utils/format';
 import { rpc, scValToNative } from '@stellar/stellar-sdk';
 
 /**
+ * Raw position data from contract (before parsing)
+ * Contract uses snake_case and enum indices
+ */
+interface RawPosition {
+  id: number | bigint;
+  trader: string;
+  asset: string;
+  direction: number | bigint; // 0 = Long, 1 = Short
+  collateral: bigint;
+  size: bigint;
+  entry_price: bigint; // snake_case from contract
+  liquidation_price: bigint; // snake_case from contract
+  opened_at: number | bigint; // snake_case from contract
+  last_funding_at: number | bigint;
+  accumulated_funding: bigint;
+}
+
+/**
+ * Parse raw contract position to typed Position
+ */
+function parsePosition(raw: RawPosition): Position {
+  return {
+    id: Number(raw.id),
+    trader: raw.trader,
+    asset: raw.asset,
+    direction: Number(raw.direction) === 0 ? 'Long' : 'Short',
+    collateral: raw.collateral,
+    size: raw.size,
+    entryPrice: raw.entry_price,
+    liquidationPrice: raw.liquidation_price,
+    openedAt: Number(raw.opened_at),
+    lastFundingAt: Number(raw.last_funding_at),
+    accumulatedFunding: raw.accumulated_funding,
+  };
+}
+
+/**
+ * Safely convert BigInt to number with precision (7 decimals)
+ */
+function bigIntToNumber(value: bigint | number | undefined, decimals = 7): number {
+  if (value === undefined || value === null) return 0;
+  const num = typeof value === 'bigint' ? Number(value) : value;
+  if (isNaN(num)) return 0;
+  return num / Math.pow(10, decimals);
+}
+
+/**
  * Open a new leveraged position
  */
 export async function openPosition(
@@ -95,7 +142,9 @@ export async function getPositions(traderPublicKey: string): Promise<Position[]>
     );
 
     if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      return scValToNative(result.result.retval) as Position[];
+      const rawPositions = scValToNative(result.result.retval) as RawPosition[];
+      console.log('[DEBUG] Raw positions from contract:', rawPositions);
+      return rawPositions.map(parsePosition);
     }
 
     return [];
@@ -179,17 +228,18 @@ export function toDisplayPosition(
   position: Position,
   currentPrice: number
 ): DisplayPosition {
-  const entryPrice = fromPrecision(position.entryPrice);
-  const collateral = fromPrecision(position.collateral);
-  const size = fromPrecision(position.size);
-  const liquidationPrice = fromPrecision(position.liquidationPrice);
-  const leverage = size / collateral;
+  const entryPrice = bigIntToNumber(position.entryPrice);
+  const collateral = bigIntToNumber(position.collateral);
+  const size = bigIntToNumber(position.size);
+  const liquidationPrice = bigIntToNumber(position.liquidationPrice);
+  const leverage = collateral > 0 ? size / collateral : 0;
 
+  const isLong = position.direction === 'Long';
   const { pnl, pnlPercent } = calculatePnL(
     entryPrice,
     currentPrice,
     size,
-    position.direction === 'Long'
+    isLong
   );
 
   return {
@@ -202,9 +252,9 @@ export function toDisplayPosition(
     entryPrice,
     liquidationPrice,
     currentPrice,
-    pnl,
-    pnlPercent,
-    leverage,
+    pnl: isNaN(pnl) ? 0 : pnl,
+    pnlPercent: isNaN(pnlPercent) ? 0 : pnlPercent,
+    leverage: isNaN(leverage) ? 0 : leverage,
     openedAt: new Date(position.openedAt * 1000),
   };
 }
