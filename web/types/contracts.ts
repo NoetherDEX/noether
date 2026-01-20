@@ -70,8 +70,10 @@ export interface Trade {
   direction: Direction;
   type: 'open' | 'close' | 'liquidation';
   size: number;
-  price: number;
+  price: number; // Exit price for close trades
+  entryPrice?: number; // Entry price (for close trades)
   pnl?: number;
+  pnlPercent?: number; // PnL as percentage of size
   fee: number;
   timestamp: Date;
 }

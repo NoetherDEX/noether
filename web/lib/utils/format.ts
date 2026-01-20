@@ -64,13 +64,40 @@ export function truncateAddress(address: string, start = 4, end = 4): string {
  * Format a timestamp as relative time
  */
 export function formatRelativeTime(timestamp: number): string {
+  if (!timestamp || isNaN(timestamp)) return 'Unknown';
+
   const now = Date.now();
   const diff = now - timestamp;
 
+  if (diff < 0) return 'Just now';
   if (diff < 60000) return 'Just now';
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
   return `${Math.floor(diff / 86400000)}d ago`;
+}
+
+/**
+ * Format a Date object as "Jan 19, 14:30"
+ */
+export function formatDateTime(date: Date): string {
+  if (!date || isNaN(date.getTime())) return 'Unknown';
+
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+/**
+ * Shorten a transaction hash for display (e.g., "abc123...xyz789")
+ */
+export function shortenTxHash(hash: string, startChars = 6, endChars = 4): string {
+  if (!hash) return '';
+  if (hash.length <= startChars + endChars) return hash;
+  return `${hash.slice(0, startChars)}...${hash.slice(-endChars)}`;
 }
 
 /**

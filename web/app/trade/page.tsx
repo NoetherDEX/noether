@@ -25,70 +25,28 @@ function TradePage() {
   const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
   const [positions, setPositions] = useState<DisplayPosition[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
-  const [isClosingPosition, setIsClosingPosition] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { isConnected, publicKey, sign, refreshBalances } = useWallet();
 
-  // Fetch positions when connected
-  useEffect(() => {
-    if (!isConnected || !publicKey) {
-      setPositions([]);
-      return;
-    }
+  // Fetch positions function - extracted for manual refresh
+  const fetchPositions = useCallback(async (showLoading = true) => {
+    if (!publicKey) return;
 
-    const fetchPositions = async () => {
-      setIsLoadingPositions(true);
-      try {
-        // Fetch positions from contract
-        const contractPositions = await getPositions(publicKey);
+    if (showLoading) setIsLoadingPositions(true);
+    setIsRefreshing(true);
 
-        if (contractPositions.length === 0) {
-          setPositions([]);
-          return;
-        }
-
-        // Fetch current prices for all unique assets
-        const uniqueAssets = [...new Set(contractPositions.map(p => p.asset))];
-        const priceMap: Record<string, number> = {};
-
-        await Promise.all(
-          uniqueAssets.map(async (asset) => {
-            const priceData = await getPrice(publicKey, asset);
-            if (priceData) {
-              priceMap[asset] = priceToDisplay(priceData.price);
-            }
-          })
-        );
-
-        // Convert to display positions
-        const displayPositions = contractPositions.map(p =>
-          toDisplayPosition(p, priceMap[p.asset] || 0)
-        );
-
-        setPositions(displayPositions);
-      } catch (error) {
-        console.error('Failed to fetch positions:', error);
-      } finally {
-        setIsLoadingPositions(false);
-      }
-    };
-
-    fetchPositions();
-    const interval = setInterval(fetchPositions, 10000);
-    return () => clearInterval(interval);
-  }, [isConnected, publicKey]);
-
-  const handleClosePosition = async (positionId: number) => {
-    if (!publicKey || isClosingPosition) return;
-
-    setIsClosingPosition(true);
     try {
-      const result = await closePosition(publicKey, sign, positionId);
-      console.log('Position closed:', result);
-
-      // Refresh positions and balances
+      // Fetch positions from contract
       const contractPositions = await getPositions(publicKey);
-      const uniqueAssets = [...new Set(contractPositions.map(p => p.asset))];
+
+      if (contractPositions.length === 0) {
+        setPositions([]);
+        return;
+      }
+
+      // Fetch current prices for all unique assets
+      const uniqueAssets = Array.from(new Set(contractPositions.map(p => p.asset)));
       const priceMap: Record<string, number> = {};
 
       await Promise.all(
@@ -100,16 +58,50 @@ function TradePage() {
         })
       );
 
+      // Convert to display positions
       const displayPositions = contractPositions.map(p =>
         toDisplayPosition(p, priceMap[p.asset] || 0)
       );
 
       setPositions(displayPositions);
+    } catch (error) {
+      console.error('Failed to fetch positions:', error);
+    } finally {
+      setIsLoadingPositions(false);
+      setIsRefreshing(false);
+    }
+  }, [publicKey]);
+
+  // Manual refresh handler
+  const handleRefreshPositions = useCallback(() => {
+    fetchPositions(false); // Don't show full loading state for manual refresh
+  }, [fetchPositions]);
+
+  // Auto-refresh positions every 60 seconds when connected
+  useEffect(() => {
+    if (!isConnected || !publicKey) {
+      setPositions([]);
+      return;
+    }
+
+    fetchPositions(true); // Initial fetch with loading state
+    const interval = setInterval(() => fetchPositions(false), 60000); // 60 seconds
+    return () => clearInterval(interval);
+  }, [isConnected, publicKey, fetchPositions]);
+
+  const handleClosePosition = async (positionId: number): Promise<void> => {
+    if (!publicKey) throw new Error('Wallet not connected');
+
+    try {
+      const result = await closePosition(publicKey, sign, positionId);
+      console.log('Position closed:', result);
+
+      // Refresh positions and balances
+      await fetchPositions(false);
       refreshBalances();
     } catch (error) {
       console.error('Failed to close position:', error);
-    } finally {
-      setIsClosingPosition(false);
+      throw error; // Re-throw so the modal knows it failed
     }
   };
 
@@ -127,8 +119,10 @@ function TradePage() {
         <PositionsList
           positions={positions}
           isLoading={isLoadingPositions}
+          isRefreshing={isRefreshing}
           onClosePosition={handleClosePosition}
           onAddCollateral={handleAddCollateral}
+          onRefresh={handleRefreshPositions}
         />
       ),
     },

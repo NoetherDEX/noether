@@ -1,28 +1,33 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { TrendingUp, TrendingDown, MoreHorizontal, X, Plus } from 'lucide-react';
+import { TrendingUp, TrendingDown, MoreHorizontal, X, Plus, RefreshCw } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
-import { formatUSD, formatPercent, formatRelativeTime } from '@/lib/utils';
+import { formatUSD, formatPercent, formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayPosition } from '@/types';
 
 interface PositionsListProps {
   positions: DisplayPosition[];
   isLoading?: boolean;
-  onClosePosition?: (id: number) => void;
+  isRefreshing?: boolean;
+  onClosePosition?: (id: number) => Promise<void>;
   onAddCollateral?: (id: number, amount: number) => void;
+  onRefresh?: () => void;
 }
 
 export function PositionsList({
   positions,
   isLoading,
+  isRefreshing,
   onClosePosition,
   onAddCollateral,
+  onRefresh,
 }: PositionsListProps) {
   const [selectedPosition, setSelectedPosition] = useState<DisplayPosition | null>(null);
   const [actionModal, setActionModal] = useState<'close' | 'add-collateral' | null>(null);
   const [addCollateralAmount, setAddCollateralAmount] = useState('');
+  const [isClosing, setIsClosing] = useState(false);
 
   if (isLoading) {
     return (
@@ -53,12 +58,21 @@ export function PositionsList({
     );
   }
 
-  const handleClose = () => {
-    if (selectedPosition && onClosePosition) {
-      onClosePosition(selectedPosition.id);
+  const handleClose = async () => {
+    if (!selectedPosition || !onClosePosition || isClosing) return;
+
+    setIsClosing(true);
+    try {
+      await onClosePosition(selectedPosition.id);
+      // Only close modal after successful transaction
+      setActionModal(null);
+      setSelectedPosition(null);
+    } catch (error) {
+      console.error('Failed to close position:', error);
+      // Keep modal open on error so user can retry
+    } finally {
+      setIsClosing(false);
     }
-    setActionModal(null);
-    setSelectedPosition(null);
   };
 
   const handleAddCollateral = () => {
@@ -72,11 +86,36 @@ export function PositionsList({
 
   return (
     <>
+      {/* Header with Refresh Button */}
+      {positions.length > 0 && (
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs text-neutral-500">
+            {positions.length} open position{positions.length !== 1 ? 's' : ''}
+          </span>
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all',
+                'text-neutral-400 hover:text-white hover:bg-white/5',
+                'disabled:opacity-50 disabled:cursor-not-allowed'
+              )}
+              title="Refresh positions"
+            >
+              <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Desktop Table */}
       <div className="hidden lg:block overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="text-xs text-neutral-500 border-b border-white/5">
+              <th className="text-left py-3 px-4 font-medium">ID</th>
               <th className="text-left py-3 px-4 font-medium">Asset</th>
               <th className="text-left py-3 px-4 font-medium">Side</th>
               <th className="text-right py-3 px-4 font-medium">Size</th>
@@ -84,6 +123,7 @@ export function PositionsList({
               <th className="text-right py-3 px-4 font-medium">Mark</th>
               <th className="text-right py-3 px-4 font-medium">PnL</th>
               <th className="text-right py-3 px-4 font-medium">Liq. Price</th>
+              <th className="text-right py-3 px-4 font-medium">Opened</th>
               <th className="text-right py-3 px-4 font-medium">Actions</th>
             </tr>
           </thead>
@@ -157,6 +197,7 @@ export function PositionsList({
                 variant="secondary"
                 className="flex-1"
                 onClick={() => setActionModal(null)}
+                disabled={isClosing}
               >
                 Cancel
               </Button>
@@ -164,8 +205,10 @@ export function PositionsList({
                 variant="danger"
                 className="flex-1"
                 onClick={handleClose}
+                disabled={isClosing}
+                isLoading={isClosing}
               >
-                Close Position
+                {isClosing ? 'Closing...' : 'Close Position'}
               </Button>
             </div>
           </div>
@@ -233,6 +276,9 @@ function PositionRow({
   return (
     <tr className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
       <td className="py-4 px-4">
+        <span className="text-neutral-400 font-mono text-sm">#{position.id}</span>
+      </td>
+      <td className="py-4 px-4">
         <span className="font-medium text-white">{position.asset}/USD</span>
       </td>
       <td className="py-4 px-4">
@@ -259,6 +305,9 @@ function PositionRow({
       </td>
       <td className="py-4 px-4 text-right text-neutral-400">
         {formatUSD(position.liquidationPrice, position.asset === 'XLM' ? 4 : 2)}
+      </td>
+      <td className="py-4 px-4 text-right text-neutral-400 text-sm">
+        {formatDateTime(position.openedAt)}
       </td>
       <td className="py-4 px-4 text-right">
         <div className="flex items-center justify-end gap-2">
@@ -299,13 +348,14 @@ function PositionCard({
       <div className="flex items-start justify-between mb-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
+            <span className="text-neutral-400 font-mono text-xs">#{position.id}</span>
             <span className="font-semibold text-white">{position.asset}/USD</span>
             <Badge variant={position.direction === 'Long' ? 'success' : 'danger'} size="sm">
               {position.direction} {position.leverage.toFixed(1)}x
             </Badge>
           </div>
           <p className="text-xs text-neutral-500">
-            Opened {formatRelativeTime(position.openedAt.getTime())}
+            {formatDateTime(position.openedAt)}
           </p>
         </div>
         <div className="text-right">

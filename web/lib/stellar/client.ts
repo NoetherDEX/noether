@@ -23,6 +23,7 @@ export const sorobanRpc = new rpc.Server(NETWORK.RPC_URL);
 export const marketContract = new Contract(CONTRACTS.MARKET);
 export const vaultContract = new Contract(CONTRACTS.VAULT);
 export const oracleContract = new Contract(CONTRACTS.ORACLE_ADAPTER);
+export const usdcTokenContract = new Contract(CONTRACTS.USDC_TOKEN);
 
 /**
  * Build a transaction for a contract call
@@ -81,19 +82,46 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
 
   if (response.status === 'ERROR') {
     console.error('[DEBUG] Transaction error:', response.errorResult);
-    throw new Error(`Transaction failed: ${response.errorResult}`);
+    // Try to extract meaningful error message
+    let errorMessage = 'Transaction submission failed';
+    try {
+      if (response.errorResult) {
+        errorMessage = JSON.stringify(response.errorResult, null, 2);
+      }
+    } catch {
+      errorMessage = 'Unknown error during submission';
+    }
+    throw new Error(errorMessage);
   }
 
-  // Wait for confirmation
+  // Wait for confirmation - poll until we get a final status
   let result = await sorobanRpc.getTransaction(response.hash);
-  while (result.status === 'NOT_FOUND') {
+  let attempts = 0;
+  const maxAttempts = 30; // 30 seconds max wait
+
+  while ((result.status === 'NOT_FOUND' || result.status === 'PENDING') && attempts < maxAttempts) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     result = await sorobanRpc.getTransaction(response.hash);
+    attempts++;
   }
 
   if (result.status === 'FAILED') {
-    console.error('[DEBUG] Transaction failed on-chain');
-    throw new Error('Transaction failed');
+    console.error('[DEBUG] Transaction failed on-chain:', result);
+    // Try to extract the error from resultXdr
+    let errorMessage = 'Transaction failed on-chain';
+    try {
+      if ('resultXdr' in result && result.resultXdr) {
+        const resultXdr = result.resultXdr;
+        errorMessage = `Transaction failed: ${resultXdr.result().switch().name}`;
+      }
+    } catch {
+      // Keep default message
+    }
+    throw new Error(errorMessage);
+  }
+
+  if (result.status !== 'SUCCESS') {
+    throw new Error(`Transaction did not complete: ${result.status}`);
   }
 
   console.log('[DEBUG] Transaction successful!');

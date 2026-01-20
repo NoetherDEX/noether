@@ -13,6 +13,25 @@
 //! - Uses Oracle Adapter for price feeds
 //! - Settles with Vault for PnL
 //! - Positions stored with global index for keeper efficiency
+//!
+//! ## Settlement Flow
+//!
+//! **Close Position (Trader Wins):**
+//! 1. Market calls Vault.settle_pnl(+pnl)
+//! 2. Vault transfers profit to Market
+//! 3. Market pays trader: collateral + profit
+//!
+//! **Close Position (Trader Loses):**
+//! 1. Market calls Vault.settle_pnl(-pnl)
+//! 2. Vault updates accounting (no transfer)
+//! 3. Market transfers loss to Vault
+//! 4. Market pays trader: collateral - loss
+//!
+//! **Liquidation:**
+//! 1. Market calculates remaining equity
+//! 2. Keeper gets reward from remaining
+//! 3. Vault gets rest of collateral
+//! 4. Trader gets nothing
 
 #![no_std]
 
@@ -93,6 +112,11 @@ impl MarketContract {
 
         extend_instance_ttl(&env);
 
+        env.events().publish(
+            (Symbol::new(&env, "initialized"),),
+            (admin, vault, oracle_adapter),
+        );
+
         Ok(())
     }
 
@@ -114,11 +138,12 @@ impl MarketContract {
     ///
     /// # Flow
     /// 1. Validate parameters
-    /// 2. Fetch price from oracle
-    /// 3. Calculate position size and liquidation price
-    /// 4. Transfer collateral from trader
-    /// 5. Deduct trading fee
-    /// 6. Store position
+    /// 2. Check Vault liquidity for potential payout
+    /// 3. Fetch price from oracle
+    /// 4. Calculate position size and liquidation price
+    /// 5. Transfer collateral from trader
+    /// 6. Deduct trading fee
+    /// 7. Store position
     pub fn open_position(
         env: Env,
         trader: Address,
@@ -147,6 +172,11 @@ impl MarketContract {
         if size > config.max_position_size {
             return Err(NoetherError::PositionTooLarge);
         }
+
+        // Check Vault has enough liquidity for potential payout
+        // Maximum potential payout is the position size (100% gain)
+        let vault_address = get_vault(&env);
+        Self::check_vault_liquidity(&env, &vault_address, size)?;
 
         // Fetch current price
         let entry_price = Self::get_oracle_price(&env, &asset)?;
@@ -203,14 +233,15 @@ impl MarketContract {
         }
 
         // Transfer fee to vault
-        let vault_address = get_vault(&env);
         token_client.transfer(&env.current_contract_address(), &vault_address, &fee);
 
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "position_opened"),),
-            (position.id, trader, asset, size, direction, leverage),
+            (position.id, trader, asset, size, direction, leverage, entry_price),
         );
+
+        extend_instance_ttl(&env);
 
         Ok(position)
     }
@@ -228,8 +259,9 @@ impl MarketContract {
     /// 1. Verify ownership
     /// 2. Apply any pending funding
     /// 3. Calculate PnL at current price
-    /// 4. Settle with vault
-    /// 5. Return collateral +/- PnL to trader
+    /// 4. Settle with vault (handles fund transfer for wins)
+    /// 5. Transfer loss to vault if trader lost
+    /// 6. Return collateral +/- PnL to trader
     pub fn close_position(
         env: Env,
         trader: Address,
@@ -262,15 +294,33 @@ impl MarketContract {
         let to_trader = position.collateral + pnl - position.accumulated_funding;
 
         // Settle with vault
+        // - If pnl > 0: Vault transfers profit to Market
+        // - If pnl < 0: Vault just updates accounting
         let vault_address = get_vault(&env);
         Self::settle_with_vault(&env, &vault_address, pnl)?;
 
+        // Get token client for transfers
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+
+        // If trader lost, transfer the loss amount to Vault
+        // (Vault's settle_pnl already updated accounting, now transfer actual tokens)
+        if pnl < 0 {
+            let loss = -pnl;
+            token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
+        }
+
+        // Transfer remaining funding to vault (if any)
+        if position.accumulated_funding > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &vault_address,
+                &position.accumulated_funding,
+            );
+        }
+
         // Transfer to trader (if positive)
         if to_trader > 0 {
-            let usdc_token = get_usdc_token(&env);
-            let token_client = token::Client::new(&env, &usdc_token);
-
-            // Transfer collateral back from market contract
             token_client.transfer(&env.current_contract_address(), &trader, &to_trader);
         }
 
@@ -289,11 +339,23 @@ impl MarketContract {
         // Delete position
         delete_position(&env, position_id, &trader);
 
-        // Emit event
+        // Emit comprehensive event with full trade data for frontend history
         env.events().publish(
             (Symbol::new(&env, "position_closed"),),
-            (position_id, trader, pnl),
+            (
+                position_id,
+                trader,
+                position.asset,
+                position.direction,
+                position.size,
+                position.entry_price,
+                current_price,  // exit_price
+                pnl,
+                position.accumulated_funding,
+            ),
         );
+
+        extend_instance_ttl(&env);
 
         Ok(pnl)
     }
@@ -348,7 +410,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(&env, "collateral_added"),),
-            (position_id, amount),
+            (position_id, amount, position.collateral),
         );
 
         Ok(())
@@ -367,6 +429,13 @@ impl MarketContract {
     ///
     /// # Returns
     /// Keeper reward amount
+    ///
+    /// # Flow
+    /// 1. Verify position is liquidatable
+    /// 2. Calculate remaining equity and keeper reward
+    /// 3. Pay keeper their reward
+    /// 4. Transfer remaining collateral to Vault
+    /// 5. Update Vault accounting
     pub fn liquidate(
         env: Env,
         keeper: Address,
@@ -394,38 +463,45 @@ impl MarketContract {
         // Calculate PnL
         let pnl = calculate_pnl(&position, current_price)?;
 
-        // Calculate remaining collateral after PnL
+        // Calculate remaining collateral after PnL and funding
         let remaining = position.collateral + pnl - position.accumulated_funding;
 
-        // Calculate keeper reward
+        // Calculate keeper reward (only from remaining equity, if positive)
         let keeper_reward = if remaining > 0 {
             calculate_keeper_reward(remaining, config.liquidation_fee_bps)
         } else {
             0
         };
 
-        // Amount that goes to vault (remaining - keeper reward)
-        let to_vault = if remaining > keeper_reward {
-            remaining - keeper_reward
+        // Ensure keeper_reward doesn't exceed position collateral
+        let actual_keeper_reward = if keeper_reward > position.collateral {
+            position.collateral / 10 // Cap at 10% of collateral as safety
+        } else {
+            keeper_reward
+        };
+
+        // Calculate what goes to Vault (everything except keeper reward)
+        let vault_receives = if position.collateral > actual_keeper_reward {
+            position.collateral - actual_keeper_reward
         } else {
             0
         };
 
-        // Settle with vault
+        // Get addresses and token client
         let vault_address = get_vault(&env);
-        Self::settle_with_vault(&env, &vault_address, pnl)?;
-
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
 
-        // Pay keeper reward
-        if keeper_reward > 0 {
-            token_client.transfer(&env.current_contract_address(), &keeper, &keeper_reward);
+        // Settle with vault - pass the amount Vault is receiving (as negative pnl)
+        // This ensures Vault's total_usdc accounting matches actual token receipt
+        if vault_receives > 0 {
+            Self::settle_with_vault(&env, &vault_address, -vault_receives)?;
+            token_client.transfer(&env.current_contract_address(), &vault_address, &vault_receives);
         }
 
-        // Send remainder to vault
-        if to_vault > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &to_vault);
+        // Pay keeper reward
+        if actual_keeper_reward > 0 {
+            token_client.transfer(&env.current_contract_address(), &keeper, &actual_keeper_reward);
         }
 
         // Update market stats
@@ -443,13 +519,26 @@ impl MarketContract {
         // Delete position
         delete_position(&env, position_id, &position.trader);
 
-        // Emit event
+        // Emit comprehensive event with full trade data for frontend history
         env.events().publish(
             (Symbol::new(&env, "position_liquidated"),),
-            (position_id, keeper.clone(), keeper_reward),
+            (
+                position_id,
+                position.trader,
+                position.asset,
+                position.direction,
+                position.size,
+                position.entry_price,
+                current_price,
+                pnl,
+                keeper.clone(),
+                actual_keeper_reward,
+            ),
         );
 
-        Ok(keeper_reward)
+        extend_instance_ttl(&env);
+
+        Ok(actual_keeper_reward)
     }
 
     /// Check if a position can be liquidated.
@@ -590,6 +679,26 @@ impl MarketContract {
         get_config(&env)
     }
 
+    /// Get vault address.
+    pub fn get_vault(env: Env) -> Result<Address, NoetherError> {
+        require_initialized(&env)?;
+        Ok(get_vault(&env))
+    }
+
+    /// Get USDC token address.
+    pub fn get_usdc_token(env: Env) -> Result<Address, NoetherError> {
+        require_initialized(&env)?;
+        Ok(get_usdc_token(&env))
+    }
+
+    /// Get USDC balance held by Market contract.
+    pub fn get_usdc_balance(env: Env) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        Ok(token_client.balance(&env.current_contract_address()))
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // Admin Functions
     // ═══════════════════════════════════════════════════════════════════════
@@ -597,21 +706,47 @@ impl MarketContract {
     /// Update market configuration.
     pub fn update_config(env: Env, config: MarketConfig) -> Result<(), NoetherError> {
         require_admin(&env)?;
+
+        // Validate config
+        if config.max_leverage < 1 || config.max_leverage > 100 {
+            return Err(NoetherError::InvalidParameter);
+        }
+
         set_config(&env, &config);
+
+        env.events().publish(
+            (Symbol::new(&env, "config_updated"),),
+            (),
+        );
+
         Ok(())
     }
 
     /// Update oracle adapter address.
     pub fn set_oracle_adapter(env: Env, oracle: Address) -> Result<(), NoetherError> {
         require_admin(&env)?;
+        let old = get_oracle_adapter(&env);
         set_oracle_adapter(&env, &oracle);
+
+        env.events().publish(
+            (Symbol::new(&env, "oracle_updated"),),
+            (old, oracle),
+        );
+
         Ok(())
     }
 
     /// Update vault address.
     pub fn set_vault(env: Env, vault: Address) -> Result<(), NoetherError> {
         require_admin(&env)?;
+        let old = get_vault(&env);
         set_vault(&env, &vault);
+
+        env.events().publish(
+            (Symbol::new(&env, "vault_updated"),),
+            (old, vault),
+        );
+
         Ok(())
     }
 
@@ -619,6 +754,12 @@ impl MarketContract {
     pub fn pause(env: Env) -> Result<(), NoetherError> {
         require_admin(&env)?;
         set_paused(&env, true);
+
+        env.events().publish(
+            (Symbol::new(&env, "paused"),),
+            (),
+        );
+
         Ok(())
     }
 
@@ -626,6 +767,12 @@ impl MarketContract {
     pub fn unpause(env: Env) -> Result<(), NoetherError> {
         require_admin(&env)?;
         set_paused(&env, false);
+
+        env.events().publish(
+            (Symbol::new(&env, "unpaused"),),
+            (),
+        );
+
         Ok(())
     }
 
@@ -633,7 +780,15 @@ impl MarketContract {
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
         require_admin(&env)?;
         new_admin.require_auth();
+
+        let old = get_admin(&env);
         set_admin(&env, &new_admin);
+
+        env.events().publish(
+            (Symbol::new(&env, "admin_updated"),),
+            (old, new_admin),
+        );
+
         Ok(())
     }
 
@@ -679,9 +834,25 @@ impl MarketContract {
         Ok(price)
     }
 
+    /// Check if Vault has enough liquidity for a potential payout.
+    fn check_vault_liquidity(env: &Env, vault: &Address, amount: i128) -> Result<(), NoetherError> {
+        // Call vault's reserve_for_position function
+        // This checks liquidity without moving funds
+        let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
+        let _: () = env.invoke_contract(
+            vault,
+            &Symbol::new(env, "reserve_for_position"),
+            args,
+        );
+
+        Ok(())
+    }
+
     /// Settle PnL with vault contract.
     fn settle_with_vault(env: &Env, vault: &Address, pnl: i128) -> Result<(), NoetherError> {
         // Call vault's settle_pnl function
+        // - If pnl > 0: Vault transfers profit to Market
+        // - If pnl < 0: Vault updates accounting (Market transfers loss separately)
         let args: Vec<soroban_sdk::Val> = (pnl,).into_val(env);
         let _: () = env.invoke_contract(
             vault,

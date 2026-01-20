@@ -19,10 +19,21 @@
 //! GLP Price = AUM / Total GLP Supply
 //! ```
 //!
-//! ## Functions
-//! - `deposit`: LPs deposit USDC, receive GLP tokens
-//! - `withdraw`: LPs burn GLP, receive USDC
-//! - `settle_pnl`: Called by Market contract to settle trader profits/losses
+//! ## Settlement Architecture
+//!
+//! The Vault and Market contracts work together for PnL settlement:
+//!
+//! **When trader WINS (positive PnL):**
+//! - Vault transfers profit to Market (Vault can transfer its own tokens)
+//! - Market then pays trader: collateral + profit
+//!
+//! **When trader LOSES (negative PnL):**
+//! - Market pays trader the reduced amount (collateral - loss)
+//! - Market transfers the loss to Vault via `receive_loss()`
+//! - Vault just updates accounting in `settle_pnl()` for losses
+//!
+//! This design respects Soroban's authorization model where contracts
+//! can only transfer their OWN tokens, not tokens from other contracts.
 
 #![no_std]
 
@@ -72,6 +83,11 @@ impl VaultContract {
 
         admin.require_auth();
 
+        // Validate fee parameters
+        if deposit_fee_bps > 1000 || withdraw_fee_bps > 1000 {
+            return Err(NoetherError::InvalidParameter);
+        }
+
         // Store configuration
         set_admin(&env, &admin);
         set_usdc_token(&env, &usdc_token);
@@ -89,6 +105,11 @@ impl VaultContract {
 
         // Extend storage TTL
         extend_instance_ttl(&env);
+
+        env.events().publish(
+            (Symbol::new(&env, "initialized"),),
+            (admin, market_contract, usdc_token),
+        );
 
         Ok(())
     }
@@ -152,8 +173,10 @@ impl VaultContract {
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "deposit"),),
-            (depositor.clone(), usdc_amount, glp_to_mint),
+            (depositor.clone(), usdc_amount, glp_to_mint, fee),
         );
+
+        extend_instance_ttl(&env);
 
         Ok(glp_to_mint)
     }
@@ -203,9 +226,12 @@ impl VaultContract {
             return Err(NoetherError::InvalidAmount);
         }
 
-        // Check liquidity
-        let total_usdc = get_total_usdc(&env);
-        if net_usdc > total_usdc {
+        // Check liquidity (actual token balance in vault)
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        let vault_balance = token_client.balance(&env.current_contract_address());
+
+        if net_usdc > vault_balance {
             return Err(NoetherError::InsufficientLiquidity);
         }
 
@@ -213,25 +239,25 @@ impl VaultContract {
         glp::burn(&env, &withdrawer, glp_amount);
 
         // Update pool state
-        set_total_usdc(&env, total_usdc - gross_usdc);
+        set_total_usdc(&env, get_total_usdc(&env) - gross_usdc);
         set_total_fees(&env, get_total_fees(&env) + fee);
 
         // Transfer USDC to withdrawer
-        let usdc_token = get_usdc_token(&env);
-        let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&env.current_contract_address(), &withdrawer, &net_usdc);
 
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "withdraw"),),
-            (withdrawer.clone(), glp_amount, net_usdc),
+            (withdrawer.clone(), glp_amount, net_usdc, fee),
         );
+
+        extend_instance_ttl(&env);
 
         Ok(net_usdc)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Market Contract Interface
+    // Market Contract Interface - Settlement Functions
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Settle trader PnL with the vault.
@@ -240,11 +266,20 @@ impl VaultContract {
     /// # Arguments
     /// * `pnl` - Profit/loss amount (positive = trader won, negative = trader lost)
     ///
-    /// # Logic
-    /// - If trader won (positive PnL): vault pays out, reducing pool value
-    /// - If trader lost (negative PnL): vault receives, increasing pool value
+    /// # Settlement Logic
     ///
-    /// This is the core mechanism where LPs take the opposite side of traders.
+    /// **Trader WON (pnl > 0):**
+    /// - Vault transfers profit amount to Market contract
+    /// - Market then pays trader: collateral + profit
+    /// - Vault's total_usdc decreases by pnl
+    ///
+    /// **Trader LOST (pnl < 0):**
+    /// - Only update accounting here (Vault cannot pull from Market)
+    /// - Market must call `receive_loss()` separately to transfer the loss
+    /// - This respects Soroban's auth model: contracts can only spend own tokens
+    ///
+    /// **Break-even (pnl = 0):**
+    /// - No transfers needed, just emit event
     pub fn settle_pnl(env: Env, pnl: i128) -> Result<(), NoetherError> {
         require_initialized(&env)?;
 
@@ -252,24 +287,79 @@ impl VaultContract {
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
-        let total_usdc = get_total_usdc(&env);
-
         if pnl > 0 {
-            // Trader won - vault pays out
+            // Trader WON - Vault must pay profit to Market
+            let total_usdc = get_total_usdc(&env);
+
             // Check we have enough liquidity
             if pnl > total_usdc {
                 return Err(NoetherError::InsufficientLiquidity);
             }
+
+            // Verify actual token balance
+            let usdc_token = get_usdc_token(&env);
+            let token_client = token::Client::new(&env, &usdc_token);
+            let vault_balance = token_client.balance(&env.current_contract_address());
+
+            if pnl > vault_balance {
+                return Err(NoetherError::InsufficientLiquidity);
+            }
+
+            // Transfer profit from Vault to Market
+            token_client.transfer(&env.current_contract_address(), &market_contract, &pnl);
+
+            // Update accounting
             set_total_usdc(&env, total_usdc - pnl);
-        } else {
-            // Trader lost - vault receives
-            set_total_usdc(&env, total_usdc + (-pnl));
+
+        } else if pnl < 0 {
+            // Trader LOST - Just update accounting
+            // The Market will call receive_loss() to transfer the actual funds
+            // We don't transfer here because Vault cannot pull tokens from Market
+            let loss = -pnl;
+            let total_usdc = get_total_usdc(&env);
+            set_total_usdc(&env, total_usdc + loss);
         }
+        // If pnl == 0, no action needed
 
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "pnl_settled"),),
             (pnl,),
+        );
+
+        extend_instance_ttl(&env);
+
+        Ok(())
+    }
+
+    /// Receive loss payment from Market contract.
+    /// Called by Market after settle_pnl() when trader loses.
+    ///
+    /// # Arguments
+    /// * `amount` - The loss amount being transferred from Market to Vault
+    ///
+    /// # Flow
+    /// 1. Market calls settle_pnl(negative_pnl) - updates accounting
+    /// 2. Market transfers loss amount to Vault
+    /// 3. Market calls receive_loss(amount) - Vault verifies receipt
+    ///
+    /// This function is optional but recommended for verification.
+    /// The accounting was already updated in settle_pnl().
+    pub fn receive_loss(env: Env, amount: i128) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+
+        // Only market contract can call this
+        let market_contract = get_market_contract(&env);
+        market_contract.require_auth();
+
+        // Emit event for tracking (accounting already updated in settle_pnl)
+        env.events().publish(
+            (Symbol::new(&env, "loss_received"),),
+            (amount,),
         );
 
         Ok(())
@@ -279,32 +369,56 @@ impl VaultContract {
     /// Called by Market contract to keep track of open position PnL.
     ///
     /// This affects AUM calculation and thus GLP price.
+    /// Positive unrealized PnL = traders are winning = lower AUM
+    /// Negative unrealized PnL = traders are losing = higher AUM
     pub fn update_unrealized_pnl(env: Env, new_pnl: i128) -> Result<(), NoetherError> {
         require_initialized(&env)?;
 
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
+        let old_pnl = get_unrealized_pnl(&env);
         set_unrealized_pnl(&env, new_pnl);
+
+        env.events().publish(
+            (Symbol::new(&env, "unrealized_pnl_updated"),),
+            (old_pnl, new_pnl),
+        );
 
         Ok(())
     }
 
     /// Reserve USDC for a position being opened.
-    /// Called when a trader opens a position.
+    /// Called when a trader opens a position to ensure liquidity exists.
+    ///
+    /// # Arguments
+    /// * `amount` - Maximum potential payout needed for this position
+    ///
+    /// This is a check-only function - no actual fund movement.
     pub fn reserve_for_position(env: Env, amount: i128) -> Result<(), NoetherError> {
         require_initialized(&env)?;
+
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
 
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
+        // Check we have enough liquidity to potentially pay out
         let total_usdc = get_total_usdc(&env);
         if amount > total_usdc {
             return Err(NoetherError::InsufficientLiquidity);
         }
 
-        // We don't actually move funds, just track the reservation
-        // The actual transfer happens on settlement
+        // Verify actual token balance
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        let vault_balance = token_client.balance(&env.current_contract_address());
+
+        if amount > vault_balance {
+            return Err(NoetherError::InsufficientLiquidity);
+        }
 
         Ok(())
     }
@@ -347,9 +461,18 @@ impl VaultContract {
         get_total_glp(&env)
     }
 
-    /// Get total USDC in pool.
+    /// Get total USDC in pool (accounting value).
     pub fn get_total_usdc(env: Env) -> i128 {
         get_total_usdc(&env)
+    }
+
+    /// Get actual USDC token balance held by vault.
+    pub fn get_usdc_balance(env: Env) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        Ok(token_client.balance(&env.current_contract_address()))
     }
 
     /// Calculate current AUM.
@@ -370,14 +493,33 @@ impl VaultContract {
         Ok(get_market_contract(&env))
     }
 
+    /// Get deposit fee in basis points.
+    pub fn get_deposit_fee(env: Env) -> u32 {
+        get_deposit_fee_bps(&env)
+    }
+
+    /// Get withdrawal fee in basis points.
+    pub fn get_withdraw_fee(env: Env) -> u32 {
+        get_withdraw_fee_bps(&env)
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // Admin Functions
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Update market contract address.
+    /// Use with caution - this changes which contract can settle trades.
     pub fn set_market_contract(env: Env, new_market: Address) -> Result<(), NoetherError> {
         require_admin(&env)?;
+
+        let old_market = get_market_contract(&env);
         set_market_contract(&env, &new_market);
+
+        env.events().publish(
+            (Symbol::new(&env, "market_updated"),),
+            (old_market, new_market),
+        );
+
         Ok(())
     }
 
@@ -389,6 +531,12 @@ impl VaultContract {
             return Err(NoetherError::InvalidParameter);
         }
         set_deposit_fee_bps(&env, fee_bps);
+
+        env.events().publish(
+            (Symbol::new(&env, "deposit_fee_updated"),),
+            (fee_bps,),
+        );
+
         Ok(())
     }
 
@@ -399,13 +547,27 @@ impl VaultContract {
             return Err(NoetherError::InvalidParameter);
         }
         set_withdraw_fee_bps(&env, fee_bps);
+
+        env.events().publish(
+            (Symbol::new(&env, "withdraw_fee_updated"),),
+            (fee_bps,),
+        );
+
         Ok(())
     }
 
     /// Pause the vault (emergency).
+    /// When paused: deposits and withdrawals are blocked.
+    /// Settlements still work to allow position closures.
     pub fn pause(env: Env) -> Result<(), NoetherError> {
         require_admin(&env)?;
         set_paused(&env, true);
+
+        env.events().publish(
+            (Symbol::new(&env, "paused"),),
+            (),
+        );
+
         Ok(())
     }
 
@@ -413,14 +575,29 @@ impl VaultContract {
     pub fn unpause(env: Env) -> Result<(), NoetherError> {
         require_admin(&env)?;
         set_paused(&env, false);
+
+        env.events().publish(
+            (Symbol::new(&env, "unpaused"),),
+            (),
+        );
+
         Ok(())
     }
 
     /// Transfer admin role.
+    /// Requires both current admin and new admin authorization.
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
         require_admin(&env)?;
         new_admin.require_auth();
+
+        let old_admin = get_admin(&env);
         set_admin(&env, &new_admin);
+
+        env.events().publish(
+            (Symbol::new(&env, "admin_updated"),),
+            (old_admin, new_admin),
+        );
+
         Ok(())
     }
 
@@ -433,6 +610,38 @@ impl VaultContract {
     /// Check if paused.
     pub fn is_paused(env: Env) -> bool {
         get_paused(&env)
+    }
+
+    /// Emergency withdraw for admin.
+    /// Only callable when paused. Use for emergency recovery only.
+    pub fn emergency_withdraw(env: Env, amount: i128, recipient: Address) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+
+        // Must be paused for emergency operations
+        if !get_paused(&env) {
+            return Err(NoetherError::NotPaused);
+        }
+
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        let vault_balance = token_client.balance(&env.current_contract_address());
+
+        if amount > vault_balance {
+            return Err(NoetherError::InsufficientLiquidity);
+        }
+
+        token_client.transfer(&env.current_contract_address(), &recipient, &amount);
+
+        env.events().publish(
+            (Symbol::new(&env, "emergency_withdraw"),),
+            (amount, recipient),
+        );
+
+        Ok(())
     }
 
     // ═══════════════════════════════════════════════════════════════════════

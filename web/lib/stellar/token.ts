@@ -93,13 +93,15 @@ export async function approveUSDC(
   spenderAddress: string,
   amount: bigint
 ): Promise<void> {
+  // Small delay to ensure any pending transactions have time to be processed
+  await new Promise((r) => setTimeout(r, 1000));
+
+  // Fetch fresh account data right before building
   const account = await sorobanRpc.getAccount(signerPublicKey);
 
   // Set expiration to ~30 days (in ledger sequence terms)
-  // Approximately 5 seconds per ledger, so 30 days = ~500k ledgers
-  // Note: Soroban max is ~3.1M ledgers, so we use a safe limit
   const currentLedger = await sorobanRpc.getLatestLedger();
-  const expirationLedger = currentLedger.sequence + 500_000; // ~30 days
+  const expirationLedger = currentLedger.sequence + 500_000;
 
   const operation = usdcContract.call(
     'approve',
@@ -110,7 +112,7 @@ export async function approveUSDC(
   );
 
   const transaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee: '100000', // Higher fee for priority
     networkPassphrase: NETWORK.PASSPHRASE,
   })
     .addOperation(operation)
@@ -133,18 +135,52 @@ export async function approveUSDC(
   const response = await sorobanRpc.sendTransaction(tx);
 
   if (response.status === 'ERROR') {
-    throw new Error(`Approval failed: ${response.errorResult}`);
+    const errorStr = JSON.stringify(response.errorResult);
+
+    // Check if it's a sequence error
+    if (errorStr.includes('txBadSeq') || errorStr.includes('-5')) {
+      throw new Error(
+        'Transaction sequence conflict. This can happen if you have a pending transaction. ' +
+        'Please wait 10-15 seconds and try again.'
+      );
+    }
+
+    let errorMessage = 'Approval submission failed';
+    try {
+      if (response.errorResult) {
+        errorMessage = JSON.stringify(response.errorResult, null, 2);
+      }
+    } catch {
+      errorMessage = 'Unknown error during approval submission';
+    }
+    throw new Error(errorMessage);
   }
 
-  // Wait for confirmation
+  // Wait for confirmation with timeout
   let result = await sorobanRpc.getTransaction(response.hash);
-  while (result.status === 'NOT_FOUND') {
+  let pollAttempts = 0;
+  const maxPollAttempts = 30;
+
+  while ((result.status === 'NOT_FOUND' || result.status === 'PENDING') && pollAttempts < maxPollAttempts) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     result = await sorobanRpc.getTransaction(response.hash);
+    pollAttempts++;
   }
 
   if (result.status === 'FAILED') {
-    throw new Error('Approval transaction failed');
+    let errorMessage = 'Approval transaction failed on-chain';
+    try {
+      if ('resultXdr' in result && result.resultXdr) {
+        errorMessage = `Approval failed: ${result.resultXdr.result().switch().name}`;
+      }
+    } catch {
+      // Keep default message
+    }
+    throw new Error(errorMessage);
+  }
+
+  if (result.status !== 'SUCCESS') {
+    throw new Error(`Approval did not complete: ${result.status}`);
   }
 }
 
@@ -205,18 +241,34 @@ export async function mintTestUSDC(
   const response = await sorobanRpc.sendTransaction(prepared);
 
   if (response.status === 'ERROR') {
-    throw new Error(`Mint failed: ${response.errorResult}`);
+    let errorMessage = 'Mint submission failed';
+    try {
+      if (response.errorResult) {
+        errorMessage = JSON.stringify(response.errorResult, null, 2);
+      }
+    } catch {
+      errorMessage = 'Unknown error during mint submission';
+    }
+    throw new Error(errorMessage);
   }
 
-  // Wait for confirmation
+  // Wait for confirmation with timeout
   let result = await sorobanRpc.getTransaction(response.hash);
-  while (result.status === 'NOT_FOUND') {
+  let attempts = 0;
+  const maxAttempts = 30;
+
+  while ((result.status === 'NOT_FOUND' || result.status === 'PENDING') && attempts < maxAttempts) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     result = await sorobanRpc.getTransaction(response.hash);
+    attempts++;
   }
 
   if (result.status === 'FAILED') {
-    throw new Error('Mint transaction failed');
+    throw new Error('Mint transaction failed on-chain');
+  }
+
+  if (result.status !== 'SUCCESS') {
+    throw new Error(`Mint did not complete: ${result.status}`);
   }
 
   return response.hash;

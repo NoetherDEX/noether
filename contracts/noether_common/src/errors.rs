@@ -21,6 +21,8 @@ pub enum NoetherError {
     Unauthorized = 3,
     /// Operation is currently paused
     Paused = 4,
+    /// Operation requires contract to be paused
+    NotPaused = 9,
     /// Invalid input parameter
     InvalidParameter = 5,
     /// Arithmetic overflow occurred

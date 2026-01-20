@@ -1,7 +1,7 @@
-import { vaultContract, buildTransaction, submitTransaction, toScVal, rpc } from './client';
+import { vaultContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
 import type { PoolInfo } from '@/types';
-import { SorobanRpc, scValToNative } from '@stellar/stellar-sdk';
-import { NETWORK } from '@/lib/utils/constants';
+import { rpc, scValToNative } from '@stellar/stellar-sdk';
+import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
 /**
  * Deposit USDC (XLM on testnet) and receive GLP tokens
@@ -58,7 +58,7 @@ export async function getPoolInfo(publicKey: string): Promise<PoolInfo | null> {
   try {
     const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
 
-    const account = await rpc.getAccount(publicKey);
+    const account = await sorobanRpc.getAccount(publicKey);
     const operation = vaultContract.call('get_pool_info');
 
     const transaction = new TransactionBuilder(account, {
@@ -69,9 +69,9 @@ export async function getPoolInfo(publicKey: string): Promise<PoolInfo | null> {
       .setTimeout(30)
       .build();
 
-    const result = await rpc.simulateTransaction(transaction);
+    const result = await sorobanRpc.simulateTransaction(transaction);
 
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
       return scValToNative(result.result.retval) as PoolInfo;
     }
 
@@ -89,7 +89,7 @@ export async function getGlpPrice(publicKey: string): Promise<bigint> {
   try {
     const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
 
-    const account = await rpc.getAccount(publicKey);
+    const account = await sorobanRpc.getAccount(publicKey);
     const operation = vaultContract.call('get_glp_price');
 
     const transaction = new TransactionBuilder(account, {
@@ -100,9 +100,9 @@ export async function getGlpPrice(publicKey: string): Promise<bigint> {
       .setTimeout(30)
       .build();
 
-    const result = await rpc.simulateTransaction(transaction);
+    const result = await sorobanRpc.simulateTransaction(transaction);
 
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
       return scValToNative(result.result.retval) as bigint;
     }
 
@@ -122,7 +122,7 @@ export async function getGlpBalance(
   try {
     const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
 
-    const account = await rpc.getAccount(publicKey);
+    const account = await sorobanRpc.getAccount(publicKey);
     const operation = vaultContract.call('get_glp_balance', toScVal(userAddress, 'address'));
 
     const transaction = new TransactionBuilder(account, {
@@ -133,14 +133,98 @@ export async function getGlpBalance(
       .setTimeout(30)
       .build();
 
-    const result = await rpc.simulateTransaction(transaction);
+    const result = await sorobanRpc.simulateTransaction(transaction);
 
-    if (SorobanRpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
       return scValToNative(result.result.retval) as bigint;
     }
 
     return BigInt(0);
   } catch {
     return BigInt(0);
+  }
+}
+
+/**
+ * Link Market Contract to Vault (Admin function)
+ * This is required for the Market contract to call settle_pnl on the Vault.
+ */
+export async function setMarketContract(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>
+): Promise<void> {
+  const args = [
+    toScVal(CONTRACTS.MARKET, 'address'), // new_market: Address
+  ];
+
+  const xdr = await buildTransaction(signerPublicKey, vaultContract, 'set_market_contract', args);
+  const signedXdr = await signTransaction(xdr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status !== 'SUCCESS') {
+    throw new Error('Failed to set market contract on vault');
+  }
+}
+
+/**
+ * Get the current market contract address from vault (read-only)
+ */
+export async function getMarketContract(publicKey: string): Promise<string | null> {
+  try {
+    const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
+
+    const account = await sorobanRpc.getAccount(publicKey);
+    const operation = vaultContract.call('get_market_contract');
+
+    const transaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK.PASSPHRASE,
+    })
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    const result = await sorobanRpc.simulateTransaction(transaction);
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      return scValToNative(result.result.retval) as string;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error fetching market contract:', error);
+    return null;
+  }
+}
+
+/**
+ * Update Mock Oracle price (Admin function - temporary for testing)
+ * Takes live prices from the UI and sends them to the oracle
+ */
+export async function updateOraclePrice(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  asset: string,
+  priceUsd: number
+): Promise<void> {
+  const { Contract } = await import('@stellar/stellar-sdk');
+
+  const mockOracleContract = new Contract(CONTRACTS.MOCK_ORACLE);
+
+  // Convert USD price to 7 decimals (e.g., $0.45 -> 4500000, $97000 -> 970000000000)
+  const priceWithDecimals = BigInt(Math.floor(priceUsd * 10_000_000));
+
+  // Contract uses env.ledger().timestamp() internally, so only pass asset and price
+  const args = [
+    toScVal(asset, 'symbol'),           // asset: Symbol (e.g., "XLM", "BTC")
+    toScVal(priceWithDecimals, 'i128'), // price: i128 (7 decimals)
+  ];
+
+  const xdr = await buildTransaction(signerPublicKey, mockOracleContract, 'set_price', args);
+  const signedXdr = await signTransaction(xdr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status !== 'SUCCESS') {
+    throw new Error(`Failed to update oracle price for ${asset}`);
   }
 }

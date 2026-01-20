@@ -6,9 +6,4 @@ const nextConfig = {
 
 module.exports = nextConfig
 
-
-
-
-
-
-
+// Force Restart ID: 738492
