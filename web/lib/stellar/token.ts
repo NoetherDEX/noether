@@ -161,7 +161,7 @@ export async function approveUSDC(
   let pollAttempts = 0;
   const maxPollAttempts = 30;
 
-  while ((result.status === 'NOT_FOUND' || result.status === 'PENDING') && pollAttempts < maxPollAttempts) {
+  while (result.status === 'NOT_FOUND' && pollAttempts < maxPollAttempts) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     result = await sorobanRpc.getTransaction(response.hash);
     pollAttempts++;
@@ -257,7 +257,7 @@ export async function mintTestUSDC(
   let attempts = 0;
   const maxAttempts = 30;
 
-  while ((result.status === 'NOT_FOUND' || result.status === 'PENDING') && attempts < maxAttempts) {
+  while (result.status === 'NOT_FOUND' && attempts < maxAttempts) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     result = await sorobanRpc.getTransaction(response.hash);
     attempts++;

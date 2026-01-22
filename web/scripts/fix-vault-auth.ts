@@ -104,7 +104,7 @@ async function main() {
     const maxAttempts = 60;
 
     while (
-      (getResponse.status === 'NOT_FOUND' || getResponse.status === 'PENDING') &&
+      getResponse.status === 'NOT_FOUND' &&
       attempts < maxAttempts
     ) {
       process.stdout.write('.');

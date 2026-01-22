@@ -32,7 +32,7 @@ const MOCK_ORACLE_ID = process.env.NEXT_PUBLIC_MOCK_ORACLE_ID!;
 const RPC_URL = process.env.RPC_URL || 'https://soroban-testnet.stellar.org';
 const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
 
-const PRECISION = 10_000_000n; // 7 decimals
+const PRECISION = BigInt(10_000_000); // 7 decimals
 const UPDATE_INTERVAL_MS = 10_000; // 10 seconds
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000; // 2 seconds between retries
@@ -168,7 +168,7 @@ async function updatePriceWithRetry(
       const maxPollAttempts = 15; // 15 attempts * 1 second = 15 seconds max wait
 
       while (
-        (getResponse.status === 'NOT_FOUND' || getResponse.status === 'PENDING') &&
+        getResponse.status === 'NOT_FOUND' &&
         pollAttempts < maxPollAttempts
       ) {
         await sleep(1000);

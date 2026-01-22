@@ -99,7 +99,7 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
   let attempts = 0;
   const maxAttempts = 30; // 30 seconds max wait
 
-  while ((result.status === 'NOT_FOUND' || result.status === 'PENDING') && attempts < maxAttempts) {
+  while (result.status === 'NOT_FOUND' && attempts < maxAttempts) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     result = await sorobanRpc.getTransaction(response.hash);
     attempts++;
