@@ -7,7 +7,17 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
+        heading: ['var(--font-space-grotesk)', 'system-ui', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'monospace'],
+      },
       colors: {
+        noether: {
+          bg: '#051015',
+          emerald: '#00e6b8',
+          cyan: '#00d4ff',
+        },
         primary: {
           50: '#f0f9ff',
           100: '#e0f2fe',
