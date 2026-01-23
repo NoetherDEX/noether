@@ -23,7 +23,7 @@ const steps = [
     number: '04',
     icon: BarChart3,
     title: 'Manage & Earn',
-    description: 'Track PnL in real-time or earn GLP yields.',
+    description: 'Track PnL in real-time or earn NOE yields.',
   },
 ];
 

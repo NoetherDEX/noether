@@ -156,7 +156,7 @@ async function main() {
       const poolInfo = scValToNative(infoSim.result.retval);
       console.log('  Pool Info:');
       console.log(`    Total USDC:  ${Number(poolInfo.total_usdc) / 10_000_000}`);
-      console.log(`    Total GLP:   ${Number(poolInfo.total_glp) / 10_000_000}`);
+      console.log(`    Total NOE:   ${Number(poolInfo.total_glp) / 10_000_000}`);
       console.log(`    AUM:         ${Number(poolInfo.aum) / 10_000_000}`);
     }
 

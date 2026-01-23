@@ -78,7 +78,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
       fetchXLMBalance(currentPublicKey),
       getUSDCBalance(currentPublicKey),
     ]);
-    setBalances(xlmBalance, usdcBalance, 0); // GLP balance would come from contract
+    setBalances(xlmBalance, usdcBalance, 0); // NOE balance would come from contract
   }, [setBalances]);
 
   // Initial setup - check for Freighter and existing connection (runs once on mount)

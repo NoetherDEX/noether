@@ -14,15 +14,15 @@ import { CONTRACTS } from '@/lib/utils/constants';
 import type { Ticker } from '@/types';
 
 function VaultPage() {
-  const { isConnected, publicKey, xlmBalance, sign } = useWallet();
+  const { isConnected, publicKey, usdcBalance, sign } = useWallet();
 
   // Pool stats (mock data for now)
   const [poolStats, setPoolStats] = useState({
     tvl: 1_250_000,
-    glpPrice: 1.05,
+    noePrice: 1.05,
     apy: 12.5,
     totalFees: 45_000,
-    yourGlp: 0,
+    yourNoe: 0,
     yourValue: 0,
   });
 
@@ -79,7 +79,7 @@ function VaultPage() {
     const fetchPoolData = async () => {
       // TODO: Fetch from contract
       // const poolInfo = await getPoolInfo(publicKey);
-      // const glpBalance = await getGlpBalance(publicKey, publicKey);
+      // const noeBalance = await getNoeBalance(publicKey, publicKey);
 
       // Fetch current market contract address
       if (publicKey) {
@@ -177,11 +177,11 @@ function VaultPage() {
   };
 
   const depositNum = parseFloat(depositAmount) || 0;
-  const glpToReceive = depositNum / poolStats.glpPrice;
+  const noeToReceive = depositNum / poolStats.noePrice;
   const depositFee = depositNum * 0.003; // 0.3%
 
   const withdrawNum = parseFloat(withdrawAmount) || 0;
-  const xlmToReceive = withdrawNum * poolStats.glpPrice * 0.997; // After 0.3% fee
+  const usdcToReceive = withdrawNum * poolStats.noePrice * 0.997; // After 0.3% fee
 
   return (
     <div className="min-h-screen bg-[#09090b]">
@@ -198,7 +198,7 @@ function VaultPage() {
               Liquidity Vault
             </h1>
             <p className="text-lg text-neutral-400 max-w-2xl mx-auto">
-              Earn yield by providing liquidity. GLP holders act as the counterparty
+              Earn yield by providing liquidity. NOE holders act as the counterparty
               to traders and earn from trading fees and trader losses.
             </p>
           </div>
@@ -210,8 +210,8 @@ function VaultPage() {
               <p className="text-2xl font-bold text-white">{formatUSD(poolStats.tvl)}</p>
             </Card>
             <Card className="text-center">
-              <p className="text-sm text-neutral-500 mb-1">GLP Price</p>
-              <p className="text-2xl font-bold text-white">{formatUSD(poolStats.glpPrice)}</p>
+              <p className="text-sm text-neutral-500 mb-1">NOE Price</p>
+              <p className="text-2xl font-bold text-white">{formatUSD(poolStats.noePrice)}</p>
             </Card>
             <Card className="text-center">
               <p className="text-sm text-neutral-500 mb-1">Est. APY</p>
@@ -240,10 +240,10 @@ function VaultPage() {
                       <span className="text-sm text-neutral-400">Amount</span>
                       {isConnected && (
                         <button
-                          onClick={() => setDepositAmount(Math.floor(xlmBalance * 0.95).toString())}
+                          onClick={() => setDepositAmount(Math.floor(usdcBalance * 0.95).toString())}
                           className="text-xs text-neutral-500 hover:text-white transition-colors"
                         >
-                          Max: {formatNumber(xlmBalance)} XLM
+                          Max: {formatNumber(usdcBalance)} USDC
                         </button>
                       )}
                     </div>
@@ -252,7 +252,7 @@ function VaultPage() {
                       value={depositAmount}
                       onChange={(e) => setDepositAmount(e.target.value)}
                       placeholder="0.00"
-                      suffix="XLM"
+                      suffix="USDC"
                       className="text-right text-xl"
                     />
                   </div>
@@ -261,13 +261,13 @@ function VaultPage() {
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-400">You will receive</span>
                       <span className="text-white font-medium">
-                        {formatNumber(glpToReceive, 4)} GLP
+                        {formatNumber(noeToReceive, 4)} NOE
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-400">Fee (0.3%)</span>
                       <span className="text-neutral-300">
-                        {formatNumber(depositFee)} XLM
+                        {formatNumber(depositFee)} USDC
                       </span>
                     </div>
                   </div>
@@ -295,13 +295,13 @@ function VaultPage() {
                 <div className="space-y-4">
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-neutral-400">GLP Amount</span>
-                      {isConnected && poolStats.yourGlp > 0 && (
+                      <span className="text-sm text-neutral-400">NOE Amount</span>
+                      {isConnected && poolStats.yourNoe > 0 && (
                         <button
-                          onClick={() => setWithdrawAmount(poolStats.yourGlp.toString())}
+                          onClick={() => setWithdrawAmount(poolStats.yourNoe.toString())}
                           className="text-xs text-neutral-500 hover:text-white transition-colors"
                         >
-                          Max: {formatNumber(poolStats.yourGlp)} GLP
+                          Max: {formatNumber(poolStats.yourNoe)} NOE
                         </button>
                       )}
                     </div>
@@ -310,7 +310,7 @@ function VaultPage() {
                       value={withdrawAmount}
                       onChange={(e) => setWithdrawAmount(e.target.value)}
                       placeholder="0.00"
-                      suffix="GLP"
+                      suffix="NOE"
                       className="text-right text-xl"
                     />
                   </div>
@@ -319,13 +319,13 @@ function VaultPage() {
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-400">You will receive</span>
                       <span className="text-white font-medium">
-                        {formatNumber(xlmToReceive)} XLM
+                        {formatNumber(usdcToReceive)} USDC
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-400">Fee (0.3%)</span>
                       <span className="text-neutral-300">
-                        {formatNumber(withdrawNum * poolStats.glpPrice * 0.003)} XLM
+                        {formatNumber(withdrawNum * poolStats.noePrice * 0.003)} USDC
                       </span>
                     </div>
                   </div>
@@ -335,7 +335,7 @@ function VaultPage() {
                     size="lg"
                     className="w-full"
                     onClick={handleWithdraw}
-                    disabled={!isConnected || withdrawNum <= 0 || withdrawNum > poolStats.yourGlp}
+                    disabled={!isConnected || withdrawNum <= 0 || withdrawNum > poolStats.yourNoe}
                     isLoading={isWithdrawing}
                   >
                     {!isConnected ? 'Connect Wallet' : 'Withdraw'}
@@ -352,12 +352,12 @@ function VaultPage() {
                 <CardTitle>Your Position</CardTitle>
               </CardHeader>
               <CardContent>
-                {poolStats.yourGlp > 0 ? (
+                {poolStats.yourNoe > 0 ? (
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
                     <div>
-                      <p className="text-sm text-neutral-500 mb-1">GLP Balance</p>
+                      <p className="text-sm text-neutral-500 mb-1">NOE Balance</p>
                       <p className="text-xl font-semibold text-white">
-                        {formatNumber(poolStats.yourGlp)} GLP
+                        {formatNumber(poolStats.yourNoe)} NOE
                       </p>
                     </div>
                     <div>
@@ -382,10 +382,10 @@ function VaultPage() {
                 ) : (
                   <div className="text-center py-8">
                     <p className="text-neutral-400 mb-4">
-                      You don&apos;t have any GLP tokens yet.
+                      You don&apos;t have any NOE tokens yet.
                     </p>
                     <p className="text-sm text-neutral-500">
-                      Deposit XLM above to start earning yield.
+                      Deposit USDC above to start earning yield.
                     </p>
                   </div>
                 )}
@@ -396,7 +396,7 @@ function VaultPage() {
           {/* How it Works */}
           <Card className="mt-6">
             <CardHeader>
-              <CardTitle>How GLP Works</CardTitle>
+              <CardTitle>How NOE Works</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid md:grid-cols-3 gap-6">
@@ -407,7 +407,7 @@ function VaultPage() {
                   <h4 className="font-medium text-white mb-2">Earn from Fees</h4>
                   <p className="text-sm text-neutral-400">
                     Every trade on Noether pays a 0.1% fee. This fee is distributed
-                    proportionally to all GLP holders.
+                    proportionally to all NOE holders.
                   </p>
                 </div>
                 <div className="p-4 bg-white/5 rounded-xl">
@@ -416,8 +416,8 @@ function VaultPage() {
                   </div>
                   <h4 className="font-medium text-white mb-2">Counterparty to Traders</h4>
                   <p className="text-sm text-neutral-400">
-                    When traders lose, GLP holders profit. When traders win,
-                    GLP holders pay. Over time, the house edge favors LPs.
+                    When traders lose, NOE holders profit. When traders win,
+                    NOE holders pay. Over time, the house edge favors LPs.
                   </p>
                 </div>
                 <div className="p-4 bg-white/5 rounded-xl">
@@ -426,7 +426,7 @@ function VaultPage() {
                   </div>
                   <h4 className="font-medium text-white mb-2">Flexible Withdrawals</h4>
                   <p className="text-sm text-neutral-400">
-                    Withdraw your liquidity anytime. GLP tokens represent your
+                    Withdraw your liquidity anytime. NOE tokens represent your
                     proportional share of the pool.
                   </p>
                 </div>

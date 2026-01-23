@@ -45,7 +45,7 @@ export function useWallet() {
     publicKey,
     xlmBalance,
     usdcBalance,
-    glpBalance,
+    noeBalance,
     setConnected,
     setDisconnected,
     setConnecting,
@@ -154,8 +154,8 @@ export function useWallet() {
       fetchXLMBalance(publicKey),
       getUSDCBalance(publicKey),
     ]);
-    setBalances(xlmBal, usdcBal, glpBalance);
-  }, [publicKey, glpBalance, setBalances]);
+    setBalances(xlmBal, usdcBal, noeBalance);
+  }, [publicKey, noeBalance, setBalances]);
 
   return {
     isConnected,
@@ -164,7 +164,7 @@ export function useWallet() {
     publicKey,
     xlmBalance,
     usdcBalance,
-    glpBalance,
+    noeBalance,
     connect,
     disconnect,
     sign,

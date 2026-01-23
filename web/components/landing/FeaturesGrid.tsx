@@ -54,7 +54,7 @@ export function FeaturesGrid() {
             className="md:col-span-1"
           />
           <FeatureCard
-            title="GLP Liquidity Model"
+            title="NOE Liquidity Model"
             description="Earn yield by providing USDC liquidity. Protocol revenue sharing."
             symbol="Σ"
             className="md:row-span-2"

@@ -32,10 +32,10 @@ export interface MarketConfig {
 // Pool/Vault information
 export interface PoolInfo {
   totalUsdc: bigint;
-  totalGlp: bigint;
+  totalNoe: bigint;
   unrealizedPnl: bigint;
   totalFees: bigint;
-  glpPrice: bigint;
+  noePrice: bigint;
 }
 
 // Price data from oracle

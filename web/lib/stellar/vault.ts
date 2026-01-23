@@ -4,7 +4,7 @@ import { rpc, scValToNative } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
 /**
- * Deposit USDC (XLM on testnet) and receive GLP tokens
+ * Deposit USDC and receive NOE tokens
  */
 export async function deposit(
   signerPublicKey: string,
@@ -28,16 +28,16 @@ export async function deposit(
 }
 
 /**
- * Withdraw GLP tokens and receive USDC (XLM on testnet)
+ * Withdraw NOE tokens and receive USDC
  */
 export async function withdraw(
   signerPublicKey: string,
   signTransaction: (xdr: string) => Promise<string>,
-  glpAmount: bigint
+  noeAmount: bigint
 ): Promise<bigint> {
   const args = [
     toScVal(signerPublicKey, 'address'),
-    toScVal(glpAmount, 'i128'),
+    toScVal(noeAmount, 'i128'),
   ];
 
   const xdr = await buildTransaction(signerPublicKey, vaultContract, 'withdraw', args);
@@ -83,9 +83,9 @@ export async function getPoolInfo(publicKey: string): Promise<PoolInfo | null> {
 }
 
 /**
- * Get GLP price in USDC (read-only)
+ * Get NOE price in USDC (read-only)
  */
-export async function getGlpPrice(publicKey: string): Promise<bigint> {
+export async function getNoePrice(publicKey: string): Promise<bigint> {
   try {
     const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
 
@@ -113,9 +113,9 @@ export async function getGlpPrice(publicKey: string): Promise<bigint> {
 }
 
 /**
- * Get user's GLP balance (read-only)
+ * Get user's NOE balance (read-only)
  */
-export async function getGlpBalance(
+export async function getNoeBalance(
   publicKey: string,
   userAddress: string
 ): Promise<bigint> {

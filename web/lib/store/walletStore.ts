@@ -11,13 +11,13 @@ interface WalletState {
   // Balances
   xlmBalance: number;
   usdcBalance: number;
-  glpBalance: number;
+  noeBalance: number;
 
   // Actions
   setConnected: (address: string, publicKey: string) => void;
   setDisconnected: () => void;
   setConnecting: (isConnecting: boolean) => void;
-  setBalances: (xlm: number, usdc: number, glp: number) => void;
+  setBalances: (xlm: number, usdc: number, noe: number) => void;
   setUsdcBalance: (usdc: number) => void;
 }
 
@@ -30,7 +30,7 @@ export const useWalletStore = create<WalletState>()(
       publicKey: null,
       xlmBalance: 0,
       usdcBalance: 0,
-      glpBalance: 0,
+      noeBalance: 0,
 
       setConnected: (address, publicKey) =>
         set({
@@ -48,13 +48,13 @@ export const useWalletStore = create<WalletState>()(
           publicKey: null,
           xlmBalance: 0,
           usdcBalance: 0,
-          glpBalance: 0,
+          noeBalance: 0,
         }),
 
       setConnecting: (isConnecting) => set({ isConnecting }),
 
-      setBalances: (xlmBalance, usdcBalance, glpBalance) =>
-        set({ xlmBalance, usdcBalance, glpBalance }),
+      setBalances: (xlmBalance, usdcBalance, noeBalance) =>
+        set({ xlmBalance, usdcBalance, noeBalance }),
 
       setUsdcBalance: (usdcBalance) => set({ usdcBalance }),
     }),

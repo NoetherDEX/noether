@@ -54,7 +54,7 @@ export function UserSegments() {
             <ul className="space-y-4">
               {[
                 'Earn yield from trading fees and trader losses.',
-                'Mint GLP tokens representing your pool share.',
+                'Mint NOE tokens representing your pool share.',
                 'Proportional and fair distribution.',
                 'Withdraw liquidity anytime.',
               ].map((item, index) => (
