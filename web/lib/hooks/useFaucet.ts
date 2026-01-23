@@ -11,6 +11,7 @@ import {
   DAILY_LIMIT_USDC,
   calculateRunningTotals,
 } from '@/lib/stellar/faucet';
+import { useWallet } from '@/lib/hooks/useWallet';
 
 interface FaucetHistoryResponse {
   success: boolean;
@@ -35,6 +36,7 @@ export type TrustlineStatus = 'checking' | 'not_found' | 'adding' | 'active' | '
 
 export function useFaucet(publicKey: string | null) {
   const queryClient = useQueryClient();
+  const { refreshBalances } = useWallet();
   const [trustlineStatus, setTrustlineStatus] = useState<TrustlineStatus>('checking');
   const [selectedAmount, setSelectedAmount] = useState<ClaimAmount | null>(null);
   const [trustlineError, setTrustlineError] = useState<string | null>(null);
@@ -141,7 +143,9 @@ export function useFaucet(publicKey: string | null) {
     onSuccess: (data) => {
       toast.success(`Received ${data.amount} USDC!`);
       setSelectedAmount(null);
-      // Invalidate and refetch
+      // Refresh wallet balance to show new USDC
+      refreshBalances();
+      // Invalidate and refetch faucet history
       queryClient.invalidateQueries({ queryKey: ['faucet-history', publicKey] });
     },
     onError: (error: Error) => {

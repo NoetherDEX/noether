@@ -54,6 +54,12 @@ export function useWallet() {
   } = useWalletStore();
 
   const connect = useCallback(async () => {
+    // Prevent multiple simultaneous connection attempts
+    if (useWalletStore.getState().isConnecting) {
+      console.log('Connection already in progress, skipping...');
+      return;
+    }
+
     setConnecting(true);
 
     try {
@@ -97,6 +103,9 @@ export function useWallet() {
       console.error('Failed to connect wallet:', error);
       setDisconnected();
       throw error;
+    } finally {
+      // Ensure isConnecting is reset even if something goes wrong
+      setConnecting(false);
     }
   }, [setConnecting, setConnected, setDisconnected, setBalances]);
 

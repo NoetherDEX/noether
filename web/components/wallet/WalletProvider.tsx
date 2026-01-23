@@ -1,9 +1,8 @@
 'use client';
 
-import { ReactNode, createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import { ReactNode, createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { isConnected as checkIsConnected, getPublicKey, getNetwork } from '@stellar/freighter-api';
 import { useWalletStore } from '@/lib/store';
-import { NETWORK } from '@/lib/utils/constants';
 import { getUSDCBalance } from '@/lib/stellar/token';
 
 // Horizon Testnet URL for balance fetching
@@ -68,12 +67,9 @@ async function fetchXLMBalance(publicKey: string): Promise<number> {
 export function WalletProvider({ children }: WalletProviderProps) {
   const [isReady, setIsReady] = useState(false);
   const [hasFreighter, setHasFreighter] = useState(false);
-  const { setConnected, setDisconnected, setBalances, publicKey, isConnected } = useWalletStore();
+  const { setConnected, setDisconnected, setBalances } = useWalletStore();
 
-  // Track previous public key to detect account changes
-  const previousPublicKeyRef = useRef<string | null>(null);
-
-  // Refresh balance function
+  // Refresh balance function - can be called manually after trades/deposits
   const refreshBalance = useCallback(async () => {
     const currentPublicKey = useWalletStore.getState().publicKey;
     if (!currentPublicKey) return;
@@ -85,99 +81,62 @@ export function WalletProvider({ children }: WalletProviderProps) {
     setBalances(xlmBalance, usdcBalance, 0); // GLP balance would come from contract
   }, [setBalances]);
 
-  // Initial setup - check for Freighter and existing connection
+  // Initial setup - check for Freighter and existing connection (runs once on mount)
   useEffect(() => {
+    let cancelled = false;
+
     const init = async () => {
       try {
         // Check if Freighter is available (client-side only)
         const connected = await checkIsConnected();
+        if (cancelled) return;
+
         setHasFreighter(true);
 
         if (connected) {
           try {
             const pubKey = await getPublicKey();
-            if (pubKey) {
-              // Verify we're on testnet
-              const network = await getNetwork();
-              if (network !== 'TESTNET' && network !== 'testnet') {
-                console.warn(`Connected to ${network}, please switch to TESTNET in Freighter`);
-              }
+            if (cancelled || !pubKey) {
+              if (!pubKey) setDisconnected();
+              setIsReady(true);
+              return;
+            }
 
-              setConnected(pubKey, pubKey);
-              previousPublicKeyRef.current = pubKey;
+            // Verify we're on testnet
+            const network = await getNetwork();
+            if (network !== 'TESTNET' && network !== 'testnet') {
+              console.warn(`Connected to ${network}, please switch to TESTNET in Freighter`);
+            }
 
-              // Fetch initial balances
-              const [xlmBalance, usdcBalance] = await Promise.all([
-                fetchXLMBalance(pubKey),
-                getUSDCBalance(pubKey),
-              ]);
+            setConnected(pubKey, pubKey);
+
+            // Fetch initial balances
+            const [xlmBalance, usdcBalance] = await Promise.all([
+              fetchXLMBalance(pubKey),
+              getUSDCBalance(pubKey),
+            ]);
+            if (!cancelled) {
               setBalances(xlmBalance, usdcBalance, 0);
             }
           } catch {
             // Not connected or not allowed
-            setDisconnected();
+            if (!cancelled) setDisconnected();
           }
         }
       } catch {
         // Freighter not installed
-        setHasFreighter(false);
+        if (!cancelled) setHasFreighter(false);
       }
 
-      setIsReady(true);
+      if (!cancelled) setIsReady(true);
     };
 
     init();
-  }, [setConnected, setDisconnected, setBalances]);
 
-  // Poll for account changes every 2 seconds
-  useEffect(() => {
-    if (!hasFreighter) return;
-
-    const checkForAccountChange = async () => {
-      try {
-        const connected = await checkIsConnected();
-
-        if (connected) {
-          const currentPubKey = await getPublicKey();
-          const storeState = useWalletStore.getState();
-
-          // Check if account changed
-          if (currentPubKey && currentPubKey !== previousPublicKeyRef.current) {
-            console.log('Account changed detected:', currentPubKey);
-            previousPublicKeyRef.current = currentPubKey;
-
-            // Update store with new account
-            setConnected(currentPubKey, currentPubKey);
-
-            // Fetch new balances
-            const [xlmBalance, usdcBalance] = await Promise.all([
-              fetchXLMBalance(currentPubKey),
-              getUSDCBalance(currentPubKey),
-            ]);
-            setBalances(xlmBalance, usdcBalance, 0);
-          } else if (storeState.isConnected && storeState.publicKey) {
-            // Refresh balance periodically even if account didn't change
-            const [xlmBalance, usdcBalance] = await Promise.all([
-              fetchXLMBalance(storeState.publicKey),
-              getUSDCBalance(storeState.publicKey),
-            ]);
-            setBalances(xlmBalance, usdcBalance, 0);
-          }
-        } else if (useWalletStore.getState().isConnected) {
-          // Was connected but now disconnected
-          setDisconnected();
-          previousPublicKeyRef.current = null;
-        }
-      } catch (error) {
-        console.error('Error checking for account change:', error);
-      }
+    return () => {
+      cancelled = true;
     };
-
-    // Start polling
-    const interval = setInterval(checkForAccountChange, 2000);
-
-    return () => clearInterval(interval);
-  }, [hasFreighter, setConnected, setDisconnected, setBalances]);
+  }, [setConnected, setDisconnected, setBalances]);
 
   return (
     <WalletContext.Provider value={{ isReady, hasFreighter, refreshBalance }}>
