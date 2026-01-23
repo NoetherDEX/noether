@@ -27,7 +27,8 @@ import * as path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 // Configuration
-const ADMIN_SECRET = process.env.ADMIN_SECRET_KEY;
+// Use dedicated ORACLE_SECRET_KEY to avoid conflicts with faucet operations
+const ORACLE_SECRET = process.env.ORACLE_SECRET_KEY || process.env.ADMIN_SECRET_KEY;
 const MOCK_ORACLE_ID = process.env.NEXT_PUBLIC_MOCK_ORACLE_ID!;
 const RPC_URL = process.env.RPC_URL || 'https://soroban-testnet.stellar.org';
 const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
@@ -111,7 +112,7 @@ function sleep(ms: number): Promise<void> {
 async function updatePriceWithRetry(
   sorobanRpc: rpc.Server,
   oracleContract: Contract,
-  adminKeypair: Keypair,
+  oracleKeypair: Keypair,
   asset: string,
   price: number
 ): Promise<UpdateResult> {
@@ -119,7 +120,7 @@ async function updatePriceWithRetry(
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const account = await sorobanRpc.getAccount(adminKeypair.publicKey());
+      const account = await sorobanRpc.getAccount(oracleKeypair.publicKey());
       const priceScaled = toPrecision(price);
 
       const tx = new TransactionBuilder(account, {
@@ -149,7 +150,7 @@ async function updatePriceWithRetry(
 
       // Prepare and sign
       const preparedTx = rpc.assembleTransaction(tx, simResponse).build();
-      preparedTx.sign(adminKeypair);
+      preparedTx.sign(oracleKeypair);
 
       // Submit
       const sendResponse = await sorobanRpc.sendTransaction(preparedTx);
@@ -206,7 +207,7 @@ async function updatePriceWithRetry(
 async function updateAllPrices(
   sorobanRpc: rpc.Server,
   oracleContract: Contract,
-  adminKeypair: Keypair
+  oracleKeypair: Keypair
 ): Promise<void> {
   const timestamp = new Date().toLocaleTimeString();
   const results: UpdateResult[] = [];
@@ -226,7 +227,7 @@ async function updateAllPrices(
         const result = await updatePriceWithRetry(
           sorobanRpc,
           oracleContract,
-          adminKeypair,
+          oracleKeypair,
           asset,
           price
         );
@@ -272,8 +273,8 @@ async function main() {
   console.log('');
 
   // Validate environment
-  if (!ADMIN_SECRET) {
-    console.error('ERROR: ADMIN_SECRET_KEY not found in .env file');
+  if (!ORACLE_SECRET) {
+    console.error('ERROR: ORACLE_SECRET_KEY (or ADMIN_SECRET_KEY) not found in .env file');
     process.exit(1);
   }
 
@@ -283,12 +284,12 @@ async function main() {
   }
 
   // Setup
-  const adminKeypair = Keypair.fromSecret(ADMIN_SECRET);
+  const oracleKeypair = Keypair.fromSecret(ORACLE_SECRET);
   const sorobanRpc = new rpc.Server(RPC_URL);
   const oracleContract = new Contract(MOCK_ORACLE_ID);
 
-  console.log(`Admin:      ${adminKeypair.publicKey().slice(0, 8)}...`);
-  console.log(`Oracle:     ${MOCK_ORACLE_ID.slice(0, 8)}...`);
+  console.log(`Account:    ${oracleKeypair.publicKey().slice(0, 8)}...`);
+  console.log(`Contract:   ${MOCK_ORACLE_ID.slice(0, 8)}...`);
   console.log(`Interval:   ${UPDATE_INTERVAL_MS / 1000} seconds`);
   console.log(`Assets:     ${ASSETS.join(', ')}`);
   console.log(`Max Retry:  ${MAX_RETRIES} attempts per asset`);
@@ -303,11 +304,11 @@ async function main() {
   });
 
   // Initial update
-  await updateAllPrices(sorobanRpc, oracleContract, adminKeypair);
+  await updateAllPrices(sorobanRpc, oracleContract, oracleKeypair);
 
   // Start interval
   setInterval(async () => {
-    await updateAllPrices(sorobanRpc, oracleContract, adminKeypair);
+    await updateAllPrices(sorobanRpc, oracleContract, oracleKeypair);
   }, UPDATE_INTERVAL_MS);
 }
 
