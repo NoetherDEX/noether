@@ -1,11 +1,12 @@
-//! # Vault Contract (GLP Liquidity Pool)
+//! # Vault Contract (NOE Liquidity Pool)
 //!
 //! Manages the liquidity pool that acts as counterparty to all trades.
 //!
 //! ## Core Concepts
 //!
-//! **GLP (Global Liquidity Provider) Token:**
+//! **NOE (Noether LP) Token:**
 //! - Represents proportional ownership of the liquidity pool
+//! - Real Stellar Classic Asset + SAC wrapper (visible in wallets, tradeable on SDEX)
 //! - Price fluctuates based on pool performance
 //! - LPs profit when traders lose, and vice versa
 //!
@@ -14,10 +15,16 @@
 //! AUM = Total USDC Deposited - Unrealized Trader PnL + Collected Fees
 //! ```
 //!
-//! **GLP Price:**
+//! **NOE Price:**
 //! ```
-//! GLP Price = AUM / Total GLP Supply
+//! NOE Price = AUM / Circulating NOE Supply
 //! ```
+//!
+//! ## Pre-mint + Transfer Model
+//!
+//! NOE tokens are pre-minted to the vault. On deposit/withdraw:
+//! - Deposit: Vault transfers NOE to user
+//! - Withdraw: User transfers NOE back to vault
 //!
 //! ## Settlement Architecture
 //!
@@ -44,7 +51,7 @@ use noether_common::{
 };
 
 mod storage;
-mod glp;
+mod noe;
 
 use storage::*;
 
@@ -66,6 +73,7 @@ impl VaultContract {
     /// # Arguments
     /// * `admin` - Admin address for configuration
     /// * `usdc_token` - USDC token contract address
+    /// * `noe_token` - NOE token contract address (SAC-wrapped classic asset)
     /// * `market_contract` - Market contract address (for settlement authorization)
     /// * `deposit_fee_bps` - Fee on deposits in basis points (e.g., 30 = 0.3%)
     /// * `withdraw_fee_bps` - Fee on withdrawals in basis points
@@ -73,6 +81,7 @@ impl VaultContract {
         env: Env,
         admin: Address,
         usdc_token: Address,
+        noe_token: Address,
         market_contract: Address,
         deposit_fee_bps: u32,
         withdraw_fee_bps: u32,
@@ -91,13 +100,14 @@ impl VaultContract {
         // Store configuration
         set_admin(&env, &admin);
         set_usdc_token(&env, &usdc_token);
+        set_noe_token(&env, &noe_token);
         set_market_contract(&env, &market_contract);
         set_deposit_fee_bps(&env, deposit_fee_bps);
         set_withdraw_fee_bps(&env, withdraw_fee_bps);
 
         // Initialize pool state
         set_total_usdc(&env, 0);
-        set_total_glp(&env, 0);
+        set_total_noe_circulating(&env, 0);
         set_unrealized_pnl(&env, 0);
         set_total_fees(&env, 0);
         set_initialized(&env, true);
@@ -108,7 +118,7 @@ impl VaultContract {
 
         env.events().publish(
             (Symbol::new(&env, "initialized"),),
-            (admin, market_contract, usdc_token),
+            (admin, market_contract, usdc_token, noe_token),
         );
 
         Ok(())
@@ -118,18 +128,18 @@ impl VaultContract {
     // Liquidity Provider Functions
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Deposit USDC and receive GLP tokens.
+    /// Deposit USDC and receive NOE tokens.
     ///
     /// # Arguments
     /// * `depositor` - Address depositing USDC
     /// * `usdc_amount` - Amount of USDC to deposit (7 decimals)
     ///
     /// # Returns
-    /// Amount of GLP tokens minted
+    /// Amount of NOE tokens received
     ///
     /// # Formula
     /// ```
-    /// glp_minted = usdc_amount * total_glp / aum  (or 1:1 if first deposit)
+    /// noe_amount = usdc_amount * circulating_noe / aum  (or 1:1 if first deposit)
     /// ```
     pub fn deposit(env: Env, depositor: Address, usdc_amount: i128) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
@@ -148,14 +158,20 @@ impl VaultContract {
         let net_amount = usdc_amount - fee;
 
         // Get current pool state
-        let total_glp = get_total_glp(&env);
+        let circulating_noe = get_total_noe_circulating(&env);
         let aum = Self::calculate_aum_internal(&env);
 
-        // Calculate GLP to mint
-        let glp_to_mint = calculate_glp_for_deposit(net_amount, total_glp, aum)?;
+        // Calculate NOE to transfer to user
+        let noe_amount = calculate_glp_for_deposit(net_amount, circulating_noe, aum)?;
 
-        if glp_to_mint <= 0 {
+        if noe_amount <= 0 {
             return Err(NoetherError::InvalidAmount);
+        }
+
+        // Check vault has enough NOE to transfer
+        let vault_noe = noe::vault_balance(&env);
+        if noe_amount > vault_noe {
+            return Err(NoetherError::InsufficientLiquidity);
         }
 
         // Transfer USDC from depositor to vault
@@ -167,55 +183,58 @@ impl VaultContract {
         set_total_usdc(&env, get_total_usdc(&env) + usdc_amount);
         set_total_fees(&env, get_total_fees(&env) + fee);
 
-        // Mint GLP to depositor
-        glp::mint(&env, &depositor, glp_to_mint);
+        // Transfer NOE to depositor
+        noe::transfer_to_user(&env, &depositor, noe_amount);
 
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "deposit"),),
-            (depositor.clone(), usdc_amount, glp_to_mint, fee),
+            (depositor.clone(), usdc_amount, noe_amount, fee),
         );
 
         extend_instance_ttl(&env);
 
-        Ok(glp_to_mint)
+        Ok(noe_amount)
     }
 
-    /// Withdraw USDC by burning GLP tokens.
+    /// Withdraw USDC by returning NOE tokens.
     ///
     /// # Arguments
     /// * `withdrawer` - Address withdrawing
-    /// * `glp_amount` - Amount of GLP tokens to burn
+    /// * `noe_amount` - Amount of NOE tokens to return
     ///
     /// # Returns
     /// Amount of USDC returned
     ///
     /// # Formula
     /// ```
-    /// usdc_returned = glp_amount * aum / total_glp - withdrawal_fee
+    /// usdc_returned = noe_amount * aum / circulating_noe - withdrawal_fee
     /// ```
-    pub fn withdraw(env: Env, withdrawer: Address, glp_amount: i128) -> Result<i128, NoetherError> {
+    ///
+    /// # Note
+    /// User must approve the vault to spend their NOE tokens before calling.
+    pub fn withdraw(env: Env, withdrawer: Address, noe_amount: i128) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
 
-        if glp_amount <= 0 {
+        if noe_amount <= 0 {
             return Err(NoetherError::InvalidAmount);
         }
 
         withdrawer.require_auth();
 
-        // Check GLP balance
-        let glp_balance = glp::balance(&env, &withdrawer);
-        if glp_balance < glp_amount {
+        // Check NOE balance
+        let noe_balance = noe::balance(&env, &withdrawer);
+        if noe_balance < noe_amount {
             return Err(NoetherError::InsufficientGlpBalance);
         }
 
         // Get current pool state
-        let total_glp = get_total_glp(&env);
+        let circulating_noe = get_total_noe_circulating(&env);
         let aum = Self::calculate_aum_internal(&env);
 
         // Calculate USDC to return
-        let gross_usdc = calculate_usdc_for_withdrawal(glp_amount, total_glp, aum)?;
+        let gross_usdc = calculate_usdc_for_withdrawal(noe_amount, circulating_noe, aum)?;
 
         // Calculate fee
         let fee_bps = get_withdraw_fee_bps(&env);
@@ -226,7 +245,7 @@ impl VaultContract {
             return Err(NoetherError::InvalidAmount);
         }
 
-        // Check liquidity (actual token balance in vault)
+        // Check USDC liquidity (actual token balance in vault)
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
         let vault_balance = token_client.balance(&env.current_contract_address());
@@ -235,8 +254,8 @@ impl VaultContract {
             return Err(NoetherError::InsufficientLiquidity);
         }
 
-        // Burn GLP from withdrawer
-        glp::burn(&env, &withdrawer, glp_amount);
+        // Transfer NOE from withdrawer back to vault
+        noe::transfer_from_user(&env, &withdrawer, noe_amount);
 
         // Update pool state
         set_total_usdc(&env, get_total_usdc(&env) - gross_usdc);
@@ -248,7 +267,7 @@ impl VaultContract {
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "withdraw"),),
-            (withdrawer.clone(), glp_amount, net_usdc, fee),
+            (withdrawer.clone(), noe_amount, net_usdc, fee),
         );
 
         extend_instance_ttl(&env);
@@ -433,32 +452,38 @@ impl VaultContract {
 
         Ok(PoolInfo {
             total_usdc: get_total_usdc(&env),
-            total_glp: get_total_glp(&env),
+            total_glp: get_total_noe_circulating(&env),
             aum: Self::calculate_aum_internal(&env),
             unrealized_pnl: get_unrealized_pnl(&env),
             total_fees: get_total_fees(&env),
         })
     }
 
-    /// Get current GLP price in USDC.
+    /// Get current NOE price in USDC.
     /// Returns price with 7 decimals (1.0 = 10_000_000).
-    pub fn get_glp_price(env: Env) -> Result<i128, NoetherError> {
+    pub fn get_noe_price(env: Env) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
 
-        let total_glp = get_total_glp(&env);
+        let circulating_noe = get_total_noe_circulating(&env);
         let aum = Self::calculate_aum_internal(&env);
 
-        calculate_glp_price(total_glp, aum)
+        calculate_glp_price(circulating_noe, aum)
     }
 
-    /// Get GLP balance for an address.
-    pub fn get_glp_balance(env: Env, user: Address) -> i128 {
-        glp::balance(&env, &user)
+    /// Get NOE balance for an address (queries token contract).
+    pub fn get_noe_balance(env: Env, user: Address) -> i128 {
+        noe::balance(&env, &user)
     }
 
-    /// Get total GLP supply.
-    pub fn get_total_glp(env: Env) -> i128 {
-        get_total_glp(&env)
+    /// Get total circulating NOE (held by users).
+    pub fn get_total_noe(env: Env) -> i128 {
+        get_total_noe_circulating(&env)
+    }
+
+    /// Get NOE token address.
+    pub fn get_noe_token(env: Env) -> Result<Address, NoetherError> {
+        require_initialized(&env)?;
+        Ok(get_noe_token(&env))
     }
 
     /// Get total USDC in pool (accounting value).

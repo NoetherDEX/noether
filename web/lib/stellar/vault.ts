@@ -1,6 +1,6 @@
 import { vaultContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
 import type { PoolInfo } from '@/types';
-import { rpc, scValToNative } from '@stellar/stellar-sdk';
+import { Contract, rpc, scValToNative } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
 /**
@@ -28,7 +28,44 @@ export async function deposit(
 }
 
 /**
+ * Approve NOE tokens for vault to withdraw
+ * Must be called before withdraw() when using real NOE tokens
+ */
+export async function approveNoeForWithdraw(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  noeAmount: bigint
+): Promise<void> {
+  const noeTokenId = CONTRACTS.NOE_TOKEN;
+  if (!noeTokenId) {
+    throw new Error('NOE token contract not configured');
+  }
+
+  const noeToken = new Contract(noeTokenId);
+
+  // Get current ledger for expiration calculation
+  const ledger = await sorobanRpc.getLatestLedger();
+  const expirationLedger = ledger.sequence + 500_000; // ~1 month
+
+  const args = [
+    toScVal(signerPublicKey, 'address'),      // from (user)
+    toScVal(CONTRACTS.VAULT, 'address'),      // spender (vault)
+    toScVal(noeAmount, 'i128'),               // amount
+    toScVal(expirationLedger, 'u32'),         // expiration_ledger
+  ];
+
+  const xdr = await buildTransaction(signerPublicKey, noeToken, 'approve', args);
+  const signedXdr = await signTransaction(xdr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status !== 'SUCCESS') {
+    throw new Error('Failed to approve NOE for withdrawal');
+  }
+}
+
+/**
  * Withdraw NOE tokens and receive USDC
+ * Note: User must call approveNoeForWithdraw first
  */
 export async function withdraw(
   signerPublicKey: string,
@@ -90,7 +127,7 @@ export async function getNoePrice(publicKey: string): Promise<bigint> {
     const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
 
     const account = await sorobanRpc.getAccount(publicKey);
-    const operation = vaultContract.call('get_glp_price');
+    const operation = vaultContract.call('get_noe_price');
 
     const transaction = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -114,6 +151,7 @@ export async function getNoePrice(publicKey: string): Promise<bigint> {
 
 /**
  * Get user's NOE balance (read-only)
+ * Now queries the real NOE token contract directly
  */
 export async function getNoeBalance(
   publicKey: string,
@@ -123,7 +161,7 @@ export async function getNoeBalance(
     const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
 
     const account = await sorobanRpc.getAccount(publicKey);
-    const operation = vaultContract.call('get_glp_balance', toScVal(userAddress, 'address'));
+    const operation = vaultContract.call('get_noe_balance', toScVal(userAddress, 'address'));
 
     const transaction = new TransactionBuilder(account, {
       fee: BASE_FEE,

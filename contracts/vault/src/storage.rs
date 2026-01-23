@@ -16,12 +16,14 @@ pub enum DataKey {
     Admin,
     /// USDC token contract address
     UsdcToken,
+    /// NOE token contract address (SAC-wrapped classic asset)
+    NoeToken,
     /// Market contract address (authorized for settlements)
     MarketContract,
     /// Total USDC in pool (7 decimals)
     TotalUsdc,
-    /// Total GLP supply (7 decimals)
-    TotalGlp,
+    /// Total NOE circulating (held by users, not in vault) (7 decimals)
+    TotalNoeCirculating,
     /// Unrealized trader PnL (7 decimals)
     UnrealizedPnl,
     /// Total fees collected (7 decimals)
@@ -34,8 +36,6 @@ pub enum DataKey {
     Initialized,
     /// Whether contract is paused
     Paused,
-    /// GLP balance for a user
-    GlpBalance(Address),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -82,6 +82,14 @@ pub fn set_market_contract(env: &Env, market: &Address) {
     env.storage().instance().set(&DataKey::MarketContract, market);
 }
 
+pub fn get_noe_token(env: &Env) -> Address {
+    env.storage().instance().get(&DataKey::NoeToken).unwrap()
+}
+
+pub fn set_noe_token(env: &Env, token: &Address) {
+    env.storage().instance().set(&DataKey::NoeToken, token);
+}
+
 pub fn get_deposit_fee_bps(env: &Env) -> u32 {
     env.storage().instance().get(&DataKey::DepositFeeBps).unwrap_or(30) // 0.3% default
 }
@@ -111,13 +119,13 @@ pub fn set_total_usdc(env: &Env, amount: i128) {
     env.storage().persistent().extend_ttl(&DataKey::TotalUsdc, 2_592_000, 2_592_000);
 }
 
-pub fn get_total_glp(env: &Env) -> i128 {
-    env.storage().persistent().get(&DataKey::TotalGlp).unwrap_or(0)
+pub fn get_total_noe_circulating(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::TotalNoeCirculating).unwrap_or(0)
 }
 
-pub fn set_total_glp(env: &Env, amount: i128) {
-    env.storage().persistent().set(&DataKey::TotalGlp, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::TotalGlp, 2_592_000, 2_592_000);
+pub fn set_total_noe_circulating(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::TotalNoeCirculating, &amount);
+    env.storage().persistent().extend_ttl(&DataKey::TotalNoeCirculating, 2_592_000, 2_592_000);
 }
 
 pub fn get_unrealized_pnl(env: &Env) -> i128 {
@@ -136,19 +144,6 @@ pub fn get_total_fees(env: &Env) -> i128 {
 pub fn set_total_fees(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::TotalFees, &amount);
     env.storage().persistent().extend_ttl(&DataKey::TotalFees, 2_592_000, 2_592_000);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// User Storage (GLP Balances)
-// ═══════════════════════════════════════════════════════════════════════════
-
-pub fn get_glp_balance(env: &Env, user: &Address) -> i128 {
-    env.storage().persistent().get(&DataKey::GlpBalance(user.clone())).unwrap_or(0)
-}
-
-pub fn set_glp_balance(env: &Env, user: &Address, amount: i128) {
-    env.storage().persistent().set(&DataKey::GlpBalance(user.clone()), &amount);
-    env.storage().persistent().extend_ttl(&DataKey::GlpBalance(user.clone()), 2_592_000, 2_592_000);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

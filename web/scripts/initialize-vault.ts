@@ -25,6 +25,7 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET_KEY;
 const VAULT_CONTRACT_ID = process.env.NEXT_PUBLIC_VAULT_ID!;
 const MARKET_CONTRACT_ID = process.env.NEXT_PUBLIC_MARKET_ID!;
 const USDC_TOKEN_ID = process.env.NEXT_PUBLIC_USDC_TOKEN_ID!;
+const NOE_TOKEN_ID = process.env.NEXT_PUBLIC_NOE_TOKEN_ID!;
 const RPC_URL = process.env.RPC_URL || 'https://soroban-testnet.stellar.org';
 const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
 
@@ -54,6 +55,7 @@ async function main() {
   console.log(`  Vault:         ${VAULT_CONTRACT_ID}`);
   console.log(`  Market:        ${MARKET_CONTRACT_ID}`);
   console.log(`  USDC Token:    ${USDC_TOKEN_ID}`);
+  console.log(`  NOE Token:     ${NOE_TOKEN_ID}`);
   console.log(`  Deposit Fee:   ${DEPOSIT_FEE_BPS / 100}%`);
   console.log(`  Withdraw Fee:  ${WITHDRAW_FEE_BPS / 100}%`);
 
@@ -66,10 +68,11 @@ async function main() {
     // Step 2: Build initialization transaction
     console.log('\n[2/3] Building initialization transaction...');
 
-    // initialize(admin, usdc_token, market_contract, deposit_fee_bps, withdraw_fee_bps)
+    // initialize(admin, usdc_token, noe_token, market_contract, deposit_fee_bps, withdraw_fee_bps)
     const args = [
       new Address(adminPublicKey).toScVal(),           // admin
       new Address(USDC_TOKEN_ID).toScVal(),            // usdc_token
+      new Address(NOE_TOKEN_ID).toScVal(),             // noe_token
       new Address(MARKET_CONTRACT_ID).toScVal(),       // market_contract
       nativeToScVal(DEPOSIT_FEE_BPS, { type: 'u32' }), // deposit_fee_bps
       nativeToScVal(WITHDRAW_FEE_BPS, { type: 'u32' }),// withdraw_fee_bps

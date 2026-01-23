@@ -8,7 +8,7 @@ import { WalletProvider } from '@/components/wallet';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { formatUSD, formatNumber, formatPercent, fromPrecision, toPrecision, truncateAddress } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
-import { setMarketContract, getMarketContract, updateOraclePrice } from '@/lib/stellar/vault';
+import { setMarketContract, getMarketContract, updateOraclePrice, deposit, withdraw, approveNoeForWithdraw, getPoolInfo, getNoeBalance, getNoePrice } from '@/lib/stellar/vault';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 import { CONTRACTS } from '@/lib/utils/constants';
 import type { Ticker } from '@/types';
@@ -74,20 +74,8 @@ function VaultPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch pool data
+  // Fetch pool data on mount and when connection changes
   useEffect(() => {
-    const fetchPoolData = async () => {
-      // TODO: Fetch from contract
-      // const poolInfo = await getPoolInfo(publicKey);
-      // const noeBalance = await getNoeBalance(publicKey, publicKey);
-
-      // Fetch current market contract address
-      if (publicKey) {
-        const marketAddr = await getMarketContract(publicKey);
-        setCurrentMarketContract(marketAddr);
-      }
-    };
-
     if (isConnected && publicKey) {
       fetchPoolData();
     }
@@ -147,13 +135,16 @@ function VaultPage() {
   };
 
   const handleDeposit = async () => {
-    if (!depositAmount || !isConnected) return;
+    if (!depositAmount || !isConnected || !publicKey) return;
 
     setIsDepositing(true);
     try {
-      // TODO: Call deposit contract
-      console.log('Depositing:', depositAmount);
+      const amountWithPrecision = toPrecision(parseFloat(depositAmount));
+      const noeReceived = await deposit(publicKey, sign, amountWithPrecision);
+      console.log('Deposited! NOE received:', fromPrecision(Number(noeReceived)));
       setDepositAmount('');
+      // Refresh pool stats after deposit
+      fetchPoolData();
     } catch (error) {
       console.error('Deposit failed:', error);
     } finally {
@@ -162,17 +153,61 @@ function VaultPage() {
   };
 
   const handleWithdraw = async () => {
-    if (!withdrawAmount || !isConnected) return;
+    if (!withdrawAmount || !isConnected || !publicKey) return;
 
     setIsWithdrawing(true);
     try {
-      // TODO: Call withdraw contract
-      console.log('Withdrawing:', withdrawAmount);
+      const noeAmount = toPrecision(parseFloat(withdrawAmount));
+
+      // Step 1: Approve NOE tokens for vault to spend
+      console.log('Approving NOE for withdrawal...');
+      await approveNoeForWithdraw(publicKey, sign, noeAmount);
+
+      // Step 2: Withdraw (vault transfers NOE from user, sends USDC back)
+      console.log('Withdrawing...');
+      const usdcReceived = await withdraw(publicKey, sign, noeAmount);
+      console.log('Withdrawn! USDC received:', fromPrecision(Number(usdcReceived)));
+
       setWithdrawAmount('');
+      // Refresh pool stats after withdrawal
+      fetchPoolData();
     } catch (error) {
       console.error('Withdraw failed:', error);
     } finally {
       setIsWithdrawing(false);
+    }
+  };
+
+  // Fetch pool data function (extracted for reuse)
+  const fetchPoolData = async () => {
+    if (!publicKey) return;
+
+    try {
+      const [poolInfo, noeBalance, noePrice] = await Promise.all([
+        getPoolInfo(publicKey),
+        getNoeBalance(publicKey, publicKey),
+        getNoePrice(publicKey),
+      ]);
+
+      if (poolInfo) {
+        const noePriceNum = fromPrecision(Number(noePrice));
+        const yourNoeNum = fromPrecision(Number(noeBalance));
+
+        setPoolStats({
+          tvl: fromPrecision(Number(poolInfo.aum)),
+          noePrice: noePriceNum,
+          apy: 12.5, // TODO: Calculate from actual fees
+          totalFees: fromPrecision(Number(poolInfo.total_fees)),
+          yourNoe: yourNoeNum,
+          yourValue: yourNoeNum * noePriceNum,
+        });
+      }
+
+      // Fetch current market contract address
+      const marketAddr = await getMarketContract(publicKey);
+      setCurrentMarketContract(marketAddr);
+    } catch (error) {
+      console.error('Failed to fetch pool data:', error);
     }
   };
 
