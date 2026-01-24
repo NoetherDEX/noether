@@ -8,6 +8,12 @@ export const CONTRACTS = {
   NOE_TOKEN: process.env.NEXT_PUBLIC_NOE_TOKEN_ID || 'CD7VRBXIDYP2C2F2AZZL242GY4PRDVDH2BG3LAN2ASXYUXCPHWQJTDP5',
 } as const;
 
+// NOE Asset (Classic Stellar Asset)
+export const NOE_ASSET = {
+  CODE: process.env.NEXT_PUBLIC_NOE_ASSET_CODE || 'NOE',
+  ISSUER: process.env.NEXT_PUBLIC_NOE_ISSUER || 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN',
+} as const;
+
 // Network configuration
 export const NETWORK = {
   NAME: 'testnet' as const,
