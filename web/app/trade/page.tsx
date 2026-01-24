@@ -12,6 +12,7 @@ import {
   AssetSelector,
   PositionsList,
   TradeHistoryContainer,
+  RecentTrades,
 } from '@/components/trading';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { TIMEFRAMES } from '@/lib/utils/constants';
@@ -141,15 +142,23 @@ function TradePage() {
         <div className="max-w-[1800px] mx-auto p-4 lg:p-6">
           {/* Main Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
-            {/* Left Sidebar - Asset Selector (Desktop) */}
+            {/* Left Sidebar - Split: Markets (Top 50%) + Recent Trades (Bottom 50%) */}
             <div className="hidden xl:block xl:col-span-2">
-              <Card className="sticky top-20">
-                <h3 className="text-sm font-medium text-neutral-400 mb-4">Markets</h3>
-                <AssetSelector
-                  selectedAsset={selectedAsset}
-                  onSelect={setSelectedAsset}
-                />
-              </Card>
+              <div className="sticky top-20 flex flex-col gap-4 h-[calc(100vh-120px)]">
+                {/* Top Half: Markets */}
+                <Card className="flex-1 min-h-0 overflow-hidden">
+                  <h3 className="text-sm font-medium text-neutral-400 mb-4">Markets</h3>
+                  <AssetSelector
+                    selectedAsset={selectedAsset}
+                    onSelect={setSelectedAsset}
+                  />
+                </Card>
+
+                {/* Bottom Half: Recent Trades (Global Activity) */}
+                <Card className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                  <RecentTrades />
+                </Card>
+              </div>
             </div>
 
             {/* Main Content */}
