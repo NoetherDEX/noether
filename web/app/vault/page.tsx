@@ -67,21 +67,39 @@ function VaultPage() {
         hasNoeTrustline(publicKey),
       ]);
 
+      // Debug: Log raw poolInfo to see what we're getting
+      console.log('[Vault] Raw poolInfo:', poolInfo);
+      console.log('[Vault] Raw noePrice:', noePrice);
+      console.log('[Vault] Raw noeBalance:', noeBalance);
+
       if (poolInfo) {
-        const noePriceNum = fromPrecision(Number(noePrice));
-        const noeBalanceNum = fromPrecision(Number(noeBalance));
+        // Safely convert values with fallbacks
+        const noePriceNum = noePrice ? fromPrecision(Number(noePrice)) : 1.0;
+        const noeBalanceNum = noeBalance ? fromPrecision(Number(noeBalance)) : 0;
+
+        // Helper to get field value - Soroban returns snake_case, TypeScript expects camelCase
+        // Check both naming conventions
+        const getField = (obj: Record<string, unknown>, camelCase: string, snakeCase: string): bigint => {
+          const value = obj[camelCase] ?? obj[snakeCase];
+          return value != null ? BigInt(value as string | number | bigint) : BigInt(0);
+        };
+
+        const poolData = poolInfo as unknown as Record<string, unknown>;
 
         // Calculate AUM: Total USDC + Fees - Unrealized PnL
-        const totalUsdc = fromPrecision(Number(poolInfo.totalUsdc));
-        const totalFees = fromPrecision(Number(poolInfo.totalFees));
-        const unrealizedPnl = fromPrecision(Number(poolInfo.unrealizedPnl));
+        const totalUsdc = fromPrecision(Number(getField(poolData, 'totalUsdc', 'total_usdc')));
+        const totalFees = fromPrecision(Number(getField(poolData, 'totalFees', 'total_fees')));
+        const unrealizedPnl = fromPrecision(Number(getField(poolData, 'unrealizedPnl', 'unrealized_pnl')));
+
         const aum = totalUsdc + totalFees - unrealizedPnl;
 
+        console.log('[Vault] Calculated values:', { totalUsdc, totalFees, unrealizedPnl, aum, noePriceNum, noeBalanceNum });
+
         setPoolStats({
-          tvl: aum,
-          noePrice: noePriceNum,
+          tvl: isNaN(aum) ? 0 : aum,
+          noePrice: isNaN(noePriceNum) ? 1.0 : noePriceNum,
           apy: 12.5, // TODO: Calculate from actual fees
-          noeBalance: noeBalanceNum,
+          noeBalance: isNaN(noeBalanceNum) ? 0 : noeBalanceNum,
         });
       }
 

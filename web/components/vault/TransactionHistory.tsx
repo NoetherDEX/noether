@@ -4,13 +4,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { ArrowDownLeft, ArrowUpRight, ExternalLink } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent, Button, Skeleton } from '@/components/ui';
 import { formatNumber, formatDateTime } from '@/lib/utils';
-import { NETWORK } from '@/lib/utils/constants';
+import { NETWORK, NOE_ASSET } from '@/lib/utils/constants';
 
-interface VaultTransaction {
+interface NoeTransaction {
   id: string;
-  type: 'deposit' | 'withdraw';
-  usdcAmount: number;
-  noeAmount: number;
+  type: 'received' | 'sent';
+  amount: number;
   timestamp: string;
   txHash: string;
 }
@@ -50,7 +49,7 @@ export function TransactionHistorySkeleton() {
 }
 
 export function TransactionHistory({ publicKey, isConnected }: TransactionHistoryProps) {
-  const [transactions, setTransactions] = useState<VaultTransaction[]>([]);
+  const [transactions, setTransactions] = useState<NoeTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [visibleCount, setVisibleCount] = useState(5);
 
@@ -59,14 +58,17 @@ export function TransactionHistory({ publicKey, isConnected }: TransactionHistor
 
     setIsLoading(true);
     try {
-      // Fetch operations from Horizon API
-      const response = await fetch(
-        `${NETWORK.HORIZON_URL}/accounts/${publicKey}/operations?limit=100&order=desc`
-      );
+      // Use Horizon's effects endpoint - reliably tracks all balance changes
+      // including SAC (Soroban Asset Contract) token transfers
+      const url = `${NETWORK.HORIZON_URL}/accounts/${publicKey}/effects?limit=100&order=desc`;
+
+      console.log('[TransactionHistory] Fetching effects from Horizon:', url);
+
+      const response = await fetch(url);
 
       if (!response.ok) {
         if (response.status === 404) {
-          // Account not found or no operations
+          console.log('[TransactionHistory] Account not found or no effects');
           setTransactions([]);
           return;
         }
@@ -74,96 +76,59 @@ export function TransactionHistory({ publicKey, isConnected }: TransactionHistor
       }
 
       const data = await response.json();
-      const operations = data._embedded?.records || [];
+      const effects = data._embedded?.records || [];
 
-      // Filter for vault-related operations (invoke_host_function calls to vault contract)
-      const vaultTxs: VaultTransaction[] = [];
+      console.log('[TransactionHistory] Raw effects count:', effects.length);
 
-      for (const op of operations) {
-        // Look for Soroban invoke_host_function operations
-        if (op.type === 'invoke_host_function') {
-          // Check if this operation involves the vault contract
-          // We need to check the function and parameters
-          const isVaultOp = op.function === 'HostFunctionTypeHostFunctionTypeInvokeContract';
+      // Filter for NOE token balance changes (credited/debited)
+      const noeTxs: NoeTransaction[] = [];
+      const seenTxHashes = new Set<string>();
 
-          // For now, we'll include operations that mention our vault or NOE token
-          // In production, you'd parse the parameters more carefully
-          if (op.source_account === publicKey) {
-            // Try to determine if this is a deposit or withdraw based on asset transfers
-            // This is a simplified heuristic
-            const txHash = op.transaction_hash;
+      for (const effect of effects) {
+        // Check if this effect involves NOE token
+        const isNoeEffect =
+          effect.asset_code === NOE_ASSET.CODE &&
+          effect.asset_issuer === NOE_ASSET.ISSUER;
 
-            // Fetch the transaction to get more details
-            try {
-              const txResponse = await fetch(`${NETWORK.HORIZON_URL}/transactions/${txHash}/operations`);
-              if (txResponse.ok) {
-                const txData = await txResponse.json();
-                const txOps = txData._embedded?.records || [];
+        if (!isNoeEffect) continue;
 
-                // Look for token transfer patterns
-                let usdcAmount = 0;
-                let noeAmount = 0;
-                let isDeposit = false;
-                let isWithdraw = false;
+        // Get transaction hash from the effect's links
+        const txHash = effect.transaction_hash ||
+          (effect._links?.operation?.href?.split('/operations/')[0]?.split('/transactions/')[1]) ||
+          '';
 
-                for (const txOp of txOps) {
-                  // Check for SAC token transfers (invoke_host_function with transfer)
-                  if (txOp.asset_code === 'USDC' || txOp.asset?.includes('USDC')) {
-                    usdcAmount = parseFloat(txOp.amount || '0');
-                  }
-                  if (txOp.asset_code === 'NOE' || txOp.asset?.includes('NOE')) {
-                    noeAmount = parseFloat(txOp.amount || '0');
-                  }
+        // Deduplicate by transaction hash (same tx can have multiple effects)
+        if (txHash && seenTxHashes.has(txHash)) continue;
+        if (txHash) seenTxHashes.add(txHash);
 
-                  // Heuristic: if NOE is going TO user, it's a deposit
-                  // if NOE is going FROM user, it's a withdraw
-                  if (txOp.to === publicKey && txOp.asset_code === 'NOE') {
-                    isDeposit = true;
-                  }
-                  if (txOp.from === publicKey && txOp.asset_code === 'NOE') {
-                    isWithdraw = true;
-                  }
-                }
+        // Determine type based on effect type
+        let type: 'received' | 'sent' | null = null;
+        let amount = 0;
 
-                if ((isDeposit || isWithdraw) && (usdcAmount > 0 || noeAmount > 0)) {
-                  vaultTxs.push({
-                    id: op.id,
-                    type: isDeposit ? 'deposit' : 'withdraw',
-                    usdcAmount,
-                    noeAmount,
-                    timestamp: op.created_at,
-                    txHash,
-                  });
-                }
-              }
-            } catch (err) {
-              // Skip this transaction if we can't fetch details
-              console.error('Failed to fetch tx details:', err);
-            }
-          }
+        if (effect.type === 'account_credited') {
+          type = 'received';
+          amount = parseFloat(effect.amount || '0');
+        } else if (effect.type === 'account_debited') {
+          type = 'sent';
+          amount = parseFloat(effect.amount || '0');
         }
 
-        // Also check for classic payment operations involving NOE
-        if (op.type === 'payment' && op.asset_code === 'NOE') {
-          const isDeposit = op.to === publicKey;
-          const isWithdraw = op.from === publicKey;
-
-          if (isDeposit || isWithdraw) {
-            vaultTxs.push({
-              id: op.id,
-              type: isDeposit ? 'deposit' : 'withdraw',
-              usdcAmount: 0, // Would need to correlate with USDC transfer
-              noeAmount: parseFloat(op.amount || '0'),
-              timestamp: op.created_at,
-              txHash: op.transaction_hash,
-            });
-          }
+        if (type && amount > 0) {
+          noeTxs.push({
+            id: effect.id || effect.paging_token,
+            type,
+            amount,
+            timestamp: effect.created_at,
+            txHash,
+          });
         }
       }
 
-      setTransactions(vaultTxs);
+      console.log('[TransactionHistory] Filtered NOE transactions:', noeTxs.length);
+
+      setTransactions(noeTxs);
     } catch (error) {
-      console.error('Failed to fetch transactions:', error);
+      console.error('[TransactionHistory] Failed to fetch transactions:', error);
       setTransactions([]);
     } finally {
       setIsLoading(false);
@@ -181,6 +146,7 @@ export function TransactionHistory({ publicKey, isConnected }: TransactionHistor
   }, [publicKey, isConnected, fetchTransactions]);
 
   const getExplorerUrl = (txHash: string) => {
+    if (!txHash) return '#';
     const network = NETWORK.NAME === 'testnet' ? 'testnet' : 'public';
     return `https://stellar.expert/explorer/${network}/tx/${txHash}`;
   };
@@ -201,9 +167,9 @@ export function TransactionHistory({ publicKey, isConnected }: TransactionHistor
           </div>
         ) : transactions.length === 0 ? (
           <div className="text-center py-8">
-            <p className="text-neutral-400 mb-1">No transactions yet</p>
+            <p className="text-neutral-400 mb-1">No NOE transactions yet</p>
             <p className="text-sm text-neutral-500">
-              Your deposit and withdrawal history will appear here.
+              Your NOE transfer history will appear here.
             </p>
           </div>
         ) : (
@@ -219,32 +185,40 @@ export function TransactionHistory({ publicKey, isConnected }: TransactionHistor
                 <div className="flex items-center gap-3">
                   <div
                     className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      tx.type === 'deposit'
+                      tx.type === 'received'
                         ? 'bg-emerald-500/20'
                         : 'bg-amber-500/20'
                     }`}
                   >
-                    {tx.type === 'deposit' ? (
+                    {tx.type === 'received' ? (
                       <ArrowDownLeft className="w-5 h-5 text-emerald-400" />
                     ) : (
                       <ArrowUpRight className="w-5 h-5 text-amber-400" />
                     )}
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-white capitalize">
-                      {tx.type}
+                    <p className="text-sm font-medium text-white">
+                      {tx.type === 'received' ? 'Received' : 'Sent'} NOE
                     </p>
                     <p className="text-xs text-neutral-500">
-                      {tx.type === 'deposit'
-                        ? `+${formatNumber(tx.usdcAmount)} USDC → ${formatNumber(tx.noeAmount, 2)} NOE`
-                        : `${formatNumber(tx.noeAmount, 2)} NOE → ${formatNumber(tx.usdcAmount)} USDC`}
+                      {tx.type === 'received' ? 'Deposit / Transfer In' : 'Withdraw / Transfer Out'}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-neutral-500">
-                    {formatDateTime(new Date(tx.timestamp))}
-                  </span>
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <p
+                      className={`text-sm font-medium ${
+                        tx.type === 'received' ? 'text-emerald-400' : 'text-amber-400'
+                      }`}
+                    >
+                      {tx.type === 'received' ? '+' : '-'}
+                      {formatNumber(tx.amount, 4)} NOE
+                    </p>
+                    <p className="text-xs text-neutral-500">
+                      {formatDateTime(new Date(tx.timestamp))}
+                    </p>
+                  </div>
                   <ExternalLink className="w-4 h-4 text-neutral-500 group-hover:text-white transition-colors" />
                 </div>
               </a>
