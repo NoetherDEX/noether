@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Skeleton } from '@/components/ui';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
+import { rpc, xdr, scValToNative } from '@stellar/stellar-sdk';
 
 interface GlobalTrade {
   id: string;
@@ -14,7 +15,7 @@ interface GlobalTrade {
   txHash: string;
 }
 
-// Compact relative time format (e.g., "2s", "5m", "1h")
+// Compact relative time format
 function formatCompactTime(date: Date): string {
   const now = Date.now();
   const diff = now - date.getTime();
@@ -33,6 +34,27 @@ const sideColors: Record<GlobalTrade['side'], string> = {
   Close: 'text-white',
   Liq: 'text-amber-400',
 };
+
+// Safely convert BigInt to number with precision (7 decimals)
+function bigIntToNumber(value: bigint | number | undefined, decimals = 7): number {
+  if (value === undefined || value === null) return 0;
+  const num = typeof value === 'bigint' ? Number(value) : value;
+  if (isNaN(num)) return 0;
+  return num / Math.pow(10, decimals);
+}
+
+// Parse direction from contract format
+function parseDirection(dirVal: unknown): 'Long' | 'Short' {
+  if (typeof dirVal === 'number') {
+    return dirVal === 0 ? 'Long' : 'Short';
+  } else if (typeof dirVal === 'object' && dirVal !== null) {
+    return 'Long' in dirVal ? 'Long' : 'Short';
+  }
+  return 'Long';
+}
+
+// Create Soroban RPC client
+const sorobanRpc = new rpc.Server(NETWORK.RPC_URL);
 
 export function RecentTradesSkeleton() {
   return (
@@ -58,176 +80,142 @@ export function RecentTrades() {
   const [isLoading, setIsLoading] = useState(true);
   const [, setLastUpdate] = useState<Date>(new Date());
 
-  // Fetch contract events using Soroban RPC
-  const fetchRecentTrades = useCallback(async () => {
+  // Parse a single event into a GlobalTrade
+  const parseEventToTrade = useCallback((
+    event: rpc.Api.EventResponse,
+    eventType: 'position_opened' | 'position_closed' | 'position_liquidated'
+  ): GlobalTrade | null => {
     try {
-      // Use Soroban RPC to get contract events
-      const response = await fetch(NETWORK.RPC_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'getEvents',
-          params: {
-            startLedger: 0, // Will be adjusted by the server
-            filters: [
-              {
-                type: 'contract',
-                contractIds: [CONTRACTS.MARKET],
-              },
-            ],
-            pagination: {
-              limit: 30,
-            },
-          },
-        }),
-      });
+      if (!event.value) return null;
 
-      if (!response.ok) {
-        throw new Error(`RPC error: ${response.status}`);
-      }
+      const data = scValToNative(event.value);
 
-      const data = await response.json();
+      let asset = 'BTC';
+      let size = 0;
+      let side: GlobalTrade['side'] = 'Long';
 
-      if (data.error) {
-        console.log('[RecentTrades] RPC error:', data.error);
-        // If getEvents fails, try alternative approach
-        await fetchFromTransactions();
-        return;
-      }
-
-      const events = data.result?.events || [];
-      console.log('[RecentTrades] Contract events:', events.length);
-
-      const parsedTrades: GlobalTrade[] = [];
-
-      for (const event of events) {
-        // Parse event topic to determine trade type
-        const topics = event.topic || [];
-        const topicStr = topics.map((t: string) => {
-          try {
-            // Topics are XDR-encoded, try to decode
-            return Buffer.from(t, 'base64').toString('utf8');
-          } catch {
-            return t;
-          }
-        }).join(' ');
-
-        let side: GlobalTrade['side'] | null = null;
-        let asset = 'BTC';
-
-        // Determine trade type from event topics/data
-        if (topicStr.includes('open') || topicStr.includes('position_opened')) {
-          side = Math.random() > 0.5 ? 'Long' : 'Short'; // Would parse from event data
-        } else if (topicStr.includes('close') || topicStr.includes('position_closed')) {
+      if (Array.isArray(data)) {
+        if (eventType === 'position_opened') {
+          // Format: [position_id, trader, asset, size, direction]
+          asset = String(data[2] || 'BTC').toUpperCase();
+          size = bigIntToNumber(data[3] as bigint);
+          side = parseDirection(data[4]);
+        } else if (eventType === 'position_closed') {
+          // Format: [position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid]
+          asset = String(data[2] || 'BTC').toUpperCase();
+          size = bigIntToNumber(data[4] as bigint);
           side = 'Close';
-        } else if (topicStr.includes('liquidat')) {
+        } else if (eventType === 'position_liquidated') {
+          // Format: similar to position_closed
+          asset = String(data[2] || 'BTC').toUpperCase();
+          size = bigIntToNumber(data[4] as bigint);
           side = 'Liq';
         }
-
-        if (!side) continue;
-
-        // Parse size from event value (would need proper XDR decoding)
-        const size = Math.random() * 500 + 50; // Placeholder
-
-        // Determine asset (would parse from event data)
-        const assets = ['BTC', 'ETH', 'XLM'];
-        asset = assets[Math.floor(Math.random() * assets.length)];
-
-        parsedTrades.push({
-          id: event.id || `${event.ledger}-${event.txHash}`,
-          asset,
-          side,
-          size,
-          timestamp: new Date(event.ledgerClosedAt || Date.now()),
-          txHash: event.txHash || '',
-        });
       }
 
-      if (parsedTrades.length > 0) {
-        setTrades(parsedTrades);
-      } else {
-        // Try alternative if no events found
-        await fetchFromTransactions();
-      }
+      // Validate asset name
+      if (asset.length > 5) asset = 'BTC';
 
-      setLastUpdate(new Date());
+      if (size <= 0) return null;
+
+      return {
+        id: event.id,
+        asset,
+        side,
+        size,
+        timestamp: new Date(event.ledgerClosedAt || Date.now()),
+        txHash: event.txHash,
+      };
     } catch (error) {
-      console.error('[RecentTrades] Failed to fetch events:', error);
-      // Try alternative approach
-      await fetchFromTransactions();
-    } finally {
-      setIsLoading(false);
+      console.error('[RecentTrades] Failed to parse event:', error);
+      return null;
     }
   }, []);
 
-  // Alternative: Fetch recent transactions that invoked the Market contract
-  const fetchFromTransactions = async () => {
+  // Fetch events for a specific event type using Soroban RPC
+  const fetchEventsForType = useCallback(async (
+    startLedger: number,
+    eventType: 'position_opened' | 'position_closed' | 'position_liquidated'
+  ): Promise<GlobalTrade[]> => {
     try {
-      // Query recent transactions and look for ones involving our contract
-      // We can use the /transactions endpoint with cursor-based pagination
-      const url = `${NETWORK.HORIZON_URL}/transactions?limit=50&order=desc`;
+      const response = await sorobanRpc.getEvents({
+        startLedger,
+        filters: [
+          {
+            type: 'contract',
+            contractIds: [CONTRACTS.MARKET],
+            topics: [
+              [xdr.ScVal.scvSymbol(eventType).toXDR('base64')],
+            ],
+          },
+        ],
+        limit: 50,
+      });
 
-      const response = await fetch(url);
-      if (!response.ok) {
-        console.log('[RecentTrades] Transactions API error:', response.status);
-        return;
+      if (!response.events || response.events.length === 0) {
+        return [];
       }
 
-      const data = await response.json();
-      const transactions = data._embedded?.records || [];
-
-      const parsedTrades: GlobalTrade[] = [];
-
-      for (const tx of transactions) {
-        // Check if this transaction involves Soroban
-        if (!tx.operation_count || tx.operation_count === 0) continue;
-
-        // Check the memo or other fields for contract invocation hints
-        // This is a simplified check - in production you'd fetch operations
-        const isSoroban = tx.fee_charged > 100000; // Soroban txs typically have higher fees
-
-        if (!isSoroban) continue;
-
-        // For demo purposes, create trade entries
-        // In production, you'd fetch the operations and parse the invoke_host_function
-        const sides: GlobalTrade['side'][] = ['Long', 'Short', 'Close', 'Liq'];
-        const side = sides[Math.floor(Math.random() * 4)];
-        const assets = ['BTC', 'ETH', 'XLM'];
-        const asset = assets[Math.floor(Math.random() * 3)];
-        const size = Math.random() * 800 + 100;
-
-        parsedTrades.push({
-          id: tx.id,
-          asset,
-          side,
-          size,
-          timestamp: new Date(tx.created_at),
-          txHash: tx.hash,
-        });
-
-        if (parsedTrades.length >= 20) break;
+      const trades: GlobalTrade[] = [];
+      for (const event of response.events) {
+        const trade = parseEventToTrade(event, eventType);
+        if (trade) {
+          trades.push(trade);
+        }
       }
 
-      if (parsedTrades.length > 0) {
-        setTrades(parsedTrades);
-      }
+      return trades;
     } catch (error) {
-      console.error('[RecentTrades] Transactions fetch failed:', error);
+      console.error(`[RecentTrades] Failed to fetch ${eventType} events:`, error);
+      return [];
     }
-  };
+  }, [parseEventToTrade]);
+
+  // Fetch all recent trades from the Market contract
+  const fetchRecentTrades = useCallback(async () => {
+    try {
+      // Get latest ledger to calculate start ledger
+      const latestLedger = await sorobanRpc.getLatestLedger();
+
+      // Use same lookback as Trade History (10000 ledgers = ~14 hours)
+      const LOOKBACK_LEDGERS = 10000;
+      const startLedger = Math.max(1, latestLedger.sequence - LOOKBACK_LEDGERS);
+
+      // Fetch all three event types in parallel
+      const [openedTrades, closedTrades, liquidatedTrades] = await Promise.all([
+        fetchEventsForType(startLedger, 'position_opened'),
+        fetchEventsForType(startLedger, 'position_closed'),
+        fetchEventsForType(startLedger, 'position_liquidated'),
+      ]);
+
+      // Combine all trades
+      const allTrades = [...openedTrades, ...closedTrades, ...liquidatedTrades];
+
+      // Sort by timestamp descending (newest first)
+      allTrades.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+      // Keep only the 20 most recent
+      setTrades(allTrades.slice(0, 20));
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error('[RecentTrades] Fetch error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [fetchEventsForType]);
 
   // Initial fetch and polling
   useEffect(() => {
-    fetchRecentTrades();
+    // Initial fetch with slight delay
+    const initialDelay = setTimeout(fetchRecentTrades, 500);
 
-    // Poll every 5 seconds
-    const interval = setInterval(fetchRecentTrades, 5000);
+    // Poll every 30 seconds
+    const interval = setInterval(fetchRecentTrades, 30000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(initialDelay);
+      clearInterval(interval);
+    };
   }, [fetchRecentTrades]);
 
   // Update relative times every second
@@ -285,7 +273,7 @@ export function RecentTrades() {
             {trades.map((trade, index) => (
               <a
                 key={trade.id}
-                href={`https://stellar.expert/explorer/${NETWORK.NAME}/tx/${trade.txHash}`}
+                href={trade.txHash ? `https://stellar.expert/explorer/${NETWORK.NAME}/tx/${trade.txHash}` : '#'}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(
@@ -304,7 +292,7 @@ export function RecentTrades() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <span className="text-xs text-neutral-300">
-                    ${Math.round(trade.size).toLocaleString()}
+                    ${trade.size > 0 ? Math.round(trade.size).toLocaleString() : '0'}
                   </span>
                   <span className="text-xs text-neutral-500 w-6 text-right">
                     {formatCompactTime(trade.timestamp)}

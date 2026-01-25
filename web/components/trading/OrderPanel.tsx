@@ -40,7 +40,6 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
-  const [isMinting, setIsMinting] = useState(false);
 
   // Allowance state
   const [hasAllowance, setHasAllowance] = useState(false);
@@ -195,35 +194,6 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
     }
   };
 
-  // Handle faucet mint
-  const handleMintTestUSDC = async () => {
-    if (!publicKey) return;
-
-    setIsMinting(true);
-
-    try {
-      const response = await fetch('/api/faucet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipientAddress: publicKey }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to mint test USDC');
-      }
-
-      toast.success(`Received 10,000 test USDC!`);
-      refreshBalances();
-    } catch (error) {
-      console.error('Faucet error:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to get test USDC');
-    } finally {
-      setIsMinting(false);
-    }
-  };
-
   return (
     <Card className="w-full">
       {/* Direction Toggle */}
@@ -335,27 +305,6 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
           )}
         </div>
       </div>
-
-      {/* Faucet Button - Show when USDC balance is low */}
-      {isConnected && usdcBalance < 100 && (
-        <button
-          onClick={handleMintTestUSDC}
-          disabled={isMinting}
-          className="w-full mb-4 py-2 px-4 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-xl text-sm text-blue-400 font-medium transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {isMinting ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Minting...
-            </>
-          ) : (
-            <>
-              <span>🚰</span>
-              Get 10,000 Test USDC
-            </>
-          )}
-        </button>
-      )}
 
       {/* Leverage Slider */}
       <div className="mb-6">
