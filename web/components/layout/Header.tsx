@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BarChart3, Landmark, Droplets, Trophy, PieChart, Menu, X, Wallet, LogOut } from 'lucide-react';
+import { BarChart3, Landmark, Droplets, Trophy, PieChart, Menu, X } from 'lucide-react';
 import { useState } from 'react';
-import { useWallet } from '@/lib/hooks/useWallet';
+import { ConnectButton } from '@/components/wallet';
 import { cn } from '@/lib/utils/cn';
 
 const navItems = [
@@ -18,11 +18,6 @@ const navItems = [
 export function Header() {
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { isConnected, publicKey, xlmBalance, usdcBalance, connect, disconnect, isConnecting } = useWallet();
-
-  const formatAddress = (address: string) => {
-    return `${address.slice(0, 4)}...${address.slice(-4)}`;
-  };
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-14 border-b border-white/10 bg-[#0a0a0a]/80 backdrop-blur-xl">
@@ -76,47 +71,7 @@ export function Header() {
             <span className="text-muted-foreground">Stellar Testnet</span>
           </div>
 
-          {isConnected && publicKey ? (
-            <div className="relative group">
-              <div className="relative p-[1px] rounded-lg bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6]">
-                <button className="flex items-center gap-2 bg-[#0a0a0a] hover:bg-[#111] text-foreground rounded-[7px] px-4 py-2 transition-colors">
-                  <div className="h-2 w-2 rounded-full bg-[#22c55e]" />
-                  <span className="text-sm font-medium">{formatAddress(publicKey)}</span>
-                </button>
-              </div>
-
-              {/* Dropdown */}
-              <div className="absolute right-0 top-full mt-2 w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
-                <div className="bg-card border border-white/10 rounded-lg shadow-xl overflow-hidden">
-                  <div className="p-3 border-b border-white/10">
-                    <p className="text-xs text-muted-foreground mb-1">Balance</p>
-                    <p className="font-mono font-medium text-foreground">{xlmBalance.toLocaleString()} XLM</p>
-                    <p className="font-mono text-sm text-muted-foreground">${usdcBalance.toLocaleString()} USDC</p>
-                  </div>
-                  <button
-                    onClick={disconnect}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-[#ef4444] hover:bg-[#ef4444]/10 transition-colors"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Disconnect
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="relative p-[1px] rounded-lg bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6]">
-              <button
-                onClick={connect}
-                disabled={isConnecting}
-                className="flex items-center gap-2 bg-[#0a0a0a] hover:bg-[#111] text-foreground rounded-[7px] px-4 py-2 transition-colors disabled:opacity-50"
-              >
-                <Wallet className="h-4 w-4" />
-                <span className="text-sm font-medium">
-                  {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-                </span>
-              </button>
-            </div>
-          )}
+          <ConnectButton />
 
           {/* Mobile menu button */}
           <button

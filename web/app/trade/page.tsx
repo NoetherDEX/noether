@@ -252,8 +252,6 @@ function TradePage() {
 
 export default function TradePageWrapper() {
   return (
-    <WalletProvider>
-      <TradePage />
-    </WalletProvider>
+    <TradePage />
   );
 }

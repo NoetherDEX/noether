@@ -65,7 +65,7 @@ export function AssetSelector({ selectedAsset, onSelect }: AssetSelectorProps) {
                 {asset.symbol.charAt(0)}
               </div>
               <div className="text-left">
-                <p className="text-sm font-medium text-foreground">{asset.symbol}-PERP</p>
+                <p className="text-sm font-medium text-foreground">{asset.symbol}-USDC</p>
                 <p className="text-xs text-muted-foreground">{asset.name}</p>
               </div>
             </div>

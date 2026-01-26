@@ -46,9 +46,9 @@ export function ConnectButton() {
     setIsDropdownOpen(false);
   };
 
-  const handleSwitchWallet = async () => {
+  const handleRefreshWallet = async () => {
     // Disconnect current wallet and prompt for new connection
-    // This allows users to switch to a different account in Freighter
+    // This allows users to refresh to a different account in Freighter
     disconnect();
     setIsDropdownOpen(false);
 
@@ -59,7 +59,7 @@ export function ConnectButton() {
     try {
       await connect();
     } catch (error) {
-      console.error('Failed to switch wallet:', error);
+      console.error('Failed to refresh wallet:', error);
     }
   };
 
@@ -231,11 +231,11 @@ export function ConnectButton() {
               {/* Actions */}
               <div className="flex flex-col gap-1">
                 <button
-                  onClick={handleSwitchWallet}
+                  onClick={handleRefreshWallet}
                   className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
                 >
                   <ArrowLeftRight className="w-4 h-4" />
-                  Switch Wallet
+                  Refresh Wallet
                 </button>
                 <a
                   href={`https://stellar.expert/explorer/testnet/account/${address}`}

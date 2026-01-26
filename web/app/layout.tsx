@@ -23,6 +23,8 @@ export const metadata: Metadata = {
   },
 }
 
+import { Providers } from './providers'
+
 export default function RootLayout({
   children,
 }: {
@@ -31,7 +33,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark scroll-smooth">
       <body className={`${inter.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} font-sans antialiased bg-background text-foreground`}>
-        {children}
+        <Providers>
+          {children}
+        </Providers>
         <Toaster
           position="bottom-right"
           toastOptions={{
