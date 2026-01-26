@@ -1,28 +1,43 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
-import { Menu, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Menu, X, Sparkles } from 'lucide-react';
 
 const navLinks = [
   { href: '/trade', label: 'Trade' },
+  { href: '/portfolio', label: 'Portfolio' },
   { href: '/vault', label: 'Vault' },
+  { href: '/leaderboard', label: 'Leaderboard' },
   { href: '/faucet', label: 'Faucet' },
-  { href: '#', label: 'Docs', external: true },
 ];
 
 export function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => setScrolled(window.scrollY > 20);
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#051015]/90 backdrop-blur-xl border-b border-white/5">
-      <div className="max-w-7xl mx-auto px-6 py-4">
-        <div className="flex items-center justify-between">
+    <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${scrolled ? 'py-3' : 'py-5'}`}>
+      <div className="max-w-7xl mx-auto px-6">
+        <div
+          className={`flex items-center justify-between px-6 py-3 rounded-2xl transition-all duration-300 ${
+            scrolled
+              ? 'bg-white/5 backdrop-blur-xl border border-white/10 shadow-lg shadow-violet-500/5'
+              : 'bg-transparent'
+          }`}
+        >
           {/* Logo */}
-          <Link href="/" className="flex items-center">
-            <span className="text-white font-mono tracking-[0.3em] text-lg font-medium">
-              NOETHER
-            </span>
+          <Link href="/" className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-white" />
+            </div>
+            <span className="text-xl font-bold tracking-wide">Noether</span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -31,8 +46,7 @@ export function Navbar() {
               <Link
                 key={link.label}
                 href={link.href}
-                className="text-gray-400 hover:text-white transition-colors text-sm"
-                {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                className="text-sm text-gray-400 hover:text-white transition-colors"
               >
                 {link.label}
               </Link>
@@ -41,11 +55,12 @@ export function Navbar() {
 
           {/* Connect Wallet Button */}
           <div className="hidden md:block">
-            <Link
-              href="/trade"
-              className="px-5 py-2.5 border border-[#00e6b8] text-[#00e6b8] hover:bg-[#00e6b8] hover:text-[#051015] rounded-lg font-medium text-sm transition-all duration-200"
-            >
-              Connect Wallet
+            <Link href="/trade" className="group relative px-5 py-2.5 rounded-xl overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-violet-500 to-cyan-500 opacity-80 group-hover:opacity-100 transition-opacity" />
+              <div className="absolute inset-[1px] bg-[#051015] rounded-[10px] group-hover:bg-[#0a1628] transition-colors" />
+              <span className="relative text-sm font-medium bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
+                Launch App
+              </span>
             </Link>
           </div>
 
@@ -65,14 +80,14 @@ export function Navbar() {
 
         {/* Mobile Navigation */}
         {isMobileMenuOpen && (
-          <div className="md:hidden pt-4 pb-2 border-t border-white/5 mt-4">
-            <div className="flex flex-col gap-4">
+          <div className="md:hidden mt-2 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10">
+            <div className="flex flex-col gap-2">
               {navLinks.map((link) => (
                 <Link
                   key={link.label}
                   href={link.href}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className="text-gray-400 hover:text-white transition-colors text-sm py-2"
+                  className="text-gray-400 hover:text-white transition-colors text-sm py-2 px-4 rounded-lg hover:bg-white/5"
                 >
                   {link.label}
                 </Link>
@@ -80,9 +95,9 @@ export function Navbar() {
               <Link
                 href="/trade"
                 onClick={() => setIsMobileMenuOpen(false)}
-                className="px-5 py-2.5 border border-[#00e6b8] text-[#00e6b8] hover:bg-[#00e6b8] hover:text-[#051015] rounded-lg font-medium text-sm transition-all duration-200 text-center mt-2"
+                className="mt-2 px-5 py-2.5 bg-gradient-to-r from-violet-500 to-cyan-500 text-white rounded-xl font-medium text-sm text-center"
               >
-                Connect Wallet
+                Launch App
               </Link>
             </div>
           </div>

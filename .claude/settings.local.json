@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(xargs -I {} git show --stat {})"
+      "Bash(xargs -I {} git show --stat {})",
+      "Bash(wc:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

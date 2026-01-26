@@ -2,30 +2,63 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
+/* Custom dark theme for Noether trading dashboard */
+:root {
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+  --card: #111111;
+  --card-foreground: #fafafa;
+  --popover: #111111;
+  --popover-foreground: #fafafa;
+  --primary: #8b5cf6;
+  --primary-foreground: #ffffff;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #fafafa;
+  --muted: #1a1a1a;
+  --muted-foreground: #a1a1aa;
+  --accent: #3b82f6;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: #1a1a1a;
+  --ring: #8b5cf6;
+  --radius: 0.5rem;
+
+  /* Trading specific colors */
+  --profit: #22c55e;
+  --loss: #ef4444;
+  --stellar-violet: #8b5cf6;
+  --electric-blue: #3b82f6;
 }
 
-html {
-  scroll-behavior: smooth;
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
-body {
-  background: #09090b;
-  color: white;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* Custom scrollbar - monochrome */
+/* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: var(--background);
 }
 
 ::-webkit-scrollbar-thumb {
@@ -55,9 +88,9 @@ body {
   background: #52525b;
 }
 
-/* Selection - soft emerald accent */
+/* Selection - violet accent */
 ::selection {
-  background: rgba(52, 211, 153, 0.2);
+  background: rgba(139, 92, 246, 0.3);
   color: white;
 }
 
@@ -73,7 +106,7 @@ details summary {
 /* Focus styles */
 button:focus-visible,
 a:focus-visible {
-  outline: 1px solid rgba(255, 255, 255, 0.3);
+  outline: 1px solid rgba(139, 92, 246, 0.5);
   outline-offset: 2px;
 }
 
@@ -89,5 +122,28 @@ a:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Utility classes for the new theme */
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6] bg-clip-text text-transparent;
+  }
+
+  .bg-gradient-primary {
+    @apply bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6];
+  }
+
+  .border-gradient {
+    border-image: linear-gradient(to right, #8b5cf6, #3b82f6) 1;
+  }
+
+  .glow-violet {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+  }
+
+  .glow-blue {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
   }
 }

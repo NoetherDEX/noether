@@ -1,9 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { AlertCircle, Info, CheckCircle2, Loader2 } from 'lucide-react';
+import { AlertCircle, Info, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { Button, Card, Slider } from '@/components/ui';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
@@ -77,6 +76,9 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
   );
 
   const tradingFee = positionSize * 0.001; // 0.1%
+
+  // Risk assessment based on leverage
+  const liquidationRisk = leverage >= 8 ? 'high' : leverage >= 5 ? 'medium' : 'low';
 
   // Check allowance when collateral changes
   useEffect(() => {
@@ -194,248 +196,285 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
     }
   };
 
+  // Percentage buttons for collateral
+  const handlePercentage = (pct: number) => {
+    setCollateral(Math.floor(usdcBalance * (pct / 100)).toString());
+  };
+
   return (
-    <Card className="w-full">
-      {/* Direction Toggle */}
-      <div className="flex gap-2 mb-6">
-        <button
-          onClick={() => setDirection('Long')}
-          className={cn(
-            'flex-1 py-3 rounded-xl font-semibold text-sm transition-all',
-            direction === 'Long'
-              ? 'bg-emerald-500 text-white'
-              : 'bg-white/5 text-neutral-400 hover:bg-white/10'
-          )}
-        >
-          Long {asset}
-        </button>
-        <button
-          onClick={() => setDirection('Short')}
-          className={cn(
-            'flex-1 py-3 rounded-xl font-semibold text-sm transition-all',
-            direction === 'Short'
-              ? 'bg-red-500 text-white'
-              : 'bg-white/5 text-neutral-400 hover:bg-white/10'
-          )}
-        >
-          Short {asset}
-        </button>
+    <div className="h-full rounded-lg border border-white/10 bg-card overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-white/10">
+        <h3 className="text-sm font-medium text-foreground">Place Order</h3>
       </div>
 
-      {/* Collateral Input */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm text-neutral-400">Collateral</span>
-            <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded font-medium">USDC</span>
-          </div>
-          {isConnected && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-neutral-500">
-                Bal: {formatNumber(usdcBalance)} USDC
-              </span>
-              {/* Quick percent buttons */}
-              <div className="flex gap-1">
-                <button
-                  onClick={() => setCollateral(Math.floor(usdcBalance * 0.25).toString())}
-                  className="px-2 py-0.5 text-[10px] font-medium text-neutral-400 bg-white/5 hover:bg-white/10 hover:text-white rounded transition-all"
-                >
-                  25%
-                </button>
-                <button
-                  onClick={() => setCollateral(Math.floor(usdcBalance * 0.5).toString())}
-                  className="px-2 py-0.5 text-[10px] font-medium text-neutral-400 bg-white/5 hover:bg-white/10 hover:text-white rounded transition-all"
-                >
-                  50%
-                </button>
-                <button
-                  onClick={() => setCollateral(Math.floor(usdcBalance * 0.95).toString())}
-                  className="px-2 py-0.5 text-[10px] font-medium text-emerald-400/80 bg-emerald-500/10 hover:bg-emerald-500/20 hover:text-emerald-300 rounded transition-all"
-                >
-                  Max
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Input box */}
-        <div className="relative bg-gray-900/80 border border-white/5 rounded-xl p-4 hover:border-white/10 transition-colors focus-within:border-white/20 focus-within:ring-1 focus-within:ring-white/10">
-          <input
-            type="number"
-            value={collateral}
-            onChange={(e) => setCollateral(e.target.value)}
-            placeholder="0.00"
+      <div className="flex-1 overflow-auto p-4 space-y-4">
+        {/* Long/Short Tabs */}
+        <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden border border-white/10">
+          <button
+            onClick={() => setDirection('Long')}
             className={cn(
-              'w-full bg-transparent text-2xl font-semibold text-white placeholder-neutral-600',
-              'focus:outline-none',
-              '[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
-              '[&::-webkit-outer-spin-button]:m-0 [&::-webkit-inner-spin-button]:m-0',
-              '[appearance:textfield]'
+              'py-3 text-sm font-bold transition-all relative',
+              direction === 'Long'
+                ? 'bg-[#22c55e] text-white'
+                : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
             )}
-          />
-          {/* Token badge */}
-          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg">
-            <div className="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center">
-              <span className="text-[10px] font-bold text-white">$</span>
+          >
+            Long
+            {direction === 'Long' && <div className="absolute inset-0 bg-[#22c55e]/20 animate-pulse" />}
+          </button>
+          <button
+            onClick={() => setDirection('Short')}
+            className={cn(
+              'py-3 text-sm font-bold transition-all relative',
+              direction === 'Short'
+                ? 'bg-[#ef4444] text-white'
+                : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+            )}
+          >
+            Short
+            {direction === 'Short' && <div className="absolute inset-0 bg-[#ef4444]/20 animate-pulse" />}
+          </button>
+        </div>
+
+        {/* Pay (Collateral) Input */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+              Pay (Collateral)
+              <Info className="h-3 w-3 opacity-50" />
+            </label>
+          </div>
+          <div className="relative">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={collateral}
+              onChange={(e) => setCollateral(e.target.value.replace(/[^0-9.]/g, ''))}
+              placeholder="0.00"
+              className="w-full bg-secondary/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-16"
+            />
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+              <div className="w-4 h-4 rounded-full bg-[#2775ca] flex items-center justify-center">
+                <span className="text-[8px] font-bold text-white">$</span>
+              </div>
+              <span className="text-xs font-medium text-foreground">USDC</span>
             </div>
-            <span className="text-sm font-medium text-white">USDC</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              Balance: <span className="font-mono text-foreground">{formatNumber(usdcBalance)}</span> USDC
+            </span>
+            {/* Allowance status */}
+            {isConnected && collateralNum > 0 && (
+              <div className="flex items-center gap-1">
+                {isCheckingAllowance ? (
+                  <Loader2 className="w-3 h-3 text-muted-foreground animate-spin" />
+                ) : hasAllowance ? (
+                  <>
+                    <CheckCircle2 className="w-3 h-3 text-[#22c55e]" />
+                    <span className="text-[10px] text-[#22c55e]">Approved</span>
+                  </>
+                ) : (
+                  <span className="text-[10px] text-amber-500">Approval needed</span>
+                )}
+              </div>
+            )}
+          </div>
+          {/* Percentage Buttons */}
+          <div className="grid grid-cols-4 gap-1.5">
+            {[25, 50, 75, 100].map((pct) => (
+              <button
+                key={pct}
+                onClick={() => handlePercentage(pct)}
+                className="py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-secondary/30 hover:bg-secondary/60 rounded border border-white/5 hover:border-white/10 transition-all"
+              >
+                {pct}%
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* USD value display */}
-        <div className="mt-2 pl-1 flex items-center justify-between">
-          <span className="text-xs text-neutral-500">
-            ≈ {formatUSD(collateralNum)}
-          </span>
-          {/* Allowance status */}
-          {isConnected && collateralNum > 0 && (
-            <div className="flex items-center gap-1">
-              {isCheckingAllowance ? (
-                <Loader2 className="w-3 h-3 text-neutral-500 animate-spin" />
-              ) : hasAllowance ? (
-                <>
-                  <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                  <span className="text-[10px] text-emerald-500">Approved</span>
-                </>
-              ) : (
-                <span className="text-[10px] text-amber-500">Approval needed</span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Leverage Slider */}
-      <div className="mb-6">
-        <Slider
-          label="Leverage"
-          min={1}
-          max={10}
-          step={1}
-          value={leverage}
-          onChange={(newLeverage) => setLeverage(newLeverage)}
-          marks={[1, 2, 5, 10]}
-          formatValue={(v) => `${v}x`}
-        />
-      </div>
-
-      {/* Order Summary */}
-      <div className="mb-6 space-y-3">
-        {/* Position Size */}
-        <div className="bg-white/[0.03] border border-white/5 rounded-xl p-4">
-          <div className="flex justify-between items-center">
+        {/* Leverage Slider */}
+        <div className="space-y-3 p-3 bg-secondary/20 rounded-lg border border-white/5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+              Leverage
+              <Info className="h-3 w-3 opacity-50" />
+            </label>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-neutral-400">Position Size</span>
-              <span className="text-[10px] text-neutral-600">
-                ({formatUSD(collateralNum)} × {leverage}x)
+              <span
+                className={cn(
+                  'text-lg font-mono font-bold',
+                  leverage >= 8 ? 'text-[#ef4444]' : leverage >= 5 ? 'text-[#f59e0b]' : 'text-foreground'
+                )}
+              >
+                {leverage}x
               </span>
             </div>
-            <span className="text-lg font-semibold text-white">
-              {formatUSD(positionSize)}
+          </div>
+
+          <div className="relative pt-1">
+            <input
+              type="range"
+              min={1}
+              max={10}
+              step={1}
+              value={leverage}
+              onChange={(e) => setLeverage(parseInt(e.target.value))}
+              className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+            />
+            {/* Leverage scale markers */}
+            <div className="flex justify-between mt-2 px-0.5">
+              {[1, 2, 5, 8, 10].map((mark) => (
+                <span
+                  key={mark}
+                  className={cn(
+                    'text-[10px] font-mono',
+                    leverage >= mark ? 'text-foreground' : 'text-muted-foreground/50'
+                  )}
+                >
+                  {mark}x
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Quick leverage buttons */}
+          <div className="grid grid-cols-5 gap-1.5">
+            {[1, 2, 5, 8, 10].map((lev) => (
+              <button
+                key={lev}
+                onClick={() => setLeverage(lev)}
+                className={cn(
+                  'py-1.5 text-xs font-mono font-medium rounded border transition-all',
+                  leverage === lev
+                    ? 'bg-primary/20 border-primary/50 text-primary'
+                    : 'border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20'
+                )}
+              >
+                {lev}x
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Order Summary Box */}
+        <div className="space-y-2.5 p-3 bg-secondary/20 rounded-lg border border-white/5">
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Order Summary</h4>
+
+          <div className="space-y-2">
+            {/* Position Size */}
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-muted-foreground">Position Size</span>
+              <span className="font-mono text-sm text-foreground">{formatUSD(positionSize)}</span>
+            </div>
+
+            {/* Entry Price */}
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-muted-foreground flex items-center gap-1">Entry Price</span>
+              <span className="font-mono text-sm text-foreground">
+                {assetPrice > 0 ? formatUSD(assetPrice, asset === 'XLM' ? 4 : 2) : '--'}
+              </span>
+            </div>
+
+            {/* Liquidation Price */}
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                Liq. Price
+                {liquidationRisk === 'high' && <AlertTriangle className="h-3 w-3 text-[#ef4444]" />}
+              </span>
+              <span
+                className={cn(
+                  'font-mono text-sm font-medium',
+                  liquidationRisk === 'high'
+                    ? 'text-[#ef4444]'
+                    : liquidationRisk === 'medium'
+                    ? 'text-[#f59e0b]'
+                    : 'text-foreground'
+                )}
+              >
+                {liquidationPrice > 0 ? formatUSD(liquidationPrice, asset === 'XLM' ? 4 : 2) : '--'}
+              </span>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-white/5 my-1" />
+
+            {/* Trading Fee */}
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-muted-foreground">Fee (0.1%)</span>
+              <span className="font-mono text-xs text-muted-foreground">{formatUSD(tradingFee)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Gas Info */}
+        {isConnected && (
+          <div className="p-3 bg-secondary/20 border border-white/5 rounded-lg flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Gas (XLM)</span>
+            <span
+              className={cn(
+                'text-xs font-mono font-medium',
+                xlmBalance < 1 ? 'text-[#ef4444]' : 'text-muted-foreground'
+              )}
+            >
+              {formatNumber(xlmBalance, 2)} XLM
             </span>
           </div>
-        </div>
+        )}
 
-        {/* Price Info */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white/[0.03] border border-white/5 rounded-xl p-4">
-            <div className="text-xs text-neutral-500 mb-1">{asset} Entry Price</div>
-            <div className="text-base font-medium text-white">
-              {assetPrice > 0 ? formatUSD(assetPrice, asset === 'XLM' ? 4 : 2) : '--'}
-            </div>
+        {/* Errors */}
+        {errors.length > 0 && collateralNum > 0 && (
+          <div className="p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg">
+            {errors.map((error, i) => (
+              <div key={i} className="flex items-center gap-2 text-sm text-[#ef4444]">
+                <AlertCircle className="w-4 h-4" />
+                {error}
+              </div>
+            ))}
           </div>
+        )}
 
-          <div className={cn(
-            'border rounded-xl p-4',
-            direction === 'Long'
-              ? 'bg-red-500/5 border-red-500/10'
-              : 'bg-emerald-500/5 border-emerald-500/10'
-          )}>
-            <div className="text-xs text-neutral-500 mb-1">Liq. Price</div>
-            <div className={cn(
-              'text-base font-medium',
-              direction === 'Long' ? 'text-red-400' : 'text-emerald-400'
-            )}>
-              {liquidationPrice > 0 ? formatUSD(liquidationPrice, asset === 'XLM' ? 4 : 2) : '--'}
-            </div>
-          </div>
-        </div>
+        {/* CTA Button */}
+        {!hasAllowance && collateralNum >= 10 && errors.length === 0 ? (
+          <button
+            onClick={handleApprove}
+            disabled={!canApprove || isApproving}
+            className={cn(
+              'w-full h-14 text-base font-bold rounded-lg transition-all',
+              'bg-amber-500 hover:bg-amber-600 text-white',
+              'disabled:opacity-40 disabled:cursor-not-allowed',
+              'flex items-center justify-center gap-2'
+            )}
+          >
+            {isApproving && <Loader2 className="w-5 h-5 animate-spin" />}
+            Approve USDC
+          </button>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={!canSubmit || isSubmitting}
+            className={cn(
+              'w-full h-14 text-base font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed',
+              'flex items-center justify-center gap-2 rounded-lg',
+              direction === 'Long'
+                ? 'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white shadow-lg shadow-[#22c55e]/30'
+                : 'bg-[#ef4444] hover:bg-[#ef4444]/90 text-white shadow-lg shadow-[#ef4444]/30'
+            )}
+          >
+            {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
+            {!isConnected
+              ? 'Connect Wallet'
+              : `${direction === 'Long' ? 'Buy / Long' : 'Sell / Short'} ${asset}`}
+          </button>
+        )}
 
-        {/* Fees */}
-        <div className="bg-neutral-900/50 border border-white/5 rounded-xl p-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-neutral-400">Trading Fee</span>
-              <span className="text-[10px] px-1.5 py-0.5 bg-white/5 rounded text-neutral-500">0.1%</span>
-            </div>
-            <span className="text-sm font-medium text-neutral-300">
-              {formatUSD(tradingFee)}
-            </span>
-          </div>
-        </div>
+        {/* Risk Warning */}
+        <p className="text-xs text-muted-foreground text-center">
+          Trading with leverage carries significant risk. You may lose more than your initial investment.
+        </p>
       </div>
-
-      {/* Gas Info */}
-      {isConnected && (
-        <div className="mb-4 p-3 bg-neutral-900/50 border border-white/5 rounded-lg flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-neutral-500">Gas (XLM)</span>
-          </div>
-          <span className={cn(
-            'text-xs font-medium',
-            xlmBalance < 1 ? 'text-red-400' : 'text-neutral-400'
-          )}>
-            {formatNumber(xlmBalance, 2)} XLM
-          </span>
-        </div>
-      )}
-
-      {/* Errors */}
-      {errors.length > 0 && collateralNum > 0 && (
-        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-          {errors.map((error, i) => (
-            <div key={i} className="flex items-center gap-2 text-sm text-red-400">
-              <AlertCircle className="w-4 h-4" />
-              {error}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Action Buttons */}
-      {!hasAllowance && collateralNum >= 10 && errors.length === 0 ? (
-        // Approval Button
-        <Button
-          variant="primary"
-          size="lg"
-          className="w-full bg-amber-500 hover:bg-amber-600"
-          onClick={handleApprove}
-          disabled={!canApprove}
-          isLoading={isApproving}
-        >
-          Approve USDC
-        </Button>
-      ) : (
-        // Trade Button
-        <Button
-          variant={direction === 'Long' ? 'success' : 'danger'}
-          size="lg"
-          className="w-full"
-          onClick={handleSubmit}
-          disabled={!canSubmit}
-          isLoading={isSubmitting}
-        >
-          {!isConnected
-            ? 'Connect Wallet'
-            : `${direction} ${asset} with ${collateralNum > 0 ? formatNumber(collateralNum, 0) : '0'} USDC`}
-        </Button>
-      )}
-
-      {/* Risk Warning */}
-      <p className="mt-4 text-xs text-neutral-600 text-center">
-        Trading with leverage carries significant risk. You may lose more than your initial investment.
-      </p>
-    </Card>
+    </div>
   );
 }

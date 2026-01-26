@@ -135,7 +135,7 @@ function TradePage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#09090b]">
+    <div className="min-h-screen bg-[#0a0a0a]">
       <Header />
 
       <main className="pt-16">

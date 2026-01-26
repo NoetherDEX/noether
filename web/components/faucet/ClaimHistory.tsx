@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { History, ExternalLink, ChevronDown } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardContent, Button } from '@/components/ui';
+import { cn } from '@/lib/utils/cn';
 import type { ClaimRecord } from '@/lib/stellar/faucet';
 
 interface ClaimHistoryProps {
@@ -37,43 +37,45 @@ export function ClaimHistory({
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <History className="w-5 h-5" />
-            Claim History
-          </CardTitle>
-          <div className="text-sm text-neutral-400">
-            Total Received:{' '}
-            <span className="text-white font-medium">
-              {totalAllTime.toLocaleString()} USDC
-            </span>
-          </div>
+    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+        <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+          <History className="w-5 h-5 text-muted-foreground" />
+          Claim History
+        </h3>
+        <div className="text-sm text-muted-foreground">
+          Total Received:{' '}
+          <span className="text-foreground font-medium font-mono">
+            {totalAllTime.toLocaleString()} USDC
+          </span>
         </div>
-      </CardHeader>
-      <CardContent>
+      </div>
+
+      <div className="p-6">
         {isLoading ? (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
               <div
                 key={i}
-                className="h-16 bg-white/5 rounded-xl animate-pulse"
+                className="h-14 bg-secondary/30 rounded-lg animate-pulse"
               />
             ))}
           </div>
         ) : records.length === 0 ? (
           <div className="text-center py-12">
-            <History className="w-12 h-12 text-neutral-700 mx-auto mb-4" />
-            <p className="text-neutral-400 mb-2">No claims yet</p>
-            <p className="text-sm text-neutral-600">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/10 to-[#3b82f6]/10 mb-4">
+              <History className="w-7 h-7 text-muted-foreground" />
+            </div>
+            <p className="text-foreground font-medium mb-1">No claims yet</p>
+            <p className="text-sm text-muted-foreground">
               Claim some USDC to see your history here
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {/* Table Header */}
-            <div className="grid grid-cols-4 gap-4 px-4 py-2 text-xs text-neutral-500 uppercase tracking-wider">
+            <div className="grid grid-cols-4 gap-4 px-4 py-2 text-xs text-muted-foreground uppercase tracking-wider">
               <span>Date & Time</span>
               <span className="text-right">Amount</span>
               <span className="text-right">Running Total</span>
@@ -84,15 +86,15 @@ export function ClaimHistory({
             {displayedRecords.map((record) => (
               <div
                 key={record.id}
-                className="grid grid-cols-4 gap-4 px-4 py-3 bg-white/[0.02] rounded-xl hover:bg-white/[0.04] transition-colors"
+                className="grid grid-cols-4 gap-4 px-4 py-3 bg-secondary/20 rounded-lg border border-white/5 hover:bg-secondary/30 transition-colors"
               >
-                <span className="text-sm text-neutral-300">
+                <span className="text-sm text-muted-foreground">
                   {formatDate(record.timestamp)}
                 </span>
-                <span className="text-sm text-emerald-400 font-medium text-right">
+                <span className="text-sm text-[#22c55e] font-medium font-mono text-right">
                   +{record.amount.toLocaleString()} USDC
                 </span>
-                <span className="text-sm text-neutral-400 text-right">
+                <span className="text-sm text-muted-foreground font-mono text-right">
                   {record.runningTotal.toLocaleString()} USDC
                 </span>
                 <div className="text-right">
@@ -100,7 +102,7 @@ export function ClaimHistory({
                     href={getStellarExpertUrl(record.txHash)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                    className="inline-flex items-center gap-1 text-xs text-[#3b82f6] hover:text-[#8b5cf6] transition-colors font-mono"
                   >
                     {record.txHash.slice(0, 8)}...
                     <ExternalLink className="w-3 h-3" />
@@ -111,18 +113,22 @@ export function ClaimHistory({
 
             {/* Load More Button */}
             {hasMore && (
-              <Button
-                variant="ghost"
-                className="w-full mt-4"
+              <button
                 onClick={() => setDisplayCount((c) => c + RECORDS_PER_PAGE)}
+                className={cn(
+                  'w-full mt-4 py-3 text-sm font-medium rounded-lg transition-all',
+                  'flex items-center justify-center gap-2',
+                  'text-muted-foreground hover:text-foreground',
+                  'bg-secondary/30 hover:bg-secondary/50 border border-white/5'
+                )}
               >
-                <ChevronDown className="w-4 h-4 mr-2" />
+                <ChevronDown className="w-4 h-4" />
                 Load More ({records.length - displayCount} remaining)
-              </Button>
+              </button>
             )}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

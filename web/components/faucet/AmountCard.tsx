@@ -21,37 +21,20 @@ export function AmountCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'flex flex-col items-center justify-center p-6 rounded-xl border-2 transition-all',
-        'focus:outline-none focus:ring-2 focus:ring-emerald-500/50',
+        'relative p-4 rounded-xl border transition-all text-center',
+        'disabled:opacity-40 disabled:cursor-not-allowed',
         selected
-          ? 'border-emerald-500 bg-emerald-500/10'
-          : 'border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]',
-        disabled && 'opacity-40 cursor-not-allowed hover:border-white/10 hover:bg-white/[0.02]'
+          ? 'border-[#8b5cf6]/50 bg-gradient-to-br from-[#8b5cf6]/20 to-[#3b82f6]/10 ring-1 ring-[#8b5cf6]/50'
+          : 'border-white/10 bg-secondary/30 hover:border-white/20 hover:bg-secondary/50'
       )}
     >
-      <span
-        className={cn(
-          'text-3xl font-bold mb-1',
-          selected ? 'text-emerald-400' : 'text-white'
-        )}
-      >
+      <span className="text-xl font-bold font-mono text-foreground">
         {amount}
       </span>
-      <span className="text-sm text-neutral-500">USDC</span>
-      <div className="mt-3">
-        <div
-          className={cn(
-            'w-5 h-5 rounded-full border-2 flex items-center justify-center',
-            selected
-              ? 'border-emerald-500 bg-emerald-500'
-              : 'border-neutral-600'
-          )}
-        >
-          {selected && (
-            <div className="w-2 h-2 rounded-full bg-white" />
-          )}
-        </div>
-      </div>
+      <span className="block text-xs text-muted-foreground mt-1">USDC</span>
+      {selected && (
+        <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#8b5cf6]" />
+      )}
     </button>
   );
 }
