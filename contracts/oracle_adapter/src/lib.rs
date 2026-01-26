@@ -151,7 +151,7 @@ impl OracleAdapterContract {
 
             // Check deviation
             if Self::deviation_too_high(primary_price.price, secondary_price.price, max_deviation) {
-                return Err(NoetherError::PriceDeviation);
+                return Err(NoetherError::InvalidPrice);
             }
 
             // Return average price
@@ -197,7 +197,7 @@ impl OracleAdapterContract {
         }
 
         // Case 3: No valid prices
-        Err(NoetherError::AllOraclesFailed)
+        Err(NoetherError::OracleUnavailable)
     }
 
     /// Get price as simple tuple (SEP-0040 compatible).

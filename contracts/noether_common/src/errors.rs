@@ -2,6 +2,7 @@
 //!
 //! All possible errors in the Noether protocol.
 //! Error codes are grouped by category for easy identification.
+//! Note: Soroban contracterror has a limit of ~48 variants, so we consolidate similar errors.
 
 use soroban_sdk::contracterror;
 
@@ -10,7 +11,7 @@ use soroban_sdk::contracterror;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum NoetherError {
     // ═══════════════════════════════════════════════════════════════
-    // General Errors (1-99)
+    // General Errors (1-19)
     // ═══════════════════════════════════════════════════════════════
 
     /// Contract has not been initialized
@@ -21,116 +22,86 @@ pub enum NoetherError {
     Unauthorized = 3,
     /// Operation is currently paused
     Paused = 4,
-    /// Operation requires contract to be paused
-    NotPaused = 9,
     /// Invalid input parameter
     InvalidParameter = 5,
     /// Arithmetic overflow occurred
     Overflow = 6,
-    /// Arithmetic underflow occurred
-    Underflow = 7,
     /// Division by zero attempted
-    DivisionByZero = 8,
+    DivisionByZero = 7,
 
     // ═══════════════════════════════════════════════════════════════
-    // Position Errors (100-199)
+    // Position Errors (20-29)
     // ═══════════════════════════════════════════════════════════════
 
     /// Position with given ID does not exist
-    PositionNotFound = 100,
-    /// Position already exists (duplicate ID)
-    PositionAlreadyExists = 101,
+    PositionNotFound = 20,
     /// Leverage must be between 1 and max_leverage (typically 10)
-    InvalidLeverage = 102,
+    InvalidLeverage = 21,
     /// Collateral amount is below minimum required
-    InsufficientCollateral = 103,
-    /// Position size is below minimum threshold
-    PositionTooSmall = 104,
+    InsufficientCollateral = 22,
     /// Position size exceeds maximum allowed
-    PositionTooLarge = 105,
+    PositionTooLarge = 23,
     /// Caller does not own this position
-    NotPositionOwner = 106,
-    /// Position is already closed
-    PositionAlreadyClosed = 107,
-    /// Invalid direction specified
-    InvalidDirection = 108,
-    /// Cannot close position with this method (use liquidate)
-    PositionUnderwater = 109,
+    NotPositionOwner = 24,
     /// Position has insufficient margin for operation
-    InsufficientMargin = 110,
+    InsufficientMargin = 25,
 
     // ═══════════════════════════════════════════════════════════════
-    // Oracle Errors (200-299)
+    // Oracle Errors (30-39)
     // ═══════════════════════════════════════════════════════════════
 
     /// Oracle price is older than max staleness threshold
-    PriceStale = 200,
-    /// Primary and secondary oracle prices deviate too much
-    PriceDeviation = 201,
-    /// Oracle is not responding or unavailable
-    OracleUnavailable = 202,
+    PriceStale = 30,
     /// Invalid price returned (zero or negative)
-    InvalidPrice = 203,
-    /// Asset not supported by oracle
-    AssetNotSupported = 204,
-    /// Oracle contract address is invalid
-    InvalidOracleAddress = 205,
-    /// Both oracles failed and no fallback available
-    AllOraclesFailed = 206,
+    InvalidPrice = 31,
+    /// Oracle is not responding or unavailable
+    OracleUnavailable = 32,
 
     // ═══════════════════════════════════════════════════════════════
-    // Vault Errors (300-399)
+    // Vault Errors (40-49)
     // ═══════════════════════════════════════════════════════════════
 
     /// Insufficient USDC liquidity in vault
-    InsufficientLiquidity = 300,
-    /// Withdrawal cooldown period not elapsed
-    WithdrawalCooldown = 301,
+    InsufficientLiquidity = 40,
     /// Amount must be positive
-    InvalidAmount = 302,
-    /// Insufficient GLP balance for withdrawal
-    InsufficientGlpBalance = 303,
-    /// Deposit would exceed pool capacity
-    PoolCapacityExceeded = 304,
-    /// Withdrawal would leave pool undercollateralized
-    WithdrawalWouldUndercollateralize = 305,
-    /// Cannot settle - caller is not the market contract
-    UnauthorizedSettlement = 306,
-    /// GLP price calculation failed
-    GlpPriceError = 307,
+    InvalidAmount = 41,
+    /// Insufficient balance for operation
+    InsufficientBalance = 42,
 
     // ═══════════════════════════════════════════════════════════════
-    // Liquidation Errors (400-499)
+    // Liquidation Errors (50-54)
     // ═══════════════════════════════════════════════════════════════
 
     /// Position is healthy and cannot be liquidated
-    NotLiquidatable = 400,
-    /// Position has already been liquidated
-    AlreadyLiquidated = 401,
-    /// Liquidation would result in negative payout
-    LiquidationFailed = 402,
-    /// Keeper reward calculation failed
-    KeeperRewardError = 403,
+    NotLiquidatable = 50,
+    /// Liquidation operation failed
+    LiquidationFailed = 51,
 
     // ═══════════════════════════════════════════════════════════════
-    // Token Errors (500-599)
+    // Funding Rate Errors (55-59)
     // ═══════════════════════════════════════════════════════════════
 
-    /// Token transfer failed
-    TransferFailed = 500,
-    /// Insufficient token balance
-    InsufficientBalance = 501,
-    /// Token approval failed
-    ApprovalFailed = 502,
-    /// Invalid token address
-    InvalidTokenAddress = 503,
-
-    // ═══════════════════════════════════════════════════════════════
-    // Funding Rate Errors (600-699)
-    // ═══════════════════════════════════════════════════════════════
-
-    /// Funding rate calculation failed
-    FundingCalculationError = 600,
     /// Funding interval not elapsed
-    FundingIntervalNotElapsed = 601,
+    FundingIntervalNotElapsed = 55,
+
+    // ═══════════════════════════════════════════════════════════════
+    // Order Errors (60-75)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Order with given ID does not exist
+    OrderNotFound = 60,
+    /// Order has already been executed or cancelled
+    OrderNotPending = 61,
+    /// Order trigger condition not met (price hasn't reached trigger)
+    OrderNotTriggered = 62,
+    /// Slippage exceeds trader's tolerance
+    SlippageExceeded = 63,
+    /// Caller does not own this order
+    NotOrderOwner = 64,
+    /// Invalid trigger price (e.g., stop-loss above entry for long)
+    InvalidTriggerPrice = 65,
+    /// Invalid slippage tolerance (must be > 0 and <= 10000 bps)
+    InvalidSlippageTolerance = 66,
+    /// Position already has this type of order attached
+    OrderAlreadyExists = 67,
 }

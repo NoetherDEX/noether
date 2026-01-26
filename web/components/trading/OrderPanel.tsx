@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { AlertCircle, Info, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
-import { openPosition } from '@/lib/stellar/market';
+import { openPosition, placeLimitOrder } from '@/lib/stellar/market';
 import { approveUSDC, checkMarketAllowance } from '@/lib/stellar/token';
 import { CONTRACTS, TRADING } from '@/lib/utils/constants';
 import {
@@ -16,6 +16,7 @@ import {
   toPrecision,
 } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
+import type { TriggerCondition } from '@/types';
 
 interface OrderPanelProps {
   asset: string;
@@ -33,8 +34,15 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
     setLeverage,
   } = useTradeStore();
 
+  // Order type state
+  const [orderType, setOrderType] = useState<'Market' | 'Limit'>('Market');
+
   // Price states
   const [assetPrice, setAssetPrice] = useState<number>(0);
+
+  // Limit order states
+  const [triggerPrice, setTriggerPrice] = useState<string>('');
+  const [slippageTolerance, setSlippageTolerance] = useState<number>(100); // 1% = 100 bps
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -50,7 +58,8 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
       try {
         const ticker = await fetchTicker(asset);
         setAssetPrice(ticker.price);
-      } catch (error) {
+      }
+      catch (error) {
         console.error('Failed to fetch price:', error);
       }
     };
@@ -150,50 +159,99 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
     }
   };
 
-  // Handle position submission
+  // Handle position submission (market or limit)
   const handleSubmit = async () => {
     if (!canSubmit || !publicKey) return;
 
     setIsSubmitting(true);
 
-    const openPositionPromise = openPosition(publicKey, sign, {
-      asset,
-      collateral: toPrecision(collateralNum),
-      leverage,
-      direction,
-    });
+    if (orderType === 'Market') {
+      // Market order - immediate execution
+      const openPositionPromise = openPosition(publicKey, sign, {
+        asset,
+        collateral: toPrecision(collateralNum),
+        leverage,
+        direction,
+      });
 
-    toast.promise(openPositionPromise, {
-      loading: `Opening ${direction} ${asset} position...`,
-      success: (position) => {
-        setCollateral('');
-        refreshBalances();
-        onSubmit?.();
-        return `${direction} ${asset} position opened! ID: ${position.id}`;
-      },
-      error: (err) => {
-        console.error('Failed to open position:', err);
-        // Parse common errors
-        if (err?.message?.includes('InsufficientCollateral')) {
-          return 'Insufficient collateral. Minimum is 10 USDC.';
-        }
-        if (err?.message?.includes('InvalidLeverage')) {
-          return 'Invalid leverage. Must be between 1x and 10x.';
-        }
-        if (err?.message?.includes('AllOraclesFailed')) {
-          return 'Price feed unavailable. Please try again.';
-        }
-        return err?.message || 'Failed to open position';
-      },
-    });
+      toast.promise(openPositionPromise, {
+        loading: `Opening ${direction} ${asset} position...`,
+        success: (position) => {
+          setCollateral('');
+          refreshBalances();
+          onSubmit?.();
+          return `${direction} ${asset} position opened! ID: ${position.id}`;
+        },
+        error: (err) => {
+          console.error('Failed to open position:', err);
+          if (err?.message?.includes('InsufficientCollateral')) {
+            return 'Insufficient collateral. Minimum is 10 USDC.';
+          }
+          if (err?.message?.includes('InvalidLeverage')) {
+            return 'Invalid leverage. Must be between 1x and 10x.';
+          }
+          if (err?.message?.includes('AllOraclesFailed')) {
+            return 'Price feed unavailable. Please try again.';
+          }
+          return err?.message || 'Failed to open position';
+        },
+      });
 
-    try {
-      await openPositionPromise;
-    } catch {
-      // Error handled by toast
-    } finally {
-      setIsSubmitting(false);
+      try {
+        await openPositionPromise;
+      } catch {
+        // Error handled by toast
+      }
+    } else {
+      // Limit order - conditional execution
+      const triggerPriceNum = parseFloat(triggerPrice) || 0;
+      const triggerPricePrecision = toPrecision(triggerPriceNum);
+
+      // Determine trigger condition based on direction and price
+      // Long: buy when price goes BELOW trigger (dip buy)
+      // Short: sell when price goes ABOVE trigger (rally short)
+      const triggerCondition: TriggerCondition =
+        direction === 'Long' ? 'Below' : 'Above';
+
+      const placeLimitOrderPromise = placeLimitOrder(publicKey, sign, {
+        asset,
+        direction,
+        collateral: toPrecision(collateralNum),
+        leverage,
+        triggerPrice: triggerPricePrecision,
+        triggerCondition,
+        slippageToleranceBps: slippageTolerance,
+      });
+
+      toast.promise(placeLimitOrderPromise, {
+        loading: `Placing ${direction} limit order...`,
+        success: (order) => {
+          setCollateral('');
+          setTriggerPrice('');
+          refreshBalances();
+          onSubmit?.();
+          return `Limit order placed! ID: ${order.id}. Will execute when ${asset} reaches $${triggerPriceNum.toFixed(2)}`;
+        },
+        error: (err) => {
+          console.error('Failed to place limit order:', err);
+          if (err?.message?.includes('InvalidTriggerPrice')) {
+            return 'Invalid trigger price. Please check your entry.';
+          }
+          if (err?.message?.includes('InvalidSlippageTolerance')) {
+            return 'Invalid slippage tolerance.';
+          }
+          return err?.message || 'Failed to place limit order';
+        },
+      });
+
+      try {
+        await placeLimitOrderPromise;
+      } catch {
+        // Error handled by toast
+      }
     }
+
+    setIsSubmitting(false);
   };
 
   // Percentage buttons for collateral
@@ -209,6 +267,32 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
+        {/* Market/Limit Order Type Tabs */}
+        <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden border border-white/10">
+          <button
+            onClick={() => setOrderType('Market')}
+            className={cn(
+              'py-2 text-sm font-medium transition-all',
+              orderType === 'Market'
+                ? 'bg-primary/20 text-primary border-b-2 border-primary'
+                : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+            )}
+          >
+            Market
+          </button>
+          <button
+            onClick={() => setOrderType('Limit')}
+            className={cn(
+              'py-2 text-sm font-medium transition-all',
+              orderType === 'Limit'
+                ? 'bg-primary/20 text-primary border-b-2 border-primary'
+                : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+            )}
+          >
+            Limit
+          </button>
+        </div>
+
         {/* Long/Short Tabs */}
         <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden border border-white/10">
           <button
@@ -359,6 +443,76 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
           </div>
         </div>
 
+        {/* Limit Order Settings (only show when Limit is selected) */}
+        {orderType === 'Limit' && (
+          <div className="space-y-3 p-3 bg-amber-500/10 rounded-lg border border-amber-500/20">
+            <h4 className="text-xs font-medium text-amber-500 uppercase tracking-wider">
+              Limit Order Settings
+            </h4>
+
+            {/* Trigger Price */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  Trigger Price
+                  <Info className="h-3 w-3 opacity-50" />
+                </label>
+                <span className="text-xs text-muted-foreground">
+                  Current: ${assetPrice.toFixed(asset === 'XLM' ? 4 : 2)}
+                </span>
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={triggerPrice}
+                  onChange={(e) => setTriggerPrice(e.target.value.replace(/[^0-9.]/g, ''))}
+                  placeholder="Enter the trigger price"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2.5 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-colors pr-8"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {direction === 'Long'
+                  ? 'Order triggers when price drops to this level'
+                  : 'Order triggers when price rises to this level'}
+              </p>
+            </div>
+
+            {/* Slippage Tolerance */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  Slippage Tolerance
+                  <Info className="h-3 w-3 opacity-50" />
+                </label>
+                <span className="text-xs font-mono text-foreground">
+                  {(slippageTolerance / 100).toFixed(2)}%
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[50, 100, 200, 500].map((bps) => (
+                  <button
+                    key={bps}
+                    onClick={() => setSlippageTolerance(bps)}
+                    className={cn(
+                      'py-1.5 text-xs font-medium rounded border transition-all',
+                      slippageTolerance === bps
+                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
+                        : 'border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20'
+                    )}
+                  >
+                    {(bps / 100).toFixed(1)}%
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Order cancelled if execution price differs by more than this
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Order Summary Box */}
         <div className="space-y-2.5 p-3 bg-secondary/20 rounded-lg border border-white/5">
           <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Order Summary</h4>
@@ -370,11 +524,19 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
               <span className="font-mono text-sm text-foreground">{formatUSD(positionSize)}</span>
             </div>
 
-            {/* Entry Price */}
+            {/* Entry Price / Trigger Price */}
             <div className="flex justify-between items-center">
-              <span className="text-xs text-muted-foreground flex items-center gap-1">Entry Price</span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                {orderType === 'Limit' ? 'Trigger Price' : 'Entry Price'}
+              </span>
               <span className="font-mono text-sm text-foreground">
-                {assetPrice > 0 ? formatUSD(assetPrice, asset === 'XLM' ? 4 : 2) : '--'}
+                {orderType === 'Limit'
+                  ? triggerPrice
+                    ? formatUSD(parseFloat(triggerPrice), asset === 'XLM' ? 4 : 2)
+                    : '--'
+                  : assetPrice > 0
+                  ? formatUSD(assetPrice, asset === 'XLM' ? 4 : 2)
+                  : '--'}
               </span>
             </div>
 
@@ -466,6 +628,8 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
             {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
             {!isConnected
               ? 'Connect Wallet'
+              : orderType === 'Limit'
+              ? `Place ${direction} Limit Order`
               : `${direction === 'Long' ? 'Buy / Long' : 'Sell / Short'} ${asset}`}
           </button>
         )}

@@ -313,7 +313,7 @@ pub fn safe_add(a: i128, b: i128) -> Result<i128, NoetherError> {
 
 /// Safe subtraction that checks for underflow.
 pub fn safe_sub(a: i128, b: i128) -> Result<i128, NoetherError> {
-    a.checked_sub(b).ok_or(NoetherError::Underflow)
+    a.checked_sub(b).ok_or(NoetherError::Overflow)
 }
 
 #[cfg(test)]

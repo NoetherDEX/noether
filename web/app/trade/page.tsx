@@ -11,22 +11,37 @@ import {
   OrderPanel,
   AssetSelector,
   PositionsList,
+  OrdersList,
   TradeHistoryContainer,
   RecentTrades,
 } from '@/components/trading';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { TIMEFRAMES } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
-import { getPositions, toDisplayPosition, closePosition } from '@/lib/stellar/market';
+import {
+  getPositions,
+  toDisplayPosition,
+  closePosition,
+  getOrders,
+  toDisplayOrder,
+  setStopLoss,
+  setTakeProfit,
+  cancelOrder,
+} from '@/lib/stellar/market';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
-import type { DisplayPosition } from '@/types';
+import { toPrecision } from '@/lib/utils';
+import type { DisplayPosition, DisplayOrder } from '@/types';
+import toast from 'react-hot-toast';
 
 function TradePage() {
   const [selectedAsset, setSelectedAsset] = useState('BTC');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
   const [positions, setPositions] = useState<DisplayPosition[]>([]);
+  const [orders, setOrders] = useState<DisplayOrder[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
 
   const { isConnected, publicKey, sign, refreshBalances } = useWallet();
 
@@ -78,17 +93,46 @@ function TradePage() {
     fetchPositions(false); // Don't show full loading state for manual refresh
   }, [fetchPositions]);
 
-  // Auto-refresh positions every 60 seconds when connected
+  // Fetch orders function
+  const fetchOrders = useCallback(async (showLoading = true) => {
+    if (!publicKey) return;
+
+    if (showLoading) setIsLoadingOrders(true);
+    setIsRefreshingOrders(true);
+
+    try {
+      const contractOrders = await getOrders(publicKey);
+      const displayOrders = contractOrders.map(toDisplayOrder);
+      setOrders(displayOrders);
+    } catch (error) {
+      console.error('Failed to fetch orders:', error);
+    } finally {
+      setIsLoadingOrders(false);
+      setIsRefreshingOrders(false);
+    }
+  }, [publicKey]);
+
+  // Manual refresh handler for orders
+  const handleRefreshOrders = useCallback(() => {
+    fetchOrders(false);
+  }, [fetchOrders]);
+
+  // Auto-refresh positions and orders every 60 seconds when connected
   useEffect(() => {
     if (!isConnected || !publicKey) {
       setPositions([]);
+      setOrders([]);
       return;
     }
 
     fetchPositions(true); // Initial fetch with loading state
-    const interval = setInterval(() => fetchPositions(false), 60000); // 60 seconds
+    fetchOrders(true);
+    const interval = setInterval(() => {
+      fetchPositions(false);
+      fetchOrders(false);
+    }, 60000); // 60 seconds
     return () => clearInterval(interval);
-  }, [isConnected, publicKey, fetchPositions]);
+  }, [isConnected, publicKey, fetchPositions, fetchOrders]);
 
   const handleClosePosition = async (positionId: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
@@ -111,6 +155,78 @@ function TradePage() {
     console.log('Adding collateral:', positionId, amount);
   };
 
+  const handleSetStopLoss = async (positionId: number, triggerPrice: number, slippageBps: number): Promise<void> => {
+    if (!publicKey) throw new Error('Wallet not connected');
+
+    const promise = setStopLoss(publicKey, sign, {
+      positionId,
+      triggerPrice: toPrecision(triggerPrice),
+      slippageToleranceBps: slippageBps,
+    });
+
+    toast.promise(promise, {
+      loading: 'Setting stop-loss...',
+      success: (order) => {
+        fetchOrders(false);
+        return `Stop-loss set at $${triggerPrice.toFixed(2)}`;
+      },
+      error: (err) => {
+        console.error('Failed to set stop-loss:', err);
+        return err?.message || 'Failed to set stop-loss';
+      },
+    });
+
+    await promise;
+  };
+
+  const handleSetTakeProfit = async (positionId: number, triggerPrice: number, slippageBps: number): Promise<void> => {
+    if (!publicKey) throw new Error('Wallet not connected');
+
+    const promise = setTakeProfit(publicKey, sign, {
+      positionId,
+      triggerPrice: toPrecision(triggerPrice),
+      slippageToleranceBps: slippageBps,
+    });
+
+    toast.promise(promise, {
+      loading: 'Setting take-profit...',
+      success: (order) => {
+        fetchOrders(false);
+        return `Take-profit set at $${triggerPrice.toFixed(2)}`;
+      },
+      error: (err) => {
+        console.error('Failed to set take-profit:', err);
+        return err?.message || 'Failed to set take-profit';
+      },
+    });
+
+    await promise;
+  };
+
+  const handleCancelOrder = async (orderId: number): Promise<void> => {
+    if (!publicKey) throw new Error('Wallet not connected');
+
+    const promise = cancelOrder(publicKey, sign, orderId);
+
+    toast.promise(promise, {
+      loading: 'Cancelling order...',
+      success: () => {
+        fetchOrders(false);
+        refreshBalances(); // Refund collateral for limit orders
+        return 'Order cancelled successfully';
+      },
+      error: (err) => {
+        console.error('Failed to cancel order:', err);
+        return err?.message || 'Failed to cancel order';
+      },
+    });
+
+    await promise;
+  };
+
+  // Count only pending orders for the badge
+  const pendingOrdersCount = orders.filter(o => o.status === 'Pending').length;
+
   const positionTabs = [
     {
       id: 'positions',
@@ -123,7 +239,23 @@ function TradePage() {
           isRefreshing={isRefreshing}
           onClosePosition={handleClosePosition}
           onAddCollateral={handleAddCollateral}
+          onSetStopLoss={handleSetStopLoss}
+          onSetTakeProfit={handleSetTakeProfit}
           onRefresh={handleRefreshPositions}
+        />
+      ),
+    },
+    {
+      id: 'orders',
+      label: 'Orders',
+      count: pendingOrdersCount,
+      content: (
+        <OrdersList
+          orders={orders}
+          isLoading={isLoadingOrders}
+          isRefreshing={isRefreshingOrders}
+          onCancelOrder={handleCancelOrder}
+          onRefresh={handleRefreshOrders}
         />
       ),
     },

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { TrendingUp, X, Plus, RefreshCw, Share2, AlertTriangle } from 'lucide-react';
+import { TrendingUp, X, Plus, RefreshCw, Share2, AlertTriangle, Shield, Target } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPercent, formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
@@ -13,6 +13,8 @@ interface PositionsListProps {
   isRefreshing?: boolean;
   onClosePosition?: (id: number) => Promise<void>;
   onAddCollateral?: (id: number, amount: number) => void;
+  onSetStopLoss?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
+  onSetTakeProfit?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
   onRefresh?: () => void;
 }
 
@@ -22,12 +24,17 @@ export function PositionsList({
   isRefreshing,
   onClosePosition,
   onAddCollateral,
+  onSetStopLoss,
+  onSetTakeProfit,
   onRefresh,
 }: PositionsListProps) {
   const [selectedPosition, setSelectedPosition] = useState<DisplayPosition | null>(null);
-  const [actionModal, setActionModal] = useState<'close' | 'add-collateral' | null>(null);
+  const [actionModal, setActionModal] = useState<'close' | 'add-collateral' | 'stop-loss' | 'take-profit' | null>(null);
   const [addCollateralAmount, setAddCollateralAmount] = useState('');
+  const [slTpPrice, setSlTpPrice] = useState('');
+  const [slTpSlippage, setSlTpSlippage] = useState(100); // 1% default
   const [isClosing, setIsClosing] = useState(false);
+  const [isSettingSLTP, setIsSettingSLTP] = useState(false);
 
   if (isLoading) {
     return (
@@ -86,6 +93,38 @@ export function PositionsList({
     setActionModal(null);
     setSelectedPosition(null);
     setAddCollateralAmount('');
+  };
+
+  const handleSetStopLoss = async () => {
+    if (!selectedPosition || !onSetStopLoss || !slTpPrice || isSettingSLTP) return;
+
+    setIsSettingSLTP(true);
+    try {
+      await onSetStopLoss(selectedPosition.id, parseFloat(slTpPrice), slTpSlippage);
+      setActionModal(null);
+      setSelectedPosition(null);
+      setSlTpPrice('');
+    } catch (error) {
+      console.error('Failed to set stop-loss:', error);
+    } finally {
+      setIsSettingSLTP(false);
+    }
+  };
+
+  const handleSetTakeProfit = async () => {
+    if (!selectedPosition || !onSetTakeProfit || !slTpPrice || isSettingSLTP) return;
+
+    setIsSettingSLTP(true);
+    try {
+      await onSetTakeProfit(selectedPosition.id, parseFloat(slTpPrice), slTpSlippage);
+      setActionModal(null);
+      setSelectedPosition(null);
+      setSlTpPrice('');
+    } catch (error) {
+      console.error('Failed to set take-profit:', error);
+    } finally {
+      setIsSettingSLTP(false);
+    }
   };
 
   // Check if position is at liquidation risk (within 10% of mark price)
@@ -148,6 +187,25 @@ export function PositionsList({
                   setSelectedPosition(position);
                   setActionModal('add-collateral');
                 }}
+                onSetStopLoss={() => {
+                  setSelectedPosition(position);
+                  // Suggest a stop-loss 5% below entry for long, 5% above for short
+                  const suggestedSL = position.direction === 'Long'
+                    ? position.entryPrice * 0.95
+                    : position.entryPrice * 1.05;
+                  setSlTpPrice(suggestedSL.toFixed(position.asset === 'XLM' ? 4 : 2));
+                  setActionModal('stop-loss');
+                }}
+                onSetTakeProfit={() => {
+                  setSelectedPosition(position);
+                  // Suggest a take-profit 10% above entry for long, 10% below for short
+                  const suggestedTP = position.direction === 'Long'
+                    ? position.entryPrice * 1.10
+                    : position.entryPrice * 0.90;
+                  setSlTpPrice(suggestedTP.toFixed(position.asset === 'XLM' ? 4 : 2));
+                  setActionModal('take-profit');
+                }}
+                hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
               />
             ))}
           </tbody>
@@ -168,6 +226,23 @@ export function PositionsList({
               setSelectedPosition(position);
               setActionModal('add-collateral');
             }}
+            onSetStopLoss={() => {
+              setSelectedPosition(position);
+              const suggestedSL = position.direction === 'Long'
+                ? position.entryPrice * 0.95
+                : position.entryPrice * 1.05;
+              setSlTpPrice(suggestedSL.toFixed(position.asset === 'XLM' ? 4 : 2));
+              setActionModal('stop-loss');
+            }}
+            onSetTakeProfit={() => {
+              setSelectedPosition(position);
+              const suggestedTP = position.direction === 'Long'
+                ? position.entryPrice * 1.10
+                : position.entryPrice * 0.90;
+              setSlTpPrice(suggestedTP.toFixed(position.asset === 'XLM' ? 4 : 2));
+              setActionModal('take-profit');
+            }}
+            hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
           />
         ))}
       </div>
@@ -265,6 +340,186 @@ export function PositionsList({
           </div>
         )}
       </Modal>
+
+      {/* Stop-Loss Modal */}
+      <Modal
+        isOpen={actionModal === 'stop-loss'}
+        onClose={() => setActionModal(null)}
+        title="Set Stop-Loss"
+        size="sm"
+      >
+        {selectedPosition && (
+          <div>
+            <div className="mb-6 p-4 bg-white/5 rounded-xl space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Position</span>
+                <span className="text-foreground">
+                  {selectedPosition.asset} {selectedPosition.direction}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Entry Price</span>
+                <span className="text-foreground">{formatUSD(selectedPosition.entryPrice, 2)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Current Price</span>
+                <span className="text-foreground">{formatUSD(selectedPosition.currentPrice, 2)}</span>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="text-sm text-muted-foreground mb-2 block">
+                Trigger Price (USD)
+              </label>
+              <input
+                type="number"
+                value={slTpPrice}
+                onChange={(e) => setSlTpPrice(e.target.value)}
+                placeholder="Stop-loss price"
+                className="w-full bg-secondary/50 border border-white/10 rounded-lg px-4 py-3 text-foreground focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444]"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                {selectedPosition.direction === 'Long'
+                  ? 'Position closes when price drops to this level'
+                  : 'Position closes when price rises to this level'}
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label className="text-sm text-muted-foreground mb-2 block">
+                Slippage Tolerance
+              </label>
+              <div className="grid grid-cols-4 gap-2">
+                {[50, 100, 200, 500].map((bps) => (
+                  <button
+                    key={bps}
+                    onClick={() => setSlTpSlippage(bps)}
+                    className={cn(
+                      'py-2 text-xs font-medium rounded border transition-all',
+                      slTpSlippage === bps
+                        ? 'bg-[#ef4444]/20 border-[#ef4444]/50 text-[#ef4444]'
+                        : 'border-white/10 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {(bps / 100).toFixed(1)}%
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                className="flex-1"
+                onClick={() => setActionModal(null)}
+                disabled={isSettingSLTP}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                className="flex-1"
+                onClick={handleSetStopLoss}
+                disabled={!slTpPrice || isSettingSLTP}
+                isLoading={isSettingSLTP}
+              >
+                <Shield className="w-4 h-4 mr-1" />
+                Set Stop-Loss
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Take-Profit Modal */}
+      <Modal
+        isOpen={actionModal === 'take-profit'}
+        onClose={() => setActionModal(null)}
+        title="Set Take-Profit"
+        size="sm"
+      >
+        {selectedPosition && (
+          <div>
+            <div className="mb-6 p-4 bg-white/5 rounded-xl space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Position</span>
+                <span className="text-foreground">
+                  {selectedPosition.asset} {selectedPosition.direction}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Entry Price</span>
+                <span className="text-foreground">{formatUSD(selectedPosition.entryPrice, 2)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Current Price</span>
+                <span className="text-foreground">{formatUSD(selectedPosition.currentPrice, 2)}</span>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="text-sm text-muted-foreground mb-2 block">
+                Trigger Price (USD)
+              </label>
+              <input
+                type="number"
+                value={slTpPrice}
+                onChange={(e) => setSlTpPrice(e.target.value)}
+                placeholder="Take-profit price"
+                className="w-full bg-secondary/50 border border-white/10 rounded-lg px-4 py-3 text-foreground focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e]"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                {selectedPosition.direction === 'Long'
+                  ? 'Position closes when price rises to this level'
+                  : 'Position closes when price drops to this level'}
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label className="text-sm text-muted-foreground mb-2 block">
+                Slippage Tolerance
+              </label>
+              <div className="grid grid-cols-4 gap-2">
+                {[50, 100, 200, 500].map((bps) => (
+                  <button
+                    key={bps}
+                    onClick={() => setSlTpSlippage(bps)}
+                    className={cn(
+                      'py-2 text-xs font-medium rounded border transition-all',
+                      slTpSlippage === bps
+                        ? 'bg-[#22c55e]/20 border-[#22c55e]/50 text-[#22c55e]'
+                        : 'border-white/10 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {(bps / 100).toFixed(1)}%
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                className="flex-1"
+                onClick={() => setActionModal(null)}
+                disabled={isSettingSLTP}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                className="flex-1"
+                onClick={handleSetTakeProfit}
+                disabled={!slTpPrice || isSettingSLTP}
+                isLoading={isSettingSLTP}
+              >
+                <Target className="w-4 h-4 mr-1" />
+                Set Take-Profit
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </>
   );
 }
@@ -275,11 +530,17 @@ function PositionRow({
   isLiquidationRisk,
   onClose,
   onAddCollateral,
+  onSetStopLoss,
+  onSetTakeProfit,
+  hasSlTpCallbacks,
 }: {
   position: DisplayPosition;
   isLiquidationRisk: boolean;
   onClose: () => void;
   onAddCollateral: () => void;
+  onSetStopLoss: () => void;
+  onSetTakeProfit: () => void;
+  hasSlTpCallbacks: boolean;
 }) {
   const isPositive = position.pnl >= 0;
 
@@ -364,6 +625,24 @@ function PositionRow({
 
       <td className="px-3 py-3">
         <div className="flex items-center justify-center gap-1">
+          {hasSlTpCallbacks && (
+            <>
+              <button
+                onClick={onSetStopLoss}
+                className="p-1.5 rounded hover:bg-[#ef4444]/10 text-muted-foreground hover:text-[#ef4444] transition-colors"
+                title="Set Stop-Loss"
+              >
+                <Shield className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={onSetTakeProfit}
+                className="p-1.5 rounded hover:bg-[#22c55e]/10 text-muted-foreground hover:text-[#22c55e] transition-colors"
+                title="Set Take-Profit"
+              >
+                <Target className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
           <button
             onClick={onAddCollateral}
             className="p-1.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
@@ -390,10 +669,16 @@ function PositionCard({
   position,
   onClose,
   onAddCollateral,
+  onSetStopLoss,
+  onSetTakeProfit,
+  hasSlTpCallbacks,
 }: {
   position: DisplayPosition;
   onClose: () => void;
   onAddCollateral: () => void;
+  onSetStopLoss: () => void;
+  onSetTakeProfit: () => void;
+  hasSlTpCallbacks: boolean;
 }) {
   const isPositive = position.pnl >= 0;
 
@@ -439,6 +724,19 @@ function PositionCard({
           <p className="text-[#f97316]/70 font-mono">{formatUSD(position.liquidationPrice, 2)}</p>
         </div>
       </div>
+
+      {hasSlTpCallbacks && (
+        <div className="flex gap-2 mb-2">
+          <Button variant="secondary" size="sm" className="flex-1" onClick={onSetStopLoss}>
+            <Shield className="w-4 h-4 mr-1" />
+            Stop-Loss
+          </Button>
+          <Button variant="secondary" size="sm" className="flex-1" onClick={onSetTakeProfit}>
+            <Target className="w-4 h-4 mr-1" />
+            Take-Profit
+          </Button>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <Button variant="secondary" size="sm" className="flex-1" onClick={onAddCollateral}>

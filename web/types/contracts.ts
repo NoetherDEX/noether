@@ -1,6 +1,15 @@
 // Position direction
 export type Direction = 'Long' | 'Short';
 
+// Order type
+export type OrderType = 'LimitEntry' | 'StopLoss' | 'TakeProfit';
+
+// Order status
+export type OrderStatus = 'Pending' | 'Executed' | 'Cancelled' | 'CancelledSlippage' | 'Expired';
+
+// Trigger condition
+export type TriggerCondition = 'Above' | 'Below';
+
 // Trading position from the market contract
 export interface Position {
   id: number;
@@ -14,6 +23,44 @@ export interface Position {
   openedAt: number;
   lastFundingAt: number;
   accumulatedFunding: bigint;
+}
+
+// Order from market contract
+export interface Order {
+  id: number;
+  trader: string;
+  asset: string;
+  orderType: OrderType;
+  direction: Direction;
+  collateral: bigint;
+  leverage: number;
+  triggerPrice: bigint;
+  triggerCondition: TriggerCondition;
+  slippageToleranceBps: number;
+  positionId: number;
+  hasPosition: boolean;
+  createdAt: number;
+  status: OrderStatus;
+}
+
+// Display-friendly order
+export interface DisplayOrder {
+  id: number;
+  trader: string;
+  asset: string;
+  orderType: OrderType;
+  direction: Direction;
+  collateral: number;
+  leverage: number;
+  triggerPrice: number;
+  triggerCondition: TriggerCondition;
+  slippageToleranceBps: number;
+  positionId: number;
+  hasPosition: boolean;
+  createdAt: Date;
+  status: OrderStatus;
+  // Calculated fields
+  positionSize: number;
 }
 
 // Market configuration

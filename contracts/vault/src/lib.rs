@@ -226,7 +226,7 @@ impl VaultContract {
         // Check NOE balance
         let noe_balance = noe::balance(&env, &withdrawer);
         if noe_balance < noe_amount {
-            return Err(NoetherError::InsufficientGlpBalance);
+            return Err(NoetherError::InsufficientBalance);
         }
 
         // Get current pool state
@@ -644,7 +644,7 @@ impl VaultContract {
 
         // Must be paused for emergency operations
         if !get_paused(&env) {
-            return Err(NoetherError::NotPaused);
+            return Err(NoetherError::InvalidParameter);
         }
 
         if amount <= 0 {

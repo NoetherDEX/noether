@@ -173,7 +173,7 @@ impl MockOracleContract {
     /// Tuple of (price, timestamp) - price has 7 decimals
     ///
     /// # Errors
-    /// * `AssetNotSupported` - No price set for this asset
+    /// * `InvalidPrice` - No price set for this asset
     pub fn lastprice(env: Env, asset: Symbol) -> Result<(i128, u64), NoetherError> {
         Self::require_initialized(&env)?;
 
@@ -181,7 +181,7 @@ impl MockOracleContract {
             .storage()
             .persistent()
             .get(&DataKey::Price(asset.clone()))
-            .ok_or(NoetherError::AssetNotSupported)?;
+            .ok_or(NoetherError::InvalidPrice)?;
 
         Ok((stored.price, stored.timestamp))
     }
@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "AssetNotSupported")]
+    #[should_panic(expected = "InvalidPrice")]
     fn test_get_nonexistent_price() {
         let (env, admin, client) = setup_env();
         client.initialize(&admin);

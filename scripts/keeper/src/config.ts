@@ -1,37 +1,22 @@
 /**
- * Keeper Bot Configuration
- *
- * Loads configuration from environment variables and contracts.json
+ * Noether Keeper Bot - Configuration
  */
 
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
+import { KeeperConfig, AssetConfig } from './types';
 
 // Load .env from project root
 const projectRoot = path.resolve(__dirname, '../../../');
 dotenv.config({ path: path.join(projectRoot, '.env') });
 
-export interface KeeperConfig {
-  // Network
-  network: 'testnet' | 'mainnet';
-  rpcUrl: string;
-  networkPassphrase: string;
-
-  // Keeper credentials
-  secretKey: string;
-  publicKey: string;
-
-  // Contract addresses
-  marketContractId: string;
-  oracleContractId: string;
-  vaultContractId: string;
-
-  // Keeper settings
-  pollIntervalMs: number;
-  minKeeperReward: bigint;
-  maxGasPrice: number;
-}
+// Default assets to monitor
+const DEFAULT_ASSETS: AssetConfig[] = [
+  { symbol: 'BTC', binanceSymbol: 'BTCUSDT', decimals: 8 },
+  { symbol: 'ETH', binanceSymbol: 'ETHUSDT', decimals: 8 },
+  { symbol: 'XLM', binanceSymbol: 'XLMUSDT', decimals: 7 },
+];
 
 /**
  * Load and validate configuration
@@ -43,13 +28,13 @@ export function loadConfig(): KeeperConfig {
 
   if (fs.existsSync(contractsPath)) {
     contracts = JSON.parse(fs.readFileSync(contractsPath, 'utf-8'));
-    console.log('Loaded contract addresses from contracts.json');
+    console.log('📄 Loaded contract addresses from contracts.json');
   }
 
   // Validate required environment variables
-  const secretKey = process.env.KEEPER_SECRET_KEY || process.env.ADMIN_SECRET_KEY;
+  const secretKey = process.env.KEEPER_SECRET_KEY || process.env.ORACLE_SECRET_KEY || process.env.ADMIN_SECRET_KEY;
   if (!secretKey) {
-    throw new Error('KEEPER_SECRET_KEY or ADMIN_SECRET_KEY must be set');
+    throw new Error('❌ KEEPER_SECRET_KEY, ORACLE_SECRET_KEY, or ADMIN_SECRET_KEY must be set in .env');
   }
 
   const config: KeeperConfig = {
@@ -60,7 +45,6 @@ export function loadConfig(): KeeperConfig {
 
     // Credentials
     secretKey,
-    publicKey: '', // Will be derived
 
     // Contract addresses (from env or contracts.json)
     marketContractId:
@@ -68,23 +52,28 @@ export function loadConfig(): KeeperConfig {
       contracts.contracts?.market ||
       '',
     oracleContractId:
-      process.env.NEXT_PUBLIC_ORACLE_ADAPTER_ID ||
-      contracts.contracts?.oracleAdapter ||
+      process.env.NEXT_PUBLIC_MOCK_ORACLE_ID ||
+      contracts.contracts?.mockOracle ||
       '',
     vaultContractId:
       process.env.NEXT_PUBLIC_VAULT_ID ||
       contracts.contracts?.vault ||
       '',
 
-    // Keeper settings
-    pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '10000', 10),
-    minKeeperReward: BigInt(process.env.MIN_KEEPER_REWARD || '1000000'), // 0.1 USDC
-    maxGasPrice: parseInt(process.env.MAX_GAS_PRICE || '100', 10),
+    // Timing
+    pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '5000', 10),
+    oracleUpdateIntervalMs: parseInt(process.env.ORACLE_UPDATE_INTERVAL_MS || '10000', 10),
+
+    // Assets
+    assets: DEFAULT_ASSETS,
   };
 
   // Validate contract addresses
   if (!config.marketContractId) {
-    console.warn('Warning: MARKET_CONTRACT_ID not set. Run deployment first.');
+    console.warn('⚠️  Warning: MARKET_CONTRACT_ID not set. Liquidations and orders will not work.');
+  }
+  if (!config.oracleContractId) {
+    console.warn('⚠️  Warning: ORACLE_CONTRACT_ID not set. Price updates will not work.');
   }
 
   return config;

@@ -3,7 +3,7 @@
 //! Storage keys and helpers for the Market contract.
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
-use noether_common::{NoetherError, Position, MarketConfig};
+use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
@@ -42,6 +42,18 @@ pub enum DataKey {
     TraderPositions(Address),
     /// Global position index (all position IDs)
     AllPositions,
+    /// Order by ID
+    Order(u64),
+    /// Order counter (for ID generation)
+    OrderCounter,
+    /// Order IDs for a trader
+    TraderOrders(Address),
+    /// Global order index (all pending order IDs)
+    AllOrders,
+    /// Stop-loss order ID attached to a position
+    PositionStopLoss(u64),
+    /// Take-profit order ID attached to a position
+    PositionTakeProfit(u64),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -310,4 +322,184 @@ pub fn extend_instance_ttl(env: &Env) {
 
 fn extend_persistent_ttl(env: &Env, key: &DataKey) {
     env.storage().persistent().extend_ttl(key, 2_592_000, 2_592_000);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Order Storage
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub fn get_order_counter(env: &Env) -> u64 {
+    env.storage().persistent().get(&DataKey::OrderCounter).unwrap_or(0)
+}
+
+pub fn set_order_counter(env: &Env, counter: u64) {
+    env.storage().persistent().set(&DataKey::OrderCounter, &counter);
+    extend_persistent_ttl(env, &DataKey::OrderCounter);
+}
+
+pub fn next_order_id(env: &Env) -> u64 {
+    let counter = get_order_counter(env);
+    let next_id = counter + 1;
+    set_order_counter(env, next_id);
+    next_id
+}
+
+pub fn get_order(env: &Env, id: u64) -> Option<Order> {
+    env.storage().persistent().get(&DataKey::Order(id))
+}
+
+pub fn save_order(env: &Env, order: &Order) {
+    // Save order
+    env.storage().persistent().set(&DataKey::Order(order.id), order);
+    extend_persistent_ttl(env, &DataKey::Order(order.id));
+
+    // Add to trader's order list if pending
+    if order.status == OrderStatus::Pending {
+        let trader_key = DataKey::TraderOrders(order.trader.clone());
+        let mut trader_orders: Vec<u64> = env.storage()
+            .persistent()
+            .get(&trader_key)
+            .unwrap_or(Vec::new(env));
+
+        // Only add if not already in list
+        let mut found = false;
+        for i in 0..trader_orders.len() {
+            if trader_orders.get(i).unwrap() == order.id {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            trader_orders.push_back(order.id);
+            env.storage().persistent().set(&trader_key, &trader_orders);
+            extend_persistent_ttl(env, &trader_key);
+        }
+
+        // Add to global order index
+        let mut all_orders = get_all_order_ids(env);
+        let mut found_global = false;
+        for i in 0..all_orders.len() {
+            if all_orders.get(i).unwrap() == order.id {
+                found_global = true;
+                break;
+            }
+        }
+        if !found_global {
+            all_orders.push_back(order.id);
+            env.storage().persistent().set(&DataKey::AllOrders, &all_orders);
+            extend_persistent_ttl(env, &DataKey::AllOrders);
+        }
+    }
+}
+
+pub fn update_order_status(env: &Env, order_id: u64, status: OrderStatus) {
+    if let Some(mut order) = get_order(env, order_id) {
+        order.status = status;
+        env.storage().persistent().set(&DataKey::Order(order_id), &order);
+        extend_persistent_ttl(env, &DataKey::Order(order_id));
+
+        // Remove from active lists if no longer pending
+        if status != OrderStatus::Pending {
+            remove_order_from_lists(env, order_id, &order.trader);
+        }
+    }
+}
+
+pub fn remove_order_from_lists(env: &Env, order_id: u64, trader: &Address) {
+    // Remove from trader's list
+    let trader_key = DataKey::TraderOrders(trader.clone());
+    let trader_orders: Vec<u64> = env.storage()
+        .persistent()
+        .get(&trader_key)
+        .unwrap_or(Vec::new(env));
+
+    let mut new_list = Vec::new(env);
+    for i in 0..trader_orders.len() {
+        let id = trader_orders.get(i).unwrap();
+        if id != order_id {
+            new_list.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&trader_key, &new_list);
+
+    // Remove from global index
+    let all_orders = get_all_order_ids(env);
+    let mut new_all = Vec::new(env);
+    for i in 0..all_orders.len() {
+        let id = all_orders.get(i).unwrap();
+        if id != order_id {
+            new_all.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&DataKey::AllOrders, &new_all);
+}
+
+pub fn delete_order(env: &Env, order_id: u64, trader: &Address) {
+    // Remove from storage
+    env.storage().persistent().remove(&DataKey::Order(order_id));
+
+    // Remove from lists
+    remove_order_from_lists(env, order_id, trader);
+}
+
+pub fn get_trader_orders(env: &Env, trader: &Address) -> Vec<Order> {
+    let trader_key = DataKey::TraderOrders(trader.clone());
+    let order_ids: Vec<u64> = env.storage()
+        .persistent()
+        .get(&trader_key)
+        .unwrap_or(Vec::new(env));
+
+    let mut orders = Vec::new(env);
+    for i in 0..order_ids.len() {
+        let id = order_ids.get(i).unwrap();
+        if let Some(order) = get_order(env, id) {
+            if order.status == OrderStatus::Pending {
+                orders.push_back(order);
+            }
+        }
+    }
+    orders
+}
+
+pub fn init_order_index(env: &Env) {
+    let empty: Vec<u64> = Vec::new(env);
+    env.storage().persistent().set(&DataKey::AllOrders, &empty);
+}
+
+pub fn get_all_order_ids(env: &Env) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AllOrders)
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn get_order_count(env: &Env) -> u64 {
+    get_all_order_ids(env).len() as u64
+}
+
+// Position SL/TP attachment helpers
+pub fn get_position_stop_loss(env: &Env, position_id: u64) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::PositionStopLoss(position_id))
+}
+
+pub fn set_position_stop_loss(env: &Env, position_id: u64, order_id: u64) {
+    env.storage().persistent().set(&DataKey::PositionStopLoss(position_id), &order_id);
+    extend_persistent_ttl(env, &DataKey::PositionStopLoss(position_id));
+}
+
+pub fn remove_position_stop_loss(env: &Env, position_id: u64) {
+    env.storage().persistent().remove(&DataKey::PositionStopLoss(position_id));
+}
+
+pub fn get_position_take_profit(env: &Env, position_id: u64) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::PositionTakeProfit(position_id))
+}
+
+pub fn set_position_take_profit(env: &Env, position_id: u64, order_id: u64) {
+    env.storage().persistent().set(&DataKey::PositionTakeProfit(position_id), &order_id);
+    extend_persistent_ttl(env, &DataKey::PositionTakeProfit(position_id));
+}
+
+pub fn remove_position_take_profit(env: &Env, position_id: u64) {
+    env.storage().persistent().remove(&DataKey::PositionTakeProfit(position_id));
 }

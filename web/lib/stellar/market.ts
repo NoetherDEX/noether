@@ -1,5 +1,5 @@
 import { marketContract, usdcTokenContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
-import type { Position, DisplayPosition, MarketConfig, Direction, Trade } from '@/types';
+import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, DisplayOrder, OrderType, TriggerCondition, OrderStatus } from '@/types';
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
 import { rpc, scValToNative, xdr, Horizon, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk';
 import { CONTRACTS, NETWORK } from '@/lib/utils/constants';
@@ -649,6 +649,339 @@ async function getTradeHistoryFromEvents(traderPublicKey: string): Promise<Trade
  * Parse Soroban events into Trade objects
  * NEW FORMAT: (position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid)
  */
+/**
+ * Raw order data from contract (before parsing)
+ * Contract uses snake_case and enum indices
+ */
+interface RawOrder {
+  id: number | bigint;
+  trader: string;
+  asset: string;
+  order_type: number | bigint; // 0 = LimitEntry, 1 = StopLoss, 2 = TakeProfit
+  direction: number | bigint; // 0 = Long, 1 = Short
+  collateral: bigint;
+  leverage: number | bigint;
+  trigger_price: bigint;
+  trigger_condition: number | bigint; // 0 = Above, 1 = Below
+  slippage_tolerance_bps: number | bigint;
+  position_id: number | bigint;
+  has_position: boolean;
+  created_at: number | bigint;
+  status: number | bigint; // 0 = Pending, 1 = Executed, 2 = Cancelled, 3 = CancelledSlippage, 4 = Expired
+}
+
+/**
+ * Parse raw contract order to typed Order
+ */
+function parseOrder(raw: RawOrder): Order {
+  const orderTypeMap: Record<number, OrderType> = {
+    0: 'LimitEntry',
+    1: 'StopLoss',
+    2: 'TakeProfit',
+  };
+
+  const statusMap: Record<number, OrderStatus> = {
+    0: 'Pending',
+    1: 'Executed',
+    2: 'Cancelled',
+    3: 'CancelledSlippage',
+    4: 'Expired',
+  };
+
+  return {
+    id: Number(raw.id),
+    trader: raw.trader,
+    asset: raw.asset,
+    orderType: orderTypeMap[Number(raw.order_type)] || 'LimitEntry',
+    direction: Number(raw.direction) === 0 ? 'Long' : 'Short',
+    collateral: raw.collateral,
+    leverage: Number(raw.leverage),
+    triggerPrice: raw.trigger_price,
+    triggerCondition: Number(raw.trigger_condition) === 0 ? 'Above' : 'Below',
+    slippageToleranceBps: Number(raw.slippage_tolerance_bps),
+    positionId: Number(raw.position_id),
+    hasPosition: raw.has_position,
+    createdAt: Number(raw.created_at),
+    status: statusMap[Number(raw.status)] || 'Pending',
+  };
+}
+
+/**
+ * Convert contract Order to DisplayOrder
+ */
+export function toDisplayOrder(order: Order): DisplayOrder {
+  const collateral = bigIntToNumber(order.collateral);
+  const triggerPrice = bigIntToNumber(order.triggerPrice);
+  const positionSize = collateral * order.leverage;
+
+  return {
+    id: order.id,
+    trader: order.trader,
+    asset: order.asset,
+    orderType: order.orderType,
+    direction: order.direction,
+    collateral,
+    leverage: order.leverage,
+    triggerPrice,
+    triggerCondition: order.triggerCondition,
+    slippageToleranceBps: order.slippageToleranceBps,
+    positionId: order.positionId,
+    hasPosition: order.hasPosition,
+    createdAt: new Date(order.createdAt * 1000),
+    status: order.status,
+    positionSize,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Order Functions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Place a limit entry order
+ * Locks collateral immediately, executes when trigger price is reached
+ */
+export async function placeLimitOrder(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  params: {
+    asset: string;
+    direction: Direction;
+    collateral: bigint;
+    leverage: number;
+    triggerPrice: bigint;
+    triggerCondition: TriggerCondition;
+    slippageToleranceBps: number;
+  }
+): Promise<Order> {
+  // Step 1: Check current allowance
+  console.log('[DEBUG] Place Limit Order - Step 1: Checking USDC allowance...');
+  let currentAllowance = await getAllowance(signerPublicKey);
+  console.log('[DEBUG] Current USDC allowance:', currentAllowance.toString());
+  console.log('[DEBUG] Required collateral:', params.collateral.toString());
+
+  // Step 2: Approve if needed
+  if (currentAllowance < params.collateral) {
+    console.log('[DEBUG] Step 2: Insufficient allowance, requesting approval...');
+    const approvalAmount = BigInt(1_000_000_000) * BigInt(10_000_000);
+    await approveUSDC(signerPublicKey, signTransaction, approvalAmount);
+
+    console.log('[DEBUG] Waiting for ledger state to propagate...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    currentAllowance = await getAllowance(signerPublicKey);
+    console.log('[DEBUG] New allowance after approval:', currentAllowance.toString());
+
+    if (currentAllowance < params.collateral) {
+      throw new Error('Approval transaction confirmed but allowance still insufficient. Please try again.');
+    }
+  }
+
+  // Step 3: Place the limit order
+  console.log('[DEBUG] Step 3: Placing limit order...');
+
+  // Contract signature: place_limit_order(trader, asset, direction, collateral, leverage, trigger_price, trigger_above, slippage_tolerance_bps)
+  // trigger_above is a boolean: true = trigger when price >= trigger_price, false = trigger when price <= trigger_price
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(params.asset, 'symbol'),
+    toScVal(params.direction, 'direction'),
+    toScVal(params.collateral, 'i128'),
+    toScVal(params.leverage, 'u32'),
+    toScVal(params.triggerPrice, 'i128'),
+    toScVal(params.triggerCondition === 'Above', 'bool'),  // trigger_above: bool
+    toScVal(params.slippageToleranceBps, 'u32'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'place_limit_order', args);
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    console.log('[DEBUG] Limit order placed successfully!');
+    const rawOrder = scValToNative(result.returnValue) as RawOrder;
+    return parseOrder(rawOrder);
+  }
+
+  throw new Error('Failed to place limit order');
+}
+
+/**
+ * Set stop-loss for an existing position
+ */
+export async function setStopLoss(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  params: {
+    positionId: number;
+    triggerPrice: bigint;
+    slippageToleranceBps: number;
+  }
+): Promise<Order> {
+  console.log('[DEBUG] Setting stop-loss for position:', params.positionId);
+
+  // Contract signature: set_stop_loss(trader, position_id, trigger_price, slippage_tolerance_bps)
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(params.positionId, 'u64'),
+    toScVal(params.triggerPrice, 'i128'),
+    toScVal(params.slippageToleranceBps, 'u32'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'set_stop_loss', args);
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    console.log('[DEBUG] Stop-loss set successfully!');
+    const rawOrder = scValToNative(result.returnValue) as RawOrder;
+    return parseOrder(rawOrder);
+  }
+
+  throw new Error('Failed to set stop-loss');
+}
+
+/**
+ * Set take-profit for an existing position
+ */
+export async function setTakeProfit(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  params: {
+    positionId: number;
+    triggerPrice: bigint;
+    slippageToleranceBps: number;
+  }
+): Promise<Order> {
+  console.log('[DEBUG] Setting take-profit for position:', params.positionId);
+
+  // Contract signature: set_take_profit(trader, position_id, trigger_price, slippage_tolerance_bps)
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(params.positionId, 'u64'),
+    toScVal(params.triggerPrice, 'i128'),
+    toScVal(params.slippageToleranceBps, 'u32'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'set_take_profit', args);
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    console.log('[DEBUG] Take-profit set successfully!');
+    const rawOrder = scValToNative(result.returnValue) as RawOrder;
+    return parseOrder(rawOrder);
+  }
+
+  throw new Error('Failed to set take-profit');
+}
+
+/**
+ * Cancel a pending order
+ */
+export async function cancelOrder(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  orderId: number
+): Promise<void> {
+  console.log('[DEBUG] Cancelling order:', orderId);
+
+  // Contract signature: cancel_order(trader, order_id)
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(orderId, 'u64'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'cancel_order', args);
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status === 'SUCCESS') {
+    console.log('[DEBUG] Order cancelled successfully!');
+    return;
+  }
+
+  throw new Error('Failed to cancel order');
+}
+
+/**
+ * Get all orders for a trader (read-only)
+ */
+export async function getOrders(traderPublicKey: string): Promise<Order[]> {
+  try {
+    const args = [toScVal(traderPublicKey, 'address')];
+
+    const result = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(traderPublicKey, 'get_orders', args)
+    );
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      const rawOrders = scValToNative(result.result.retval) as RawOrder[];
+      console.log('[DEBUG] Raw orders from contract:', rawOrders);
+      return rawOrders.map(parseOrder);
+    }
+
+    return [];
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    return [];
+  }
+}
+
+/**
+ * Get stop-loss order for a position (read-only)
+ */
+export async function getPositionStopLoss(
+  publicKey: string,
+  positionId: number
+): Promise<Order | null> {
+  try {
+    const args = [toScVal(positionId, 'u64')];
+
+    const result = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(publicKey, 'get_position_sl', args)
+    );
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      const rawOrder = scValToNative(result.result.retval) as RawOrder | null;
+      return rawOrder ? parseOrder(rawOrder) : null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get take-profit order for a position (read-only)
+ */
+export async function getPositionTakeProfit(
+  publicKey: string,
+  positionId: number
+): Promise<Order | null> {
+  try {
+    const args = [toScVal(positionId, 'u64')];
+
+    const result = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(publicKey, 'get_position_tp', args)
+    );
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      const rawOrder = scValToNative(result.result.retval) as RawOrder | null;
+      return rawOrder ? parseOrder(rawOrder) : null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Trade History Functions
+// ═══════════════════════════════════════════════════════════════════════════════
+
 function parseEventsToTrades(events: rpc.Api.EventResponse[], traderPublicKey: string): Trade[] {
   const trades: Trade[] = [];
 

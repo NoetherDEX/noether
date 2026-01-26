@@ -192,3 +192,98 @@ pub struct OracleConfig {
     /// Whether to require both oracles (true) or allow single oracle fallback
     pub require_both: bool,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Order Types (Limit Orders, Stop-Loss, Take-Profit)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Type of conditional order
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub enum OrderType {
+    /// Limit entry order - open a new position when price reaches trigger
+    LimitEntry = 0,
+    /// Stop-loss order - close position to limit losses
+    StopLoss = 1,
+    /// Take-profit order - close position to lock in profits
+    TakeProfit = 2,
+}
+
+/// Trigger condition for order execution
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub enum TriggerCondition {
+    /// Execute when price >= trigger_price
+    Above = 0,
+    /// Execute when price <= trigger_price
+    Below = 1,
+}
+
+/// Status of an order
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub enum OrderStatus {
+    /// Order is pending execution
+    Pending = 0,
+    /// Order was executed successfully
+    Executed = 1,
+    /// Order was cancelled by trader
+    Cancelled = 2,
+    /// Order was cancelled due to slippage exceeded
+    CancelledSlippage = 3,
+    /// Order expired (for future use)
+    Expired = 4,
+}
+
+/// A conditional order (limit entry, stop-loss, or take-profit)
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Order {
+    /// Unique order identifier
+    pub id: u64,
+    /// Address of the trader who placed this order
+    pub trader: Address,
+    /// Trading asset symbol (e.g., "BTC", "ETH", "XLM")
+    pub asset: Symbol,
+    /// Type of order (LimitEntry, StopLoss, TakeProfit)
+    pub order_type: OrderType,
+    /// Direction for the position (Long or Short) - used for LimitEntry
+    pub direction: Direction,
+    /// USDC collateral locked (for LimitEntry orders)
+    pub collateral: i128,
+    /// Leverage multiplier (for LimitEntry orders)
+    pub leverage: u32,
+    /// Price at which to trigger the order (7 decimals)
+    pub trigger_price: i128,
+    /// Trigger condition (Above or Below)
+    pub trigger_condition: TriggerCondition,
+    /// Maximum allowed slippage in basis points (e.g., 100 = 1%)
+    pub slippage_tolerance_bps: u32,
+    /// Position ID this order is attached to (for SL/TP orders)
+    pub position_id: u64,
+    /// Whether this order is attached to a position (0 = no, position_id value if yes)
+    pub has_position: bool,
+    /// Timestamp when order was created (Unix seconds)
+    pub created_at: u64,
+    /// Current status of the order
+    pub status: OrderStatus,
+}
+
+/// Keeper fee configuration for order execution
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct KeeperFeeConfig {
+    /// Base fee in USDC (7 decimals) - e.g., 5_000_000 = 0.50 USDC
+    pub base_fee: i128,
+    /// Variable fee in basis points of position size - e.g., 5 = 0.05%
+    pub variable_fee_bps: u32,
+}
+
+impl Default for KeeperFeeConfig {
+    fn default() -> Self {
+        Self {
+            base_fee: 5_000_000,    // 0.50 USDC
+            variable_fee_bps: 5,    // 0.05%
+        }
+    }
+}

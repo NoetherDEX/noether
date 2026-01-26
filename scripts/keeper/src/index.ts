@@ -1,16 +1,20 @@
 /**
  * Noether Keeper Bot
  *
- * Monitors positions and executes liquidations for underwater positions.
- * Earns rewards (typically 5% of remaining collateral) for each liquidation.
+ * A unified keeper bot that handles:
+ * 1. Oracle price updates (fetches from Binance, updates mock oracle)
+ * 2. Position liquidations (monitors positions, liquidates when underwater)
+ * 3. Order executions (limit orders, stop-loss, take-profit)
+ * 4. Funding rate application (hourly)
  *
  * Usage:
  *   npm start        - Start the keeper bot
  *   npm run dev      - Start with auto-reload
  */
 
-import { loadConfig, KeeperConfig } from './config';
+import { loadConfig } from './config';
 import { StellarClient } from './stellar';
+import { KeeperConfig, KeeperStats, PriceData, AssetConfig } from './types';
 
 // ASCII art banner
 const BANNER = `
@@ -22,33 +26,35 @@ const BANNER = `
 ║    | |\\  | (_) |  __/ |_| | | |  __/ |    | . \\  __/  __/ |_) |  __/ |        ║
 ║    |_| \\_|\\___/ \\___|\\__|_| |_|\\___|_|    |_|\\_\\___|\\___| .__/ \\___|_|        ║
 ║                                                         |_|                   ║
-║                         Liquidation Keeper Bot                                ║
+║                     Unified Keeper Bot v2.0                                   ║
+║           Oracle Updates | Liquidations | Order Execution                     ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 `;
 
-interface Position {
-  id: bigint;
-  trader: string;
-  asset: string;
-  collateral: bigint;
-  size: bigint;
-  entryPrice: bigint;
-  direction: 'Long' | 'Short';
-  leverage: number;
-  liquidationPrice: bigint;
-}
+const PRECISION = BigInt(10_000_000); // 7 decimals
 
 class KeeperBot {
   private config: KeeperConfig;
   private stellar: StellarClient;
   private isRunning: boolean = false;
-  private liquidationCount: number = 0;
-  private totalRewards: bigint = BigInt(0);
+  private stats: KeeperStats;
+  private lastOracleUpdate: number = 0;
+  private lastFundingApplication: number = 0;
+  private currentPrices: Map<string, PriceData> = new Map();
 
   constructor() {
     this.config = loadConfig();
     this.stellar = new StellarClient(this.config);
+    this.stats = {
+      startTime: new Date(),
+      oracleUpdates: 0,
+      liquidationsExecuted: 0,
+      ordersExecuted: 0,
+      ordersCancelledSlippage: 0,
+      totalRewardsEarned: BigInt(0),
+      errors: 0,
+    };
   }
 
   /**
@@ -61,17 +67,25 @@ class KeeperBot {
     // Validate configuration
     if (!this.config.marketContractId) {
       console.error('❌ Market contract ID not configured.');
-      console.error('   Run the deployment script first: ./scripts/setup_and_deploy.sh');
+      console.error('   Set NEXT_PUBLIC_MARKET_ID in .env or deploy contracts first.');
+      process.exit(1);
+    }
+
+    if (!this.config.oracleContractId) {
+      console.error('❌ Oracle contract ID not configured.');
+      console.error('   Set NEXT_PUBLIC_MOCK_ORACLE_ID in .env or deploy contracts first.');
       process.exit(1);
     }
 
     console.log('Configuration:');
-    console.log(`  Network:          ${this.config.network}`);
-    console.log(`  RPC URL:          ${this.config.rpcUrl}`);
-    console.log(`  Keeper Address:   ${this.stellar.publicKey}`);
-    console.log(`  Market Contract:  ${this.config.marketContractId}`);
-    console.log(`  Oracle Contract:  ${this.config.oracleContractId}`);
-    console.log(`  Poll Interval:    ${this.config.pollIntervalMs}ms`);
+    console.log(`  Network:           ${this.config.network}`);
+    console.log(`  RPC URL:           ${this.config.rpcUrl}`);
+    console.log(`  Keeper Address:    ${this.stellar.publicKey}`);
+    console.log(`  Market Contract:   ${this.config.marketContractId.slice(0, 8)}...`);
+    console.log(`  Oracle Contract:   ${this.config.oracleContractId.slice(0, 8)}...`);
+    console.log(`  Poll Interval:     ${this.config.pollIntervalMs}ms`);
+    console.log(`  Oracle Interval:   ${this.config.oracleUpdateIntervalMs}ms`);
+    console.log(`  Assets:            ${this.config.assets.map(a => a.symbol).join(', ')}`);
     console.log('');
 
     this.isRunning = true;
@@ -80,15 +94,19 @@ class KeeperBot {
     process.on('SIGINT', () => this.stop());
     process.on('SIGTERM', () => this.stop());
 
-    console.log('🚀 Keeper bot started. Monitoring positions...\n');
-    console.log('═══════════════════════════════════════════════════════════════════════════════\n');
+    console.log('🚀 Keeper bot started. Monitoring...\n');
+    console.log('═'.repeat(80) + '\n');
+
+    // Initial oracle update
+    await this.updateOraclePrices();
 
     // Main loop
     while (this.isRunning) {
       try {
-        await this.checkAndLiquidate();
+        await this.runKeeperCycle();
       } catch (error) {
         console.error('Error in keeper loop:', error);
+        this.stats.errors++;
       }
 
       await this.sleep(this.config.pollIntervalMs);
@@ -99,40 +117,142 @@ class KeeperBot {
    * Stop the keeper bot
    */
   stop(): void {
-    console.log('\n\n═══════════════════════════════════════════════════════════════════════════════');
-    console.log('Shutting down keeper bot...');
-    console.log(`Total liquidations: ${this.liquidationCount}`);
-    console.log(`Total rewards earned: ${this.formatAmount(this.totalRewards)} USDC`);
-    console.log('═══════════════════════════════════════════════════════════════════════════════\n');
+    console.log('\n\n' + '═'.repeat(80));
+    console.log('Shutting down keeper bot...\n');
+    console.log('Session Statistics:');
+    console.log(`  Runtime:               ${this.formatDuration(Date.now() - this.stats.startTime.getTime())}`);
+    console.log(`  Oracle Updates:        ${this.stats.oracleUpdates}`);
+    console.log(`  Liquidations:          ${this.stats.liquidationsExecuted}`);
+    console.log(`  Orders Executed:       ${this.stats.ordersExecuted}`);
+    console.log(`  Orders Cancelled:      ${this.stats.ordersCancelledSlippage} (slippage)`);
+    console.log(`  Total Rewards:         ${this.formatAmount(this.stats.totalRewardsEarned)} USDC`);
+    console.log(`  Errors:                ${this.stats.errors}`);
+    console.log('═'.repeat(80) + '\n');
     this.isRunning = false;
     process.exit(0);
   }
 
   /**
-   * Main check and liquidate loop
+   * Run a single keeper cycle
    */
-  private async checkAndLiquidate(): Promise<void> {
-    const timestamp = new Date().toISOString();
+  private async runKeeperCycle(): Promise<void> {
+    const now = Date.now();
+    const timestamp = new Date().toLocaleTimeString();
 
-    // Get all position IDs
-    const positionIds = await this.stellar.getAllPositionIds(
-      this.config.marketContractId
-    );
-
-    if (positionIds.length === 0) {
-      process.stdout.write(`[${timestamp}] No open positions                    \r`);
-      return;
+    // 1. Update oracle prices (every oracleUpdateIntervalMs)
+    if (now - this.lastOracleUpdate >= this.config.oracleUpdateIntervalMs) {
+      await this.updateOraclePrices();
+      this.lastOracleUpdate = now;
     }
 
-    process.stdout.write(`[${timestamp}] Checking ${positionIds.length} positions... \r`);
+    // 2. Check and execute liquidations
+    await this.checkLiquidations();
 
-    // Check each position
+    // 3. Check and execute orders
+    await this.checkOrders();
+
+    // 4. Apply funding rate (every hour)
+    const ONE_HOUR = 60 * 60 * 1000;
+    if (now - this.lastFundingApplication >= ONE_HOUR) {
+      await this.applyFundingRate();
+      this.lastFundingApplication = now;
+    }
+
+    // Status line
+    const priceStr = this.config.assets
+      .map(a => {
+        const p = this.currentPrices.get(a.symbol);
+        return p ? `${a.symbol}:$${p.price.toLocaleString()}` : '';
+      })
+      .filter(Boolean)
+      .join(' | ');
+
+    process.stdout.write(`\r[${timestamp}] ${priceStr}                    `);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Oracle Updates
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Fetch prices from Binance and update oracle
+   */
+  private async updateOraclePrices(): Promise<void> {
+    try {
+      const prices = await this.fetchBinancePrices();
+
+      for (const asset of this.config.assets) {
+        const price = prices.get(asset.symbol);
+        if (price === undefined) continue;
+
+        const priceScaled = this.toPrecision(price);
+
+        try {
+          const result = await this.stellar.updateOraclePrice(asset.symbol, priceScaled);
+
+          if (result.success) {
+            this.currentPrices.set(asset.symbol, {
+              asset: asset.symbol,
+              price,
+              priceScaled,
+              timestamp: Date.now(),
+            });
+            this.stats.oracleUpdates++;
+          } else {
+            console.log(`\n⚠️  Oracle update failed for ${asset.symbol}: ${result.error}`);
+          }
+        } catch (error) {
+          console.error(`\nError updating oracle for ${asset.symbol}:`, error);
+        }
+
+        // Delay between assets to avoid sequence conflicts
+        await this.sleep(1500);
+      }
+    } catch (error) {
+      console.error('\nError fetching Binance prices:', error);
+    }
+  }
+
+  /**
+   * Fetch current prices from Binance
+   */
+  private async fetchBinancePrices(): Promise<Map<string, number>> {
+    const symbols = this.config.assets.map(a => a.binanceSymbol);
+    const url = `https://api.binance.com/api/v3/ticker/price?symbols=${JSON.stringify(symbols)}`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Binance API error: ${response.status}`);
+    }
+
+    const data = await response.json() as Array<{ symbol: string; price: string }>;
+    const prices = new Map<string, number>();
+
+    for (const asset of this.config.assets) {
+      const priceData = data.find(p => p.symbol === asset.binanceSymbol);
+      if (priceData) {
+        prices.set(asset.symbol, parseFloat(priceData.price));
+      }
+    }
+
+    return prices;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Liquidations
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Check all positions for liquidation
+   */
+  private async checkLiquidations(): Promise<void> {
+    const positionIds = await this.stellar.getAllPositionIds();
+
+    if (positionIds.length === 0) return;
+
     for (const positionId of positionIds) {
       try {
-        const isLiquidatable = await this.stellar.isLiquidatable(
-          this.config.marketContractId,
-          positionId
-        );
+        const isLiquidatable = await this.stellar.isLiquidatable(positionId);
 
         if (isLiquidatable) {
           console.log(`\n⚠️  Position ${positionId} is liquidatable!`);
@@ -150,29 +270,125 @@ class KeeperBot {
   private async executeLiquidation(positionId: bigint): Promise<void> {
     console.log(`   Executing liquidation for position ${positionId}...`);
 
-    try {
-      const txHash = await this.stellar.liquidate(
-        this.config.marketContractId,
-        positionId
-      );
+    const result = await this.stellar.liquidate(positionId);
 
-      this.liquidationCount++;
+    if (result.success) {
+      this.stats.liquidationsExecuted++;
+      if (result.reward) {
+        this.stats.totalRewardsEarned += result.reward;
+      }
       console.log(`   ✅ Liquidation successful!`);
-      console.log(`   Transaction: ${txHash}`);
-      console.log(`   Total liquidations: ${this.liquidationCount}\n`);
-    } catch (error: any) {
-      console.error(`   ❌ Liquidation failed: ${error.message}\n`);
+      console.log(`   Transaction: ${result.txHash}`);
+      if (result.reward) {
+        console.log(`   Reward: ${this.formatAmount(result.reward)} USDC`);
+      }
+    } else {
+      console.log(`   ❌ Liquidation failed: ${result.error}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Order Execution
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Check all pending orders for execution
+   */
+  private async checkOrders(): Promise<void> {
+    const orderIds = await this.stellar.getAllOrderIds();
+
+    if (orderIds.length === 0) return;
+
+    for (const orderId of orderIds) {
+      try {
+        const shouldExecute = await this.stellar.shouldExecuteOrder(orderId);
+
+        if (shouldExecute) {
+          const order = await this.stellar.getOrder(orderId);
+          if (order) {
+            console.log(`\n📋 Order ${orderId} triggered! (${order.order_type} ${order.direction} ${order.asset})`);
+            await this.executeOrder(orderId, order.order_type);
+          }
+        }
+      } catch (error) {
+        // Order might have been cancelled or executed, ignore
+      }
     }
   }
 
   /**
-   * Format amount with decimals
+   * Execute a triggered order
    */
+  private async executeOrder(orderId: bigint, orderType: string): Promise<void> {
+    console.log(`   Executing order ${orderId}...`);
+
+    const result = await this.stellar.executeOrder(orderId);
+
+    if (result.success) {
+      this.stats.ordersExecuted++;
+      if (result.reward) {
+        this.stats.totalRewardsEarned += result.reward;
+      }
+      console.log(`   ✅ Order executed successfully!`);
+      console.log(`   Transaction: ${result.txHash}`);
+      if (result.reward) {
+        console.log(`   Keeper fee: ${this.formatAmount(result.reward)} USDC`);
+      }
+    } else if (result.error?.includes('SlippageExceeded')) {
+      this.stats.ordersCancelledSlippage++;
+      console.log(`   ⚠️  Order cancelled due to slippage exceeded`);
+    } else {
+      console.log(`   ❌ Order execution failed: ${result.error}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Funding Rate
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Apply funding rate
+   */
+  private async applyFundingRate(): Promise<void> {
+    console.log('\n⏰ Applying hourly funding rate...');
+
+    const result = await this.stellar.applyFunding();
+
+    if (result.success) {
+      console.log('   ✅ Funding rate applied');
+    } else if (result.error?.includes('FundingIntervalNotElapsed')) {
+      // Not yet time, ignore
+    } else {
+      console.log(`   ❌ Funding rate application failed: ${result.error}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Utilities
+  // ═══════════════════════════════════════════════════════════════════════
+
+  private toPrecision(price: number): bigint {
+    return BigInt(Math.floor(price * Number(PRECISION)));
+  }
+
   private formatAmount(amount: bigint, decimals: number = 7): string {
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fraction = amount % divisor;
     return `${whole}.${fraction.toString().padStart(decimals, '0').slice(0, 2)}`;
+  }
+
+  private formatDuration(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (hours > 0) {
+      return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    }
+    return `${seconds}s`;
   }
 
   private sleep(ms: number): Promise<void> {

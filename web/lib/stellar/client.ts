@@ -143,6 +143,8 @@ export function toScVal(value: unknown, type: string): xdr.ScVal {
       return nativeToScVal(value as number, { type: 'u32' });
     case 'u64':
       return nativeToScVal(BigInt(value as number), { type: 'u64' });
+    case 'bool':
+      return nativeToScVal(value as boolean, { type: 'bool' });
     case 'direction':
       // Direction enum is encoded as u32: Long = 0, Short = 1
       // (confirmed via: stellar contract invoke ... -- open_position --help)

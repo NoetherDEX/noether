@@ -3,7 +3,11 @@
     "allow": [
       "Bash(xargs -I {} git show --stat {})",
       "Bash(wc:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(tree:*)",
+      "Bash(cargo build:*)",
+      "Bash(ls -la:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

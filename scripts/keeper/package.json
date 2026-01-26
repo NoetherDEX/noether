@@ -1,15 +1,13 @@
 {
   "name": "noether-keeper",
-  "version": "1.0.0",
-  "description": "Liquidation keeper bot for Noether PerpDex",
+  "version": "2.0.0",
+  "description": "Unified Keeper Bot for Noether PerpDex - Oracle updates, liquidations, and order execution",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "ts-node src/index.ts",
     "start:prod": "node dist/index.js",
-    "dev": "ts-node-dev --respawn src/index.ts",
-    "seed-oracle": "ts-node src/seed-oracle.ts",
-    "seed-oracle:loop": "ts-node src/seed-oracle.ts --loop"
+    "dev": "ts-node-dev --respawn src/index.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.4.3",
@@ -26,7 +24,9 @@
     "soroban",
     "defi",
     "perpetuals",
-    "liquidation"
+    "keeper",
+    "liquidation",
+    "limit-orders"
   ],
   "author": "Noether Team",
   "license": "MIT"
