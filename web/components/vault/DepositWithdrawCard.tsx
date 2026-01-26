@@ -138,7 +138,7 @@ export function DepositWithdrawCard({
                   value={depositAmount}
                   onChange={(e) => onDepositAmountChange(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder="0.00"
-                  className="w-full bg-secondary/50 border border-white/10 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
                   <div className="w-5 h-5 rounded-full bg-[#2775ca] flex items-center justify-center">
@@ -149,18 +149,12 @@ export function DepositWithdrawCard({
               </div>
             </div>
 
-            {/* Arrow */}
-            <div className="flex justify-center">
-              <div className="p-2 rounded-lg bg-secondary/50 border border-white/10">
-                <ArrowDownUp className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </div>
 
             {/* Receive Display */}
             <div>
               <label className="text-sm text-muted-foreground mb-2 block">You Receive</label>
               <div className="relative">
-                <div className="w-full bg-secondary/30 border border-white/5 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20">
+                <div className="w-full bg-zinc-900/50 border border-white/5 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20">
                   {formatNumber(noeToReceive, 4)}
                 </div>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
@@ -221,7 +215,7 @@ export function DepositWithdrawCard({
                   value={withdrawAmount}
                   onChange={(e) => onWithdrawAmountChange(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder="0.00"
-                  className="w-full bg-secondary/50 border border-white/10 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
                   <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#8b5cf6] to-[#3b82f6] flex items-center justify-center">
@@ -243,7 +237,7 @@ export function DepositWithdrawCard({
             <div>
               <label className="text-sm text-muted-foreground mb-2 block">You Receive</label>
               <div className="relative">
-                <div className="w-full bg-secondary/30 border border-white/5 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20">
+                <div className="w-full bg-zinc-900/50 border border-white/5 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20">
                   {formatNumber(usdcToReceive)}
                 </div>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">

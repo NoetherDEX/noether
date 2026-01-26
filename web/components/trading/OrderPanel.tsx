@@ -252,7 +252,7 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
               value={collateral}
               onChange={(e) => setCollateral(e.target.value.replace(/[^0-9.]/g, ''))}
               placeholder="0.00"
-              className="w-full bg-secondary/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-16"
+              className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-20"
             />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
               <div className="w-4 h-4 rounded-full bg-[#2775ca] flex items-center justify-center">
