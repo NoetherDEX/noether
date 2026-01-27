@@ -32,7 +32,8 @@ export function PositionsList({
   const [actionModal, setActionModal] = useState<'close' | 'add-collateral' | 'stop-loss' | 'take-profit' | null>(null);
   const [addCollateralAmount, setAddCollateralAmount] = useState('');
   const [slTpPrice, setSlTpPrice] = useState('');
-  const [slTpSlippage, setSlTpSlippage] = useState(100); // 1% default
+  const [slTpSlippage, setSlTpSlippage] = useState(50); // 0.5% default
+  const [customSlTpSlippage, setCustomSlTpSlippage] = useState('');
   const [isClosing, setIsClosing] = useState(false);
   const [isSettingSLTP, setIsSettingSLTP] = useState(false);
 
@@ -397,17 +398,25 @@ export function PositionsList({
             </div>
 
             <div className="mb-6">
-              <label className="text-sm text-muted-foreground mb-2 block">
-                Slippage Tolerance
-              </label>
-              <div className="grid grid-cols-4 gap-2">
-                {[50, 100, 200, 500].map((bps) => (
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-muted-foreground">
+                  Slippage Tolerance
+                </label>
+                <span className="text-xs font-mono text-foreground">
+                  {(slTpSlippage / 100).toFixed(2)}%
+                </span>
+              </div>
+              <div className="flex gap-2">
+                {[50, 100, 200].map((bps) => (
                   <button
                     key={bps}
-                    onClick={() => setSlTpSlippage(bps)}
+                    onClick={() => {
+                      setSlTpSlippage(bps);
+                      setCustomSlTpSlippage('');
+                    }}
                     className={cn(
-                      'py-2 text-xs font-medium rounded border transition-all',
-                      slTpSlippage === bps
+                      'flex-1 py-2 text-xs font-medium rounded border transition-all',
+                      slTpSlippage === bps && customSlTpSlippage === ''
                         ? 'bg-[#ef4444]/20 border-[#ef4444]/50 text-[#ef4444]'
                         : 'border-white/10 text-muted-foreground hover:text-foreground'
                     )}
@@ -415,7 +424,33 @@ export function PositionsList({
                     {(bps / 100).toFixed(1)}%
                   </button>
                 ))}
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customSlTpSlippage}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9.]/g, '');
+                      setCustomSlTpSlippage(val);
+                      const parsed = parseFloat(val);
+                      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
+                        setSlTpSlippage(Math.round(parsed * 100));
+                      }
+                    }}
+                    placeholder="Custom"
+                    className={cn(
+                      'w-full bg-zinc-900/50 border rounded-md px-2 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-5',
+                      customSlTpSlippage !== ''
+                        ? 'border-[#ef4444]/50'
+                        : 'border-white/10'
+                    )}
+                  />
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+                </div>
               </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Order cancelled if execution price differs by more than this (default: 0.5%)
+              </p>
             </div>
 
             <div className="flex gap-3">
@@ -490,17 +525,25 @@ export function PositionsList({
             </div>
 
             <div className="mb-6">
-              <label className="text-sm text-muted-foreground mb-2 block">
-                Slippage Tolerance
-              </label>
-              <div className="grid grid-cols-4 gap-2">
-                {[50, 100, 200, 500].map((bps) => (
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm text-muted-foreground">
+                  Slippage Tolerance
+                </label>
+                <span className="text-xs font-mono text-foreground">
+                  {(slTpSlippage / 100).toFixed(2)}%
+                </span>
+              </div>
+              <div className="flex gap-2">
+                {[50, 100, 200].map((bps) => (
                   <button
                     key={bps}
-                    onClick={() => setSlTpSlippage(bps)}
+                    onClick={() => {
+                      setSlTpSlippage(bps);
+                      setCustomSlTpSlippage('');
+                    }}
                     className={cn(
-                      'py-2 text-xs font-medium rounded border transition-all',
-                      slTpSlippage === bps
+                      'flex-1 py-2 text-xs font-medium rounded border transition-all',
+                      slTpSlippage === bps && customSlTpSlippage === ''
                         ? 'bg-[#22c55e]/20 border-[#22c55e]/50 text-[#22c55e]'
                         : 'border-white/10 text-muted-foreground hover:text-foreground'
                     )}
@@ -508,7 +551,33 @@ export function PositionsList({
                     {(bps / 100).toFixed(1)}%
                   </button>
                 ))}
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customSlTpSlippage}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9.]/g, '');
+                      setCustomSlTpSlippage(val);
+                      const parsed = parseFloat(val);
+                      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
+                        setSlTpSlippage(Math.round(parsed * 100));
+                      }
+                    }}
+                    placeholder="Custom"
+                    className={cn(
+                      'w-full bg-zinc-900/50 border rounded-md px-2 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-5',
+                      customSlTpSlippage !== ''
+                        ? 'border-[#22c55e]/50'
+                        : 'border-white/10'
+                    )}
+                  />
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+                </div>
               </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Order cancelled if execution price differs by more than this (default: 0.5%)
+              </p>
             </div>
 
             <div className="flex gap-3">

@@ -352,18 +352,17 @@ class KeeperBot {
     const result = await this.stellar.executeOrder(orderId);
 
     if (result.success) {
-      this.stats.ordersExecuted++;
-      if (result.reward) {
-        this.stats.totalRewardsEarned += result.reward;
+      // Check if order was cancelled due to slippage (reward = 0)
+      if (result.reward === BigInt(0)) {
+        this.stats.ordersCancelledSlippage++;
+        console.log(`   ⚠️  Order ${orderId} cancelled due to slippage exceeded (collateral refunded)`);
+      } else {
+        this.stats.ordersExecuted++;
+        this.stats.totalRewardsEarned += result.reward!;
+        console.log(`   ✅ Order executed successfully!`);
+        console.log(`   Transaction: ${result.txHash}`);
+        console.log(`   Keeper fee: ${this.formatAmount(result.reward!)} USDC`);
       }
-      console.log(`   ✅ Order executed successfully!`);
-      console.log(`   Transaction: ${result.txHash}`);
-      if (result.reward) {
-        console.log(`   Keeper fee: ${this.formatAmount(result.reward)} USDC`);
-      }
-    } else if (result.error?.includes('SlippageExceeded')) {
-      this.stats.ordersCancelledSlippage++;
-      console.log(`   ⚠️  Order cancelled due to slippage exceeded`);
     } else {
       console.log(`   ❌ Order execution failed: ${result.error}`);
     }
@@ -383,8 +382,8 @@ class KeeperBot {
 
     if (result.success) {
       console.log('   ✅ Funding rate applied');
-    } else if (result.error?.includes('FundingIntervalNotElapsed')) {
-      // Not yet time, ignore
+    } else if (result.error?.includes('FundingIntervalNotElapsed') || result.error?.includes('#55')) {
+      // Not yet time, ignore silently
     } else {
       console.log(`   ❌ Funding rate application failed: ${result.error}`);
     }

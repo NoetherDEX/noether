@@ -42,7 +42,8 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
 
   // Limit order states
   const [triggerPrice, setTriggerPrice] = useState<string>('');
-  const [slippageTolerance, setSlippageTolerance] = useState<number>(100); // 1% = 100 bps
+  const [slippageTolerance, setSlippageTolerance] = useState<number>(50); // 0.5% = 50 bps (default)
+  const [customSlippage, setCustomSlippage] = useState<string>('');
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -123,6 +124,11 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
   if (collateralNum > usdcBalance) errors.push('Insufficient USDC balance');
   if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
   if (xlmBalance < 1) errors.push('Need XLM for gas fees');
+  if (orderType === 'Limit') {
+    if (slippageTolerance <= 0 || slippageTolerance > 10000) errors.push('Slippage must be between 0.01% and 100%');
+    const triggerPriceNum = parseFloat(triggerPrice) || 0;
+    if (triggerPriceNum <= 0) errors.push('Enter a valid trigger price');
+  }
 
   const canApprove = isConnected && collateralNum >= 10 && !hasAllowance && errors.length === 0;
   const canSubmit = isConnected && collateralNum >= 10 && hasAllowance && errors.length === 0;
@@ -490,14 +496,18 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
                   {(slippageTolerance / 100).toFixed(2)}%
                 </span>
               </div>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[50, 100, 200, 500].map((bps) => (
+              <div className="flex gap-1.5">
+                {/* Preset buttons */}
+                {[50, 100, 200].map((bps) => (
                   <button
                     key={bps}
-                    onClick={() => setSlippageTolerance(bps)}
+                    onClick={() => {
+                      setSlippageTolerance(bps);
+                      setCustomSlippage('');
+                    }}
                     className={cn(
-                      'py-1.5 text-xs font-medium rounded border transition-all',
-                      slippageTolerance === bps
+                      'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
+                      slippageTolerance === bps && customSlippage === ''
                         ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
                         : 'border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20'
                     )}
@@ -505,9 +515,33 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
                     {(bps / 100).toFixed(1)}%
                   </button>
                 ))}
+                {/* Custom input */}
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customSlippage}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9.]/g, '');
+                      setCustomSlippage(val);
+                      const parsed = parseFloat(val);
+                      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
+                        setSlippageTolerance(Math.round(parsed * 100)); // Convert % to bps
+                      }
+                    }}
+                    placeholder="Custom"
+                    className={cn(
+                      'w-full bg-zinc-900/50 border rounded-md px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-colors pr-5',
+                      customSlippage !== ''
+                        ? 'border-amber-500/50'
+                        : 'border-white/10'
+                    )}
+                  />
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Order cancelled if execution price differs by more than this
+                Order cancelled if execution price differs by more than this (default: 0.5%)
               </p>
             </div>
           </div>

@@ -1211,7 +1211,11 @@ impl MarketContract {
         let actual_slippage_bps = (price_diff * 10_000) / order.trigger_price;
 
         if actual_slippage_bps > order.slippage_tolerance_bps as i128 {
-            // Slippage exceeded - cancel the order
+            // Slippage exceeded - cancel the order and commit the cancellation
+            // IMPORTANT: We return Ok(0) instead of Err() so the transaction commits
+            // and the order is properly removed from the pending list. Returning Err()
+            // would rollback all state changes, leaving the order stuck in pending.
+
             if order.order_type == OrderType::LimitEntry && order.collateral > 0 {
                 // Refund collateral
                 let usdc_token = get_usdc_token(&env);
@@ -1230,12 +1234,15 @@ impl MarketContract {
 
             update_order_status(&env, order_id, OrderStatus::CancelledSlippage);
 
+            extend_instance_ttl(&env);
+
             env.events().publish(
                 (Symbol::new(&env, "order_cancelled"),),
                 (order_id, order.trader.clone(), Symbol::new(&env, "slippage_exceeded")),
             );
 
-            return Err(NoetherError::SlippageExceeded);
+            // Return Ok(0) - no keeper reward for cancelled orders, but transaction commits
+            return Ok(0);
         }
 
         // Calculate keeper fee
