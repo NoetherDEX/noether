@@ -21,9 +21,10 @@ import type { TriggerCondition } from '@/types';
 interface OrderPanelProps {
   asset: string;
   onSubmit?: () => void;
+  onPositionOpened?: () => void;
 }
 
-export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
+export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProps) {
   const { isConnected, publicKey, xlmBalance, usdcBalance, sign, refreshBalances } = useWallet();
   const {
     direction,
@@ -186,6 +187,7 @@ export function OrderPanel({ asset, onSubmit }: OrderPanelProps) {
           setCollateral('');
           refreshBalances();
           onSubmit?.();
+          onPositionOpened?.();
           return `${direction} ${asset} position opened! ID: ${position.id}`;
         },
         error: (err) => {

@@ -158,15 +158,12 @@ export class StellarClient {
    * Get all pending order IDs
    */
   async getAllOrderIds(): Promise<bigint[]> {
-    console.log('\n[DEBUG] === getAllOrderIds called ===');
     try {
-      console.log('[DEBUG] Calling get_all_order_ids on contract...');
       const result = await this.invokeContractRead<any>(
         this.marketContract,
         'get_all_order_ids',
         []
       );
-      console.log(`[DEBUG] get_all_order_ids raw result:`, result, `type:`, typeof result, `isArray:`, Array.isArray(result));
 
       // Convert to bigint array if needed
       if (Array.isArray(result)) {
@@ -174,16 +171,12 @@ export class StellarClient {
           if (typeof id === 'bigint') return id;
           if (typeof id === 'number') return BigInt(id);
           if (typeof id === 'string') return BigInt(id);
-          console.log(`[DEBUG] Unknown order ID type:`, typeof id, id);
           return BigInt(0);
         });
-        console.log(`[DEBUG] Returning ${converted.length} order IDs`);
         return converted;
       }
-      console.log('[DEBUG] Result is not an array, returning empty');
       return [];
     } catch (error) {
-      console.error('\n[DEBUG] ERROR in getAllOrderIds:', error);
       return [];
     }
   }
@@ -209,16 +202,13 @@ export class StellarClient {
    */
   async shouldExecuteOrder(orderId: bigint): Promise<boolean> {
     try {
-      console.log(`[DEBUG] Calling should_execute_order with orderId: ${orderId} (type: ${typeof orderId})`);
       const result = await this.invokeContractRead<boolean>(
         this.marketContract,
         'should_execute_order',
         [nativeToScVal(orderId, { type: 'u64' })]
       );
-      console.log(`[DEBUG] should_execute_order result:`, result);
       return result;
     } catch (error) {
-      console.error(`[DEBUG] shouldExecuteOrder error for ${orderId}:`, error);
       return false;
     }
   }

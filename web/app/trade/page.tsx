@@ -357,7 +357,13 @@ function TradePage() {
             {/* Right Sidebar - Order Panel */}
             <div className="lg:col-span-4 xl:col-span-3">
               <div className="sticky top-20 space-y-4">
-                <OrderPanel asset={selectedAsset} />
+                <OrderPanel
+                  asset={selectedAsset}
+                  onPositionOpened={() => {
+                    fetchPositions(false);
+                    refreshBalances();
+                  }}
+                />
 
                 {/* Market Stats */}
                 <Card>
