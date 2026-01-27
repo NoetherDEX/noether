@@ -7,7 +7,9 @@
       "Bash(tree:*)",
       "Bash(cargo build:*)",
       "Bash(ls -la:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npx ts-node:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

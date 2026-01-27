@@ -929,6 +929,75 @@ export async function getOrders(traderPublicKey: string): Promise<Order[]> {
 }
 
 /**
+ * Get all pending order IDs (for orderbook) - read-only
+ */
+export async function getAllOrderIds(publicKey: string): Promise<number[]> {
+  try {
+    const result = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(publicKey, 'get_all_order_ids', [])
+    );
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      const ids = scValToNative(result.result.retval) as (number | bigint)[];
+      return ids.map(id => Number(id));
+    }
+
+    return [];
+  } catch (error) {
+    console.error('Error fetching all order IDs:', error);
+    return [];
+  }
+}
+
+/**
+ * Get a specific order by ID (read-only)
+ */
+export async function getOrderById(publicKey: string, orderId: number): Promise<Order | null> {
+  try {
+    const args = [toScVal(orderId, 'u64')];
+
+    const result = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(publicKey, 'get_order', args)
+    );
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      const rawOrder = scValToNative(result.result.retval) as RawOrder | null;
+      return rawOrder ? parseOrder(rawOrder) : null;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error fetching order:', error);
+    return null;
+  }
+}
+
+/**
+ * Get all pending orders for orderbook (read-only)
+ * Fetches all order IDs and then fetches each order's details
+ */
+export async function getAllPendingOrders(publicKey: string): Promise<Order[]> {
+  try {
+    const orderIds = await getAllOrderIds(publicKey);
+    console.log('[DEBUG] All order IDs:', orderIds);
+
+    if (orderIds.length === 0) return [];
+
+    // Fetch all orders in parallel
+    const orderPromises = orderIds.map(id => getOrderById(publicKey, id));
+    const orders = await Promise.all(orderPromises);
+
+    // Filter out nulls and only return pending orders
+    return orders.filter((order): order is Order =>
+      order !== null && order.status === 'Pending'
+    );
+  } catch (error) {
+    console.error('Error fetching all pending orders:', error);
+    return [];
+  }
+}
+
+/**
  * Get stop-loss order for a position (read-only)
  */
 export async function getPositionStopLoss(

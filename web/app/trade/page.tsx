@@ -10,10 +10,12 @@ import {
   ChartHeader,
   OrderPanel,
   AssetSelector,
+  AssetSelectorDropdown,
   PositionsList,
   OrdersList,
   TradeHistoryContainer,
   RecentTrades,
+  OrderBook,
 } from '@/components/trading';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { TIMEFRAMES } from '@/lib/utils/constants';
@@ -274,16 +276,12 @@ function TradePage() {
         <div className="max-w-[1800px] mx-auto p-4 lg:p-6">
           {/* Main Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
-            {/* Left Sidebar - Split: Markets (Top 50%) + Recent Trades (Bottom 50%) */}
+            {/* Left Sidebar - Split: OrderBook (Top) + Recent Trades (Bottom) */}
             <div className="hidden xl:block xl:col-span-2">
               <div className="sticky top-20 flex flex-col gap-4 h-[calc(100vh-120px)]">
-                {/* Top Half: Markets */}
+                {/* Top Half: Order Book */}
                 <Card className="flex-1 min-h-0 overflow-hidden">
-                  <h3 className="text-sm font-medium text-neutral-400 mb-4">Markets</h3>
-                  <AssetSelector
-                    selectedAsset={selectedAsset}
-                    onSelect={setSelectedAsset}
-                  />
+                  <OrderBook asset={selectedAsset} />
                 </Card>
 
                 {/* Bottom Half: Recent Trades (Global Activity) */}
@@ -297,9 +295,19 @@ function TradePage() {
             <div className="lg:col-span-8 xl:col-span-7 space-y-4">
               {/* Chart Card */}
               <Card padding="none" className="overflow-hidden">
-                {/* Chart Header */}
+                {/* Chart Header with Asset Selector */}
                 <div className="border-b border-white/5">
-                  <ChartHeader asset={selectedAsset} />
+                  <div className="flex items-center justify-between px-4 py-2">
+                    {/* Asset Selector Dropdown */}
+                    <AssetSelectorDropdown
+                      selectedAsset={selectedAsset}
+                      onSelect={setSelectedAsset}
+                    />
+                    {/* Chart Header Stats (price, change, etc.) */}
+                    <div className="hidden sm:block">
+                      <ChartHeader asset={selectedAsset} compact />
+                    </div>
+                  </div>
                 </div>
 
                 {/* Timeframe Selector */}

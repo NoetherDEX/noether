@@ -42,7 +42,7 @@ export function PositionsList({
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-16 bg-white/5 rounded-lg animate-pulse"
+            className="h-16 bg-zinc-900/50 rounded-lg animate-pulse"
           />
         ))}
       </div>
@@ -147,7 +147,7 @@ export function PositionsList({
               disabled={isRefreshing}
               className={cn(
                 'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all',
-                'text-muted-foreground hover:text-foreground hover:bg-white/5',
+                'text-muted-foreground hover:text-foreground hover:bg-zinc-900/50',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
               title="Refresh positions"
@@ -256,7 +256,7 @@ export function PositionsList({
       >
         {selectedPosition && (
           <div>
-            <div className="mb-6 p-4 bg-white/5 rounded-xl space-y-2">
+            <div className="mb-6 p-4 bg-zinc-900/50 rounded-xl space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Position</span>
                 <span className="text-foreground">
@@ -311,13 +311,21 @@ export function PositionsList({
               <p className="text-sm text-muted-foreground mb-4">
                 Adding collateral will lower your liquidation price and reduce risk.
               </p>
-              <input
-                type="number"
-                value={addCollateralAmount}
-                onChange={(e) => setAddCollateralAmount(e.target.value)}
-                placeholder="Amount (USDC)"
-                className="w-full bg-secondary/50 border border-white/10 rounded-lg px-4 py-3 text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-              />
+              <div className="relative">
+                <input
+                  type="number"
+                  value={addCollateralAmount}
+                  onChange={(e) => setAddCollateralAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-16"
+                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                  <div className="w-4 h-4 rounded-full bg-[#2775ca] flex items-center justify-center">
+                    <span className="text-[8px] font-bold text-white">$</span>
+                  </div>
+                  <span className="text-xs font-medium text-foreground">USDC</span>
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-3">
@@ -350,7 +358,7 @@ export function PositionsList({
       >
         {selectedPosition && (
           <div>
-            <div className="mb-6 p-4 bg-white/5 rounded-xl space-y-2">
+            <div className="mb-6 p-4 bg-zinc-900/50 rounded-xl space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Position</span>
                 <span className="text-foreground">
@@ -371,13 +379,16 @@ export function PositionsList({
               <label className="text-sm text-muted-foreground mb-2 block">
                 Trigger Price (USD)
               </label>
-              <input
-                type="number"
-                value={slTpPrice}
-                onChange={(e) => setSlTpPrice(e.target.value)}
-                placeholder="Stop-loss price"
-                className="w-full bg-secondary/50 border border-white/10 rounded-lg px-4 py-3 text-foreground focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444]"
-              />
+              <div className="relative">
+                <input
+                  type="number"
+                  value={slTpPrice}
+                  onChange={(e) => setSlTpPrice(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-12"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
+              </div>
               <p className="text-xs text-muted-foreground mt-1">
                 {selectedPosition.direction === 'Long'
                   ? 'Position closes when price drops to this level'
@@ -440,7 +451,7 @@ export function PositionsList({
       >
         {selectedPosition && (
           <div>
-            <div className="mb-6 p-4 bg-white/5 rounded-xl space-y-2">
+            <div className="mb-6 p-4 bg-zinc-900/50 rounded-xl space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Position</span>
                 <span className="text-foreground">
@@ -461,13 +472,16 @@ export function PositionsList({
               <label className="text-sm text-muted-foreground mb-2 block">
                 Trigger Price (USD)
               </label>
-              <input
-                type="number"
-                value={slTpPrice}
-                onChange={(e) => setSlTpPrice(e.target.value)}
-                placeholder="Take-profit price"
-                className="w-full bg-secondary/50 border border-white/10 rounded-lg px-4 py-3 text-foreground focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e]"
-              />
+              <div className="relative">
+                <input
+                  type="number"
+                  value={slTpPrice}
+                  onChange={(e) => setSlTpPrice(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
+              </div>
               <p className="text-xs text-muted-foreground mt-1">
                 {selectedPosition.direction === 'Long'
                   ? 'Position closes when price rises to this level'
@@ -551,7 +565,7 @@ function PositionRow({
   };
 
   return (
-    <tr className="border-b border-white/5 hover:bg-white/[0.03] transition-colors">
+    <tr className="border-b border-white/5 hover:bg-zinc-900/50 transition-colors">
       <td className="px-3 py-3">
         <div className="flex items-center gap-2">
           <span className="font-medium text-foreground">{position.asset}-PERP</span>
@@ -645,7 +659,7 @@ function PositionRow({
           )}
           <button
             onClick={onAddCollateral}
-            className="p-1.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+            className="p-1.5 rounded hover:bg-zinc-900/50 text-muted-foreground hover:text-foreground transition-colors"
             title="Add Collateral"
           >
             <Plus className="w-3.5 h-3.5" />

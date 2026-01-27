@@ -10,9 +10,10 @@ import type { Ticker } from '@/types';
 interface ChartHeaderProps {
   asset: string;
   className?: string;
+  compact?: boolean;
 }
 
-export function ChartHeader({ asset, className }: ChartHeaderProps) {
+export function ChartHeader({ asset, className, compact = false }: ChartHeaderProps) {
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
@@ -65,11 +66,42 @@ export function ChartHeader({ asset, className }: ChartHeaderProps) {
 
   if (isLoading) {
     return (
-      <div className={cn('flex items-center gap-6 p-4', className)}>
+      <div className={cn('flex items-center gap-6', !compact && 'p-4', className)}>
         <div className="animate-pulse">
-          <div className="h-4 w-20 bg-white/10 rounded mb-2" />
-          <div className="h-8 w-32 bg-white/10 rounded" />
+          <div className="h-4 w-20 bg-white/10 rounded" />
         </div>
+      </div>
+    );
+  }
+
+  // Compact mode: just show stats without the main price (shown in dropdown)
+  if (compact) {
+    return (
+      <div className={cn('flex items-center gap-4', className)}>
+        {ticker && (
+          <>
+            <div>
+              <p className="text-[10px] text-neutral-500 mb-0.5">24h High</p>
+              <p className="text-xs font-medium text-white font-mono">
+                {formatUSD(ticker.high24h, asset === 'XLM' ? 4 : 2)}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-[10px] text-neutral-500 mb-0.5">24h Low</p>
+              <p className="text-xs font-medium text-white font-mono">
+                {formatUSD(ticker.low24h, asset === 'XLM' ? 4 : 2)}
+              </p>
+            </div>
+
+            <div className="hidden lg:block">
+              <p className="text-[10px] text-neutral-500 mb-0.5">24h Volume</p>
+              <p className="text-xs font-medium text-white font-mono">
+                ${formatNumber(ticker.volume24h / 1_000_000, 2)}M
+              </p>
+            </div>
+          </>
+        )}
       </div>
     );
   }

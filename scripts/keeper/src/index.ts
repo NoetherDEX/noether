@@ -97,8 +97,11 @@ class KeeperBot {
     console.log('🚀 Keeper bot started. Monitoring...\n');
     console.log('═'.repeat(80) + '\n');
 
-    // Initial oracle update
-    await this.updateOraclePrices();
+    // Skip initial oracle update for faster startup - will update on first cycle
+    // console.log('[DEBUG] Starting initial oracle update...');
+    // await this.updateOraclePrices();
+    // console.log('[DEBUG] Initial oracle update complete. Entering main loop...');
+    console.log('[DEBUG] Skipping initial oracle update, entering main loop immediately...');
 
     // Main loop
     while (this.isRunning) {
@@ -139,26 +142,32 @@ class KeeperBot {
     const now = Date.now();
     const timestamp = new Date().toLocaleTimeString();
 
-    // 1. Update oracle prices (every oracleUpdateIntervalMs)
+    console.log(`\n[DEBUG] === runKeeperCycle at ${timestamp} ===`);
+
+    // 1. Update oracle prices (every oracleUpdateIntervalMs) - run in background, don't block
     if (now - this.lastOracleUpdate >= this.config.oracleUpdateIntervalMs) {
-      await this.updateOraclePrices();
+      console.log('[DEBUG] Starting oracle price update (background)...');
       this.lastOracleUpdate = now;
+      // Run in background without await
+      this.updateOraclePrices().catch(e => console.error('Oracle update error:', e));
     }
 
     // 2. Check and execute liquidations
+    console.log('[DEBUG] Checking liquidations...');
     await this.checkLiquidations();
 
     // 3. Check and execute orders
+    console.log('[DEBUG] Checking orders...');
     await this.checkOrders();
 
     // 4. Apply funding rate (every hour)
     const ONE_HOUR = 60 * 60 * 1000;
     if (now - this.lastFundingApplication >= ONE_HOUR) {
-      await this.applyFundingRate();
+      this.applyFundingRate().catch(e => console.error('Funding rate error:', e));
       this.lastFundingApplication = now;
     }
 
-    // Status line
+    // Status line (use newline instead of carriage return for debugging)
     const priceStr = this.config.assets
       .map(a => {
         const p = this.currentPrices.get(a.symbol);
@@ -167,7 +176,7 @@ class KeeperBot {
       .filter(Boolean)
       .join(' | ');
 
-    process.stdout.write(`\r[${timestamp}] ${priceStr}                    `);
+    console.log(`[${timestamp}] ${priceStr}`);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -295,22 +304,40 @@ class KeeperBot {
    * Check all pending orders for execution
    */
   private async checkOrders(): Promise<void> {
+    console.log('\n[DEBUG] === checkOrders called ===');
     const orderIds = await this.stellar.getAllOrderIds();
+    console.log(`[DEBUG] checkOrders received ${orderIds.length} order IDs`);
+
+    // Debug: Log order IDs count on each cycle
+    if (orderIds.length > 0) {
+      console.log(`[DEBUG] Found ${orderIds.length} pending order(s): ${orderIds.map(id => id.toString()).join(', ')}`);
+    }
 
     if (orderIds.length === 0) return;
 
     for (const orderId of orderIds) {
       try {
+        console.log(`[DEBUG] Checking order ${orderId}...`);
         const shouldExecute = await this.stellar.shouldExecuteOrder(orderId);
+        console.log(`[DEBUG] Order ${orderId} shouldExecute: ${shouldExecute}`);
 
         if (shouldExecute) {
           const order = await this.stellar.getOrder(orderId);
           if (order) {
             console.log(`\n📋 Order ${orderId} triggered! (${order.order_type} ${order.direction} ${order.asset})`);
+            console.log(`[DEBUG] Order details: trigger_price=${order.trigger_price}, trigger_condition=${order.trigger_condition}`);
             await this.executeOrder(orderId, order.order_type);
+          }
+        } else {
+          // Debug: Get order details to understand why it didn't trigger
+          const order = await this.stellar.getOrder(orderId);
+          if (order) {
+            const priceData = this.currentPrices.get(order.asset);
+            console.log(`[DEBUG] Order ${orderId} not triggered: trigger_price=${order.trigger_price}, condition=${order.trigger_condition}, current_price=${priceData?.priceScaled || 'unknown'}`);
           }
         }
       } catch (error) {
+        console.log(`[DEBUG] Error checking order ${orderId}:`, error);
         // Order might have been cancelled or executed, ignore
       }
     }

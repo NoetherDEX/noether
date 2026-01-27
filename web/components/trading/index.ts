@@ -5,4 +5,6 @@ export { PositionsList } from './PositionsList';
 export { OrdersList } from './OrdersList';
 export { TradeHistory, TradeHistoryContainer } from './TradeHistory';
 export { AssetSelector } from './AssetSelector';
+export { AssetSelectorDropdown } from './AssetSelectorDropdown';
 export { RecentTrades } from './RecentTrades';
+export { OrderBook } from './OrderBook';
