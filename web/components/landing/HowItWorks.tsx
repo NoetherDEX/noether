@@ -48,11 +48,13 @@ export function HowItWorks() {
                 className="relative p-6 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-colors overflow-hidden group"
               >
                 {/* Step Number with Line */}
-                <div className="flex items-center gap-2 mb-6">
-                  <span className="text-[#00e6b8] font-mono text-sm font-medium">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-[#00e6b8] font-mono text-sm font-medium -translate-y-4">
                     {step.number}
                   </span>
-                  <div className="flex-1 h-px bg-[#00e6b8]/30" />
+                  <div className="flex-1 flex items-center">
+                    <div className="flex-1 h-px bg-[#00e6b8]/30 -translate-y-5" />
+                  </div>
                 </div>
 
                 {/* Icon */}
