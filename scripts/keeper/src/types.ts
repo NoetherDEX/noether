@@ -63,6 +63,7 @@ export interface KeeperStats {
   liquidationsExecuted: number;
   ordersExecuted: number;
   ordersCancelledSlippage: number;
+  ordersSkippedOrphaned: number;
   totalRewardsEarned: bigint;
   errors: number;
 }

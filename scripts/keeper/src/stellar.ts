@@ -297,7 +297,9 @@ export class StellarClient {
         // Don't retry on certain errors
         if (lastError.includes('SlippageExceeded') ||
             lastError.includes('OrderNotTriggered') ||
-            lastError.includes('NotLiquidatable')) {
+            lastError.includes('NotLiquidatable') ||
+            lastError.includes('PositionNotFound') ||
+            lastError.includes('#20')) {
           return { success: false, error: lastError };
         }
 

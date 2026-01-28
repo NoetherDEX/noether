@@ -52,6 +52,7 @@ class KeeperBot {
       liquidationsExecuted: 0,
       ordersExecuted: 0,
       ordersCancelledSlippage: 0,
+      ordersSkippedOrphaned: 0,
       totalRewardsEarned: BigInt(0),
       errors: 0,
     };
@@ -122,6 +123,7 @@ class KeeperBot {
     console.log(`  Liquidations:          ${this.stats.liquidationsExecuted}`);
     console.log(`  Orders Executed:       ${this.stats.ordersExecuted}`);
     console.log(`  Orders Cancelled:      ${this.stats.ordersCancelledSlippage} (slippage)`);
+    console.log(`  Orders Skipped:        ${this.stats.ordersSkippedOrphaned} (orphaned - position closed)`);
     console.log(`  Total Rewards:         ${this.formatAmount(this.stats.totalRewardsEarned)} USDC`);
     console.log(`  Errors:                ${this.stats.errors}`);
     console.log('═'.repeat(80) + '\n');
@@ -335,7 +337,16 @@ class KeeperBot {
         console.log(`   Keeper fee: ${this.formatAmount(result.reward!)} USDC`);
       }
     } else {
-      console.log(`   ❌ Order execution failed: ${result.error}`);
+      // Handle PositionNotFound (Error #20) for SL/TP orders
+      // This happens when the position was already closed (manually, liquidated, or by another SL/TP)
+      // The order is orphaned but harmless - just skip it
+      if (result.error?.includes('PositionNotFound') || result.error?.includes('#20')) {
+        this.stats.ordersSkippedOrphaned++;
+        console.log(`   ⚠️  Order ${orderId} skipped: Position already closed (manually or liquidated)`);
+        console.log(`      This ${orderType} order is now orphaned and will be ignored.`);
+      } else {
+        console.log(`   ❌ Order execution failed: ${result.error}`);
+      }
     }
   }
 
