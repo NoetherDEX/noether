@@ -26,14 +26,7 @@ export function Header() {
         <div className="flex items-center gap-6">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2">
-            <div className="relative h-8 w-8">
-              <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-[#8b5cf6] to-[#3b82f6]" />
-              <div className="absolute inset-[2px] rounded-md bg-[#0a0a0a] flex items-center justify-center">
-                <span className="text-sm font-bold bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6] bg-clip-text text-transparent">
-                  N
-                </span>
-              </div>
-            </div>
+            <img src="/logo.svg" alt="Noether" className="h-20 w-20" />
             <span className="text-lg font-semibold text-foreground">Noether</span>
           </Link>
         </div>
