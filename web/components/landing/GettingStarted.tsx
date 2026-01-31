@@ -15,6 +15,11 @@ const steps = [
   },
   {
     number: 3,
+    title: 'Claim Your USDC',
+    description: 'Claim free testnet USDC from the faucet to use as trading collateral.',
+  },
+  {
+    number: 4,
     title: 'Start Trading',
     description: "Open positions with up to 10x leverage. That's it!",
   },
@@ -50,7 +55,7 @@ export function GettingStarted() {
             Getting Started
           </p>
           <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
-            Start in 3 Simple Steps
+            Start in 4 Simple Steps
           </h2>
         </div>
 
@@ -60,7 +65,7 @@ export function GettingStarted() {
             <>
               <div
                 key={step.number}
-                className="step-card flex-1 min-w-[220px] max-w-[300px] p-8 bg-white/[0.02] border border-white/[0.06] rounded-2xl text-center transition-all duration-300"
+                className="step-card flex-1 min-w-[200px] max-w-[260px] p-6 bg-white/[0.02] border border-white/[0.06] rounded-2xl text-center transition-all duration-300"
               >
                 <div className="w-10 h-10 flex items-center justify-center bg-gradient-to-br from-[#eab308] to-[#22c55e] rounded-full font-bold text-black mx-auto mb-6">
                   {step.number}
