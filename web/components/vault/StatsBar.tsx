@@ -29,7 +29,7 @@ export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
   }
 
   return (
-    <div className="grid grid-cols-3 gap-4 md:gap-6">
+    <div className="grid grid-cols-3 items-stretch gap-4 md:gap-6">
       {/* TVL Card */}
       <div className="relative group">
         <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/20 to-[#3b82f6]/10 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -43,6 +43,7 @@ export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
           <div className="flex items-baseline gap-2">
             <span className="text-xl md:text-3xl font-bold font-mono text-foreground">{formatUSD(tvl)}</span>
           </div>
+          <p className="mt-2 text-xs text-muted-foreground hidden md:block">Amount of assets locked in the vault</p>
         </div>
       </div>
 
@@ -76,6 +77,7 @@ export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
           <div className="flex items-baseline gap-2">
             <span className="text-xl md:text-3xl font-bold font-mono text-foreground">{formatUSD(noePrice, 3)}</span>
           </div>
+          <p className="mt-2 text-xs text-muted-foreground hidden md:block">Current market price of NOE token</p>
         </div>
       </div>
     </div>
