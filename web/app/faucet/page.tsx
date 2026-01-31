@@ -36,10 +36,10 @@ function FaucetPage() {
     <div className="min-h-screen bg-[#0a0a0a]">
       <Header />
 
-      <main className="pt-20 pb-12">
-        <div className="max-w-2xl mx-auto px-4 lg:px-6">
+      <main className="pt-16 pb-20">
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
           {/* Hero */}
-          <div className="text-center mb-8">
+          <div className="text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/20 to-[#3b82f6]/20 border border-[#8b5cf6]/20 mb-6">
               <Droplets className="w-8 h-8 text-[#8b5cf6]" />
             </div>
@@ -72,25 +72,28 @@ function FaucetPage() {
               {/* How It Works */}
               <HowItWorks />
 
-              {/* Trustline Section */}
-              <TrustlineSection
-                status={trustlineStatus}
-                onAddTrustline={addTrustline}
-                isAdding={isAddingTrustline}
-                error={trustlineError}
-              />
+              {/* Trustline + Claim Section (side by side on desktop) */}
+              <div className="grid lg:grid-cols-2 gap-8">
+                {/* Trustline Section */}
+                <TrustlineSection
+                  status={trustlineStatus}
+                  onAddTrustline={addTrustline}
+                  isAdding={isAddingTrustline}
+                  error={trustlineError}
+                />
 
-              {/* Claim Section */}
-              <ClaimSection
-                claimedToday={claimedToday}
-                remainingToday={remainingToday}
-                dailyLimit={dailyLimit}
-                selectedAmount={selectedAmount}
-                onSelectAmount={setSelectedAmount}
-                onClaim={claimUsdc}
-                isClaiming={isClaiming}
-                disabled={trustlineStatus !== 'active'}
-              />
+                {/* Claim Section */}
+                <ClaimSection
+                  claimedToday={claimedToday}
+                  remainingToday={remainingToday}
+                  dailyLimit={dailyLimit}
+                  selectedAmount={selectedAmount}
+                  onSelectAmount={setSelectedAmount}
+                  onClaim={claimUsdc}
+                  isClaiming={isClaiming}
+                  disabled={trustlineStatus !== 'active'}
+                />
+              </div>
 
               {/* Claim History */}
               <ClaimHistory

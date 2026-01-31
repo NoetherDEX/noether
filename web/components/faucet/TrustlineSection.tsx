@@ -21,7 +21,7 @@ export function TrustlineSection({
   const truncatedIssuer = `${issuerAddress.slice(0, 8)}...${issuerAddress.slice(-8)}`;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden mb-6">
+    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden h-full">
       <div className="px-6 py-4 border-b border-white/10">
         <h3 className="text-base font-semibold text-foreground">Step 1: USDC Trustline</h3>
       </div>

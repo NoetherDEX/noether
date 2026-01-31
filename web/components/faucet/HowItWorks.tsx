@@ -25,7 +25,7 @@ export function HowItWorks() {
   ];
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card p-6 mb-6">
+    <div className="rounded-2xl border border-white/10 bg-card p-6">
       <h2 className="text-base font-semibold text-foreground mb-6 text-center">
         How It Works
       </h2>

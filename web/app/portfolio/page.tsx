@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import { AccountHealth, PnlChart, AssetAllocation, PortfolioHistory } from '@/components/portfolio';
@@ -11,7 +10,6 @@ import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import type { DisplayPosition, Trade } from '@/types';
 
 function PortfolioPage() {
-  const router = useRouter();
   const { isConnected, publicKey } = useWallet();
 
   const [positions, setPositions] = useState<DisplayPosition[]>([]);
@@ -107,43 +105,31 @@ function PortfolioPage() {
     return () => clearInterval(interval);
   }, [isConnected, publicKey, fetchPositions]);
 
-  const handleDeposit = () => {
-    router.push('/vault');
-  };
-
-  const handleWithdraw = () => {
-    router.push('/vault');
-  };
-
   return (
     <div className="min-h-screen bg-[#0a0a0a]">
       <Header />
 
-      <main className="pt-16">
-        <div className="max-w-[1600px] mx-auto p-4 lg:p-6">
-          <div className="flex flex-col gap-4 lg:gap-6">
-            {/* Row 1 - Account Health */}
-            <AccountHealth
-              positions={positions}
-              usdcBalance={usdcBalance}
-              isConnected={isConnected}
-              onDeposit={handleDeposit}
-              onWithdraw={handleWithdraw}
-            />
+      <main className="pt-16 pb-20">
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
+          {/* Row 1 - Account Health */}
+          <AccountHealth
+            positions={positions}
+            usdcBalance={usdcBalance}
+            isConnected={isConnected}
+          />
 
-            {/* Row 2 - Performance & Allocation */}
-            <div className="grid grid-cols-1 lg:grid-cols-[60%_40%] gap-4 lg:gap-6">
-              <PnlChart trades={trades} />
-              <AssetAllocation positions={positions} usdcBalance={usdcBalance} />
-            </div>
-
-            {/* Row 3 - History Table */}
-            <PortfolioHistory
-              trades={trades}
-              transfers={[]}
-              isLoading={isLoadingTrades}
-            />
+          {/* Row 2 - Performance & Allocation */}
+          <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-8">
+            <PnlChart trades={trades} />
+            <AssetAllocation positions={positions} usdcBalance={usdcBalance} />
           </div>
+
+          {/* Row 3 - History Table */}
+          <PortfolioHistory
+            trades={trades}
+            transfers={[]}
+            isLoading={isLoadingTrades}
+          />
         </div>
       </main>
     </div>

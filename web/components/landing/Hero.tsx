@@ -1,42 +1,42 @@
+'use client';
+
 import Link from 'next/link';
 
 export function Hero() {
   return (
-    <section className="relative min-h-screen flex flex-col items-center justify-center px-6 pt-20">
-      {/* Subtle background glow */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-[#00e6b8]/5 rounded-full blur-[150px]" />
+    <section className="min-h-screen flex flex-col items-center justify-center text-center px-8 pt-32 pb-16 relative z-[1]">
+      {/* Badge */}
+      <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/[0.02] border border-white/[0.06] rounded-full text-xs text-white/60 mb-8 animate-fade-in-up">
+        <span className="w-1.5 h-1.5 bg-[#22c55e] rounded-full animate-pulse-dot" />
+        Live on Stellar Testnet
       </div>
 
-      <div className="relative z-10 text-center max-w-5xl mx-auto">
-        {/* Headline */}
-        <h1 className="font-heading text-5xl md:text-7xl lg:text-8xl font-bold mb-8 leading-[1.1] tracking-tight">
-          <span className="text-white block">PERPETUAL TRADING IN</span>
-          <span className="bg-gradient-to-r from-[#00e6b8] to-[#00d4ff] bg-clip-text text-transparent">
-            PERFECT SYMMETRY
-          </span>
-        </h1>
+      {/* Main Headline */}
+      <h1 className="text-5xl md:text-7xl lg:text-[5rem] font-bold tracking-tight leading-[1.1] mb-6 animate-fade-in-up-delay-1">
+        Decentralized Perpetuals
+        <br />
+        on <span className="shiny-text">Stellar</span> Network
+      </h1>
 
-        {/* Sub-headline */}
-        <p className="text-lg md:text-xl text-gray-400 mb-12 max-w-2xl mx-auto leading-relaxed">
-          Trade with up to 10x leverage, zero price impact, and 5s finality on Stellar.
-        </p>
+      {/* Tagline */}
+      <p className="text-xl text-white/60 max-w-[500px] mb-12 animate-fade-in-up-delay-2">
+        Up to 10x leverage on BTC, ETH & XLM. Provide liquidity, earn NOE tokens, and grow your portfolio.
+      </p>
 
-        {/* CTAs */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link
-            href="/trade"
-            className="px-8 py-4 bg-[#00e6b8] hover:bg-[#00d4a8] text-[#051015] rounded-xl font-semibold text-lg transition-all duration-200"
-          >
-            Start Trading
-          </Link>
-          <Link
-            href="#"
-            className="px-8 py-4 text-gray-400 hover:text-white font-medium text-lg transition-colors"
-          >
-            Read Docs
-          </Link>
-        </div>
+      {/* Buttons */}
+      <div className="flex gap-4 animate-fade-in-up-delay-3">
+        <Link
+          href="/trade"
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold bg-[#eab308] text-black hover:bg-[#fbbf24] hover:-translate-y-0.5 transition-all"
+        >
+          Start Trading
+        </Link>
+        <Link
+          href="/vault"
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold bg-transparent text-white border border-white/[0.06] hover:border-[#eab308] hover:text-[#eab308] transition-all"
+        >
+          Provide Liquidity
+        </Link>
       </div>
     </section>
   );

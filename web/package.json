@@ -13,15 +13,18 @@
     "@stellar/freighter-api": "^1.7.0",
     "@stellar/stellar-sdk": "^14.4.3",
     "@tanstack/react-query": "^5.90.18",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^10.18.0",
     "lightweight-charts": "^4.2.3",
     "lucide-react": "^0.294.0",
+    "motion": "^12.29.2",
     "next": "14.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hot-toast": "^2.6.0",
     "tailwind-merge": "^3.4.0",
+    "three": "^0.167.1",
     "zustand": "^4.5.7"
   },
   "devDependencies": {

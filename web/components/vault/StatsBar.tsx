@@ -12,7 +12,7 @@ interface StatsBarProps {
 
 export function StatsBarSkeleton() {
   return (
-    <div className="grid grid-cols-3 gap-4 md:gap-6 mb-8">
+    <div className="grid grid-cols-3 gap-4 md:gap-6">
       {[1, 2, 3].map((i) => (
         <div key={i} className="rounded-2xl border border-white/10 bg-card p-4 md:p-6">
           <div className="h-4 w-24 bg-white/5 rounded animate-pulse mb-3" />
@@ -29,7 +29,7 @@ export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
   }
 
   return (
-    <div className="grid grid-cols-3 gap-4 md:gap-6 mb-8">
+    <div className="grid grid-cols-3 gap-4 md:gap-6">
       {/* TVL Card */}
       <div className="relative group">
         <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/20 to-[#3b82f6]/10 opacity-0 group-hover:opacity-100 transition-opacity" />

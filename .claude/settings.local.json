@@ -9,7 +9,11 @@
       "Bash(ls -la:*)",
       "Bash(npx tsc:*)",
       "Bash(npx ts-node:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "WebFetch(domain:drake.exchange)",
+      "WebFetch(domain:hyperfoundation.org)",
+      "Bash(npx shadcn@latest add:*)",
+      "Bash(npx shadcn@latest init:*)"
     ]
   }
 }

@@ -1,22 +1,25 @@
+import '@/components/landing/landing.css';
 import {
+  StarsBackground,
   Navbar,
   Hero,
-  StatsStrip,
-  FeaturesGrid,
-  UserSegments,
-  HowItWorks,
+  TradersSection,
+  VaultSection,
+  CompetitionBanner,
+  GettingStarted,
   Footer,
 } from '@/components/landing';
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-[#051015] text-white overflow-x-hidden">
+    <main className="min-h-screen bg-[#050508] text-white overflow-x-hidden relative">
+      <StarsBackground />
       <Navbar />
       <Hero />
-      <StatsStrip />
-      <FeaturesGrid />
-      <UserSegments />
-      <HowItWorks />
+      <TradersSection />
+      <VaultSection />
+      <CompetitionBanner />
+      <GettingStarted />
       <Footer />
     </main>
   );

@@ -1,7 +1,9 @@
+export { StarsBackground } from './StarsBackground';
 export { Navbar } from './Navbar';
 export { Hero } from './Hero';
-export { StatsStrip } from './StatsStrip';
-export { FeaturesGrid } from './FeaturesGrid';
-export { UserSegments } from './UserSegments';
-export { HowItWorks } from './HowItWorks';
+export { TradersSection } from './TradersSection';
+export { VaultSection } from './VaultSection';
+export { CompetitionBanner } from './CompetitionBanner';
+export { GettingStarted } from './GettingStarted';
 export { Footer } from './Footer';
+export { NoetherLogo } from './NoetherLogo';

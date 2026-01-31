@@ -43,7 +43,7 @@ export function ClaimSection({
   const isLimitReached = remainingToday === 0;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden mb-6">
+    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden h-full">
       <div className="px-6 py-4 border-b border-white/10">
         <h3 className="text-base font-semibold text-foreground">Step 2: Claim USDC</h3>
       </div>

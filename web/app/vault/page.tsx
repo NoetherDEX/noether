@@ -192,10 +192,10 @@ function VaultPage() {
     <div className="min-h-screen bg-[#0a0a0a]">
       <Header />
 
-      <main className="pt-20 pb-12">
-        <div className="max-w-5xl mx-auto px-4 lg:px-6">
+      <main className="pt-16 pb-20">
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
           {/* Hero Section */}
-          <div className="mb-8 text-center">
+          <div className="text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 mb-4 rounded-full bg-[#8b5cf6]/10 border border-[#8b5cf6]/20">
               <span className="text-xs font-medium text-[#8b5cf6]">Liquidity Vault</span>
             </div>
@@ -216,7 +216,7 @@ function VaultPage() {
           />
 
           {/* Section 2 & 3: Position + Deposit/Withdraw (side by side on desktop) */}
-          <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          <div className="grid lg:grid-cols-2 gap-8">
             {/* Section 2: Your Position */}
             <YourPosition
               noeBalance={poolStats.noeBalance}
@@ -253,17 +253,13 @@ function VaultPage() {
           </div>
 
           {/* Section 4: Transaction History */}
-          <div className="mb-6">
-            <TransactionHistory
-              publicKey={publicKey}
-              isConnected={isConnected}
-            />
-          </div>
+          <TransactionHistory
+            publicKey={publicKey}
+            isConnected={isConnected}
+          />
 
           {/* Section 5: How It Works */}
-          <div className="mb-6">
-            <HowItWorks />
-          </div>
+          <HowItWorks />
 
           {/* Section 6: Risk Disclosure */}
           <RiskDisclosure />
