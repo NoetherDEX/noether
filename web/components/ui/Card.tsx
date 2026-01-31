@@ -6,15 +6,16 @@ import { cn } from '@/lib/utils';
 interface CardProps {
   children: ReactNode;
   className?: string;
-  variant?: 'default' | 'glass' | 'bordered';
+  variant?: 'default' | 'glass' | 'bordered' | 'transparent';
   padding?: 'none' | 'sm' | 'md' | 'lg';
 }
 
 export function Card({ children, className, variant = 'default', padding = 'md' }: CardProps) {
   const variants = {
-    default: 'bg-white/[0.02]',
-    glass: 'bg-white/[0.02] backdrop-blur-xl',
+    default: 'bg-[#0a0a0a]',
+    glass: 'bg-[#0a0a0a]/90 backdrop-blur-xl',
     bordered: 'bg-transparent border border-white/10',
+    transparent: 'bg-transparent',
   };
 
   const paddings = {

@@ -32,7 +32,7 @@ export function LeaderboardTable() {
   const [sortBy, setSortBy] = useState<'roi' | 'volume' | 'pnl'>('roi');
 
   return (
-    <div className="rounded-xl border border-white/10 bg-card/50 backdrop-blur-sm overflow-hidden">
+    <div className="rounded-xl border border-white/10 bg-[#0a0a0a] overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
         <h3 className="text-sm font-semibold text-foreground">Rankings</h3>

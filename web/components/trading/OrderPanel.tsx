@@ -268,7 +268,7 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
   };
 
   return (
-    <div className="h-full rounded-lg border border-white/10 bg-card overflow-hidden flex flex-col">
+    <div className="h-full rounded-lg border border-white/10 bg-[#0a0a0a] overflow-hidden flex flex-col">
       {/* Header */}
       <div className="px-4 py-3 border-b border-white/10">
         <h3 className="text-sm font-medium text-foreground">Place Order</h3>
