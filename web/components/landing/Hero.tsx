@@ -5,12 +5,6 @@ import Link from 'next/link';
 export function Hero() {
   return (
     <section className="min-h-screen flex flex-col items-center justify-center text-center px-8 pt-32 pb-16 relative z-[1]">
-      {/* Badge */}
-      <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/[0.02] border border-white/[0.06] rounded-full text-xs text-white/60 mb-8 animate-fade-in-up">
-        <span className="w-1.5 h-1.5 bg-[#22c55e] rounded-full animate-pulse-dot" />
-        Live on Stellar Testnet
-      </div>
-
       {/* Main Headline */}
       <h1 className="text-5xl md:text-7xl lg:text-[5rem] font-bold tracking-tight leading-[1.1] mb-6 animate-fade-in-up-delay-1">
         Decentralized Perpetuals

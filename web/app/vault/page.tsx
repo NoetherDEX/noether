@@ -194,19 +194,6 @@ function VaultPage() {
 
       <main className="pt-16 pb-20">
         <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
-          {/* Hero Section */}
-          <div className="text-center">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 mb-4 rounded-full bg-[#8b5cf6]/10 border border-[#8b5cf6]/20">
-              <span className="text-xs font-medium text-[#8b5cf6]">Liquidity Vault</span>
-            </div>
-            <h1 className="text-2xl md:text-3xl font-bold text-foreground mb-2">
-              Provide Liquidity, Earn Rewards
-            </h1>
-            <p className="text-muted-foreground max-w-xl mx-auto">
-              Deposit USDC to receive NOE tokens. Earn trading fees from all platform activity.
-            </p>
-          </div>
-
           {/* Section 1: Stats Bar */}
           <StatsBar
             tvl={poolStats.tvl}

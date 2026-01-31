@@ -38,20 +38,6 @@ function FaucetPage() {
 
       <main className="pt-16 pb-20">
         <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
-          {/* Hero */}
-          <div className="text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/20 to-[#3b82f6]/20 border border-[#8b5cf6]/20 mb-6">
-              <Droplets className="w-8 h-8 text-[#8b5cf6]" />
-            </div>
-            <h1 className="text-2xl md:text-3xl font-bold text-foreground mb-3">
-              Testnet Faucet
-            </h1>
-            <p className="text-muted-foreground max-w-md mx-auto">
-              Get free test USDC to try perpetual trading on Noether.
-              Claim up to 1,000 USDC per day.
-            </p>
-          </div>
-
           {!isConnected ? (
             <div className="rounded-2xl border border-white/10 bg-card p-8 text-center">
               <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/10 to-[#3b82f6]/10 mb-4">

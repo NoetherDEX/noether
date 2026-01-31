@@ -1,7 +1,7 @@
 'use client';
 
 import { ReactNode, createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { isConnected as checkIsConnected, getPublicKey, getNetwork } from '@stellar/freighter-api';
+import { isConnected as checkIsConnected, isAllowed, getPublicKey, getNetwork } from '@stellar/freighter-api';
 import { useWalletStore } from '@/lib/store';
 import { getUSDCBalance } from '@/lib/stellar/token';
 
@@ -94,6 +94,18 @@ export function WalletProvider({ children }: WalletProviderProps) {
         setHasFreighter(true);
 
         if (connected) {
+          // Check if user previously granted permission to this app
+          // Only auto-reconnect if permission was already granted (no popup)
+          const allowed = await isAllowed();
+          if (cancelled) return;
+
+          if (!allowed) {
+            // User hasn't granted permission yet - don't trigger popup
+            // Wait for them to click "Connect Wallet"
+            setIsReady(true);
+            return;
+          }
+
           try {
             const pubKey = await getPublicKey();
             if (cancelled || !pubKey) {

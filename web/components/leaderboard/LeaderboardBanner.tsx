@@ -105,7 +105,7 @@ export function LeaderboardBanner() {
           <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Total Prize Pool</p>
           <div className="relative">
             <div className="absolute inset-0 bg-gradient-to-r from-green-500/20 to-emerald-500/20 blur-xl rounded-full" />
-            <p className="relative font-mono text-4xl lg:text-5xl font-bold text-[#22c55e]">$50,000</p>
+            <p className="relative font-mono text-4xl lg:text-5xl font-bold text-[#22c55e]">$20,000</p>
           </div>
           <p className="text-sm text-muted-foreground mt-1">USDC</p>
         </div>
