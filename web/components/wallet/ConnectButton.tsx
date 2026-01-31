@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Wallet, ChevronDown, LogOut, Copy, ExternalLink, Check, RefreshCw, ArrowLeftRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Button } from '@/components/ui';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useWalletContext } from './WalletProvider';
 import { truncateAddress, formatNumber } from '@/lib/utils';
@@ -47,15 +46,11 @@ export function ConnectButton() {
   };
 
   const handleRefreshWallet = async () => {
-    // Disconnect current wallet and prompt for new connection
-    // This allows users to refresh to a different account in Freighter
     disconnect();
     setIsDropdownOpen(false);
 
-    // Small delay to ensure disconnect is processed
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Prompt for new connection
     try {
       await connect();
     } catch (error) {
@@ -72,13 +67,16 @@ export function ConnectButton() {
     }
   };
 
+  const buttonBaseClass =
+    'inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold border border-[#eab308]/60 text-[#eab308] bg-transparent hover:bg-[#eab308]/10 hover:border-[#eab308] hover:-translate-y-0.5 transition-all';
+
   // Loading state
   if (!isReady) {
     return (
-      <Button variant="secondary" disabled>
-        <Wallet className="w-4 h-4 mr-2" />
+      <button className={cn(buttonBaseClass, 'opacity-70 cursor-wait')} disabled>
+        <Wallet className="w-4 h-4" />
         Loading...
-      </Button>
+      </button>
     );
   }
 
@@ -89,11 +87,10 @@ export function ConnectButton() {
         href="https://freighter.app"
         target="_blank"
         rel="noopener noreferrer"
+        className={buttonBaseClass}
       >
-        <Button variant="primary">
-          <Wallet className="w-4 h-4 mr-2" />
-          Install Freighter
-        </Button>
+        <Wallet className="w-4 h-4" />
+        Install Freighter
       </a>
     );
   }
@@ -101,35 +98,36 @@ export function ConnectButton() {
   // Not connected
   if (!isConnected) {
     return (
-      <Button
-        variant="primary"
+      <button
+        className={cn(buttonBaseClass, isConnecting && 'opacity-70 cursor-wait')}
         onClick={handleConnect}
-        isLoading={isConnecting}
+        disabled={isConnecting}
       >
-        <Wallet className="w-4 h-4 mr-2" />
-        Connect Wallet
-      </Button>
+        <Wallet className="w-4 h-4" />
+        {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+      </button>
     );
   }
 
   // Connected - show dropdown
   return (
     <div className="relative">
-      <Button
-        variant="secondary"
+      <button
+        className={cn(buttonBaseClass, 'pr-4')}
         onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-        className="gap-2"
       >
-        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-        <span className="hidden sm:inline">{truncateAddress(address!, 4, 4)}</span>
-        <span className="sm:hidden">{truncateAddress(address!, 2, 2)}</span>
+        <div className="relative flex items-center justify-center">
+          <div className="w-2 h-2 rounded-full bg-[#22c55e]" />
+          <div className="absolute w-2 h-2 rounded-full bg-[#22c55e] animate-ping opacity-75" />
+        </div>
+        <span>{truncateAddress(address!, 4, 4)}</span>
         <ChevronDown
           className={cn(
             'w-4 h-4 transition-transform',
             isDropdownOpen && 'rotate-180'
           )}
         />
-      </Button>
+      </button>
 
       <AnimatePresence>
         {isDropdownOpen && (
