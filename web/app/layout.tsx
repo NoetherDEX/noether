@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   description: 'Trade crypto perpetuals with up to 10x leverage on the first decentralized perpetual exchange built on Stellar using Soroban smart contracts.',
   keywords: ['DeFi', 'perpetuals', 'DEX', 'Stellar', 'Soroban', 'trading', 'leverage', 'crypto'],
   icons: {
-    icon: '/favicon.ico',
+    icon: '/favicon.svg',
   },
   openGraph: {
     title: 'Noether | Decentralized Perpetual Exchange on Stellar',
