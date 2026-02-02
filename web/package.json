@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "oracle:auto": "tsx scripts/auto-update-oracle.ts"
+    "lint": "next lint"
   },
   "dependencies": {
     "@stellar/freighter-api": "^1.7.0",
