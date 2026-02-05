@@ -280,7 +280,7 @@ Visit `http://localhost:3000` to access the trading interface.
 - [x] Freighter wallet integration
 
 ### Phase 4: Enhancement (In Progress)
-- [ ] Limit orders and stop-loss
+- [x] Limit orders and stop-loss
 - [ ] Advanced order types
 - [ ] Mobile-responsive improvements
 - [ ] Additional trading pairs
