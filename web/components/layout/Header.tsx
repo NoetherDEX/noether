@@ -60,7 +60,7 @@ export function Header() {
             >
               {item.label}
               {isActive && (
-                <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-gradient-to-r from-[#eab308] to-[#22c55e] rounded-full" />
+                <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-[#eab308] rounded-full" />
               )}
             </Link>
           );
