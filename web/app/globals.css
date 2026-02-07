@@ -23,7 +23,7 @@
   --input: 0 0% 10%;
   --ring: 262 83% 58%;
   --radius: 0.5rem;
-  --background: 0 0% 4%;
+  --background: 0 0% 0%;
   --foreground: 0 0% 98%;
 
   /* Trading specific colors */
@@ -155,5 +155,22 @@ a:focus-visible {
 
   .glow-blue {
     box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+  }
+
+  /* Landing page utilities */
+  .text-gradient-gold-green {
+    @apply bg-gradient-to-r from-[#eab308] via-[#a3c926] to-[#22c55e] bg-clip-text text-transparent;
+  }
+
+  .text-gradient-gold {
+    @apply bg-gradient-to-r from-[#eab308] to-[#fbbf24] bg-clip-text text-transparent;
+  }
+
+  .glow-gold {
+    box-shadow: 0 0 40px rgba(234, 179, 8, 0.15);
+  }
+
+  .glow-gold-lg {
+    box-shadow: 0 0 60px rgba(234, 179, 8, 0.25);
   }
 }

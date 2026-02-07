@@ -1,9 +1,12 @@
-export { StarsBackground } from './StarsBackground';
 export { Navbar } from './Navbar';
 export { Hero } from './Hero';
-export { TradersSection } from './TradersSection';
+export { HeroBlobs } from './HeroBlobs';
+export { FlagshipSection, FlagshipFeaturesSection } from './FlagshipSection';
+export { NOEIntroSection } from './NOEIntroSection';
 export { VaultSection } from './VaultSection';
-export { CompetitionBanner } from './CompetitionBanner';
-export { GettingStarted } from './GettingStarted';
-export { Footer } from './Footer';
+export { FinalSection } from './FinalSection';
+export { CommunitySection } from './CommunitySection';
+export { LandingFooter } from './LandingFooter';
 export { NoetherLogo } from './NoetherLogo';
+export { BrowserFrame } from './BrowserFrame';
+export { SlideContainer } from './SlideContainer';
