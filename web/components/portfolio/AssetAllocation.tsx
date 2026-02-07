@@ -2,6 +2,7 @@
 
 import { Wallet } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { TokenIcon } from '@/components/ui/TokenIcon';
 import type { DisplayPosition } from '@/types';
 
 interface AssetAllocationProps {
@@ -123,12 +124,7 @@ export function AssetAllocation({ positions, usdcBalance }: AssetAllocationProps
           >
             <div className="flex items-center gap-3">
               {/* Asset Icon */}
-              <div
-                className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold text-black"
-                style={{ backgroundColor: item.color }}
-              >
-                {item.asset.charAt(0)}
-              </div>
+              <TokenIcon symbol={item.asset} size={32} />
               <div>
                 <div className="font-medium text-foreground">{item.asset}</div>
                 <div className="text-xs text-muted-foreground">{item.type}</div>

@@ -1,37 +1,80 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
+import { HeroBlobs } from './HeroBlobs';
+import { TextReveal, FadeIn } from './animations';
+import { BrowserFrame } from './BrowserFrame';
 
 export function Hero() {
   return (
-    <section className="min-h-screen flex flex-col items-center justify-center text-center px-8 pt-32 pb-16 relative z-[1]">
-      {/* Main Headline */}
-      <h1 className="text-5xl md:text-7xl lg:text-[5rem] font-bold tracking-tight leading-[1.1] mb-6 animate-fade-in-up-delay-1">
-        Decentralized Perpetuals
-        <br />
-        on <span className="shiny-text">Stellar</span> Network
-      </h1>
+    <section className="snap-section section-dark flex flex-col items-center justify-center px-6 relative">
+      <HeroBlobs />
 
-      {/* Tagline */}
-      <p className="text-xl text-white/60 max-w-[500px] mb-12 animate-fade-in-up-delay-2">
-        Up to 10x leverage on BTC, ETH & XLM. Provide liquidity, earn NOE tokens, and grow your portfolio.
-      </p>
+      <div className="relative z-10 text-center max-w-[900px] mx-auto -mt-[22vh]">
+        <h1 className="font-heading text-3xl md:text-4xl lg:text-5xl font-semibold tracking-[-0.02em] leading-[1.15] mb-5">
+          <TextReveal text="Decentralized" delay={0.2} />
+          <br />
+          <span className="text-[#eab308]">
+            <TextReveal text="Perpetual Trading" delay={0.4} />
+          </span>
+        </h1>
 
-      {/* Buttons */}
-      <div className="flex gap-4 animate-fade-in-up-delay-3">
-        <Link
-          href="/trade"
-          className="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold bg-[#eab308] text-black hover:bg-[#fbbf24] hover:-translate-y-0.5 transition-all"
-        >
-          Start Trading
-        </Link>
-        <Link
-          href="/vault"
-          className="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold bg-transparent text-white border border-white/[0.06] hover:border-[#eab308] hover:text-[#eab308] transition-all"
-        >
-          Provide Liquidity
-        </Link>
+        <FadeIn delay={0.6}>
+          <p className="text-sm md:text-base text-white/50 max-w-[440px] mx-auto leading-relaxed mb-8">
+            Trade BTC, ETH & XLM perpetuals with up to 10x leverage.
+            Powered by Soroban smart contracts on Stellar.
+          </p>
+        </FadeIn>
+
+        <FadeIn delay={0.8}>
+          <Link
+            href="/trade"
+            className="inline-flex items-center gap-2.5 px-7 py-3 rounded-full border border-white/20 text-white text-sm font-medium tracking-wide hover:border-[#eab308]/60 hover:text-[#eab308] transition-all duration-300"
+          >
+            Start Trading
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </Link>
+        </FadeIn>
       </div>
+
+      <FadeIn delay={1.0} className="absolute bottom-0 left-0 right-0 z-10 flex justify-center px-4">
+        <div
+          className="max-w-[950px] w-full rounded-t-2xl overflow-hidden bg-[#0a0a0a]"
+          style={{
+            borderTop: '1.5px solid rgba(234, 179, 8, 0.5)',
+            borderLeft: '1.5px solid rgba(234, 179, 8, 0.5)',
+            borderRight: '1.5px solid rgba(234, 179, 8, 0.5)',
+            boxShadow:
+              '0 0 6px 1px rgba(234, 179, 8, 0.4), ' +
+              '0 0 14px 2px rgba(234, 179, 8, 0.2), ' +
+              '0 -8px 30px rgba(234, 179, 8, 0.1)',
+          }}
+        >
+          <div className="h-[36vh] w-full">
+            <BrowserFrame>
+              <Image
+                src="/images/trading-screenshot.png"
+                alt="Noether Trading Interface"
+                fill
+                className="object-cover object-top"
+                priority
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  target.parentElement!.innerHTML = `
+                    <div class="flex items-center justify-center w-full h-full bg-[#0a0a0a] text-white/20 text-lg font-mono">
+                      Trading Interface Preview
+                    </div>
+                  `;
+                }}
+              />
+            </BrowserFrame>
+          </div>
+        </div>
+      </FadeIn>
     </section>
   );
 }

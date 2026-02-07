@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { TokenIcon } from '@/components/ui/TokenIcon';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 
 interface AssetOption {
@@ -80,14 +81,7 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
         )}
       >
         {/* Asset Icon */}
-        <div className={cn(
-          'w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white',
-          selectedAsset === 'BTC' && 'bg-[#f7931a]',
-          selectedAsset === 'ETH' && 'bg-[#627eea]',
-          selectedAsset === 'XLM' && 'bg-[#000000] ring-1 ring-white/20'
-        )}>
-          {selectedAsset.charAt(0)}
-        </div>
+        <TokenIcon symbol={selectedAsset} size={24} />
 
         {/* Asset Info */}
         <div className="text-left">
@@ -138,14 +132,7 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
                 )}
               >
                 {/* Asset Icon */}
-                <div className={cn(
-                  'w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white',
-                  asset.symbol === 'BTC' && 'bg-[#f7931a]',
-                  asset.symbol === 'ETH' && 'bg-[#627eea]',
-                  asset.symbol === 'XLM' && 'bg-[#000000] ring-1 ring-white/20'
-                )}>
-                  {asset.symbol.charAt(0)}
-                </div>
+                <TokenIcon symbol={asset.symbol} size={32} />
 
                 {/* Asset Info */}
                 <div className="flex-1 text-left">

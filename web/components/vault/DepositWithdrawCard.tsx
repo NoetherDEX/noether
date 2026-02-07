@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ArrowDownUp, Loader2 } from 'lucide-react';
 import { formatNumber } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
+import { TokenIcon } from '@/components/ui/TokenIcon';
 
 interface DepositWithdrawCardProps {
   // Deposit state
@@ -141,9 +142,7 @@ export function DepositWithdrawCard({
                   className="w-full bg-zinc-900/50 border border-white/10 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                  <div className="w-5 h-5 rounded-full bg-[#2775ca] flex items-center justify-center">
-                    <span className="text-[10px] font-bold text-white">$</span>
-                  </div>
+                  <TokenIcon symbol="USDC" size={20} />
                   <span className="text-sm font-medium text-foreground">USDC</span>
                 </div>
               </div>
@@ -158,9 +157,7 @@ export function DepositWithdrawCard({
                   {formatNumber(noeToReceive, 4)}
                 </div>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                  <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#8b5cf6] to-[#3b82f6] flex items-center justify-center">
-                    <span className="text-[10px] font-bold text-white">N</span>
-                  </div>
+                  <TokenIcon symbol="NOE" size={20} />
                   <span className="text-sm font-medium text-foreground">NOE</span>
                 </div>
               </div>
@@ -218,9 +215,7 @@ export function DepositWithdrawCard({
                   className="w-full bg-zinc-900/50 border border-white/10 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                  <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#8b5cf6] to-[#3b82f6] flex items-center justify-center">
-                    <span className="text-[10px] font-bold text-white">N</span>
-                  </div>
+                  <TokenIcon symbol="NOE" size={20} />
                   <span className="text-sm font-medium text-foreground">NOE</span>
                 </div>
               </div>
@@ -241,9 +236,7 @@ export function DepositWithdrawCard({
                   {formatNumber(usdcToReceive)}
                 </div>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                  <div className="w-5 h-5 rounded-full bg-[#2775ca] flex items-center justify-center">
-                    <span className="text-[10px] font-bold text-white">$</span>
-                  </div>
+                  <TokenIcon symbol="USDC" size={20} />
                   <span className="text-sm font-medium text-foreground">USDC</span>
                 </div>
               </div>

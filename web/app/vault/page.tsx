@@ -189,7 +189,7 @@ function VaultPage() {
   const withdrawFee = withdrawNum * poolStats.noePrice * 0.003;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]" style={{ backgroundImage: 'url(/vault-background.png)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed', backgroundColor: 'rgba(10,10,10,0.5)', backgroundBlendMode: 'overlay' }}>
+    <div className="min-h-screen bg-[#0a0a0a]">
       <Header />
 
       <main className="pt-16 pb-20">

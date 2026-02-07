@@ -33,7 +33,7 @@ function FaucetPage() {
   } = useFaucet(publicKey);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]" style={{ backgroundImage: 'url(/faucet-background.png)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed', backgroundColor: 'rgba(10,10,10,0.5)', backgroundBlendMode: 'overlay' }}>
+    <div className="min-h-screen bg-[#0a0a0a]">
       <Header />
 
       <main className="pt-16 pb-20">

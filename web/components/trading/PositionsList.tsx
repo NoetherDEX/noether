@@ -5,6 +5,7 @@ import { TrendingUp, X, Plus, RefreshCw, Share2, AlertTriangle, Shield, Target }
 import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPercent, formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
+import { TokenIcon } from '@/components/ui/TokenIcon';
 import type { DisplayPosition } from '@/types';
 
 interface PositionsListProps {
@@ -321,9 +322,7 @@ export function PositionsList({
                   className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-16"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                  <div className="w-4 h-4 rounded-full bg-[#2775ca] flex items-center justify-center">
-                    <span className="text-[8px] font-bold text-white">$</span>
-                  </div>
+                  <TokenIcon symbol="USDC" size={16} />
                   <span className="text-xs font-medium text-foreground">USDC</span>
                 </div>
               </div>

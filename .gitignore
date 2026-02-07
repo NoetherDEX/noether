@@ -6,7 +6,7 @@ Cargo.lock
 # Node
 node_modules/
 .next/
-out/
+/out/
 dist/
 *.log
 .env.local
