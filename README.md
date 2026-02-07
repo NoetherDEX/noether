@@ -21,7 +21,7 @@
 
 ## Overview
 
-**Noether** is a decentralized perpetual futures exchange (PerpDEX) built on the [Stellar](https://stellar.org) blockchain using [Soroban](https://soroban.stellar.org) smart contracts. Traders can open leveraged long and short positions on crypto assets without expiry dates, while liquidity providers earn yield by supplying capital to the protocol
+**Noether** is a decentralized perpetual futures exchange (PerpDEX) built on the [Stellar](https://stellar.org) blockchain using [Soroban](https://soroban.stellar.org) smart contracts. Traders can open leveraged long and short positions on crypto assets without expiry dates, while liquidity providers earn yield by supplying capital to the protocol.
 
 Named after [Emmy Noether](https://en.wikipedia.org/wiki/Emmy_Noether), the brilliant mathematician whose theorem on symmetry and conservation laws revolutionized physics, our protocol aims to bring the same elegance and mathematical rigor to decentralized derivatives trading on Stellar.
 
