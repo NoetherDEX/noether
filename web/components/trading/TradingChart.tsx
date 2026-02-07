@@ -16,12 +16,15 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const disposedRef = useRef(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Initialize chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
+
+    disposedRef.current = false;
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
@@ -74,7 +77,7 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
 
     // Handle resize
     const handleResize = () => {
-      if (chartContainerRef.current) {
+      if (chartContainerRef.current && !disposedRef.current) {
         chart.applyOptions({
           width: chartContainerRef.current.clientWidth,
           height: chartContainerRef.current.clientHeight,
@@ -86,20 +89,25 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
     handleResize();
 
     return () => {
+      disposedRef.current = true;
       window.removeEventListener('resize', handleResize);
+      chartRef.current = null;
+      candlestickSeriesRef.current = null;
       chart.remove();
     };
   }, []);
 
   // Load data when asset or interval changes
   const loadData = useCallback(async () => {
-    if (!candlestickSeriesRef.current) return;
+    if (!candlestickSeriesRef.current || disposedRef.current) return;
 
     setIsLoading(true);
     setError(null);
 
     try {
       const candles = await fetchCandles(asset, toBinanceInterval(interval));
+
+      if (disposedRef.current || !candlestickSeriesRef.current) return;
 
       const chartData: CandlestickData<Time>[] = candles.map((c) => ({
         time: c.time as Time,
@@ -112,10 +120,14 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
       candlestickSeriesRef.current.setData(chartData);
       chartRef.current?.timeScale().fitContent();
     } catch (err) {
-      setError('Failed to load chart data');
-      console.error('Chart data error:', err);
+      if (!disposedRef.current) {
+        setError('Failed to load chart data');
+        console.error('Chart data error:', err);
+      }
     } finally {
-      setIsLoading(false);
+      if (!disposedRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [asset, interval]);
 
@@ -125,7 +137,7 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
 
   // Set up real-time updates
   useEffect(() => {
-    if (!candlestickSeriesRef.current) return;
+    if (!candlestickSeriesRef.current || disposedRef.current) return;
 
     const symbol = asset.toLowerCase();
     const binanceInterval = toBinanceInterval(interval);
@@ -135,10 +147,12 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
 
     ws.onmessage = (event) => {
       try {
+        if (disposedRef.current || !candlestickSeriesRef.current) return;
+
         const data = JSON.parse(event.data);
         const kline = data.k;
 
-        if (kline && candlestickSeriesRef.current) {
+        if (kline) {
           candlestickSeriesRef.current.update({
             time: Math.floor(kline.t / 1000) as Time,
             open: parseFloat(kline.o),
