@@ -54,7 +54,7 @@ export function AssetSelector({ selectedAsset, onSelect }: AssetSelectorProps) {
             className={cn(
               'w-full flex items-center justify-between p-3 rounded-lg transition-all',
               isSelected
-                ? 'bg-gradient-to-r from-[#8b5cf6]/20 to-[#3b82f6]/20 border border-[#8b5cf6]/30'
+                ? 'bg-[#eab308]/10 border border-[#eab308]/30'
                 : 'hover:bg-white/5 border border-transparent'
             )}
           >
