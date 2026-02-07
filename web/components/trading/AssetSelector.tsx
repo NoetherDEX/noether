@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { TokenIcon } from '@/components/ui/TokenIcon';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 import { formatUSD, formatPercent } from '@/lib/utils';
 import type { Ticker } from '@/types';
@@ -58,12 +59,7 @@ export function AssetSelector({ selectedAsset, onSelect }: AssetSelectorProps) {
             )}
           >
             <div className="flex items-center gap-3">
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs"
-                style={{ backgroundColor: `${asset.color}20`, color: asset.color }}
-              >
-                {asset.symbol.charAt(0)}
-              </div>
+              <TokenIcon symbol={asset.symbol} size={32} />
               <div className="text-left">
                 <p className="text-sm font-medium text-foreground">{asset.symbol}-USDC</p>
                 <p className="text-xs text-muted-foreground">{asset.name}</p>
