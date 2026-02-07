@@ -40,7 +40,7 @@ function FaucetPage() {
         <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
           {!isConnected ? (
             <div className="rounded-2xl border border-white/10 bg-card p-8 text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/10 to-[#3b82f6]/10 mb-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.06] mb-4">
                 <Wallet className="w-8 h-8 text-muted-foreground" />
               </div>
               <h2 className="text-xl font-semibold text-foreground mb-2">

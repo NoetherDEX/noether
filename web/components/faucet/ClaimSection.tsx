@@ -70,7 +70,7 @@ export function ClaimSection({
                     'h-full rounded-full transition-all duration-500',
                     progressPercent >= 100
                       ? 'bg-[#f59e0b]'
-                      : 'bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6]'
+                      : 'bg-[#eab308] text-black'
                   )}
                   style={{ width: `${Math.min(progressPercent, 100)}%` }}
                 />
@@ -127,7 +127,7 @@ export function ClaimSection({
                     'w-full h-12 text-sm font-bold rounded-lg transition-all',
                     'flex items-center justify-center gap-2',
                     'disabled:opacity-40 disabled:cursor-not-allowed',
-                    'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white shadow-lg shadow-[#22c55e]/30'
+                    'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
                   )}
                 >
                   {isClaiming ? (
