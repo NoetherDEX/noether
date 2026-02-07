@@ -1,6 +1,5 @@
 'use client';
 
-import { Wallet, TrendingUp, PieChart, Coins } from 'lucide-react';
 import { formatUSD, formatNumber, formatPercent } from '@/lib/utils';
 import { TrustlineWarning } from './TrustlineWarning';
 
@@ -55,67 +54,41 @@ export function YourPosition({
 
   return (
     <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      {/* Header */}
       <div className="px-6 py-4 border-b border-white/10">
         <h3 className="text-base font-semibold text-foreground">Your Position</h3>
       </div>
 
       <div className="p-6">
         {!isConnected ? (
-          <div className="text-center py-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/10 to-[#3b82f6]/10 mb-4">
-              <Wallet className="w-7 h-7 text-muted-foreground" />
-            </div>
-            <p className="text-foreground font-medium mb-1">Connect your wallet</p>
-            <p className="text-sm text-muted-foreground">
-              to view your position
-            </p>
+          <div className="py-8 text-center">
+            <p className="text-sm text-muted-foreground">Connect your wallet to view your position</p>
           </div>
         ) : hasPosition ? (
-          <div className="space-y-5">
-            {/* NOE Balance */}
+          <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-[#8b5cf6]/10">
-                  <Coins className="h-4 w-4 text-[#8b5cf6]" />
-                </div>
-                <span className="text-sm text-muted-foreground">NOE Balance</span>
-              </div>
-              <span className="font-mono font-semibold text-foreground">
+              <span className="text-sm text-muted-foreground">NOE Balance</span>
+              <span className="font-mono text-sm font-medium text-foreground">
                 {formatNumber(noeBalance, 4)} NOE
               </span>
             </div>
 
-            {/* Value */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-[#3b82f6]/10">
-                  <TrendingUp className="h-4 w-4 text-[#3b82f6]" />
-                </div>
-                <span className="text-sm text-muted-foreground">Value</span>
-              </div>
-              <span className="font-mono font-semibold text-foreground">
+              <span className="text-sm text-muted-foreground">Value</span>
+              <span className="font-mono text-sm font-medium text-foreground">
                 {formatUSD(value)}
               </span>
             </div>
 
-            {/* Pool Share */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-[#22c55e]/10">
-                  <PieChart className="h-4 w-4 text-[#22c55e]" />
-                </div>
-                <span className="text-sm text-muted-foreground">Pool Share</span>
-              </div>
-              <span className="font-mono font-semibold text-foreground">
+              <span className="text-sm text-muted-foreground">Pool Share</span>
+              <span className="font-mono text-sm font-medium text-foreground">
                 {formatPercent(poolShare)}
               </span>
             </div>
 
-            {/* Daily Earnings */}
             <div className="flex items-center justify-between pt-3 border-t border-white/5">
               <span className="text-sm text-muted-foreground">Est. Daily Earnings</span>
-              <span className="font-mono font-semibold text-[#22c55e]">
+              <span className="font-mono text-sm font-medium text-[#22c55e]">
                 ~{formatUSD(dailyEarnings)}
               </span>
             </div>
@@ -130,15 +103,10 @@ export function YourPosition({
             )}
           </div>
         ) : (
-          <div className="text-center py-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/10 to-[#3b82f6]/10 mb-4">
-              <Coins className="w-7 h-7 text-muted-foreground" />
-            </div>
-            <p className="text-foreground font-medium mb-1">
-              You&apos;re not providing liquidity yet
-            </p>
-            <p className="text-sm text-muted-foreground mb-4 max-w-xs mx-auto">
-              Deposit USDC to receive NOE tokens and start earning from trading fees.
+          <div className="py-8 text-center">
+            <p className="text-sm text-foreground mb-1">No liquidity provided yet</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              Deposit USDC to receive NOE tokens and earn trading fees.
             </p>
 
             {!hasTrustline && (
