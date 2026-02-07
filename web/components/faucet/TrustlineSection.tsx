@@ -21,74 +21,53 @@ export function TrustlineSection({
   const truncatedIssuer = `${issuerAddress.slice(0, 8)}...${issuerAddress.slice(-8)}`;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden h-full">
+    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden h-full flex flex-col">
       <div className="px-6 py-4 border-b border-white/10">
-        <h3 className="text-base font-semibold text-foreground">Step 1: USDC Trustline</h3>
+        <h3 className="text-base font-semibold text-foreground">USDC Trustline</h3>
       </div>
-      <div className="p-6">
+      <div className="p-6 flex-1 flex flex-col">
         {status === 'checking' && (
-          <div className="flex items-center gap-3 p-4 bg-secondary/30 rounded-lg">
-            <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
-            <span className="text-muted-foreground">Checking trustline status...</span>
+          <div className="flex-1 flex items-center justify-center">
+            <div className="flex items-center gap-3">
+              <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+              <span className="text-sm text-muted-foreground">Checking trustline...</span>
+            </div>
           </div>
         )}
 
         {status === 'active' && (
-          <div className="flex items-center gap-3 p-4 bg-[#22c55e]/10 border border-[#22c55e]/20 rounded-lg">
-            <CheckCircle className="w-5 h-5 text-[#22c55e]" />
-            <div>
-              <span className="text-[#22c55e] font-medium">
-                USDC Trustline Active
-              </span>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                You&apos;re ready to receive test USDC
-              </p>
-            </div>
+          <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
+            <CheckCircle className="w-8 h-8 text-[#22c55e] mb-3" />
+            <p className="text-lg font-medium text-foreground">Trustline Active</p>
+            <p className="text-sm text-muted-foreground mt-1">Ready to receive test USDC</p>
           </div>
         )}
 
         {(status === 'not_found' || status === 'adding') && (
           <div className="space-y-4">
-            <div className="flex items-start gap-3 p-4 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded-lg">
-              <AlertCircle className="w-5 h-5 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-              <div>
-                <span className="text-[#f59e0b] font-medium">
-                  USDC Trustline Not Found
-                </span>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Before receiving USDC, you need to add it to your wallet&apos;s
-                  trusted assets. This is a one-time setup.
-                </p>
-              </div>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Add USDC to your wallet&apos;s trusted assets before claiming. One-time setup.
+            </p>
 
-            <div className="p-4 bg-secondary/30 rounded-lg border border-white/5 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Asset</span>
-                <span className="text-foreground font-medium">USDC</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Issuer</span>
-                <span className="text-foreground font-mono text-xs">
-                  {truncatedIssuer}
-                </span>
-              </div>
+            <div className="flex items-center justify-between text-sm p-3 bg-secondary/30 rounded-lg border border-white/5">
+              <span className="text-muted-foreground">Issuer</span>
+              <span className="text-foreground font-mono text-xs">{truncatedIssuer}</span>
             </div>
 
             <button
               onClick={onAddTrustline}
               disabled={isAdding}
               className={cn(
-                'w-full h-12 text-sm font-bold rounded-lg transition-all',
+                'w-full h-11 text-sm font-medium rounded-lg transition-all',
                 'flex items-center justify-center gap-2',
                 'disabled:opacity-40 disabled:cursor-not-allowed',
-                'bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6] text-white hover:opacity-90'
+                'bg-white text-black hover:bg-white/90'
               )}
             >
               {isAdding ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Adding Trustline...
+                  Adding...
                 </>
               ) : (
                 <>
@@ -102,14 +81,12 @@ export function TrustlineSection({
 
         {status === 'error' && (
           <div className="space-y-4">
-            <div className="flex items-start gap-3 p-4 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg">
-              <AlertCircle className="w-5 h-5 text-[#ef4444] flex-shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-4 h-4 text-[#ef4444] flex-shrink-0 mt-0.5" />
               <div>
-                <span className="text-[#ef4444] font-medium">
-                  Error Checking Trustline
-                </span>
+                <span className="text-sm font-medium text-[#ef4444]">Error</span>
                 {error && (
-                  <p className="text-sm text-muted-foreground mt-1">{error}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{error}</p>
                 )}
               </div>
             </div>
@@ -118,7 +95,7 @@ export function TrustlineSection({
               onClick={onAddTrustline}
               disabled={isAdding}
               className={cn(
-                'w-full h-12 text-sm font-bold rounded-lg transition-all',
+                'w-full h-11 text-sm font-medium rounded-lg transition-all',
                 'flex items-center justify-center gap-2',
                 'disabled:opacity-40 disabled:cursor-not-allowed',
                 'bg-secondary hover:bg-secondary/80 text-foreground border border-white/10'

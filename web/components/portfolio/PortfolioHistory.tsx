@@ -52,7 +52,7 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
               className={cn(
                 'px-4 py-2 text-sm font-medium rounded-lg transition-all',
                 activeTab === tab
-                  ? 'bg-[#8b5cf6]/20 text-[#8b5cf6]'
+                  ? 'bg-[#eab308]/20 text-[#eab308]'
                   : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
               )}
             >
@@ -161,7 +161,7 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
                         href={getStellarExpertUrl(trade.txHash)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-[#3b82f6] hover:text-[#8b5cf6] transition-colors font-mono"
+                        className="inline-flex items-center gap-1 text-xs text-white/40 hover:text-white/60 transition-colors font-mono"
                       >
                         {trade.txHash.slice(0, 6)}...
                         <ExternalLink className="w-3 h-3" />
@@ -226,7 +226,7 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
                         href={getStellarExpertUrl(transfer.txHash)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="font-mono text-xs text-[#3b82f6] hover:underline"
+                        className="font-mono text-xs text-white/40 hover:text-white/60 hover:underline"
                       >
                         {transfer.txHash.slice(0, 8)}...{transfer.txHash.slice(-6)}
                       </a>

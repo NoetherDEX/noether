@@ -64,7 +64,7 @@ export function ClaimHistory({
           </div>
         ) : records.length === 0 ? (
           <div className="text-center py-12">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-[#8b5cf6]/10 to-[#3b82f6]/10 mb-4">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-white/[0.04] mb-4">
               <History className="w-7 h-7 text-muted-foreground" />
             </div>
             <p className="text-foreground font-medium mb-1">No claims yet</p>
@@ -102,7 +102,7 @@ export function ClaimHistory({
                     href={getStellarExpertUrl(record.txHash)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-[#3b82f6] hover:text-[#8b5cf6] transition-colors font-mono"
+                    className="inline-flex items-center gap-1 text-xs text-white/40 hover:text-white/60 transition-colors font-mono"
                   >
                     {record.txHash.slice(0, 8)}...
                     <ExternalLink className="w-3 h-3" />

@@ -36,7 +36,7 @@ export function AccountHealth({
     return (
       <div className="grid grid-cols-1 gap-4">
         <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-[#111] to-[#0a0a0a] p-6">
-          <div className="absolute top-0 right-0 h-32 w-32 bg-gradient-to-br from-[#8b5cf6]/10 to-transparent rounded-bl-full" />
+          <div className="absolute top-0 right-0 h-32 w-32 bg-transparent rounded-bl-full" />
           <div className="relative text-center py-8">
             <Wallet className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-medium text-foreground mb-2">Connect Your Wallet</h3>
@@ -53,7 +53,7 @@ export function AccountHealth({
     <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-8">
       {/* Net Worth Card - Left Column */}
       <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-[#111] to-[#0a0a0a] p-6">
-        <div className="absolute top-0 right-0 h-32 w-32 bg-gradient-to-br from-[#8b5cf6]/10 to-transparent rounded-bl-full" />
+        <div className="absolute top-0 right-0 h-32 w-32 bg-transparent rounded-bl-full" />
         <div className="relative">
           <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
             <Wallet className="h-4 w-4" />
@@ -131,7 +131,7 @@ export function AccountHealth({
             <div
               className={cn(
                 'h-full rounded-full transition-all',
-                marginUsagePercent > 80 ? 'bg-[#ef4444]' : marginUsagePercent > 50 ? 'bg-[#f59e0b]' : 'bg-gradient-to-r from-[#22c55e] to-[#3b82f6]'
+                marginUsagePercent > 80 ? 'bg-[#ef4444]' : marginUsagePercent > 50 ? 'bg-[#f59e0b]' : 'bg-gradient-to-r from-[#22c55e] to-[#eab308]'
               )}
               style={{ width: `${Math.min(marginUsagePercent, 100)}%` }}
             />

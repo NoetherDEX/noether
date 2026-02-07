@@ -152,7 +152,7 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-[#8b5cf6]" />
+            <TrendingUp className="h-5 w-5 text-white/40" />
             <span className="font-semibold text-foreground">PnL History</span>
           </div>
           <div className="flex items-center gap-2 pl-3 border-l border-white/10">
@@ -180,7 +180,7 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
               className={cn(
                 'px-5 py-1 text-xs font-medium rounded-md transition-all',
                 timeframe === tf
-                  ? 'bg-[#8b5cf6] text-white'
+                  ? 'bg-[#eab308] text-black'
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >

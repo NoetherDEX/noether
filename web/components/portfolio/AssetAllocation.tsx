@@ -13,7 +13,7 @@ interface AssetAllocationProps {
 // Asset colors mapping
 const assetColors: Record<string, string> = {
   USDC: '#3b82f6',
-  XLM: '#8b5cf6',
+  XLM: '#eab308',
   BTC: '#f59e0b',
   ETH: '#627eea',
 };
@@ -72,7 +72,7 @@ export function AssetAllocation({ positions, usdcBalance }: AssetAllocationProps
     return (
       <div className="rounded-xl border border-white/10 bg-card p-4 flex flex-col">
         <div className="flex items-center gap-2 mb-4">
-          <Wallet className="h-5 w-5 text-[#8b5cf6]" />
+          <Wallet className="h-5 w-5 text-white/40" />
           <span className="font-semibold text-foreground">Asset Allocation</span>
         </div>
         <div className="flex-1 flex items-center justify-center">
@@ -92,7 +92,7 @@ export function AssetAllocation({ positions, usdcBalance }: AssetAllocationProps
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Wallet className="h-5 w-5 text-[#8b5cf6]" />
+          <Wallet className="h-5 w-5 text-white/40" />
           <span className="font-semibold text-foreground">Asset Allocation</span>
         </div>
         <span className="font-mono text-sm text-muted-foreground">

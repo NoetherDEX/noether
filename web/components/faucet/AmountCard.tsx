@@ -24,7 +24,7 @@ export function AmountCard({
         'relative p-4 rounded-xl border transition-all text-center',
         'disabled:opacity-40 disabled:cursor-not-allowed',
         selected
-          ? 'border-[#8b5cf6]/50 bg-gradient-to-br from-[#8b5cf6]/20 to-[#3b82f6]/10 ring-1 ring-[#8b5cf6]/50'
+          ? 'border-[#eab308]/50 bg-[#eab308]/10 ring-1 ring-[#eab308]/50'
           : 'border-white/10 bg-secondary/30 hover:border-white/20 hover:bg-secondary/50'
       )}
     >
@@ -33,7 +33,7 @@ export function AmountCard({
       </span>
       <span className="block text-xs text-muted-foreground mt-1">USDC</span>
       {selected && (
-        <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#8b5cf6]" />
+        <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#eab308]" />
       )}
     </button>
   );

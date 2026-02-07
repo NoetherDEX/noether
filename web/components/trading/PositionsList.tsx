@@ -55,7 +55,7 @@ export function PositionsList({
     return (
       <div className="flex flex-col items-center justify-center py-16 px-4">
         <div className="relative mb-4">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#8b5cf6]/10 to-[#3b82f6]/10 flex items-center justify-center">
+          <div className="w-16 h-16 rounded-full bg-white/[0.04] flex items-center justify-center">
             <TrendingUp className="w-8 h-8 text-muted-foreground/50" />
           </div>
           <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-card border border-white/10 flex items-center justify-center">
@@ -66,7 +66,7 @@ export function PositionsList({
         <p className="text-muted-foreground text-sm text-center max-w-xs">
           Open a position to start trading. Your active trades will appear here.
         </p>
-        <button className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6] text-white hover:opacity-90 transition-opacity">
+        <button className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-[#eab308] text-black hover:opacity-90 transition-opacity">
           Start Trading
         </button>
       </div>

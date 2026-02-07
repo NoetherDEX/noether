@@ -11,7 +11,6 @@ import {
   DepositWithdrawCard,
   TransactionHistory,
   HowItWorks,
-  RiskDisclosure,
 } from '@/components/vault';
 import {
   deposit,
@@ -245,11 +244,8 @@ function VaultPage() {
             isConnected={isConnected}
           />
 
-          {/* Section 5: How It Works */}
+          {/* Section 5: How It Works + Risk */}
           <HowItWorks />
-
-          {/* Section 6: Risk Disclosure */}
-          <RiskDisclosure />
         </div>
       </main>
     </div>

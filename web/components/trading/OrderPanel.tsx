@@ -189,7 +189,7 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
           refreshBalances();
           onSubmit?.();
           onPositionOpened?.();
-          return `${direction} ${asset} position opened! ID: ${position.id}`;
+          return `${direction} ${asset} position opened!`;
         },
         error: (err) => {
           console.error('Failed to open position:', err);
@@ -656,8 +656,8 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
               'w-full h-14 text-base font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed',
               'flex items-center justify-center gap-2 rounded-lg',
               direction === 'Long'
-                ? 'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white shadow-lg shadow-[#22c55e]/30'
-                : 'bg-[#ef4444] hover:bg-[#ef4444]/90 text-white shadow-lg shadow-[#ef4444]/30'
+                ? 'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
+                : 'bg-[#ef4444] hover:bg-[#ef4444]/90 text-white'
             )}
           >
             {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}

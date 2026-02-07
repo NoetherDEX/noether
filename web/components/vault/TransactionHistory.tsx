@@ -33,10 +33,10 @@ export function TransactionHistorySkeleton() {
               className="flex items-center justify-between p-4 bg-white/5 rounded-xl"
             >
               <div className="flex items-center gap-3">
-                <Skeleton className="w-10 h-10 rounded-lg" />
+                <Skeleton className="w-4 h-4 rounded" />
                 <div>
                   <Skeleton className="h-4 w-20 mb-1" />
-                  <Skeleton className="h-3 w-32" />
+                  <Skeleton className="h-3 w-24" />
                 </div>
               </div>
               <Skeleton className="h-4 w-24" />
@@ -183,43 +183,30 @@ export function TransactionHistory({ publicKey, isConnected }: TransactionHistor
                 className="flex items-center justify-between p-4 bg-white/5 rounded-xl hover:bg-white/10 transition-colors group"
               >
                 <div className="flex items-center gap-3">
-                  <div
-                    className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      tx.type === 'received'
-                        ? 'bg-emerald-500/20'
-                        : 'bg-amber-500/20'
-                    }`}
-                  >
-                    {tx.type === 'received' ? (
-                      <ArrowDownLeft className="w-5 h-5 text-emerald-400" />
-                    ) : (
-                      <ArrowUpRight className="w-5 h-5 text-amber-400" />
-                    )}
-                  </div>
+                  {tx.type === 'received' ? (
+                    <ArrowDownLeft className="w-4 h-4 text-[#22c55e]" />
+                  ) : (
+                    <ArrowUpRight className="w-4 h-4 text-[#f59e0b]" />
+                  )}
                   <div>
                     <p className="text-sm font-medium text-white">
                       {tx.type === 'received' ? 'Received' : 'Sent'} NOE
                     </p>
                     <p className="text-xs text-neutral-500">
-                      {tx.type === 'received' ? 'Deposit / Transfer In' : 'Withdraw / Transfer Out'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <p
-                      className={`text-sm font-medium ${
-                        tx.type === 'received' ? 'text-emerald-400' : 'text-amber-400'
-                      }`}
-                    >
-                      {tx.type === 'received' ? '+' : '-'}
-                      {formatNumber(tx.amount, 4)} NOE
-                    </p>
-                    <p className="text-xs text-neutral-500">
                       {formatDateTime(new Date(tx.timestamp))}
                     </p>
                   </div>
-                  <ExternalLink className="w-4 h-4 text-neutral-500 group-hover:text-white transition-colors" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-sm font-mono font-medium ${
+                      tx.type === 'received' ? 'text-[#22c55e]' : 'text-[#f59e0b]'
+                    }`}
+                  >
+                    {tx.type === 'received' ? '+' : '-'}
+                    {formatNumber(tx.amount, 4)} NOE
+                  </span>
+                  <ExternalLink className="w-3.5 h-3.5 text-white/20 group-hover:text-white/40 transition-colors" />
                 </div>
               </a>
             ))}

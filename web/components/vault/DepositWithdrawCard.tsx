@@ -97,7 +97,7 @@ export function DepositWithdrawCard({
         >
           Deposit
           {activeTab === 'deposit' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6]" />
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#eab308]" />
           )}
         </button>
         <button
@@ -111,7 +111,7 @@ export function DepositWithdrawCard({
         >
           Withdraw
           {activeTab === 'withdraw' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6]" />
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#eab308]" />
           )}
         </button>
       </div>
@@ -183,7 +183,7 @@ export function DepositWithdrawCard({
                 'w-full h-12 text-sm font-bold rounded-lg transition-all',
                 'flex items-center justify-center gap-2',
                 'disabled:opacity-40 disabled:cursor-not-allowed',
-                'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white shadow-lg shadow-[#22c55e]/30'
+                'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
               )}
             >
               {isDepositing && <Loader2 className="w-4 h-4 animate-spin" />}
