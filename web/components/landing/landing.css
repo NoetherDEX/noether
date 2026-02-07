@@ -1,142 +1,188 @@
-/* Landing Page Animations & Styles */
+/* ============================================================
+   Noether Landing Page — Hyper Foundation Style
+   ============================================================ */
 
 :root {
   --gold: #eab308;
+  --gold-light: #fbbf24;
   --green: #22c55e;
   --bg-dark: #050508;
-  --bg-card: rgba(255, 255, 255, 0.02);
-  --border: rgba(255, 255, 255, 0.06);
+  --bg-light: #f8f6f0;
+  --bg-card: rgba(255, 255, 255, 0.03);
+  --bg-card-hover: rgba(255, 255, 255, 0.05);
+  --border-light: rgba(255, 255, 255, 0.06);
+  --border-light-hover: rgba(255, 255, 255, 0.12);
   --text-primary: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.6);
-  --text-muted: rgba(255, 255, 255, 0.4);
+  --text-muted: rgba(255, 255, 255, 0.35);
 }
 
-/* Stars Animation */
-.star {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  background: white;
-  border-radius: 50%;
-  opacity: 0.3;
-  animation: twinkle 3s infinite ease-in-out;
+/* ============================================================
+   Scroll Snap System
+   ============================================================ */
+.snap-container {
+  scroll-snap-type: y mandatory;
+  overflow-y: auto;
+  height: 100vh;
+  -webkit-overflow-scrolling: touch;
 }
 
-@keyframes twinkle {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 0.8; }
+.snap-section {
+  scroll-snap-align: start;
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
 }
 
-/* Pulse Animation */
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+/* ============================================================
+   Section Themes
+   ============================================================ */
+.section-dark {
+  background: var(--bg-dark);
+  color: var(--text-primary);
 }
 
-.animate-pulse-dot {
-  animation: pulse 2s infinite;
+.section-light {
+  background: var(--bg-light);
+  color: #1a1a1a;
 }
 
-/* Shiny Text Effect */
-.shiny-text {
-  background: linear-gradient(
-    120deg,
-    var(--gold) 0%,
-    #fff 25%,
-    var(--gold) 50%,
-    #fff 75%,
-    var(--gold) 100%
-  );
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: shine 15s linear 10s infinite;
+/* ============================================================
+   Hero Particles (canvas-based, no CSS keyframes needed)
+   ============================================================ */
+
+/* ============================================================
+   Navbar
+   ============================================================ */
+.nav-link {
+  position: relative;
 }
 
-@keyframes shine {
-  0% { background-position: 200% center; }
-  100% { background-position: -200% center; }
-}
-
-/* Fade In Up Animation */
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in-up {
-  animation: fadeInUp 0.6s ease forwards;
-}
-
-.animate-fade-in-up-delay-1 {
-  opacity: 0;
-  animation: fadeInUp 0.6s ease 0.1s forwards;
-}
-
-.animate-fade-in-up-delay-2 {
-  opacity: 0;
-  animation: fadeInUp 0.6s ease 0.2s forwards;
-}
-
-.animate-fade-in-up-delay-3 {
-  opacity: 0;
-  animation: fadeInUp 0.6s ease 0.3s forwards;
-}
-
-/* Scroll Reveal */
-.reveal {
-  opacity: 0;
-  transform: translateY(30px);
-  transition: all 0.6s ease;
-}
-
-.reveal.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* Feature Card Animation */
-.feature-card {
-  opacity: 0;
-  transform: translateY(20px);
-  transition: all 0.3s ease;
-}
-
-.feature-card.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.feature-card:hover {
-  border-color: rgba(234, 179, 8, 0.3);
-  transform: translateY(-4px);
-}
-
-/* Navbar underline animation */
 .nav-link::after {
   content: '';
   position: absolute;
   bottom: -4px;
-  left: 0;
+  left: 50%;
   width: 0;
   height: 1px;
   background: var(--gold);
-  transition: width 0.2s ease;
+  transition: all 0.3s ease;
+  transform: translateX(-50%);
 }
 
 .nav-link:hover::after {
   width: 100%;
 }
 
-/* Step hover effect */
-.step-card:hover {
+/* Navbar theme transition */
+.navbar-dark {
+  color: white;
+}
+
+.navbar-light {
+  color: #1a1a1a;
+}
+
+.navbar-dark .nav-link::after {
+  background: var(--gold);
+}
+
+.navbar-light .nav-link::after {
+  background: var(--gold);
+}
+
+/* ============================================================
+   Pill Buttons (Hyper Foundation style)
+   ============================================================ */
+.pill-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(234, 179, 8, 0.5);
+  border-radius: 9999px;
+  padding: 12px 32px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.25s ease;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.pill-button:hover {
+  background: rgba(234, 179, 8, 0.1);
   border-color: var(--gold);
-  transform: translateY(-4px);
+}
+
+.pill-button-filled {
+  background: var(--gold);
+  color: #000;
+  border-color: var(--gold);
+}
+
+.pill-button-filled:hover {
+  background: var(--gold-light);
+  box-shadow: 0 0 30px rgba(234, 179, 8, 0.3);
+}
+
+.pill-button-outline {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.pill-button-outline:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Light section pill buttons */
+.section-light .pill-button-outline {
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #1a1a1a;
+}
+
+.section-light .pill-button-outline:hover {
+  border-color: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* ============================================================
+   Scroll indicator bounce
+   ============================================================ */
+@keyframes bounce-down {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(8px); }
+}
+
+.animate-bounce-down {
+  animation: bounce-down 2s ease-in-out infinite;
+}
+
+/* ============================================================
+   Glass card
+   ============================================================ */
+.glass-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-light);
+  border-radius: 1rem;
+}
+
+.glass-card:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-light-hover);
+}
+
+/* ============================================================
+   Reduced motion
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .snap-container {
+    scroll-snap-type: none;
+  }
+  canvas {
+    display: none !important;
+  }
+  .animate-bounce-down {
+    animation: none !important;
+  }
 }
