@@ -65,5 +65,6 @@ frontend/public/contracts.json
 *.tmp
 *.temp
 .cache/
+**/.leaderboard-cache.json
 
 # Old/unused directories
