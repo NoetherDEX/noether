@@ -9,7 +9,7 @@
   --card-foreground: 0 0% 98%;
   --popover: 0 0% 4%;
   --popover-foreground: 0 0% 98%;
-  --primary: 262 83% 58%;
+  --primary: 45 93% 47%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 10%;
   --secondary-foreground: 0 0% 98%;
@@ -21,7 +21,7 @@
   --destructive-foreground: 0 0% 100%;
   --border: 0 0% 15%;
   --input: 0 0% 10%;
-  --ring: 262 83% 58%;
+  --ring: 45 93% 47%;
   --radius: 0.5rem;
   --background: 0 0% 0%;
   --foreground: 0 0% 98%;
@@ -29,7 +29,7 @@
   /* Trading specific colors */
   --profit: #22c55e;
   --loss: #ef4444;
-  --stellar-violet: #8b5cf6;
+  --stellar-gold: #eab308;
   --electric-blue: #3b82f6;
 }
 
@@ -138,19 +138,19 @@ a:focus-visible {
 /* Utility classes for the new theme */
 @layer utilities {
   .text-gradient {
-    @apply bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6] bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-[#eab308] to-[#f59e0b] bg-clip-text text-transparent;
   }
 
   .bg-gradient-primary {
-    @apply bg-gradient-to-r from-[#8b5cf6] to-[#3b82f6];
+    @apply bg-gradient-to-r from-[#eab308] to-[#f59e0b];
   }
 
   .border-gradient {
-    border-image: linear-gradient(to right, #8b5cf6, #3b82f6) 1;
+    border-image: linear-gradient(to right, #eab308, #f59e0b) 1;
   }
 
-  .glow-violet {
-    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+  .glow-gold {
+    box-shadow: 0 0 20px rgba(234, 179, 8, 0.3);
   }
 
   .glow-blue {
