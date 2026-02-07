@@ -1,72 +1,141 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { NoetherLogo } from './NoetherLogo';
 
+const NAV_LINKS = [
+  { href: '/trade', label: 'Trade' },
+  { href: '/vault', label: 'Vault' },
+  { href: '/portfolio', label: 'Portfolio' },
+  { href: '/leaderboard', label: 'Leaderboard' },
+  { href: '/faucet', label: 'Faucet' },
+];
+
 export function Navbar() {
-  const [scrolled, setScrolled] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 50);
-    };
+  const handleScroll = useCallback(() => {
+    const sections = document.querySelectorAll('.snap-section');
+    const container = document.querySelector('.snap-container');
+    if (!container) return;
 
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    const scrollTop = container.scrollTop;
+    const viewportHeight = window.innerHeight;
+
+    let currentTheme: 'dark' | 'light' = 'dark';
+    sections.forEach((section) => {
+      const el = section as HTMLElement;
+      const sectionTop = el.offsetTop;
+      if (scrollTop >= sectionTop - viewportHeight / 2) {
+        currentTheme = el.classList.contains('section-light') ? 'light' : 'dark';
+      }
+    });
+
+    setTheme(currentTheme);
   }, []);
 
-  return (
-    <nav
-      className={`fixed top-0 left-0 right-0 z-[1000] px-8 py-4 flex items-center justify-between transition-all duration-300 ${
-        scrolled
-          ? 'bg-[#050508]/85 backdrop-blur-[20px] border-b border-white/[0.06]'
-          : 'bg-transparent'
-      }`}
-    >
-      <Link href="/" className="flex items-center gap-2">
-        <NoetherLogo className="h-8 w-auto" />
-      </Link>
+  useEffect(() => {
+    const container = document.querySelector('.snap-container');
+    if (!container) return;
 
-      <div className="flex items-center gap-10">
-        <Link
-          href="/trade"
-          className="nav-link relative text-white/60 text-sm font-medium hover:text-white transition-colors"
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [handleScroll]);
+
+  const isDark = theme === 'dark';
+
+  return (
+    <nav className={`fixed top-0 left-0 right-0 z-50 transition-colors duration-300 ${isDark ? 'navbar-dark' : 'navbar-light'}`}>
+      <div className="max-w-[1400px] mx-auto px-6 py-4">
+        <div
+          className={`flex items-center justify-between rounded-full px-6 py-3 border backdrop-blur-xl transition-all duration-300 ${
+            isDark
+              ? 'border-[#eab308]/30 bg-black/20'
+              : 'border-black/10 bg-white/70'
+          }`}
         >
-          Trade
-        </Link>
-        <Link
-          href="/portfolio"
-          className="nav-link relative text-white/60 text-sm font-medium hover:text-white transition-colors"
-        >
-          Portfolio
-        </Link>
-        <Link
-          href="/vault"
-          className="nav-link relative text-white/60 text-sm font-medium hover:text-white transition-colors"
-        >
-          Vault
-        </Link>
-        <Link
-          href="/leaderboard"
-          className="nav-link relative text-white/60 text-sm font-medium hover:text-white transition-colors"
-        >
-          Leaderboard
-        </Link>
-        <Link
-          href="/faucet"
-          className="nav-link relative text-white/60 text-sm font-medium hover:text-white transition-colors"
-        >
-          Faucet
-        </Link>
+          {/* Logo */}
+          <Link href="/" className="flex-shrink-0">
+            <NoetherLogo
+              className={`h-6 w-auto transition-all duration-300 ${isDark ? 'text-white' : 'text-[#1a1a1a]'}`}
+              maskColor={isDark ? '#050508' : '#f8f6f0'}
+            />
+          </Link>
+
+          {/* Desktop Links */}
+          <div className="hidden lg:flex items-center gap-8">
+            {NAV_LINKS.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`nav-link text-sm transition-colors duration-200 ${
+                  isDark ? 'text-[#eab308]/50 hover:text-[#eab308]' : 'text-black/50 hover:text-black'
+                }`}
+              >
+                {link.label}
+              </Link>
+            ))}
+          </div>
+
+          {/* Launch App CTA */}
+          <div className="hidden lg:block">
+            <Link
+              href="/trade"
+              className="pill-button pill-button-filled text-sm"
+            >
+              Launch App
+            </Link>
+          </div>
+
+          {/* Mobile hamburger */}
+          <button
+            className="lg:hidden flex flex-col gap-1.5 p-2"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            aria-label="Toggle menu"
+          >
+            <span className={`block w-5 h-0.5 transition-all duration-200 ${isDark ? 'bg-white' : 'bg-black'} ${mobileOpen ? 'rotate-45 translate-y-2' : ''}`} />
+            <span className={`block w-5 h-0.5 transition-all duration-200 ${isDark ? 'bg-white' : 'bg-black'} ${mobileOpen ? 'opacity-0' : ''}`} />
+            <span className={`block w-5 h-0.5 transition-all duration-200 ${isDark ? 'bg-white' : 'bg-black'} ${mobileOpen ? '-rotate-45 -translate-y-2' : ''}`} />
+          </button>
+        </div>
       </div>
 
-      <Link
-        href="/trade"
-        className="inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold bg-gradient-to-r from-[#eab308] to-[#f59e0b] text-black hover:shadow-[0_4px_20px_rgba(234,179,8,0.3)] hover:-translate-y-0.5 transition-all"
-      >
-        Launch App
-      </Link>
+      {/* Mobile menu */}
+      {mobileOpen && (
+        <div
+          className={`lg:hidden border backdrop-blur-xl mx-6 rounded-2xl mt-1 p-6 ${
+            isDark
+              ? 'bg-black/90 border-white/10'
+              : 'bg-white/90 border-black/10'
+          }`}
+        >
+          <div className="flex flex-col gap-4">
+            {NAV_LINKS.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`text-base transition-colors ${
+                  isDark ? 'text-[#eab308]/60 hover:text-[#eab308]' : 'text-black/70 hover:text-black'
+                }`}
+                onClick={() => setMobileOpen(false)}
+              >
+                {link.label}
+              </Link>
+            ))}
+            <Link
+              href="/trade"
+              className="pill-button pill-button-filled text-sm mt-2 text-center"
+              onClick={() => setMobileOpen(false)}
+            >
+              Launch App
+            </Link>
+          </div>
+        </div>
+      )}
     </nav>
   );
 }
