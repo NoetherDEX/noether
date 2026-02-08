@@ -115,10 +115,10 @@ export function FlagshipSection() {
     >
       {/* Heading */}
       <div className="mt-[-2vh]">
-        <h2 className="text-xl md:text-2xl lg:text-3xl font-heading font-semibold text-center max-w-[900px] mx-auto">
-          <span>Her theorem proved that symmetry guards truth.</span>
+        <h2 className="text-xl md:text-2xl lg:text-3xl font-heading font-semibold text-center max-w-[1100px] mx-auto">
+          <span>Her theorem proves that symmetry guards truth.</span>
           <br />
-          <span>Our exchange guards yours, fully </span>
+          <span>Our exchange guards yours — fully </span>
           <LetterSpaced text="DECENTRALIZED" color="#eab308" className="font-bold" delay={0.3} />
         </h2>
       </div>
