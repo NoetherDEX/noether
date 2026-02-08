@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 import { Contract, Horizon, scValToNative, xdr, StrKey, rpc, TransactionBuilder, BASE_FEE, nativeToScVal } from '@stellar/stellar-sdk';
 import { CONTRACTS, NETWORK } from '@/lib/utils/constants';
-import * as fs from 'fs';
-import * as path from 'path';
+
+// Force dynamic rendering (no static caching on Vercel)
+export const dynamic = 'force-dynamic';
+// Allow up to 60s for the scan (Vercel Pro), Hobby plan caps at 10s
+export const maxDuration = 60;
 
 interface LeaderboardTrader {
   address: string;
@@ -24,8 +27,10 @@ interface PersistedData {
   lastUpdated: number;
 }
 
-// File path for persistent storage
-const DATA_FILE = path.join(process.cwd(), '.leaderboard-cache.json');
+// In-memory persistence across requests within the same serverless instance.
+// On Vercel, module-level variables survive across warm invocations of the
+// same function instance, so incremental data accumulates until a cold start.
+let persistedStore: PersistedData = { processedTxs: [], traders: {}, lastUpdated: 0 };
 
 // In-memory cache for fast responses
 let memoryCached: LeaderboardTrader[] | null = null;
@@ -49,20 +54,11 @@ function bigIntToNumber(value: bigint | number | undefined, decimals = 7): numbe
 }
 
 function loadPersistedData(): PersistedData {
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8'));
-    }
-  } catch { /* start fresh */ }
-  return { processedTxs: [], traders: {}, lastUpdated: 0 };
+  return persistedStore;
 }
 
 function savePersistedData(data: PersistedData): void {
-  try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data), 'utf-8');
-  } catch (error) {
-    console.error('[Leaderboard] Failed to save cache file:', error);
-  }
+  persistedStore = data;
 }
 
 /** Get traders with open positions from the contract */
@@ -253,7 +249,7 @@ async function incrementalScan(): Promise<LeaderboardTrader[]> {
     }
   }
 
-  // Persist to disk
+  // Persist to in-memory store (survives across warm invocations)
   const updatedData: PersistedData = {
     processedTxs: Array.from(alreadyProcessed),
     traders: traderData,
