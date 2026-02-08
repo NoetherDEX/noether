@@ -67,4 +67,7 @@ frontend/public/contracts.json
 .cache/
 **/.leaderboard-cache.json
 
+# Whitepaper / docs (LaTeX sources)
+whitepaper/
+
 # Old/unused directories
