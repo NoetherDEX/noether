@@ -2,37 +2,9 @@
 
 import { motion } from 'framer-motion';
 import Image from 'next/image';
-import { Coins, TrendingUp, Eye, Zap } from 'lucide-react';
 import { LetterSpaced } from './animations';
 import { useSlideContext } from './SlideContainer';
 import { BrowserFrame } from './BrowserFrame';
-
-const FEATURES = [
-  {
-    icon: Coins,
-    title: 'Minimal Costs',
-    description: 'No gas overhead — every trade settles at near-zero cost on Stellar.',
-    side: 'left' as const,
-  },
-  {
-    icon: TrendingUp,
-    title: '10x Leverage',
-    description: 'Amplify your edge with built-in margin on every perpetual pair.',
-    side: 'left' as const,
-  },
-  {
-    icon: Eye,
-    title: 'Fully Onchain',
-    description: 'Every order, match, and settlement lives on Soroban — verifiable by anyone.',
-    side: 'right' as const,
-  },
-  {
-    icon: Zap,
-    title: 'Smart Orders',
-    description: 'Stop-loss, take-profit, and limit orders — all native to the protocol.',
-    side: 'right' as const,
-  },
-];
 
 /* ── Screenshot with gold glow ──────────────────────────────── */
 function ScreenshotCard() {
@@ -74,32 +46,6 @@ function ScreenshotCard() {
   );
 }
 
-/* ── Feature Card ──────────────────────────────────────────── */
-function FeatureCard({
-  feature,
-  align,
-}: {
-  feature: (typeof FEATURES)[number];
-  align: 'left' | 'right';
-}) {
-  const Icon = feature.icon;
-  const isRight = align === 'right';
-
-  return (
-    <div className={`flex gap-4 ${isRight ? 'flex-row-reverse text-right' : ''}`}>
-      <div className="flex-shrink-0">
-        <div className="w-12 h-12 rounded-xl border border-[#eab308]/20 flex items-center justify-center bg-[#eab308]/5">
-          <Icon className="w-5 h-5 text-[#eab308]" strokeWidth={1.5} />
-        </div>
-      </div>
-      <div>
-        <h3 className="text-lg font-semibold mb-1">{feature.title}</h3>
-        <p className="text-sm text-black/50 leading-relaxed">{feature.description}</p>
-      </div>
-    </div>
-  );
-}
-
 /* ════════════════════════════════════════════════════════════
    FlagshipSection — Two-phase presentation slide
 
@@ -109,9 +55,6 @@ function FeatureCard({
    ════════════════════════════════════════════════════════════ */
 export function FlagshipSection() {
   const { flagshipPhase: phase } = useSlideContext();
-
-  const leftFeatures = FEATURES.filter((f) => f.side === 'left');
-  const rightFeatures = FEATURES.filter((f) => f.side === 'right');
 
   const ease = [0.25, 0.1, 0.25, 1] as const;
 
@@ -128,80 +71,18 @@ export function FlagshipSection() {
         </h2>
       </div>
 
-      {/* ── Desktop layout ────────────────────────────────── */}
-      <div className="hidden lg:grid grid-cols-[1fr_2.5fr_1fr] gap-8 max-w-[1400px] mx-auto items-center w-full mt-8">
-        {/* Left features */}
-        <div className="flex flex-col gap-12 justify-center">
-          {leftFeatures.map((feature, i) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, x: -80 }}
-              animate={{
-                opacity: phase === 1 ? 1 : 0,
-                x: phase === 1 ? 0 : -80,
-              }}
-              transition={{ duration: 0.65, delay: phase === 1 ? 0.1 + i * 0.1 : 0, ease }}
-            >
-              <FeatureCard feature={feature} align="right" />
-            </motion.div>
-          ))}
-        </div>
-
-        {/* Center screenshot */}
-        <motion.div
-          className="mt-4"
-          initial={{ scale: 1.1 }}
-          animate={{ scale: phase === 1 ? 1 : 1.1 }}
-          transition={{ duration: 0.7, ease }}
-        >
-          <ScreenshotCard />
-        </motion.div>
-
-        {/* Right features */}
-        <div className="flex flex-col gap-12 justify-center">
-          {rightFeatures.map((feature, i) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, x: 80 }}
-              animate={{
-                opacity: phase === 1 ? 1 : 0,
-                x: phase === 1 ? 0 : 80,
-              }}
-              transition={{ duration: 0.65, delay: phase === 1 ? 0.1 + i * 0.1 : 0, ease }}
-            >
-              <FeatureCard feature={feature} align="left" />
-            </motion.div>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Mobile layout ─────────────────────────────────── */}
-      <div className="lg:hidden w-full max-w-[600px] mx-auto mt-8">
-        <motion.div
-          className="mb-8"
-          initial={{ scale: 1 }}
-          animate={{ scale: phase === 1 ? 0.9 : 1 }}
-          transition={{ duration: 0.65, ease }}
-        >
-          <ScreenshotCard />
-        </motion.div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          {FEATURES.map((feature, i) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, y: 30 }}
-              animate={{
-                opacity: phase === 1 ? 1 : 0,
-                y: phase === 1 ? 0 : 30,
-              }}
-              transition={{ duration: 0.5, delay: phase === 1 ? 0.1 + i * 0.08 : 0, ease }}
-            >
-              <FeatureCard feature={feature} align="left" />
-            </motion.div>
-          ))}
-        </div>
-      </div>
+      {/* Screenshot */}
+      <motion.div
+        className="w-full max-w-[900px] mx-auto mt-8"
+        initial={{ scale: 1.1, opacity: 0.8 }}
+        animate={{
+          scale: phase === 1 ? 1 : 1.1,
+          opacity: phase === 1 ? 1 : 0.8,
+        }}
+        transition={{ duration: 0.7, ease }}
+      >
+        <ScreenshotCard />
+      </motion.div>
     </section>
   );
 }
