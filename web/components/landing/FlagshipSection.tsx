@@ -10,26 +10,26 @@ import { BrowserFrame } from './BrowserFrame';
 const FEATURES = [
   {
     icon: Coins,
-    title: 'Low Fees',
-    description: 'Zero gas and low fees on all orders.',
+    title: 'Minimal Costs',
+    description: 'No gas overhead — every trade settles at near-zero cost on Stellar.',
     side: 'left' as const,
   },
   {
     icon: TrendingUp,
-    title: 'Up to 10x Leverage',
-    description: 'Trade with conviction to maximize capital efficiency.',
+    title: '10x Leverage',
+    description: 'Amplify your edge with built-in margin on every perpetual pair.',
     side: 'left' as const,
   },
   {
     icon: Eye,
-    title: 'Transparent',
-    description: 'Fully onchain order book on Soroban smart contracts.',
+    title: 'Fully Onchain',
+    description: 'Every order, match, and settlement lives on Soroban — verifiable by anyone.',
     side: 'right' as const,
   },
   {
     icon: Zap,
-    title: 'Advanced Orders',
-    description: 'Limit orders, stop-loss, and take-profit built-in.',
+    title: 'Smart Orders',
+    description: 'Stop-loss, take-profit, and limit orders — all native to the protocol.',
     side: 'right' as const,
   },
 ];
@@ -123,7 +123,7 @@ export function FlagshipSection() {
       {/* Heading */}
       <div className="mt-[-2vh]">
         <h2 className="text-xl md:text-2xl lg:text-3xl font-heading font-semibold text-center max-w-[900px] mx-auto">
-          <span>Her theorem unified symmetry and truth. Our exchange unifies trading, </span>
+          <span>She proved every symmetry guards a deeper truth. We built an exchange that guards yours — fully </span>
           <LetterSpaced text="DECENTRALIZED" color="#eab308" className="font-bold" delay={0.3} />
         </h2>
       </div>
