@@ -1,6 +1,3 @@
-<p align="center">
-  <img src="web/public/images/favicon.svg" alt="Noether" height="48" />
-</p>
 
 <h3 align="center">Decentralized Perpetual Futures Exchange on Stellar</h3>
 
