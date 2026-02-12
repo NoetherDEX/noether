@@ -218,7 +218,7 @@ class KeeperBot {
    */
   private async fetchBinancePrices(): Promise<Map<string, number>> {
     const symbols = this.config.assets.map(a => a.binanceSymbol);
-    const url = `https://api.binance.com/api/v3/ticker/price?symbols=${JSON.stringify(symbols)}`;
+    const url = `https://api.binance.us/api/v3/ticker/price?symbols=${JSON.stringify(symbols)}`;
 
     const response = await fetch(url);
     if (!response.ok) {

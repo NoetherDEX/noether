@@ -49,4 +49,4 @@ export const TIMEFRAMES = [
 ] as const;
 
 // Binance API for chart data
-export const BINANCE_API = 'https://api.binance.com/api/v3';
+export const BINANCE_API = 'https://api.binance.us/api/v3';
