@@ -13,7 +13,21 @@
       "WebFetch(domain:drake.exchange)",
       "WebFetch(domain:hyperfoundation.org)",
       "Bash(npx shadcn@latest add:*)",
-      "Bash(npx shadcn@latest init:*)"
+      "Bash(npx shadcn@latest init:*)",
+      "WebFetch(domain:stellar.expert)",
+      "WebFetch(domain:api.stellar.expert)",
+      "WebSearch",
+      "Bash(npx next build:*)",
+      "Bash(npx tsx:*)",
+      "Bash(NODE_PATH=/Users/mertcicekci/noetherdexutd/web/node_modules npx tsx:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npx next lint:*)",
+      "Bash(git stash:*)",
+      "WebFetch(domain:stellarwalletskit.dev)",
+      "Bash(npm uninstall:*)"
     ]
   }
 }

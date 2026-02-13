@@ -1,7 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { signTransaction } from '@stellar/freighter-api';
-import { Networks } from '@stellar/stellar-sdk';
 import toast from 'react-hot-toast';
 import {
   buildAddTrustlineTransaction,
@@ -36,7 +34,7 @@ export type TrustlineStatus = 'checking' | 'not_found' | 'adding' | 'active' | '
 
 export function useFaucet(publicKey: string | null) {
   const queryClient = useQueryClient();
-  const { refreshBalances } = useWallet();
+  const { sign, refreshBalances } = useWallet();
   const [trustlineStatus, setTrustlineStatus] = useState<TrustlineStatus>('checking');
   const [selectedAmount, setSelectedAmount] = useState<ClaimAmount | null>(null);
   const [trustlineError, setTrustlineError] = useState<string | null>(null);
@@ -93,10 +91,8 @@ export function useFaucet(publicKey: string | null) {
         // Build the transaction
         const xdr = await buildAddTrustlineTransaction(publicKey);
 
-        // Sign with Freighter
-        const signedXdr = await signTransaction(xdr, {
-          networkPassphrase: Networks.TESTNET,
-        });
+        // Sign with connected wallet
+        const signedXdr = await sign(xdr);
 
         // Submit to network
         await submitTransaction(signedXdr);

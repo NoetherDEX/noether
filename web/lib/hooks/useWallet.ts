@@ -1,17 +1,10 @@
 'use client';
 
 import { useCallback } from 'react';
-import {
-  isConnected as checkIsConnected,
-  isAllowed,
-  setAllowed,
-  getPublicKey,
-  getNetwork,
-  signTransaction,
-} from '@stellar/freighter-api';
 import { useWalletStore } from '@/lib/store';
 import { NETWORK } from '@/lib/utils/constants';
 import { getUSDCBalance } from '@/lib/stellar/token';
+import { signWithWallet, disconnectWallet } from '@/lib/stellar/walletKit';
 
 // Horizon Testnet URL for balance fetching
 const HORIZON_TESTNET_URL = 'https://horizon-testnet.stellar.org';
@@ -53,97 +46,47 @@ export function useWallet() {
     setUsdcBalance,
   } = useWalletStore();
 
-  const connect = useCallback(async () => {
-    // Prevent multiple simultaneous connection attempts
-    if (useWalletStore.getState().isConnecting) {
-      console.log('Connection already in progress, skipping...');
-      return;
-    }
+  /** Called by WalletModal after a wallet is selected and address is obtained */
+  const onConnected = useCallback(
+    async (walletAddress: string) => {
+      setConnecting(true);
+      try {
+        setConnected(walletAddress, walletAddress);
 
-    setConnecting(true);
-
-    try {
-      // Check if Freighter is installed
-      const connected = await checkIsConnected();
-      if (!connected) {
-        throw new Error('Freighter wallet not found. Please install the Freighter extension.');
+        const [xlmBal, usdcBal] = await Promise.all([
+          fetchXLMBalance(walletAddress),
+          getUSDCBalance(walletAddress),
+        ]);
+        setBalances(xlmBal, usdcBal, 0);
+      } catch (error) {
+        console.error('Failed to complete wallet connection:', error);
+        setDisconnected();
+      } finally {
+        setConnecting(false);
       }
+    },
+    [setConnecting, setConnected, setDisconnected, setBalances]
+  );
 
-      // Check if already allowed
-      const allowed = await isAllowed();
-      if (!allowed) {
-        // Request permission
-        await setAllowed();
-      }
-
-      // Get public key
-      const pubKey = await getPublicKey();
-      if (!pubKey) {
-        throw new Error('Failed to get public key from Freighter');
-      }
-
-      // Verify network - warn if not on testnet
-      const network = await getNetwork();
-      if (network !== 'TESTNET' && network !== 'testnet') {
-        console.warn(`Connected to ${network}, please switch to TESTNET in Freighter settings`);
-      }
-
-      // Set connected state
-      setConnected(pubKey, pubKey);
-
-      // Fetch balances in parallel
-      const [xlmBal, usdcBal] = await Promise.all([
-        fetchXLMBalance(pubKey),
-        getUSDCBalance(pubKey),
-      ]);
-      setBalances(xlmBal, usdcBal, 0);
-
-      return pubKey;
-    } catch (error) {
-      console.error('Failed to connect wallet:', error);
-      setDisconnected();
-      throw error;
-    } finally {
-      // Ensure isConnecting is reset even if something goes wrong
-      setConnecting(false);
-    }
-  }, [setConnecting, setConnected, setDisconnected, setBalances]);
-
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
+    await disconnectWallet();
     setDisconnected();
   }, [setDisconnected]);
 
   const sign = useCallback(
     async (xdr: string): Promise<string> => {
-      if (!isConnected) {
+      if (!isConnected || !address) {
         throw new Error('Wallet not connected');
       }
 
-      console.log('[DEBUG] Sending to Freighter XDR (first 100 chars):', xdr.substring(0, 100));
-
-      const result = await signTransaction(xdr, {
+      const signedXdr = await signWithWallet(xdr, {
         networkPassphrase: NETWORK.PASSPHRASE,
+        address,
       });
-
-      console.log('[DEBUG] Freighter returned:', typeof result, result);
-
-      // Freighter API returns the signed XDR as a string
-      // Some versions may return an object with signedTxXdr property
-      let signedXdr: string;
-      if (typeof result === 'string') {
-        signedXdr = result;
-      } else if (result && typeof result === 'object' && 'signedTxXdr' in result) {
-        signedXdr = (result as { signedTxXdr: string }).signedTxXdr;
-      } else {
-        console.error('[DEBUG] Unexpected Freighter response format:', result);
-        throw new Error('Unexpected response format from Freighter');
-      }
-
-      console.log('[DEBUG] Signed XDR (first 100 chars):', signedXdr.substring(0, 100));
 
       return signedXdr;
     },
-    [isConnected]
+    [isConnected, address]
   );
 
   // Refresh balances
@@ -165,7 +108,7 @@ export function useWallet() {
     xlmBalance,
     usdcBalance,
     noeBalance,
-    connect,
+    onConnected,
     disconnect,
     sign,
     refreshBalances,

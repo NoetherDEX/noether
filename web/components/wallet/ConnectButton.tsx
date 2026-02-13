@@ -5,32 +5,26 @@ import { Wallet, ChevronDown, LogOut, Copy, ExternalLink, Check, RefreshCw, Arro
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useWalletContext } from './WalletProvider';
+import { WalletModal } from './WalletModal';
 import { truncateAddress, formatNumber } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 
 export function ConnectButton() {
-  const { isReady, hasFreighter, refreshBalance } = useWalletContext();
+  const { isReady, refreshBalance } = useWalletContext();
   const {
     isConnected,
     isConnecting,
     address,
     xlmBalance,
     usdcBalance,
-    connect,
+    onConnected,
     disconnect,
   } = useWallet();
 
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const handleConnect = async () => {
-    try {
-      await connect();
-    } catch (error) {
-      console.error('Connection failed:', error);
-    }
-  };
 
   const handleCopyAddress = async () => {
     if (address) {
@@ -46,16 +40,9 @@ export function ConnectButton() {
   };
 
   const handleRefreshWallet = async () => {
-    disconnect();
+    await disconnect();
     setIsDropdownOpen(false);
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    try {
-      await connect();
-    } catch (error) {
-      console.error('Failed to refresh wallet:', error);
-    }
+    setIsModalOpen(true);
   };
 
   const handleRefreshBalance = async () => {
@@ -80,32 +67,25 @@ export function ConnectButton() {
     );
   }
 
-  // Freighter not installed
-  if (!hasFreighter) {
-    return (
-      <a
-        href="https://freighter.app"
-        target="_blank"
-        rel="noopener noreferrer"
-        className={buttonBaseClass}
-      >
-        <Wallet className="w-4 h-4" />
-        Install Freighter
-      </a>
-    );
-  }
-
   // Not connected
   if (!isConnected) {
     return (
-      <button
-        className={cn(buttonBaseClass, isConnecting && 'opacity-70 cursor-wait')}
-        onClick={handleConnect}
-        disabled={isConnecting}
-      >
-        <Wallet className="w-4 h-4" />
-        {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-      </button>
+      <>
+        <button
+          className={cn(buttonBaseClass, isConnecting && 'opacity-70 cursor-wait')}
+          onClick={() => setIsModalOpen(true)}
+          disabled={isConnecting}
+        >
+          <Wallet className="w-4 h-4" />
+          {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+        </button>
+
+        <WalletModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onConnected={onConnected}
+        />
+      </>
     );
   }
 
@@ -202,7 +182,7 @@ export function ConnectButton() {
                   className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
                 >
                   <ArrowLeftRight className="w-4 h-4" />
-                  Refresh Wallet
+                  Switch Wallet
                 </button>
                 <a
                   href={`https://stellar.expert/explorer/testnet/account/${address}`}
@@ -226,6 +206,13 @@ export function ConnectButton() {
           </>
         )}
       </AnimatePresence>
+
+      {/* Modal for switching wallet */}
+      <WalletModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConnected={onConnected}
+      />
     </div>
   );
 }
