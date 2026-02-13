@@ -155,7 +155,14 @@ export function LeaderboardContent() {
                         <span className="font-mono text-sm text-white/50">{idx + 1}</span>
                       </td>
                       <td className="py-3 px-4">
-                        <span className="font-mono text-sm">{truncateAddress(trader.address, 4, 4)}</span>
+                        <a
+                          href={`https://stellar.expert/explorer/testnet/account/${trader.address}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono text-sm text-blue-400 hover:text-blue-300 hover:underline transition-colors cursor-pointer"
+                        >
+                          {truncateAddress(trader.address, 4, 4)}
+                        </a>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className="font-mono text-sm text-white/60">{trader.tradeCount}</span>
