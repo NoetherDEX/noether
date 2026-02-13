@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ChevronDown, TrendingUp, TrendingDown } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
@@ -87,14 +87,6 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
         <div className="text-left">
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-semibold text-foreground">{selectedAsset}-PERP</span>
-            {selectedAssetData.change24h !== 0 && (
-              <span className={cn(
-                'text-xs font-mono',
-                selectedAssetData.change24h >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
-              )}>
-                {selectedAssetData.change24h >= 0 ? '+' : ''}{selectedAssetData.change24h.toFixed(2)}%
-              </span>
-            )}
           </div>
           <span className="text-xs text-muted-foreground font-mono">
             {formatPrice(selectedAssetData.price, selectedAsset)}
@@ -145,18 +137,6 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
                   </span>
                 </div>
 
-                {/* Change */}
-                <div className={cn(
-                  'flex items-center gap-0.5 text-xs font-mono',
-                  asset.change24h >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
-                )}>
-                  {asset.change24h >= 0 ? (
-                    <TrendingUp className="w-3 h-3" />
-                  ) : (
-                    <TrendingDown className="w-3 h-3" />
-                  )}
-                  <span>{asset.change24h >= 0 ? '+' : ''}{asset.change24h.toFixed(2)}%</span>
-                </div>
               </button>
             ))}
           </div>
