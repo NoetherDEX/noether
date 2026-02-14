@@ -606,21 +606,6 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
           </div>
         </div>
 
-        {/* Gas Info */}
-        {isConnected && (
-          <div className="p-3 bg-secondary/20 border border-white/5 rounded-lg flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Gas (XLM)</span>
-            <span
-              className={cn(
-                'text-xs font-mono font-medium',
-                xlmBalance < 1 ? 'text-[#ef4444]' : 'text-muted-foreground'
-              )}
-            >
-              {formatNumber(xlmBalance, 2)} XLM
-            </span>
-          </div>
-        )}
-
         {/* Errors */}
         {errors.length > 0 && collateralNum > 0 && (
           <div className="p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg">
