@@ -56,8 +56,12 @@ export async function hasTrustline(publicKey: string): Promise<boolean> {
         balance.asset_code === 'USDC' &&
         balance.asset_issuer === USDC_ISSUER
     );
-  } catch (error) {
-    // Account doesn't exist or other error
+  } catch (error: unknown) {
+    // Account not found on network - not an error, just inactive
+    if (error && typeof error === 'object' && 'response' in error) {
+      const resp = error as { response?: { status?: number } };
+      if (resp.response?.status === 404) return false;
+    }
     console.error('Error checking trustline:', error);
     return false;
   }
@@ -135,7 +139,12 @@ export async function getClaimHistory(
     }
 
     return claims.slice(0, limit);
-  } catch (error) {
+  } catch (error: unknown) {
+    // Account not found on network - not an error, just inactive
+    if (error && typeof error === 'object' && 'response' in error) {
+      const resp = error as { response?: { status?: number } };
+      if (resp.response?.status === 404) return [];
+    }
     console.error('Error fetching claim history:', error);
     return [];
   }
