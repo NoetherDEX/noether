@@ -123,7 +123,7 @@ export function OrderBook({ asset }: OrderBookProps) {
       </div>
 
       {/* Column Headers */}
-      <div className="grid grid-cols-3 gap-1 text-[10px] text-muted-foreground mb-2 px-1">
+      <div className="grid grid-cols-[2fr_1.2fr_1fr] gap-2 text-[10px] text-muted-foreground mb-2 px-1">
         <span>Price</span>
         <span className="text-right">Size</span>
         <span className="text-right">Trader</span>
@@ -224,17 +224,17 @@ function OrderRow({
   return (
     <div
       className={cn(
-        'grid grid-cols-3 gap-1 px-1 py-1.5 rounded text-[11px] font-mono hover:bg-zinc-900/50 transition-colors',
+        'grid grid-cols-[2fr_1.2fr_1fr] gap-2 px-1 py-1.5 rounded text-[11px] font-mono hover:bg-zinc-900/50 transition-colors',
         bgColor
       )}
     >
       {/* Price */}
-      <span className={textColor}>
+      <span className={cn(textColor, 'truncate')}>
         {formatPrice(order.triggerPrice)}
       </span>
 
       {/* Size */}
-      <span className="text-right text-foreground">
+      <span className="text-right text-foreground truncate">
         ${order.positionSize.toLocaleString(undefined, { maximumFractionDigits: 0 })}
       </span>
 
@@ -243,11 +243,11 @@ function OrderRow({
         href={order.stellarExpertUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-right text-muted-foreground hover:text-primary flex items-center justify-end gap-0.5 group"
+        className="text-right text-muted-foreground hover:text-primary flex items-center justify-end gap-0.5 group truncate"
         title={order.trader}
       >
-        <span>{truncateAddress(order.trader)}</span>
-        <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+        <span className="truncate">{truncateAddress(order.trader)}</span>
+        <ExternalLink className="w-2.5 h-2.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
       </a>
     </div>
   );
