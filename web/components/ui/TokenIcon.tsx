@@ -1,9 +1,9 @@
 import Image from 'next/image';
 
 const TOKEN_LOGOS: Record<string, string> = {
-  BTC: '/btclogo.png',
+  BTC: '/btclogo.svg',
   ETH: '/ethlogo.svg',
-  XLM: '/xlmlogo.png',
+  XLM: '/xlmlogo.svg',
   USDC: '/usdclogo.png',
   NOE: '/favicon.svg',
 };
@@ -30,12 +30,16 @@ export function TokenIcon({ symbol, size = 24, className = '' }: TokenIconProps)
   }
 
   return (
-    <Image
-      src={src}
-      alt={symbol}
-      width={size}
-      height={size}
-      className={`rounded-full ${className}`}
-    />
+    <div
+      className={`relative rounded-full overflow-hidden flex-shrink-0 ${className}`}
+      style={{ width: size, height: size }}
+    >
+      <Image
+        src={src}
+        alt={symbol}
+        fill
+        className="object-contain"
+      />
+    </div>
   );
 }
