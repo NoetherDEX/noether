@@ -653,11 +653,6 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
               : `${direction === 'Long' ? 'Buy / Long' : 'Sell / Short'} ${asset}`}
           </button>
         )}
-
-        {/* Risk Warning */}
-        <p className="text-xs text-muted-foreground text-center">
-          Trading with leverage carries significant risk. You may lose more than your initial investment.
-        </p>
       </div>
     </div>
   );
