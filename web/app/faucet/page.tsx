@@ -1,7 +1,7 @@
 'use client';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Droplets, Wallet } from 'lucide-react';
+import { Wallet } from 'lucide-react';
 import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import { useWallet } from '@/lib/hooks/useWallet';
@@ -16,6 +16,9 @@ import {
 function FaucetPage() {
   const { isConnected, publicKey } = useWallet();
   const {
+    accountStatus,
+    fundAccount,
+    isFundingAccount,
     trustlineStatus,
     trustlineError,
     addTrustline,
@@ -66,6 +69,9 @@ function FaucetPage() {
                   onAddTrustline={addTrustline}
                   isAdding={isAddingTrustline}
                   error={trustlineError}
+                  accountStatus={accountStatus}
+                  onFundAccount={fundAccount}
+                  isFundingAccount={isFundingAccount}
                 />
 
                 {/* Claim Section */}

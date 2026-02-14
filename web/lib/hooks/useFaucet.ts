@@ -9,7 +9,10 @@ import {
   DAILY_LIMIT_USDC,
   calculateRunningTotals,
 } from '@/lib/stellar/faucet';
+import { NETWORK } from '@/lib/utils/constants';
 import { useWallet } from '@/lib/hooks/useWallet';
+
+export type AccountStatus = 'checking' | 'not_found' | 'funding' | 'active' | 'error';
 
 interface FaucetHistoryResponse {
   success: boolean;
@@ -35,6 +38,8 @@ export type TrustlineStatus = 'checking' | 'not_found' | 'adding' | 'active' | '
 export function useFaucet(publicKey: string | null) {
   const queryClient = useQueryClient();
   const { sign, refreshBalances } = useWallet();
+  const [accountStatus, setAccountStatus] = useState<AccountStatus>('checking');
+  const [accountError, setAccountError] = useState<string | null>(null);
   const [trustlineStatus, setTrustlineStatus] = useState<TrustlineStatus>('checking');
   const [selectedAmount, setSelectedAmount] = useState<ClaimAmount | null>(null);
   const [trustlineError, setTrustlineError] = useState<string | null>(null);
@@ -66,8 +71,38 @@ export function useFaucet(publicKey: string | null) {
     staleTime: 10000,
   });
 
+  // Check if account exists on the network
+  const {
+    data: accountExists,
+    isLoading: isCheckingAccount,
+  } = useQuery({
+    queryKey: ['account-exists', publicKey],
+    queryFn: async (): Promise<boolean> => {
+      if (!publicKey) return false;
+      const response = await fetch(`${NETWORK.HORIZON_URL}/accounts/${publicKey}`);
+      return response.ok;
+    },
+    enabled: !!publicKey,
+    staleTime: 10000,
+  });
+
+  // Update account status
+  useEffect(() => {
+    if (isCheckingAccount) {
+      setAccountStatus('checking');
+    } else if (accountExists === true) {
+      setAccountStatus('active');
+    } else if (accountExists === false) {
+      setAccountStatus('not_found');
+    }
+  }, [accountExists, isCheckingAccount]);
+
   // Update trustline status based on fetched data
   useEffect(() => {
+    if (accountStatus !== 'active') {
+      setTrustlineStatus('checking');
+      return;
+    }
     if (isLoadingHistory) {
       setTrustlineStatus('checking');
     } else if (faucetData) {
@@ -75,7 +110,49 @@ export function useFaucet(publicKey: string | null) {
     } else if (historyError) {
       setTrustlineStatus('error');
     }
-  }, [faucetData, isLoadingHistory, historyError]);
+  }, [faucetData, isLoadingHistory, historyError, accountStatus]);
+
+  // Fund account with Friendbot mutation
+  const fundAccountMutation = useMutation({
+    mutationFn: async () => {
+      if (!publicKey) throw new Error('No wallet connected');
+
+      setAccountStatus('funding');
+      setAccountError(null);
+
+      const response = await fetch(
+        `https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`
+      );
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        // Account already funded
+        if (response.status === 400 && data?.detail?.includes('createAccountAlready')) {
+          return true;
+        }
+        throw new Error('Failed to activate account');
+      }
+
+      return true;
+    },
+    onSuccess: () => {
+      setAccountStatus('active');
+      toast.success('Wallet activated successfully!');
+      queryClient.invalidateQueries({ queryKey: ['account-exists', publicKey] });
+      refetchHistory();
+      refreshBalances();
+    },
+    onError: (error: Error) => {
+      setAccountStatus('error');
+      setAccountError(error.message);
+      toast.error(error.message || 'Failed to activate wallet');
+    },
+  });
+
+  // Fund account handler
+  const fundAccount = useCallback(() => {
+    fundAccountMutation.mutate();
+  }, [fundAccountMutation]);
 
   // Add trustline mutation
   const addTrustlineMutation = useMutation({
@@ -173,6 +250,12 @@ export function useFaucet(publicKey: string | null) {
   const historyWithTotals = calculateRunningTotals(historyWithDates);
 
   return {
+    // Account activation
+    accountStatus,
+    accountError,
+    fundAccount,
+    isFundingAccount: fundAccountMutation.isPending,
+
     // Trustline
     trustlineStatus,
     trustlineError,
