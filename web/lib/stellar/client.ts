@@ -43,7 +43,7 @@ export async function buildTransaction(
     networkPassphrase: NETWORK.PASSPHRASE,
   })
     .addOperation(operation)
-    .setTimeout(30)
+    .setTimeout(300)
     .build();
 
   // Simulate to get the proper footprint and fees

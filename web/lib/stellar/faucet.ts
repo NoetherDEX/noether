@@ -85,7 +85,7 @@ export async function buildAddTrustlineTransaction(
         asset: USDC_ASSET,
       })
     )
-    .setTimeout(30)
+    .setTimeout(300) // 5 minutes — WalletConnect signing needs time for mobile approval
     .build();
 
   return transaction.toXDR();
