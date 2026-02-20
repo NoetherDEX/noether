@@ -18,7 +18,30 @@ async function getKit() {
   const { StellarWalletsKit } = await import('@creit-tech/stellar-wallets-kit/sdk');
   if (!initialized) {
     const { defaultModules } = await import('@creit-tech/stellar-wallets-kit/modules/utils');
-    StellarWalletsKit.init({ modules: defaultModules() });
+
+    const modules = [...defaultModules()];
+
+    // Add WalletConnect module for mobile wallet support (LOBSTR, etc.)
+    const wcProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+    if (wcProjectId) {
+      const { WalletConnectModule, WalletConnectTargetChain } = await import(
+        '@creit-tech/stellar-wallets-kit/modules/wallet-connect'
+      );
+      modules.push(
+        new WalletConnectModule({
+          projectId: wcProjectId,
+          metadata: {
+            name: 'Noether Exchange',
+            description: 'Decentralized Perpetual Exchange on Stellar',
+            url: 'https://noether.exchange',
+            icons: ['https://noether.exchange/favicon.svg'],
+          },
+          allowedChains: [WalletConnectTargetChain.TESTNET],
+        })
+      );
+    }
+
+    StellarWalletsKit.init({ modules });
     initialized = true;
   }
   return StellarWalletsKit;
