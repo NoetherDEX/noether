@@ -4,6 +4,8 @@
  * module-load time and interfering with the Next.js React app.
  */
 
+export const WALLETCONNECT_ID = 'wallet_connect';
+
 export interface SupportedWallet {
   id: string;
   name: string;
