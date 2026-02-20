@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -43,6 +43,8 @@ export function useFaucet(publicKey: string | null) {
   const [trustlineStatus, setTrustlineStatus] = useState<TrustlineStatus>('checking');
   const [selectedAmount, setSelectedAmount] = useState<ClaimAmount | null>(null);
   const [trustlineError, setTrustlineError] = useState<string | null>(null);
+  // Prevent the auto-sync useEffect from overriding a successful trustline addition
+  const trustlineConfirmed = useRef(false);
 
   // Fetch faucet history and status
   const {
@@ -99,11 +101,15 @@ export function useFaucet(publicKey: string | null) {
 
   // Update trustline status based on fetched data
   useEffect(() => {
+    // Don't override if trustline was just confirmed via mutation
+    if (trustlineConfirmed.current) return;
+
     if (accountStatus !== 'active') {
       setTrustlineStatus('checking');
       return;
     }
-    if (isLoadingHistory) {
+    // Only show 'checking' on initial load (when we have no data yet)
+    if (isLoadingHistory && !faucetData) {
       setTrustlineStatus('checking');
     } else if (faucetData) {
       setTrustlineStatus(faucetData.hasTrustline ? 'active' : 'not_found');
@@ -181,9 +187,13 @@ export function useFaucet(publicKey: string | null) {
       }
     },
     onSuccess: () => {
+      trustlineConfirmed.current = true;
       setTrustlineStatus('active');
       toast.success('USDC trustline added successfully!');
-      refetchHistory();
+      // Delay refetch to let Horizon propagate the trustline
+      setTimeout(() => {
+        refetchHistory();
+      }, 3000);
     },
     onError: (error: Error) => {
       setTrustlineStatus('error');
