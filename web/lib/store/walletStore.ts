@@ -7,6 +7,7 @@ interface WalletState {
   isConnecting: boolean;
   address: string | null;
   publicKey: string | null;
+  walletId: string | null; // Which wallet module was used (e.g. 'freighter', 'wallet_connect')
 
   // Balances
   xlmBalance: number;
@@ -14,7 +15,7 @@ interface WalletState {
   noeBalance: number;
 
   // Actions
-  setConnected: (address: string, publicKey: string) => void;
+  setConnected: (address: string, publicKey: string, walletId?: string) => void;
   setDisconnected: () => void;
   setConnecting: (isConnecting: boolean) => void;
   setBalances: (xlm: number, usdc: number, noe: number) => void;
@@ -28,16 +29,18 @@ export const useWalletStore = create<WalletState>()(
       isConnecting: false,
       address: null,
       publicKey: null,
+      walletId: null,
       xlmBalance: 0,
       usdcBalance: 0,
       noeBalance: 0,
 
-      setConnected: (address, publicKey) =>
+      setConnected: (address, publicKey, walletId) =>
         set({
           isConnected: true,
           isConnecting: false,
           address,
           publicKey,
+          ...(walletId !== undefined && { walletId }),
         }),
 
       setDisconnected: () =>
@@ -46,6 +49,7 @@ export const useWalletStore = create<WalletState>()(
           isConnecting: false,
           address: null,
           publicKey: null,
+          walletId: null,
           xlmBalance: 0,
           usdcBalance: 0,
           noeBalance: 0,
@@ -63,6 +67,7 @@ export const useWalletStore = create<WalletState>()(
       partialize: (state) => ({
         address: state.address,
         publicKey: state.publicKey,
+        walletId: state.walletId,
       }),
     }
   )

@@ -48,10 +48,10 @@ export function useWallet() {
 
   /** Called by WalletModal after a wallet is selected and address is obtained */
   const onConnected = useCallback(
-    async (walletAddress: string) => {
+    async (walletAddress: string, walletId?: string) => {
       setConnecting(true);
       try {
-        setConnected(walletAddress, walletAddress);
+        setConnected(walletAddress, walletAddress, walletId);
 
         const [xlmBal, usdcBal] = await Promise.all([
           fetchXLMBalance(walletAddress),

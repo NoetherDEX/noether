@@ -3,7 +3,7 @@
 import { ReactNode, createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useWalletStore } from '@/lib/store';
 import { getUSDCBalance } from '@/lib/stellar/token';
-import { initWalletKit, getWalletAddress } from '@/lib/stellar/walletKit';
+import { initWalletKit, getWalletAddress, restoreWalletSession } from '@/lib/stellar/walletKit';
 
 // Horizon Testnet URL for balance fetching
 const HORIZON_TESTNET_URL = 'https://horizon-testnet.stellar.org';
@@ -85,23 +85,26 @@ export function WalletProvider({ children }: WalletProviderProps) {
         await initWalletKit();
 
         // Check if we have a previously connected wallet in the persisted store
-        const { publicKey: storedKey } = useWalletStore.getState();
-        if (storedKey) {
+        const { publicKey: storedKey, walletId: storedWalletId } = useWalletStore.getState();
+        if (storedKey && storedWalletId) {
           try {
-            // Try to restore session via the kit
-            const { address } = await getWalletAddress();
-            if (cancelled || !address) {
-              if (!address) setDisconnected();
+            // Restore the previous wallet session using the stored wallet ID
+            const result = await restoreWalletSession(storedWalletId);
+            if (cancelled) { setIsReady(true); return; }
+
+            if (!result) {
+              // Session could not be restored (e.g. WalletConnect session expired)
+              setDisconnected();
               setIsReady(true);
               return;
             }
 
-            setConnected(address, address);
+            setConnected(result.address, result.address, storedWalletId);
 
             // Fetch initial balances
             const [xlmBalance, usdcBalance] = await Promise.all([
-              fetchXLMBalance(address),
-              getUSDCBalance(address),
+              fetchXLMBalance(result.address),
+              getUSDCBalance(result.address),
             ]);
             if (!cancelled) {
               setBalances(xlmBalance, usdcBalance, 0);
@@ -110,6 +113,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
             // Previous session no longer valid
             if (!cancelled) setDisconnected();
           }
+        } else if (storedKey) {
+          // Legacy: no walletId stored, clear stale state
+          setDisconnected();
         }
       } catch {
         // Kit init failed — still mark as ready so the UI isn't stuck
