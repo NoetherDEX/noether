@@ -11,7 +11,7 @@ export function Hero() {
     <section className="snap-section section-dark flex flex-col items-center justify-center px-6 relative">
       <HeroBlobs />
 
-      <div className="relative z-10 text-center max-w-[900px] mx-auto -mt-[22vh]">
+      <div className="relative z-10 text-center max-w-[900px] mx-auto -mt-[12vh] sm:-mt-[22vh]">
         <h1 className="font-heading text-3xl md:text-4xl lg:text-5xl font-semibold tracking-[-0.02em] leading-[1.15] mb-5">
           <TextReveal text="Decentralized" delay={0.2} />
           <br />
@@ -53,7 +53,7 @@ export function Hero() {
               '0 -8px 30px rgba(234, 179, 8, 0.1)',
           }}
         >
-          <div className="h-[36vh] w-full">
+          <div className="h-[28vh] sm:h-[36vh] w-full">
             <BrowserFrame>
               <Image
                 src="/images/trading-screenshot.png"

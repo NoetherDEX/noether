@@ -24,12 +24,14 @@
   scroll-snap-type: y mandatory;
   overflow-y: auto;
   height: 100vh;
+  height: 100dvh;
   -webkit-overflow-scrolling: touch;
 }
 
 .snap-section {
   scroll-snap-align: start;
   min-height: 100vh;
+  min-height: 100dvh;
   position: relative;
   overflow: hidden;
 }

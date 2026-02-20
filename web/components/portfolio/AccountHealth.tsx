@@ -59,7 +59,7 @@ export function AccountHealth({
             <Wallet className="h-4 w-4" />
             <span>Net Worth</span>
           </div>
-          <div className="font-mono text-4xl font-bold text-foreground tracking-tight">
+          <div className="font-mono text-2xl sm:text-4xl font-bold text-foreground tracking-tight">
             ${netWorth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className={cn(
@@ -80,7 +80,7 @@ export function AccountHealth({
       </div>
 
       {/* Stats Group - Right Column */}
-      <div className="grid grid-cols-3 gap-4 h-full">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 h-full">
         {/* Unrealized PnL */}
         <div className="rounded-xl border border-white/10 bg-card p-4 flex flex-col justify-center">
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-2">

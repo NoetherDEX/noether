@@ -55,14 +55,14 @@ export function ConnectButton() {
   };
 
   const buttonBaseClass =
-    'inline-flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-semibold border border-[#eab308]/60 text-[#eab308] bg-transparent hover:bg-[#eab308]/10 hover:border-[#eab308] hover:-translate-y-0.5 transition-all';
+    'inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2.5 sm:py-3 rounded-lg text-xs sm:text-sm font-semibold border border-[#eab308]/60 text-[#eab308] bg-transparent hover:bg-[#eab308]/10 hover:border-[#eab308] hover:-translate-y-0.5 transition-all';
 
   // Loading state
   if (!isReady) {
     return (
       <button className={cn(buttonBaseClass, 'opacity-70 cursor-wait')} disabled>
         <Wallet className="w-4 h-4" />
-        Loading...
+        <span className="hidden sm:inline">Loading...</span>
       </button>
     );
   }
@@ -77,7 +77,8 @@ export function ConnectButton() {
           disabled={isConnecting}
         >
           <Wallet className="w-4 h-4" />
-          {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+          <span className="hidden sm:inline">{isConnecting ? 'Connecting...' : 'Connect Wallet'}</span>
+          <span className="sm:hidden">{isConnecting ? '...' : 'Connect'}</span>
         </button>
 
         <WalletModal
@@ -124,7 +125,7 @@ export function ConnectButton() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.95 }}
               transition={{ duration: 0.15 }}
-              className="absolute right-0 mt-2 w-72 p-4 bg-[#0a0a0c] border border-white/10 rounded-xl shadow-2xl z-50"
+              className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-72 max-w-72 p-4 bg-[#0a0a0c] border border-white/10 rounded-xl shadow-2xl z-50"
             >
               {/* Network */}
               <div className="flex items-center justify-between mb-3">
