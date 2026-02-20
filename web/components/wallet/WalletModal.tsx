@@ -10,7 +10,7 @@ import { getSupportedWallets, connectWallet, WALLETCONNECT_ID, type SupportedWal
 interface WalletModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnected: (address: string) => void;
+  onConnected: (address: string, walletId?: string) => void;
 }
 
 export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) {
@@ -55,8 +55,8 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
       }
 
       try {
-        const { address } = await connectWallet(wallet.id);
-        onConnected(address);
+        const { address, walletId } = await connectWallet(wallet.id);
+        onConnected(address, walletId);
         onClose();
       } catch (err) {
         setHiddenForWC(false);

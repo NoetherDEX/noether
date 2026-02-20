@@ -72,7 +72,7 @@ export async function getSupportedWallets(): Promise<SupportedWallet[]> {
   }));
 }
 
-export async function connectWallet(walletId: string): Promise<{ address: string }> {
+export async function connectWallet(walletId: string): Promise<{ address: string; walletId: string }> {
   const kit = await getKit();
   kit.setWallet(walletId);
 
@@ -81,12 +81,50 @@ export async function connectWallet(walletId: string): Promise<{ address: string
   const { address } = await activeModule.value!.getAddress();
   activeAddress.value = address;
 
-  return { address };
+  return { address, walletId };
 }
 
 export async function getWalletAddress(): Promise<{ address: string }> {
   const kit = await getKit();
   return kit.getAddress();
+}
+
+/**
+ * Restore a previous wallet session by re-selecting the module.
+ * For WalletConnect, checks if there's an active session before trying.
+ */
+export async function restoreWalletSession(walletId: string): Promise<{ address: string } | null> {
+  const kit = await getKit();
+  kit.setWallet(walletId);
+
+  const { activeModule } = await import('@creit-tech/stellar-wallets-kit/state');
+  const mod = activeModule.value;
+  if (!mod) return null;
+
+  // For WalletConnect, check if there's an active session without opening QR modal
+  if (walletId === WALLETCONNECT_ID) {
+    try {
+      // getSessions() returns existing sessions without prompting a new one
+      const sessions = await (mod as any).getSessions?.();
+      if (!sessions || sessions.length === 0) {
+        return null; // No active session, don't try to reconnect
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const { address } = await mod.getAddress();
+    if (address) {
+      const { activeAddress } = await import('@creit-tech/stellar-wallets-kit/state');
+      activeAddress.value = address;
+      return { address };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export async function signWithWallet(
