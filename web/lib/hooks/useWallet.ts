@@ -4,7 +4,8 @@ import { useCallback } from 'react';
 import { useWalletStore } from '@/lib/store';
 import { NETWORK } from '@/lib/utils/constants';
 import { getUSDCBalance } from '@/lib/stellar/token';
-import { signWithWallet, disconnectWallet } from '@/lib/stellar/walletKit';
+import { signWithWallet, disconnectWallet, WALLETCONNECT_ID } from '@/lib/stellar/walletKit';
+import toast from 'react-hot-toast';
 
 // Horizon Testnet URL for balance fetching
 const HORIZON_TESTNET_URL = 'https://horizon-testnet.stellar.org';
@@ -73,20 +74,44 @@ export function useWallet() {
     setDisconnected();
   }, [setDisconnected]);
 
+  const walletId = useWalletStore((s) => s.walletId);
+
   const sign = useCallback(
     async (xdr: string): Promise<string> => {
       if (!isConnected || !address) {
         throw new Error('Wallet not connected');
       }
 
-      const signedXdr = await signWithWallet(xdr, {
-        networkPassphrase: NETWORK.PASSPHRASE,
-        address,
-      });
+      const isWC = walletId === WALLETCONNECT_ID;
+      let wcToastId: string | undefined;
 
-      return signedXdr;
+      if (isWC) {
+        wcToastId = toast.loading('Open your wallet app to approve the transaction', {
+          duration: 120000,
+        });
+      }
+
+      try {
+        // Race between signing and a 2-minute timeout for WalletConnect
+        const signPromise = signWithWallet(xdr, {
+          networkPassphrase: NETWORK.PASSPHRASE,
+          address,
+        });
+
+        if (isWC) {
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Wallet approval timed out. Please try again.')), 120000)
+          );
+          const signedXdr = await Promise.race([signPromise, timeoutPromise]);
+          return signedXdr;
+        }
+
+        return await signPromise;
+      } finally {
+        if (wcToastId) toast.dismiss(wcToastId);
+      }
     },
-    [isConnected, address]
+    [isConnected, address, walletId]
   );
 
   // Refresh balances
