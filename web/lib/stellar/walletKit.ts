@@ -159,8 +159,24 @@ export async function signWithWallet(
   opts: { networkPassphrase: string; address: string }
 ): Promise<string> {
   const kit = await getKit();
-  const { signedTxXdr } = await kit.signTransaction(xdr, opts);
-  return signedTxXdr;
+
+  // Close any AppKit modal that might auto-open during WalletConnect signing
+  // (prevents redirect loop from freighterwallet:// deep link failures)
+  const { activeModule } = await import('@creit-tech/stellar-wallets-kit/state');
+  const mod = activeModule.value;
+  if (mod && (mod as any).modal) {
+    try { (mod as any).modal.close(); } catch {}
+  }
+
+  console.log('[WalletKit] Signing transaction...');
+  try {
+    const { signedTxXdr } = await kit.signTransaction(xdr, opts);
+    console.log('[WalletKit] Transaction signed successfully');
+    return signedTxXdr;
+  } catch (err) {
+    console.error('[WalletKit] Signing failed:', err);
+    throw err;
+  }
 }
 
 export async function disconnectWallet(): Promise<void> {
