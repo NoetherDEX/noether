@@ -29,7 +29,7 @@ export async function getUSDCBalance(publicKey: string): Promise<number> {
       networkPassphrase: NETWORK.PASSPHRASE,
     })
       .addOperation(operation)
-      .setTimeout(30)
+      .setTimeout(300)
       .build();
 
     const result = await sorobanRpc.simulateTransaction(transaction);
@@ -68,7 +68,7 @@ export async function getAllowance(
       networkPassphrase: NETWORK.PASSPHRASE,
     })
       .addOperation(operation)
-      .setTimeout(30)
+      .setTimeout(300)
       .build();
 
     const result = await sorobanRpc.simulateTransaction(transaction);
@@ -116,7 +116,7 @@ export async function approveUSDC(
     networkPassphrase: NETWORK.PASSPHRASE,
   })
     .addOperation(operation)
-    .setTimeout(30)
+    .setTimeout(300)
     .build();
 
   // Simulate to get footprint
@@ -221,7 +221,7 @@ export async function mintTestUSDC(
     networkPassphrase: NETWORK.PASSPHRASE,
   })
     .addOperation(operation)
-    .setTimeout(30)
+    .setTimeout(300)
     .build();
 
   // Simulate

@@ -103,7 +103,7 @@ export async function getPoolInfo(publicKey: string): Promise<PoolInfo | null> {
       networkPassphrase: NETWORK.PASSPHRASE,
     })
       .addOperation(operation)
-      .setTimeout(30)
+      .setTimeout(300)
       .build();
 
     const result = await sorobanRpc.simulateTransaction(transaction);
@@ -134,7 +134,7 @@ export async function getNoePrice(publicKey: string): Promise<bigint> {
       networkPassphrase: NETWORK.PASSPHRASE,
     })
       .addOperation(operation)
-      .setTimeout(30)
+      .setTimeout(300)
       .build();
 
     const result = await sorobanRpc.simulateTransaction(transaction);
@@ -168,7 +168,7 @@ export async function getNoeBalance(
       networkPassphrase: NETWORK.PASSPHRASE,
     })
       .addOperation(operation)
-      .setTimeout(30)
+      .setTimeout(300)
       .build();
 
     const result = await sorobanRpc.simulateTransaction(transaction);
@@ -219,7 +219,7 @@ export async function getMarketContract(publicKey: string): Promise<string | nul
       networkPassphrase: NETWORK.PASSPHRASE,
     })
       .addOperation(operation)
-      .setTimeout(30)
+      .setTimeout(300)
       .build();
 
     const result = await sorobanRpc.simulateTransaction(transaction);

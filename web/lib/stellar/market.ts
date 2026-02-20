@@ -69,7 +69,7 @@ async function getAllowance(ownerPublicKey: string): Promise<bigint> {
       networkPassphrase: NETWORK.PASSPHRASE,
     })
       .addOperation(operation)
-      .setTimeout(30)
+      .setTimeout(300)
       .build();
 
     const result = await sorobanRpc.simulateTransaction(transaction);
@@ -364,7 +364,7 @@ async function buildSimulateTransaction(
     networkPassphrase: NETWORK.PASSPHRASE,
   })
     .addOperation(operation)
-    .setTimeout(30)
+    .setTimeout(300)
     .build();
 }
 

@@ -19,7 +19,7 @@ export async function getPrice(
       networkPassphrase: NETWORK.PASSPHRASE,
     })
       .addOperation(operation)
-      .setTimeout(30)
+      .setTimeout(300)
       .build();
 
     const result = await sorobanRpc.simulateTransaction(transaction);
