@@ -133,6 +133,12 @@ html, body {
   overflow-x: hidden;
 }
 
+/* Ensure WalletConnect / Reown AppKit modal is always on top */
+w3m-modal, appkit-modal {
+  --w3m-z-index: 10000 !important;
+  z-index: 10000 !important;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   html {
