@@ -89,7 +89,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
         if (storedKey && storedWalletId) {
           try {
             // Restore the previous wallet session using the stored wallet ID
-            const result = await restoreWalletSession(storedWalletId);
+            const result = await restoreWalletSession(storedWalletId, storedKey);
             if (cancelled) { setIsReady(true); return; }
 
             if (!result) {
