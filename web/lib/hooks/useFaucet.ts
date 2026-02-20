@@ -43,8 +43,8 @@ export function useFaucet(publicKey: string | null) {
   const [trustlineStatus, setTrustlineStatus] = useState<TrustlineStatus>('checking');
   const [selectedAmount, setSelectedAmount] = useState<ClaimAmount | null>(null);
   const [trustlineError, setTrustlineError] = useState<string | null>(null);
-  // Prevent the auto-sync useEffect from overriding a successful trustline addition
-  const trustlineConfirmed = useRef(false);
+  // Prevent the auto-sync useEffect from overriding trustline status during/after mutation
+  const trustlineLocked = useRef(false);
 
   // Fetch faucet history and status
   const {
@@ -101,8 +101,15 @@ export function useFaucet(publicKey: string | null) {
 
   // Update trustline status based on fetched data
   useEffect(() => {
-    // Don't override if trustline was just confirmed via mutation
-    if (trustlineConfirmed.current) return;
+    // Don't override while trustline mutation is in progress or just confirmed
+    if (trustlineLocked.current) {
+      // Only unlock when API confirms the trustline exists
+      if (faucetData?.hasTrustline) {
+        trustlineLocked.current = false;
+        setTrustlineStatus('active');
+      }
+      return;
+    }
 
     if (accountStatus !== 'active') {
       setTrustlineStatus('checking');
@@ -167,27 +174,24 @@ export function useFaucet(publicKey: string | null) {
         throw new Error('No wallet connected');
       }
 
+      // Lock to prevent useEffect from overriding status during signing
+      trustlineLocked.current = true;
       setTrustlineStatus('adding');
       setTrustlineError(null);
 
-      try {
-        // Build the transaction
-        const xdr = await buildAddTrustlineTransaction(publicKey);
+      // Build the transaction
+      const xdr = await buildAddTrustlineTransaction(publicKey);
 
-        // Sign with connected wallet
-        const signedXdr = await sign(xdr);
+      // Sign with connected wallet (may take time for WalletConnect approval)
+      const signedXdr = await sign(xdr);
 
-        // Submit to network
-        await submitTransaction(signedXdr);
+      // Submit to network
+      await submitTransaction(signedXdr);
 
-        return true;
-      } catch (error) {
-        setTrustlineStatus('error');
-        throw error;
-      }
+      return true;
     },
     onSuccess: () => {
-      trustlineConfirmed.current = true;
+      // Keep locked — useEffect will unlock when API confirms hasTrustline
       setTrustlineStatus('active');
       toast.success('USDC trustline added successfully!');
       // Delay refetch to let Horizon propagate the trustline
@@ -196,6 +200,7 @@ export function useFaucet(publicKey: string | null) {
       }, 3000);
     },
     onError: (error: Error) => {
+      trustlineLocked.current = false;
       setTrustlineStatus('error');
       setTrustlineError(error.message);
       toast.error(error.message || 'Failed to add trustline');
