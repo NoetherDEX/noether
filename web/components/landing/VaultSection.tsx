@@ -42,9 +42,9 @@ const BENEFITS = [
 const ease = [0.25, 0.1, 0.25, 1] as const;
 
 /* ── Dashed gold connector ────────────────────────────────── */
-function Connector() {
+function HorizontalConnector() {
   return (
-    <div className="flex items-center px-2 md:px-4 -mt-6">
+    <div className="hidden sm:flex items-center px-2 md:px-4 -mt-6">
       <svg width="48" height="2" viewBox="0 0 48 2" className="overflow-visible">
         <line
           x1="0" y1="1" x2="48" y2="1"
@@ -53,6 +53,22 @@ function Connector() {
           strokeDasharray="4 4"
         />
         <polygon points="44,0 48,1 44,2" fill="rgba(234,179,8,0.5)" />
+      </svg>
+    </div>
+  );
+}
+
+function VerticalConnector() {
+  return (
+    <div className="sm:hidden flex justify-center py-2">
+      <svg width="2" height="32" viewBox="0 0 2 32" className="overflow-visible">
+        <line
+          x1="1" y1="0" x2="1" y2="28"
+          stroke="rgba(234,179,8,0.3)"
+          strokeWidth="1"
+          strokeDasharray="4 4"
+        />
+        <polygon points="0,28 1,32 2,28" fill="rgba(234,179,8,0.5)" />
       </svg>
     </div>
   );
@@ -135,11 +151,16 @@ export function VaultSection() {
         </FadeIn>
 
         {/* ── Flow diagram with video cards ───────────────── */}
-        <div className="flex items-start justify-center mb-6">
+        <div className="flex flex-col sm:flex-row items-center sm:items-start justify-center mb-6">
           {STEPS.map((step, i) => (
-            <div key={step.label} className="flex items-center">
+            <div key={step.label} className="flex flex-col sm:flex-row items-center">
               <FlowCard step={step} index={i} />
-              {i < STEPS.length - 1 && <Connector />}
+              {i < STEPS.length - 1 && (
+                <>
+                  <HorizontalConnector />
+                  <VerticalConnector />
+                </>
+              )}
             </div>
           ))}
         </div>

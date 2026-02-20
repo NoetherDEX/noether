@@ -11,7 +11,7 @@ interface StatsBarProps {
 
 export function StatsBarSkeleton() {
   return (
-    <div className="grid grid-cols-3 gap-4 md:gap-6">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
       {[1, 2, 3].map((i) => (
         <div key={i} className="rounded-2xl border border-white/10 bg-card p-4 md:p-6">
           <div className="h-4 w-24 bg-white/5 rounded animate-pulse mb-3" />
@@ -28,7 +28,7 @@ export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
   }
 
   return (
-    <div className="grid grid-cols-3 items-stretch gap-4 md:gap-6">
+    <div className="grid grid-cols-1 sm:grid-cols-3 items-stretch gap-4 md:gap-6">
       {/* TVL Card */}
       <div className="rounded-2xl border border-white/10 bg-card p-4 md:p-6">
         <span className="text-xs md:text-sm text-muted-foreground">Total Value Locked</span>

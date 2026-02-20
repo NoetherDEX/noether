@@ -120,6 +120,19 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+/* Mobile: hide scrollbar on touch devices for cleaner look */
+@media (hover: none) and (pointer: coarse) {
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
+/* Prevent horizontal overflow on mobile */
+html, body {
+  overflow-x: hidden;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   html {
@@ -172,5 +185,14 @@ a:focus-visible {
 
   .glow-gold-lg {
     box-shadow: 0 0 60px rgba(234, 179, 8, 0.25);
+  }
+
+  /* Hide scrollbar but keep scrolling */
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }

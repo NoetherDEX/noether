@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter, Sora, JetBrains_Mono } from 'next/font/google'
 import { Toaster } from 'react-hot-toast'
 import './globals.css'
@@ -6,6 +6,13 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const sora = Sora({ subsets: ['latin'], variable: '--font-sora' })
 const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jetbrains-mono' })
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+}
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://noether.exchange'),
@@ -41,12 +48,13 @@ export default function RootLayout({
           {children}
         </Providers>
         <Toaster
-          position="bottom-right"
+          position="bottom-center"
           toastOptions={{
             style: {
               background: '#18181b',
               color: '#fff',
               border: '1px solid rgba(255,255,255,0.1)',
+              maxWidth: '90vw',
             },
             success: {
               iconTheme: {

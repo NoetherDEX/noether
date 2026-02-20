@@ -311,13 +311,13 @@ function TradePage() {
                 </div>
 
                 {/* Timeframe Selector */}
-                <div className="flex items-center gap-1 px-4 py-2 border-b border-white/5 overflow-x-auto">
+                <div className="flex items-center gap-1 px-3 sm:px-4 py-2 border-b border-white/5 overflow-x-auto scrollbar-none">
                   {TIMEFRAMES.map((tf) => (
                     <button
                       key={tf.value}
                       onClick={() => setSelectedTimeframe(tf.value)}
                       className={cn(
-                        'px-3 py-1.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap',
+                        'px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap',
                         selectedTimeframe === tf.value
                           ? 'bg-white text-black'
                           : 'text-neutral-400 hover:text-white hover:bg-white/5'

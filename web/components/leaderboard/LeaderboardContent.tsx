@@ -125,7 +125,8 @@ export function LeaderboardContent() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Desktop Table */}
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="text-xs text-white/40 border-b border-white/5">
@@ -178,6 +179,51 @@ export function LeaderboardContent() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile Cards */}
+        <div className="sm:hidden">
+          {loading ? (
+            <div className="p-4 space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-20 bg-white/[0.03] rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : sorted.length === 0 ? (
+            <div className="py-16 text-center text-white/30 text-sm">
+              No traders yet. Be the first to open a position!
+            </div>
+          ) : (
+            <div className="p-3 space-y-2">
+              {sorted.map((trader, idx) => (
+                <div
+                  key={trader.address}
+                  className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.02] border border-white/5"
+                >
+                  <span className="font-mono text-sm text-white/40 w-6 text-center flex-shrink-0">
+                    {idx + 1}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <a
+                      href={`https://stellar.expert/explorer/testnet/account/${trader.address}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                    >
+                      {truncateAddress(trader.address, 4, 4)}
+                    </a>
+                    <div className="flex items-center gap-3 mt-1 text-xs text-white/40">
+                      <span>{trader.tradeCount} trades</span>
+                      <span>{formatUSD(trader.totalVolume, 0)}</span>
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <PnlCell value={trader.pnl} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
