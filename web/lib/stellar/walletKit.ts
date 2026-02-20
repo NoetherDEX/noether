@@ -91,33 +91,60 @@ export async function getWalletAddress(): Promise<{ address: string }> {
 
 /**
  * Restore a previous wallet session by re-selecting the module.
- * For WalletConnect, checks if there's an active session before trying.
+ * For WalletConnect, restores from localStorage session data (no QR modal).
+ * For extensions (Freighter, etc.), calls getAddress() normally.
  */
-export async function restoreWalletSession(walletId: string): Promise<{ address: string } | null> {
+export async function restoreWalletSession(
+  walletId: string,
+  storedAddress?: string | null
+): Promise<{ address: string } | null> {
   const kit = await getKit();
   kit.setWallet(walletId);
 
-  const { activeModule } = await import('@creit-tech/stellar-wallets-kit/state');
+  const { activeModule, activeAddress } = await import('@creit-tech/stellar-wallets-kit/state');
   const mod = activeModule.value;
   if (!mod) return null;
 
-  // For WalletConnect, check if there's an active session without opening QR modal
+  // WalletConnect: restore from persisted session data without opening QR modal
   if (walletId === WALLETCONNECT_ID) {
     try {
-      // getSessions() returns existing sessions without prompting a new one
-      const sessions = await (mod as any).getSessions?.();
-      if (!sessions || sessions.length === 0) {
-        return null; // No active session, don't try to reconnect
+      // wcSessionPaths is auto-restored from localStorage on module load
+      const { wcSessionPaths } = await import('@creit-tech/stellar-wallets-kit/state');
+      const paths = wcSessionPaths.value;
+
+      if (!paths || paths.length === 0 || !storedAddress) {
+        return null; // No persisted session
       }
+
+      // Check if the stored address has a matching session path
+      const hasSession = paths.some((p: { publicKey: string }) => p.publicKey === storedAddress);
+      if (!hasSession) {
+        return null; // Session expired or doesn't match
+      }
+
+      // Wait for signClient to be ready (it inits async in constructor)
+      let retries = 0;
+      while (!(await mod.isAvailable()) && retries < 20) {
+        await new Promise(r => setTimeout(r, 250));
+        retries++;
+      }
+
+      if (!(await mod.isAvailable())) {
+        return null; // signClient never initialized
+      }
+
+      // Set activeAddress so signTransaction can find the right session
+      activeAddress.value = storedAddress;
+      return { address: storedAddress };
     } catch {
       return null;
     }
   }
 
+  // Extension wallets (Freighter, xBull, etc.): call getAddress() normally
   try {
     const { address } = await mod.getAddress();
     if (address) {
-      const { activeAddress } = await import('@creit-tech/stellar-wallets-kit/state');
       activeAddress.value = address;
       return { address };
     }
