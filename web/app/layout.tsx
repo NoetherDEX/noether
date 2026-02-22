@@ -26,11 +26,13 @@ export const metadata: Metadata = {
     title: 'Noether | Decentralized Perpetual Exchange on Stellar',
     description: 'Trade crypto perpetuals with up to 10x leverage on the first decentralized perpetual exchange built on Stellar.',
     type: 'website',
+    images: [{ url: '/og-image.png', width: 1200, height: 630, alt: 'Noether DEX' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Noether | Decentralized Perpetual Exchange on Stellar',
     description: 'Trade crypto perpetuals with up to 10x leverage on the first decentralized perpetual exchange built on Stellar.',
+    images: ['/og-image.png'],
   },
 }
 
