@@ -40,7 +40,7 @@ export function NOEIntroSection() {
           }}
         >
           Introducing the{' '}
-          <span className="italic">NOE</span> token
+          <span className="italic text-[#22c55e]">NOE</span> token
           <br className="hidden md:block" />{' '}
           for liquidity providers
         </h2>

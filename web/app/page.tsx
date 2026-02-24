@@ -5,7 +5,6 @@ import {
   FlagshipSection,
   NOEIntroSection,
   VaultSection,
-  FinalSection,
   LandingFooter,
   SlideContainer,
 } from '@/components/landing';
@@ -19,7 +18,6 @@ export default function Home() {
         <FlagshipSection />
         <NOEIntroSection />
         <VaultSection />
-        <FinalSection />
         <LandingFooter />
       </SlideContainer>
     </>

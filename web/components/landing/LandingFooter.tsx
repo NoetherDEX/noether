@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { FadeIn } from './animations';
 
 /* Social icon SVGs */
 function XIcon() {
@@ -39,40 +38,33 @@ function TelegramIcon() {
 export function LandingFooter() {
   return (
     <section className="snap-section relative bg-[#050508] overflow-hidden flex flex-col justify-end">
-      {/* Giant NOETHER text — CSS text, perfectly centered */}
+      {/* Giant NOETHER logo — SVG image, perfectly centered */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
-        <FadeIn delay={0.2}>
-          <h2
-            className="font-heading font-bold text-[20vw] leading-[0.85] tracking-[-0.04em] whitespace-nowrap select-none"
-            style={{
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.02) 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}
-          >
-            NOETHER
-          </h2>
-        </FadeIn>
+        <img
+          src="/noethersvg.svg"
+          alt=""
+          className="w-[90vw] max-w-[1400px] select-none translate-x-[3%]"
+          style={{
+            opacity: 0.12,
+          }}
+        />
       </div>
 
       {/* Social icons — right-aligned at bottom */}
-      <FadeIn delay={0.4}>
-        <div className="relative z-10 flex justify-end gap-5 px-8 md:px-16 mb-8">
-          <a href="#" className="text-white/15 hover:text-white/40 transition-colors" aria-label="X (Twitter)">
-            <XIcon />
-          </a>
-          <a href="#" className="text-white/15 hover:text-white/40 transition-colors" aria-label="Discord">
-            <DiscordIcon />
-          </a>
-          <a href="https://github.com/mertcicekci0/noether" className="text-white/15 hover:text-white/40 transition-colors" aria-label="GitHub">
-            <GitHubIcon />
-          </a>
-          <a href="#" className="text-white/15 hover:text-white/40 transition-colors" aria-label="Telegram">
-            <TelegramIcon />
-          </a>
-        </div>
-      </FadeIn>
+      <div className="relative z-10 flex justify-end gap-5 px-8 md:px-16 mb-8">
+        <a href="https://x.com/Noetherdex" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="X (Twitter)">
+          <XIcon />
+        </a>
+        <a href="https://discord.gg/wzR6pmGH" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="Discord">
+          <DiscordIcon />
+        </a>
+        <a href="https://github.com/orgs/NoetherDEX/repositories" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="GitHub">
+          <GitHubIcon />
+        </a>
+        <a href="https://t.me/Noetherdex" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="Telegram">
+          <TelegramIcon />
+        </a>
+      </div>
 
       {/* Bottom bar */}
       <div className="relative z-10 border-t border-white/[0.04] px-8 md:px-16 py-5">
