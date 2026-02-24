@@ -2,12 +2,6 @@
 
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import {
-  CircleDot,
-  Infinity as InfinityIcon,
-  Percent,
-  ArrowDownUp,
-} from 'lucide-react';
 import { FadeIn } from './animations';
 
 /* ── Flow steps with webm motion designs ──────────────────── */
@@ -30,13 +24,6 @@ const STEPS = [
     borderColor: 'rgba(34, 197, 94, 0.4)',
     glowColor: 'rgba(34, 197, 94, 0.1)',
   },
-];
-
-const BENEFITS = [
-  { icon: CircleDot, label: 'NOE = Your pool share', color: '#22c55e' },
-  { icon: InfinityIcon, label: 'Fixed supply, no inflation', color: '#eab308' },
-  { icon: Percent, label: 'Yield from fees & losses', color: '#22c55e' },
-  { icon: ArrowDownUp, label: 'Withdraw anytime', color: '#eab308' },
 ];
 
 const ease = [0.25, 0.1, 0.25, 1] as const;
@@ -127,31 +114,16 @@ export function VaultSection() {
       />
 
       <div className="relative z-10 max-w-[1100px] mx-auto text-center">
-        {/* Eyebrow */}
-        <FadeIn delay={0.1}>
-          <p className="text-[11px] font-medium uppercase tracking-[0.25em] text-[#eab308]/60 mb-4">
-            For Liquidity Providers
-          </p>
-        </FadeIn>
-
         {/* Heading */}
         <FadeIn delay={0.2}>
-          <h2 className="text-3xl md:text-4xl lg:text-5xl font-heading font-bold tracking-[-0.02em] leading-[1.05] mb-4">
+          <h2 className="text-3xl md:text-4xl lg:text-5xl font-heading font-bold tracking-[-0.02em] leading-[1.05] mb-8 md:mb-10">
             Earn Yield with{' '}
-            <span className="text-[#eab308]">NOE</span>
+            <span className="text-[#22c55e]">NOE</span>
           </h2>
         </FadeIn>
 
-        {/* Description */}
-        <FadeIn delay={0.35}>
-          <p className="text-sm md:text-base text-white/35 max-w-[460px] mx-auto leading-relaxed mb-6">
-            Deposit USDC into the vault, receive NOE tokens representing
-            your share. Earn yield from trading fees and trader losses.
-          </p>
-        </FadeIn>
-
         {/* ── Flow diagram with video cards ───────────────── */}
-        <div className="flex flex-col sm:flex-row items-center sm:items-start justify-center mb-6">
+        <div className="flex flex-col sm:flex-row items-center sm:items-start justify-center mb-8 md:mb-10">
           {STEPS.map((step, i) => (
             <div key={step.label} className="flex flex-col sm:flex-row items-center">
               <FlowCard step={step} index={i} />
@@ -163,34 +135,6 @@ export function VaultSection() {
               )}
             </div>
           ))}
-        </div>
-
-        {/* ── Benefits grid ───────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-2.5 max-w-[520px] mx-auto mb-6">
-          {BENEFITS.map((benefit, i) => {
-            const Icon = benefit.icon;
-            return (
-              <motion.div
-                key={benefit.label}
-                initial={{ opacity: 0, y: 12 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: '-60px' }}
-                transition={{ duration: 0.4, delay: 0.5 + i * 0.06, ease }}
-                className="flex items-center gap-2.5 px-4 py-3 rounded-lg text-sm relative overflow-hidden"
-                style={{
-                  background: 'rgba(255,255,255,0.02)',
-                  border: '1px solid rgba(255,255,255,0.05)',
-                }}
-              >
-                <Icon
-                  className="w-3.5 h-3.5 flex-shrink-0"
-                  style={{ color: benefit.color, opacity: 0.7 }}
-                  strokeWidth={1.5}
-                />
-                <span className="text-white/45 text-[12px]">{benefit.label}</span>
-              </motion.div>
-            );
-          })}
         </div>
 
         {/* CTA */}
