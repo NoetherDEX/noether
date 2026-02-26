@@ -141,17 +141,14 @@ export async function restoreWalletSession(
     }
   }
 
-  // Extension wallets (Freighter, xBull, etc.): call getAddress() normally
-  try {
-    const { address } = await mod.getAddress();
-    if (address) {
-      activeAddress.value = address;
-      return { address };
-    }
-    return null;
-  } catch {
-    return null;
+  // Extension wallets (Freighter, xBull, etc.): restore silently from stored address
+  // Do NOT call getAddress() here — it triggers the extension popup on page load.
+  // The address was already verified when the user first connected.
+  if (storedAddress) {
+    activeAddress.value = storedAddress;
+    return { address: storedAddress };
   }
+  return null;
 }
 
 export async function signWithWallet(
