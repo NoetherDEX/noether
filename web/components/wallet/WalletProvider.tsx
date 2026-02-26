@@ -3,7 +3,7 @@
 import { ReactNode, createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useWalletStore } from '@/lib/store';
 import { getUSDCBalance } from '@/lib/stellar/token';
-import { initWalletKit, getWalletAddress, restoreWalletSession } from '@/lib/stellar/walletKit';
+import { initWalletKit, getWalletAddress, restoreWalletSession, setupWalletModule, WALLETCONNECT_ID } from '@/lib/stellar/walletKit';
 
 // Horizon Testnet URL for balance fetching
 const HORIZON_TESTNET_URL = 'https://horizon-testnet.stellar.org';
@@ -79,21 +79,45 @@ export function WalletProvider({ children }: WalletProviderProps) {
   useEffect(() => {
     let cancelled = false;
 
+    const { publicKey: storedKey, walletId: storedWalletId } = useWalletStore.getState();
+
+    // Extension wallets (Freighter, xBull, etc.): restore immediately from stored data.
+    // No async wallet API calls needed — avoids popup AND avoids slow kit init blocking the UI.
+    if (storedKey && storedWalletId && storedWalletId !== WALLETCONNECT_ID) {
+      setConnected(storedKey, storedKey, storedWalletId);
+      setIsReady(true);
+
+      // Background: fetch balances + init kit for future signing
+      (async () => {
+        try {
+          const [xlmBalance, usdcBalance] = await Promise.all([
+            fetchXLMBalance(storedKey),
+            getUSDCBalance(storedKey),
+          ]);
+          if (!cancelled) setBalances(xlmBalance, usdcBalance, 0);
+        } catch {}
+
+        // Set up wallet module so signing works later
+        try {
+          await initWalletKit();
+          await setupWalletModule(storedWalletId, storedKey);
+        } catch {}
+      })();
+
+      return () => { cancelled = true; };
+    }
+
+    // WalletConnect or no stored wallet: full async init
     const init = async () => {
       try {
-        // Initialize the wallet kit (registers all wallet modules)
         await initWalletKit();
 
-        // Check if we have a previously connected wallet in the persisted store
-        const { publicKey: storedKey, walletId: storedWalletId } = useWalletStore.getState();
-        if (storedKey && storedWalletId) {
+        if (storedKey && storedWalletId === WALLETCONNECT_ID) {
           try {
-            // Restore the previous wallet session using the stored wallet ID
             const result = await restoreWalletSession(storedWalletId, storedKey);
             if (cancelled) { setIsReady(true); return; }
 
             if (!result) {
-              // Session could not be restored (e.g. WalletConnect session expired)
               setDisconnected();
               setIsReady(true);
               return;
@@ -101,16 +125,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
             setConnected(result.address, result.address, storedWalletId);
 
-            // Fetch initial balances
             const [xlmBalance, usdcBalance] = await Promise.all([
               fetchXLMBalance(result.address),
               getUSDCBalance(result.address),
             ]);
-            if (!cancelled) {
-              setBalances(xlmBalance, usdcBalance, 0);
-            }
+            if (!cancelled) setBalances(xlmBalance, usdcBalance, 0);
           } catch {
-            // Previous session no longer valid
             if (!cancelled) setDisconnected();
           }
         } else if (storedKey) {
@@ -118,7 +138,6 @@ export function WalletProvider({ children }: WalletProviderProps) {
           setDisconnected();
         }
       } catch {
-        // Kit init failed — still mark as ready so the UI isn't stuck
         console.error('Failed to initialize wallet kit');
       }
 
@@ -127,9 +146,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
     init();
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [setConnected, setDisconnected, setBalances]);
 
   return (

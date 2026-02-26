@@ -90,9 +90,21 @@ export async function getWalletAddress(): Promise<{ address: string }> {
 }
 
 /**
+ * Set up a wallet module and active address for future signing.
+ * Does NOT call getAddress() — no extension popup.
+ * Call this after restoring from persisted store to prepare the kit for signing.
+ */
+export async function setupWalletModule(walletId: string, address: string): Promise<void> {
+  const kit = await getKit();
+  kit.setWallet(walletId);
+  const { activeAddress } = await import('@creit-tech/stellar-wallets-kit/state');
+  activeAddress.value = address;
+}
+
+/**
  * Restore a previous wallet session by re-selecting the module.
  * For WalletConnect, restores from localStorage session data (no QR modal).
- * For extensions (Freighter, etc.), calls getAddress() normally.
+ * For extensions (Freighter, etc.), restores silently from stored address.
  */
 export async function restoreWalletSession(
   walletId: string,
