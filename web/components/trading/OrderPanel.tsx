@@ -1,14 +1,12 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { AlertCircle, Info, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
+import { AlertCircle, Info, Loader2, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 import { openPosition, placeLimitOrder } from '@/lib/stellar/market';
-import { approveUSDC, checkMarketAllowance } from '@/lib/stellar/token';
-import { CONTRACTS, TRADING } from '@/lib/utils/constants';
 import {
   formatUSD,
   formatNumber,
@@ -49,11 +47,6 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isApproving, setIsApproving] = useState(false);
-
-  // Allowance state
-  const [hasAllowance, setHasAllowance] = useState(false);
-  const [isCheckingAllowance, setIsCheckingAllowance] = useState(false);
 
   // Fetch asset price
   useEffect(() => {
@@ -74,7 +67,6 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
 
   // Calculate derived values
   const collateralNum = parseFloat(collateral) || 0;
-  const collateralPrecision = BigInt(Math.floor(collateralNum * TRADING.PRECISION));
 
   // Position size in USD (collateral is already in USD since it's USDC)
   const positionSize = collateralNum * leverage;
@@ -92,34 +84,6 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
   // Risk assessment based on leverage
   const liquidationRisk = leverage >= 8 ? 'high' : leverage >= 5 ? 'medium' : 'low';
 
-  // Check allowance when collateral changes
-  useEffect(() => {
-    const checkAllowance = async () => {
-      if (!publicKey || collateralNum <= 0) {
-        setHasAllowance(false);
-        return;
-      }
-
-      setIsCheckingAllowance(true);
-      try {
-        const { hasAllowance: allowed } = await checkMarketAllowance(
-          publicKey,
-          collateralPrecision
-        );
-        setHasAllowance(allowed);
-      } catch (error) {
-        console.error('Error checking allowance:', error);
-        setHasAllowance(false);
-      } finally {
-        setIsCheckingAllowance(false);
-      }
-    };
-
-    // Debounce the check
-    const timer = setTimeout(checkAllowance, 300);
-    return () => clearTimeout(timer);
-  }, [publicKey, collateralNum, collateralPrecision]);
-
   // Validation
   const errors: string[] = [];
   if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
@@ -132,40 +96,7 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
     if (triggerPriceNum <= 0) errors.push('Enter a valid trigger price');
   }
 
-  const canApprove = isConnected && collateralNum >= 10 && !hasAllowance && errors.length === 0;
-  const canSubmit = isConnected && collateralNum >= 10 && hasAllowance && errors.length === 0;
-
-  // Handle approval
-  const handleApprove = async () => {
-    if (!canApprove || !publicKey) return;
-
-    setIsApproving(true);
-
-    // Approve a large amount so user doesn't have to re-approve often
-    const approvalAmount = BigInt(1_000_000 * TRADING.PRECISION); // 1M USDC
-
-    const approvePromise = approveUSDC(publicKey, sign, CONTRACTS.MARKET, approvalAmount);
-
-    toast.promise(approvePromise, {
-      loading: 'Approving USDC...',
-      success: () => {
-        setHasAllowance(true);
-        return 'USDC approved! You can now open positions.';
-      },
-      error: (err) => {
-        console.error('Approval failed:', err);
-        return err?.message || 'Failed to approve USDC';
-      },
-    });
-
-    try {
-      await approvePromise;
-    } catch {
-      // Error handled by toast
-    } finally {
-      setIsApproving(false);
-    }
-  };
+  const canSubmit = isConnected && collateralNum >= 10 && errors.length === 0;
 
   // Handle position submission (market or limit)
   const handleSubmit = async () => {
@@ -356,21 +287,6 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
             <span className="text-xs text-muted-foreground">
               Balance: <span className="font-mono text-foreground">{formatNumber(usdcBalance)}</span> USDC
             </span>
-            {/* Allowance status */}
-            {isConnected && collateralNum > 0 && (
-              <div className="flex items-center gap-1">
-                {isCheckingAllowance ? (
-                  <Loader2 className="w-3 h-3 text-muted-foreground animate-spin" />
-                ) : hasAllowance ? (
-                  <>
-                    <CheckCircle2 className="w-3 h-3 text-[#22c55e]" />
-                    <span className="text-[10px] text-[#22c55e]">Approved</span>
-                  </>
-                ) : (
-                  <span className="text-[10px] text-amber-500">Approval needed</span>
-                )}
-              </div>
-            )}
           </div>
           {/* Percentage Buttons */}
           <div className="grid grid-cols-4 gap-1.5">
@@ -619,40 +535,24 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
         )}
 
         {/* CTA Button */}
-        {!hasAllowance && collateralNum >= 10 && errors.length === 0 ? (
-          <button
-            onClick={handleApprove}
-            disabled={!canApprove || isApproving}
-            className={cn(
-              'w-full h-14 text-base font-bold rounded-lg transition-all',
-              'bg-amber-500 hover:bg-amber-600 text-white',
-              'disabled:opacity-40 disabled:cursor-not-allowed',
-              'flex items-center justify-center gap-2'
-            )}
-          >
-            {isApproving && <Loader2 className="w-5 h-5 animate-spin" />}
-            Approve USDC
-          </button>
-        ) : (
-          <button
-            onClick={handleSubmit}
-            disabled={!canSubmit || isSubmitting}
-            className={cn(
-              'w-full h-14 text-base font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed',
-              'flex items-center justify-center gap-2 rounded-lg',
-              direction === 'Long'
-                ? 'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
-                : 'bg-[#ef4444] hover:bg-[#ef4444]/90 text-white'
-            )}
-          >
-            {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
-            {!isConnected
-              ? 'Connect Wallet'
-              : orderType === 'Limit'
-              ? `Place ${direction} Limit Order`
-              : `${direction === 'Long' ? 'Buy / Long' : 'Sell / Short'} ${asset}`}
-          </button>
-        )}
+        <button
+          onClick={handleSubmit}
+          disabled={!canSubmit || isSubmitting}
+          className={cn(
+            'w-full h-14 text-base font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed',
+            'flex items-center justify-center gap-2 rounded-lg',
+            direction === 'Long'
+              ? 'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
+              : 'bg-[#ef4444] hover:bg-[#ef4444]/90 text-white'
+          )}
+        >
+          {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
+          {!isConnected
+            ? 'Connect Wallet'
+            : orderType === 'Limit'
+            ? `Place ${direction} Limit Order`
+            : `${direction === 'Long' ? 'Buy / Long' : 'Sell / Short'} ${asset}`}
+        </button>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
-import { marketContract, usdcTokenContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
+import { marketContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
 import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, DisplayOrder, OrderType, TriggerCondition, OrderStatus } from '@/types';
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
-import { rpc, scValToNative, xdr, Horizon, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk';
+import { rpc, scValToNative, xdr, Horizon } from '@stellar/stellar-sdk';
 import { CONTRACTS, NETWORK } from '@/lib/utils/constants';
 
 /**
@@ -52,80 +52,7 @@ function bigIntToNumber(value: bigint | number | undefined, decimals = 7): numbe
 }
 
 /**
- * Get current USDC allowance for Market contract
- */
-async function getAllowance(ownerPublicKey: string): Promise<bigint> {
-  try {
-    const args = [
-      toScVal(ownerPublicKey, 'address'),  // from: Address (owner)
-      toScVal(CONTRACTS.MARKET, 'address'), // spender: Address (Market contract)
-    ];
-
-    const account = await sorobanRpc.getAccount(ownerPublicKey);
-    const operation = usdcTokenContract.call('allowance', ...args);
-
-    const transaction = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: NETWORK.PASSPHRASE,
-    })
-      .addOperation(operation)
-      .setTimeout(300)
-      .build();
-
-    const result = await sorobanRpc.simulateTransaction(transaction);
-
-    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      return scValToNative(result.result.retval) as bigint;
-    }
-
-    return BigInt(0);
-  } catch (error) {
-    console.error('Error checking allowance:', error);
-    return BigInt(0);
-  }
-}
-
-/**
- * Approve USDC spending for Market contract
- * Uses a large allowance to avoid repeated approvals
- */
-async function approveUSDC(
-  signerPublicKey: string,
-  signTransaction: (xdr: string) => Promise<string>,
-  amount: bigint
-): Promise<void> {
-  // Set a large expiration ledger (roughly 1 year: ~31536000 seconds / 5 seconds per ledger)
-  const currentLedger = (await sorobanRpc.getLatestLedger()).sequence;
-  const expirationLedger = currentLedger + 6_307_200; // ~1 year
-
-  const args = [
-    toScVal(signerPublicKey, 'address'),    // from: Address (owner)
-    toScVal(CONTRACTS.MARKET, 'address'),   // spender: Address (Market contract)
-    toScVal(amount, 'i128'),                // amount: i128
-    toScVal(expirationLedger, 'u32'),       // expiration_ledger: u32
-  ];
-
-  console.log('[DEBUG] Approving USDC spending:', {
-    owner: signerPublicKey,
-    spender: CONTRACTS.MARKET,
-    amount: amount.toString(),
-    expirationLedger,
-  });
-
-  const xdrStr = await buildTransaction(signerPublicKey, usdcTokenContract, 'approve', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
-
-  if (result.status !== 'SUCCESS') {
-    throw new Error('Failed to approve USDC spending');
-  }
-
-  console.log('[DEBUG] USDC approval successful');
-}
-
-/**
  * Open a new leveraged position
- * Automatically handles USDC approval if needed (strictly sequential)
  */
 export async function openPosition(
   signerPublicKey: string,
@@ -137,39 +64,7 @@ export async function openPosition(
     direction: Direction;
   }
 ): Promise<Position> {
-  // Step 1: Check current allowance
-  console.log('[DEBUG] Step 1: Checking USDC allowance...');
-  let currentAllowance = await getAllowance(signerPublicKey);
-  console.log('[DEBUG] Current USDC allowance:', currentAllowance.toString());
-  console.log('[DEBUG] Required collateral:', params.collateral.toString());
-
-  // Step 2: Approve if needed - MUST complete before proceeding
-  if (currentAllowance < params.collateral) {
-    console.log('[DEBUG] Step 2: Insufficient allowance, requesting approval...');
-
-    // Approve a large amount (1 billion USDC with 7 decimals) to avoid repeated approvals
-    const approvalAmount = BigInt(1_000_000_000) * BigInt(10_000_000);
-
-    // This will prompt Freighter and wait for on-chain confirmation
-    await approveUSDC(signerPublicKey, signTransaction, approvalAmount);
-
-    // Step 2b: Wait a moment for ledger state to propagate
-    console.log('[DEBUG] Waiting for ledger state to propagate...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // Step 2c: Verify the approval worked by re-checking allowance
-    currentAllowance = await getAllowance(signerPublicKey);
-    console.log('[DEBUG] New allowance after approval:', currentAllowance.toString());
-
-    if (currentAllowance < params.collateral) {
-      throw new Error('Approval transaction confirmed but allowance still insufficient. Please try again.');
-    }
-
-    console.log('[DEBUG] Approval verified successfully!');
-  }
-
-  // Step 3: Now open the position (allowance is guaranteed to be sufficient)
-  console.log('[DEBUG] Step 3: Opening position...');
+  console.log('[DEBUG] Opening position...');
 
   // Build arguments matching contract signature:
   // open_position(trader: Address, asset: Symbol, collateral: i128, leverage: u32, direction: Direction)
@@ -195,48 +90,13 @@ export async function openPosition(
 
 /**
  * Close a position
- * Automatically handles USDC approval if needed (for fees/losses)
  */
 export async function closePosition(
   signerPublicKey: string,
   signTransaction: (xdr: string) => Promise<string>,
   positionId: number
 ): Promise<{ pnl: bigint; fee: bigint }> {
-  // Step 1: Check current allowance
-  console.log('[DEBUG] Close Position - Step 1: Checking USDC allowance...');
-  let currentAllowance = await getAllowance(signerPublicKey);
-  console.log('[DEBUG] Current USDC allowance:', currentAllowance.toString());
-
-  // Step 2: Approve if needed - closing might require paying fees or covering losses
-  // We approve a large amount to ensure the contract can settle any fees/losses
-  const minRequiredAllowance = BigInt(100_000) * BigInt(10_000_000); // 100k USDC buffer
-
-  if (currentAllowance < minRequiredAllowance) {
-    console.log('[DEBUG] Step 2: Insufficient allowance for close, requesting approval...');
-
-    // Approve a large amount (1 billion USDC with 7 decimals)
-    const approvalAmount = BigInt(1_000_000_000) * BigInt(10_000_000);
-
-    // This will prompt Freighter and wait for on-chain confirmation
-    await approveUSDC(signerPublicKey, signTransaction, approvalAmount);
-
-    // Wait for ledger state to propagate
-    console.log('[DEBUG] Waiting for ledger state to propagate...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // Verify the approval worked
-    currentAllowance = await getAllowance(signerPublicKey);
-    console.log('[DEBUG] New allowance after approval:', currentAllowance.toString());
-
-    if (currentAllowance < minRequiredAllowance) {
-      throw new Error('Approval transaction confirmed but allowance still insufficient. Please try again.');
-    }
-
-    console.log('[DEBUG] Approval verified successfully!');
-  }
-
-  // Step 3: Close the position
-  console.log('[DEBUG] Step 3: Closing position...');
+  console.log('[DEBUG] Closing position...');
 
   // Contract signature: close_position(trader: Address, position_id: u64)
   const args = [
@@ -754,31 +614,7 @@ export async function placeLimitOrder(
     slippageToleranceBps: number;
   }
 ): Promise<Order> {
-  // Step 1: Check current allowance
-  console.log('[DEBUG] Place Limit Order - Step 1: Checking USDC allowance...');
-  let currentAllowance = await getAllowance(signerPublicKey);
-  console.log('[DEBUG] Current USDC allowance:', currentAllowance.toString());
-  console.log('[DEBUG] Required collateral:', params.collateral.toString());
-
-  // Step 2: Approve if needed
-  if (currentAllowance < params.collateral) {
-    console.log('[DEBUG] Step 2: Insufficient allowance, requesting approval...');
-    const approvalAmount = BigInt(1_000_000_000) * BigInt(10_000_000);
-    await approveUSDC(signerPublicKey, signTransaction, approvalAmount);
-
-    console.log('[DEBUG] Waiting for ledger state to propagate...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    currentAllowance = await getAllowance(signerPublicKey);
-    console.log('[DEBUG] New allowance after approval:', currentAllowance.toString());
-
-    if (currentAllowance < params.collateral) {
-      throw new Error('Approval transaction confirmed but allowance still insufficient. Please try again.');
-    }
-  }
-
-  // Step 3: Place the limit order
-  console.log('[DEBUG] Step 3: Placing limit order...');
+  console.log('[DEBUG] Placing limit order...');
 
   // Contract signature: place_limit_order(trader, asset, direction, collateral, leverage, trigger_price, trigger_above, slippage_tolerance_bps)
   // trigger_above is a boolean: true = trigger when price >= trigger_price, false = trigger when price <= trigger_price
