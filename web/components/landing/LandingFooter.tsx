@@ -77,6 +77,9 @@ export function LandingFooter() {
             <Link href="#" className="hover:text-white/30 transition-colors">
               Privacy Policy
             </Link>
+            <a href="https://drive.google.com/drive/folders/1_W3c5DZy2b4Aj8hQVcCkvObZSqCDBzmv" target="_blank" rel="noopener noreferrer" className="hover:text-white/30 transition-colors">
+              Technical Architecture
+            </a>
           </div>
           <div className="flex items-center gap-4 flex-wrap justify-center">
             {['Trade', 'Vault', 'Portfolio', 'Leaderboard', 'Faucet'].map((link) => (
