@@ -382,6 +382,7 @@ export function PositionsList({
               <div className="relative">
                 <input
                   type="number"
+                  step="0.0001"
                   value={slTpPrice}
                   onChange={(e) => setSlTpPrice(e.target.value)}
                   placeholder="0.00"
@@ -509,6 +510,7 @@ export function PositionsList({
               <div className="relative">
                 <input
                   type="number"
+                  step="0.0001"
                   value={slTpPrice}
                   onChange={(e) => setSlTpPrice(e.target.value)}
                   placeholder="0.00"
