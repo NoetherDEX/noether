@@ -331,21 +331,6 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
               onChange={(e) => setLeverage(parseInt(e.target.value))}
               className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
             />
-            {/* Leverage scale markers */}
-            <div className="relative mt-2 h-4">
-              {[1, 2, 5, 8, 10].map((mark) => (
-                <span
-                  key={mark}
-                  className={cn(
-                    'absolute text-[10px] font-mono -translate-x-1/2',
-                    leverage >= mark ? 'text-foreground' : 'text-muted-foreground/50'
-                  )}
-                  style={{ left: `${((mark - 1) / 9) * 100}%` }}
-                >
-                  {mark}x
-                </span>
-              ))}
-            </div>
           </div>
 
           {/* Quick leverage buttons */}
