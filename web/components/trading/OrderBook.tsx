@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, ExternalLink, TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
-import { formatUSD } from '@/lib/utils';
+import { formatUSD, formatPrice } from '@/lib/utils';
 import { getAllPendingOrders, toDisplayOrder } from '@/lib/stellar/market';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { useWallet } from '@/lib/hooks/useWallet';
@@ -85,11 +85,6 @@ export function OrderBook({ asset }: OrderBookProps) {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
 
-  // Format price based on asset
-  const formatPrice = (price: number) => {
-    if (asset === 'XLM') return `$${price.toFixed(4)}`;
-    return `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
 
   if (isLoading) {
     return (

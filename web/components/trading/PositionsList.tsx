@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { TrendingUp, X, Plus, RefreshCw, Share2, AlertTriangle, Shield, Target } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
-import { formatUSD, formatPercent, formatDateTime } from '@/lib/utils';
+import { formatUSD, formatPrice, formatPercent, formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import type { DisplayPosition } from '@/types';
@@ -628,11 +628,6 @@ function PositionRow({
 }) {
   const isPositive = position.pnl >= 0;
 
-  const formatPrice = (price: number, asset: string) => {
-    if (asset === 'XLM') return `$${price.toFixed(4)}`;
-    if (price < 100) return `$${price.toFixed(2)}`;
-    return `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
 
   return (
     <tr className="border-b border-white/5 hover:bg-zinc-900/50 transition-colors">
@@ -677,10 +672,10 @@ function PositionRow({
 
       <td className="px-3 py-3 text-right">
         <div className="font-mono text-muted-foreground text-[10px]">
-          {formatPrice(position.entryPrice, position.asset)}
+          {formatPrice(position.entryPrice)}
         </div>
         <div className="font-mono text-foreground">
-          {formatPrice(position.currentPrice, position.asset)}
+          {formatPrice(position.currentPrice)}
         </div>
       </td>
 
@@ -693,7 +688,7 @@ function PositionRow({
               isLiquidationRisk ? 'text-[#f97316]' : 'text-muted-foreground'
             )}
           >
-            {formatPrice(position.liquidationPrice, position.asset)}
+            {formatPrice(position.liquidationPrice)}
           </span>
         </div>
       </td>
@@ -797,15 +792,15 @@ function PositionCard({
         </div>
         <div>
           <p className="text-muted-foreground mb-1">Entry</p>
-          <p className="text-foreground font-mono">{formatUSD(position.entryPrice, 2)}</p>
+          <p className="text-foreground font-mono">{formatPrice(position.entryPrice)}</p>
         </div>
         <div>
           <p className="text-muted-foreground mb-1">Mark</p>
-          <p className="text-foreground font-mono">{formatUSD(position.currentPrice, 2)}</p>
+          <p className="text-foreground font-mono">{formatPrice(position.currentPrice)}</p>
         </div>
         <div>
           <p className="text-muted-foreground mb-1">Liq. Price</p>
-          <p className="text-[#f97316]/70 font-mono">{formatUSD(position.liquidationPrice, 2)}</p>
+          <p className="text-[#f97316]/70 font-mono">{formatPrice(position.liquidationPrice)}</p>
         </div>
       </div>
 

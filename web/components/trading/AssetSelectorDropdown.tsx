@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { formatPrice } from '@/lib/utils';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 
@@ -64,10 +65,6 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
     change24h: 0,
   };
 
-  const formatPrice = (price: number, symbol: string) => {
-    if (symbol === 'XLM') return `$${price.toFixed(4)}`;
-    return `$${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
 
   return (
     <div className="relative">
@@ -89,7 +86,7 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
             <span className="text-sm font-semibold text-foreground">{selectedAsset}-PERP</span>
           </div>
           <span className="text-xs text-muted-foreground font-mono">
-            {formatPrice(selectedAssetData.price, selectedAsset)}
+            {formatPrice(selectedAssetData.price)}
           </span>
         </div>
 
@@ -133,7 +130,7 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
                     <span className="text-xs text-muted-foreground">{asset.name}</span>
                   </div>
                   <span className="text-xs text-muted-foreground font-mono">
-                    {formatPrice(asset.price, asset.symbol)}
+                    {formatPrice(asset.price)}
                   </span>
                 </div>
 
