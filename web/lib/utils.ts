@@ -8,6 +8,7 @@ export function cn(...inputs: ClassValue[]) {
 // Re-export all utility functions from format.ts
 export {
   formatUSD,
+  formatPrice,
   formatNumber,
   formatPercent,
   bpsToPercent,

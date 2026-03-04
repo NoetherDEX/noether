@@ -13,6 +13,17 @@ export function formatUSD(value: number, decimals = 2): string {
 }
 
 /**
+ * Format a price with appropriate decimals based on magnitude.
+ * Prices < $0.01 get 6 decimals, < $1 get 4 decimals, otherwise 2.
+ */
+export function formatPrice(price: number): string {
+  const abs = Math.abs(price);
+  if (abs < 0.01) return formatUSD(price, 6);
+  if (abs < 1) return formatUSD(price, 4);
+  return formatUSD(price, 2);
+}
+
+/**
  * Format a number with commas
  */
 export function formatNumber(value: number, decimals = 2): string {
