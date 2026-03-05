@@ -1,10 +1,10 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { Download, Twitter } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
 import { PnlShareCard } from './PnlShareCard';
-import { downloadPnlImage, shareToTwitter } from '@/lib/utils/shareImage';
+import { downloadPnlImage } from '@/lib/utils/shareImage';
 import type { PnlShareData } from '@/types';
 
 interface PnlShareModalProps {
@@ -31,34 +31,20 @@ export function PnlShareModal({ isOpen, onClose, data }: PnlShareModalProps) {
     }
   };
 
-  const handleShareTwitter = () => {
-    shareToTwitter(data);
-  };
-
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Share Trade" size="md">
       <div className="flex flex-col items-center gap-4">
         <PnlShareCard ref={cardRef} data={data} />
 
-        <div className="flex gap-3 w-full">
-          <Button
-            variant="secondary"
-            className="flex-1"
-            onClick={handleDownload}
-            disabled={isGenerating}
-          >
-            <Download className="w-4 h-4 mr-2" />
-            {isGenerating ? 'Generating...' : 'Download PNG'}
-          </Button>
-          <Button
-            variant="primary"
-            className="flex-1"
-            onClick={handleShareTwitter}
-          >
-            <Twitter className="w-4 h-4 mr-2" />
-            Share on X
-          </Button>
-        </div>
+        <Button
+          variant="primary"
+          className="w-full"
+          onClick={handleDownload}
+          disabled={isGenerating}
+        >
+          <Download className="w-4 h-4 mr-2" />
+          {isGenerating ? 'Generating...' : 'Download PNG'}
+        </Button>
       </div>
     </Modal>
   );
