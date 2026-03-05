@@ -133,6 +133,11 @@ html, body {
   overflow-x: hidden;
 }
 
+/* When snap-container is present (landing page), prevent body scroll to avoid double-scroll conflict */
+body:has(.snap-container) {
+  overflow-y: hidden;
+}
+
 /* Ensure WalletConnect / Reown AppKit modal is always on top */
 w3m-modal, appkit-modal {
   --w3m-z-index: 10000 !important;
