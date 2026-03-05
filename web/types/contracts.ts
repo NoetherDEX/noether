@@ -125,6 +125,19 @@ export interface Trade {
   timestamp: Date;
 }
 
+// PnL share card data
+export interface PnlShareData {
+  asset: string;
+  direction: Direction;
+  leverage?: number;
+  entryPrice: number;
+  exitPrice: number;
+  pnl: number;
+  pnlPercent: number;
+  date: Date;
+  isOpen: boolean;
+}
+
 // Asset info
 export interface Asset {
   symbol: string;

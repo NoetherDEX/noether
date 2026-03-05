@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Clock, ExternalLink, RefreshCw } from 'lucide-react';
+import { Clock, ExternalLink, RefreshCw, Share2 } from 'lucide-react';
 import { Badge } from '@/components/ui';
 import { formatUSD, formatDateTime, shortenTxHash } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { getTradeHistory } from '@/lib/stellar/market';
-import type { Trade } from '@/types';
+import { PnlShareModal } from '@/components/share/PnlShareModal';
+import type { Trade, PnlShareData } from '@/types';
 
 interface TradeHistoryProps {
   trades: Trade[];
@@ -17,6 +18,28 @@ interface TradeHistoryProps {
 }
 
 export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: TradeHistoryProps) {
+  const [shareData, setShareData] = useState<PnlShareData | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+
+  const handleShare = (trade: Trade) => {
+    const grossPnl = trade.pnl ?? 0;
+    const fee = trade.fee ?? 0;
+    const netPnl = grossPnl - Math.abs(fee);
+    const netPnlPercent = trade.size ? (netPnl / trade.size) * 100 : 0;
+
+    setShareData({
+      asset: trade.asset || 'XLM',
+      direction: trade.direction || 'Long',
+      entryPrice: trade.entryPrice ?? 0,
+      exitPrice: trade.price ?? 0,
+      pnl: netPnl,
+      pnlPercent: netPnlPercent,
+      date: trade.timestamp,
+      isOpen: false,
+    });
+    setShowShareModal(true);
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -86,15 +109,28 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
               <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Net PnL</th>
               <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Date</th>
               <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Tx</th>
+              <th className="text-center py-3 px-3 font-medium whitespace-nowrap"></th>
             </tr>
           </thead>
           <tbody>
             {trades.map((trade, index) => (
-              <TradeRow key={trade.id} trade={trade} index={trades.length - index} />
+              <TradeRow
+                key={trade.id}
+                trade={trade}
+                index={trades.length - index}
+                onShare={trade.type === 'close' || trade.type === 'liquidation' ? () => handleShare(trade) : undefined}
+              />
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* Share PnL Modal */}
+      <PnlShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        data={shareData}
+      />
     </>
   );
 }
@@ -103,9 +139,11 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
 function TradeRow({
   trade,
   index,
+  onShare,
 }: {
   trade: Trade;
   index: number;
+  onShare?: () => void;
 }) {
   const grossPnl = trade.pnl ?? 0;
   const fee = trade.fee ?? 0;
@@ -184,6 +222,18 @@ function TradeRow({
           </a>
         ) : (
           <span className="text-neutral-600">-</span>
+        )}
+      </td>
+      {/* Share */}
+      <td className="py-3 px-3 text-center">
+        {onShare && (
+          <button
+            onClick={onShare}
+            className="p-1.5 rounded hover:bg-white/10 text-neutral-500 hover:text-white transition-colors"
+            title="Share PnL"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+          </button>
         )}
       </td>
     </tr>
