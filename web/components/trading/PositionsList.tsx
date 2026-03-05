@@ -6,7 +6,8 @@ import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPrice, formatPercent, formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import { TokenIcon } from '@/components/ui/TokenIcon';
-import type { DisplayPosition } from '@/types';
+import type { DisplayPosition, PnlShareData } from '@/types';
+import { PnlShareModal } from '@/components/share/PnlShareModal';
 
 interface PositionsListProps {
   positions: DisplayPosition[];
@@ -37,6 +38,23 @@ export function PositionsList({
   const [customSlTpSlippage, setCustomSlTpSlippage] = useState('');
   const [isClosing, setIsClosing] = useState(false);
   const [isSettingSLTP, setIsSettingSLTP] = useState(false);
+  const [shareData, setShareData] = useState<PnlShareData | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+
+  const handleShare = (position: DisplayPosition) => {
+    setShareData({
+      asset: position.asset,
+      direction: position.direction,
+      leverage: position.leverage,
+      entryPrice: position.entryPrice,
+      exitPrice: position.currentPrice,
+      pnl: position.pnl,
+      pnlPercent: position.pnlPercent,
+      date: position.openedAt,
+      isOpen: true,
+    });
+    setShowShareModal(true);
+  };
 
   if (isLoading) {
     return (
@@ -208,6 +226,7 @@ export function PositionsList({
                   setActionModal('take-profit');
                 }}
                 hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
+                onShare={() => handleShare(position)}
               />
             ))}
           </tbody>
@@ -245,6 +264,7 @@ export function PositionsList({
               setActionModal('take-profit');
             }}
             hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
+            onShare={() => handleShare(position)}
           />
         ))}
       </div>
@@ -604,6 +624,13 @@ export function PositionsList({
           </div>
         )}
       </Modal>
+
+      {/* Share PnL Modal */}
+      <PnlShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        data={shareData}
+      />
     </>
   );
 }
@@ -617,6 +644,7 @@ function PositionRow({
   onSetStopLoss,
   onSetTakeProfit,
   hasSlTpCallbacks,
+  onShare,
 }: {
   position: DisplayPosition;
   isLiquidationRisk: boolean;
@@ -625,6 +653,7 @@ function PositionRow({
   onSetStopLoss: () => void;
   onSetTakeProfit: () => void;
   hasSlTpCallbacks: boolean;
+  onShare: () => void;
 }) {
   const isPositive = position.pnl >= 0;
 
@@ -723,6 +752,13 @@ function PositionRow({
             </>
           )}
           <button
+            onClick={onShare}
+            className="p-1.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+            title="Share PnL"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+          </button>
+          <button
             onClick={onAddCollateral}
             className="p-1.5 rounded hover:bg-zinc-900/50 text-muted-foreground hover:text-foreground transition-colors"
             title="Add Collateral"
@@ -751,6 +787,7 @@ function PositionCard({
   onSetStopLoss,
   onSetTakeProfit,
   hasSlTpCallbacks,
+  onShare,
 }: {
   position: DisplayPosition;
   onClose: () => void;
@@ -758,6 +795,7 @@ function PositionCard({
   onSetStopLoss: () => void;
   onSetTakeProfit: () => void;
   hasSlTpCallbacks: boolean;
+  onShare: () => void;
 }) {
   const isPositive = position.pnl >= 0;
 
@@ -775,13 +813,22 @@ function PositionCard({
             {formatDateTime(position.openedAt)}
           </p>
         </div>
-        <div className="text-right">
-          <div className={cn('text-lg font-semibold font-mono', isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]')}>
-            {isPositive ? '+' : ''}{formatUSD(position.pnl)}
+        <div className="flex items-start gap-2">
+          <div className="text-right">
+            <div className={cn('text-lg font-semibold font-mono', isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]')}>
+              {isPositive ? '+' : ''}{formatUSD(position.pnl)}
+            </div>
+            <div className={cn('text-sm font-mono', isPositive ? 'text-[#22c55e]/70' : 'text-[#ef4444]/70')}>
+              {isPositive ? '+' : ''}{formatPercent(position.pnlPercent)}
+            </div>
           </div>
-          <div className={cn('text-sm font-mono', isPositive ? 'text-[#22c55e]/70' : 'text-[#ef4444]/70')}>
-            {isPositive ? '+' : ''}{formatPercent(position.pnlPercent)}
-          </div>
+          <button
+            onClick={onShare}
+            className="p-1.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+            title="Share PnL"
+          >
+            <Share2 className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
