@@ -26,21 +26,13 @@ export const PnlShareCard = forwardRef<HTMLDivElement, { data: PnlShareData }>(
           <div className="bg-[#0a0a0c] rounded-2xl p-6">
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
-              <div className="flex items-center gap-2">
-                <img
-                  src="/noethersvg.svg"
-                  alt="Noether"
-                  width={24}
-                  height={24}
-                  crossOrigin="anonymous"
-                />
-                <span
-                  style={{ fontFamily: 'Sora, Inter, sans-serif' }}
-                  className="text-white font-semibold text-sm"
-                >
-                  Noether
-                </span>
-              </div>
+              <img
+                src="/noethersvg.svg"
+                alt="Noether"
+                width={120}
+                height={28}
+                crossOrigin="anonymous"
+              />
               <span
                 className="text-[10px] font-medium px-2 py-0.5 rounded-full"
                 style={{
@@ -81,7 +73,7 @@ export const PnlShareCard = forwardRef<HTMLDivElement, { data: PnlShareData }>(
                     {data.direction}
                   </span>
                   {data.leverage && (
-                    <span className="text-neutral-400 text-xs">{data.leverage}x</span>
+                    <span className="text-neutral-400 text-xs">{Math.round(data.leverage)}x</span>
                   )}
                 </div>
               </div>
