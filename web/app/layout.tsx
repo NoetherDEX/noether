@@ -37,6 +37,7 @@ export const metadata: Metadata = {
 }
 
 import { Providers } from './providers'
+import { FeedbackButton } from '@/components/feedback/FeedbackButton'
 
 export default function RootLayout({
   children,
@@ -49,6 +50,7 @@ export default function RootLayout({
         <Providers>
           {children}
         </Providers>
+        <FeedbackButton />
         <Toaster
           position="bottom-center"
           toastOptions={{
