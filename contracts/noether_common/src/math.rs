@@ -320,6 +320,7 @@ pub fn safe_sub(a: i128, b: i128) -> Result<i128, NoetherError> {
 mod tests {
     use super::*;
     use soroban_sdk::{Env, Address, Symbol};
+    use soroban_sdk::testutils::Address as _;
 
     fn create_test_position(env: &Env, direction: Direction) -> Position {
         Position {

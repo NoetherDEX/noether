@@ -136,6 +136,7 @@ pub fn time_until_next_funding(last_funding_time: u64, current_time: u64, interv
 #[cfg(test)]
 mod tests {
     use super::*;
+    use noether_common::PRECISION;
 
     #[test]
     fn test_balanced_market() {

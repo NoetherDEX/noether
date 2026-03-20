@@ -99,7 +99,9 @@ pub fn calculate_distance_to_liquidation_pct(position: &Position, current_price:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use noether_common::PRECISION;
     use soroban_sdk::{Env, Address, Symbol};
+    use soroban_sdk::testutils::Address as _;
 
     fn create_long_position(env: &Env) -> Position {
         Position {

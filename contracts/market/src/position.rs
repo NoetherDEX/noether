@@ -94,6 +94,7 @@ pub fn validate_position_params(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use noether_common::PRECISION;
 
     #[test]
     fn test_validate_params_valid() {

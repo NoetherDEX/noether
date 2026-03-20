@@ -39,6 +39,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec, Into
 use noether_common::{
     NoetherError, Position, Direction, MarketConfig, MarketStats,
     Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
+    FeeTier, TraderFeeInfo, VolumeRecord,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
     calculate_trading_fee, calculate_funding_rate, calculate_funding_payment,
     calculate_keeper_reward, should_liquidate,
@@ -107,6 +108,10 @@ impl MarketContract {
         set_total_short_size(&env, 0);
         set_last_funding_time(&env, env.ledger().timestamp());
         init_position_index(&env);
+
+        // Initialize fee tiers with defaults
+        let default_tiers = trading::default_fee_tiers(&env);
+        set_fee_tiers(&env, &default_tiers);
 
         set_initialized(&env, true);
         set_paused(&env, false);
@@ -190,8 +195,29 @@ impl MarketContract {
             config.maintenance_margin_bps,
         );
 
-        // Calculate and deduct trading fee
-        let fee = calculate_trading_fee(size, config.trading_fee_bps);
+        // Calculate fee using maker/taker tier system
+        // Market orders are always taker
+        let fee_tiers = get_fee_tiers(&env);
+        let fee = if fee_tiers.len() > 0 {
+            let mut volume_record = get_trader_volume(&env, &trader)
+                .unwrap_or(VolumeRecord {
+                    daily_volumes: Vec::new(&env),
+                    last_update_day: 0,
+                });
+            let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+            let rolling_volume = trading::sum_rolling_volume(&volume_record);
+            let tier = trading::determine_fee_tier(rolling_volume, &fee_tiers);
+            let calculated_fee = trading::calculate_tiered_fee(size, false, &tier); // false = taker
+
+            // Record this trade's volume
+            trading::record_trade_volume(&env, &mut volume_record, size, current_day);
+            set_trader_volume(&env, &trader, &volume_record);
+
+            calculated_fee
+        } else {
+            // Fallback to legacy flat fee if no tiers configured
+            calculate_trading_fee(size, config.trading_fee_bps)
+        };
         let net_collateral = collateral - fee;
 
         // Transfer collateral from trader to market contract
@@ -335,6 +361,19 @@ impl MarketContract {
                 let total = get_total_short_size(&env);
                 set_total_short_size(&env, total - position.size);
             }
+        }
+
+        // Record volume for fee tier tracking
+        let fee_tiers = get_fee_tiers(&env);
+        if fee_tiers.len() > 0 {
+            let mut volume_record = get_trader_volume(&env, &trader)
+                .unwrap_or(VolumeRecord {
+                    daily_volumes: Vec::new(&env),
+                    last_update_day: 0,
+                });
+            let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+            trading::record_trade_volume(&env, &mut volume_record, position.size, current_day);
+            set_trader_volume(&env, &trader, &volume_record);
         }
 
         // Delete position
@@ -802,6 +841,79 @@ impl MarketContract {
     /// Check if paused.
     pub fn is_paused(env: Env) -> bool {
         get_paused(&env)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Fee Tier Functions
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Admin: Set fee tier configuration.
+    /// Tiers must be sorted by min_volume ascending.
+    pub fn set_fee_tiers_config(
+        env: Env,
+        tiers: Vec<FeeTier>,
+    ) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+
+        if tiers.len() == 0 {
+            return Err(NoetherError::InvalidParameter);
+        }
+
+        // Validate tiers are sorted by min_volume
+        let mut prev_volume: i128 = -1;
+        for i in 0..tiers.len() {
+            let tier = tiers.get(i).unwrap();
+            if tier.min_volume <= prev_volume {
+                return Err(NoetherError::InvalidParameter);
+            }
+            prev_volume = tier.min_volume;
+        }
+
+        set_fee_tiers(&env, &tiers);
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_tiers_updated"),),
+            tiers.len(),
+        );
+
+        Ok(())
+    }
+
+    /// View: Get current fee tier configuration.
+    pub fn get_fee_tiers_config(env: Env) -> Vec<FeeTier> {
+        get_fee_tiers(&env)
+    }
+
+    /// View: Get a trader's fee information (volume, tier, rates).
+    pub fn get_trader_fee_info(
+        env: Env,
+        trader: Address,
+    ) -> TraderFeeInfo {
+        let fee_tiers = get_fee_tiers(&env);
+        let volume_record = get_trader_volume(&env, &trader);
+
+        let volume = match volume_record {
+            Some(mut record) => {
+                let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+                trading::rotate_volume_window(&env, &mut record, current_day);
+                trading::sum_rolling_volume(&record)
+            }
+            None => 0,
+        };
+
+        if fee_tiers.len() == 0 {
+            // No tiers configured, return base info
+            let config = get_config(&env);
+            return TraderFeeInfo {
+                volume_14d: volume,
+                tier: 0,
+                maker_fee_bps: config.base_maker_fee_bps,
+                taker_fee_bps: config.base_taker_fee_bps,
+                next_tier_volume: 0,
+            };
+        }
+
+        trading::build_trader_fee_info(&env, volume, &fee_tiers)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1452,8 +1564,28 @@ impl MarketContract {
             config.maintenance_margin_bps,
         );
 
-        // Calculate trading fee
-        let trading_fee = calculate_trading_fee(size, config.trading_fee_bps);
+        // Calculate trading fee using maker/taker tier system
+        // Limit orders that were resting on book = MAKER
+        let fee_tiers = get_fee_tiers(env);
+        let trading_fee = if fee_tiers.len() > 0 {
+            let mut volume_record = get_trader_volume(env, &order.trader)
+                .unwrap_or(VolumeRecord {
+                    daily_volumes: Vec::new(env),
+                    last_update_day: 0,
+                });
+            let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+            let rolling_volume = trading::sum_rolling_volume(&volume_record);
+            let tier = trading::determine_fee_tier(rolling_volume, &fee_tiers);
+            let calculated_fee = trading::calculate_tiered_fee(size, true, &tier); // true = maker
+
+            // Record this trade's volume
+            trading::record_trade_volume(env, &mut volume_record, size, current_day);
+            set_trader_volume(env, &order.trader, &volume_record);
+
+            calculated_fee
+        } else {
+            calculate_trading_fee(size, config.trading_fee_bps)
+        };
 
         // Total fees = trading fee + keeper fee
         let total_fees = trading_fee + keeper_fee;
@@ -1582,6 +1714,19 @@ impl MarketContract {
             }
         }
 
+        // Record volume for fee tier tracking
+        let fee_tiers = get_fee_tiers(env);
+        if fee_tiers.len() > 0 {
+            let mut volume_record = get_trader_volume(env, &position.trader)
+                .unwrap_or(VolumeRecord {
+                    daily_volumes: Vec::new(env),
+                    last_update_day: 0,
+                });
+            let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+            trading::record_trade_volume(env, &mut volume_record, position.size, current_day);
+            set_trader_volume(env, &position.trader, &volume_record);
+        }
+
         // Remove SL/TP links
         remove_position_stop_loss(env, position.id);
         remove_position_take_profit(env, position.id);
@@ -1615,5 +1760,723 @@ impl MarketContract {
 
 #[cfg(test)]
 mod tests {
-    // Integration tests in separate file due to complexity
+    use super::*;
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, token::StellarAssetClient, Env, Address, Symbol};
+    use noether_common::{PRECISION, FeeTier, MarketConfig};
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Test Helpers
+    // ═══════════════════════════════════════════════════════════════════
+
+    struct TestEnv {
+        env: Env,
+        admin: Address,
+        market_id: Address,
+        market: MarketContractClient<'static>,
+        usdc_token: Address,
+        vault_id: Address,
+        oracle_id: Address,
+    }
+
+    fn setup() -> TestEnv {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Set a realistic timestamp (so funding/volume day calc works)
+        env.ledger().set_timestamp(1_700_000_000); // ~Nov 2023
+
+        let admin = Address::generate(&env);
+
+        // Deploy USDC token (SAC test token)
+        let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let usdc_token = usdc_sac.address();
+
+        // Deploy mock oracle
+        let oracle_id = env.register_contract_wasm(None, mock_oracle::WASM);
+        let oracle_client = mock_oracle::Client::new(&env, &oracle_id);
+        oracle_client.initialize(&admin);
+
+        // Set prices: BTC=$60k, ETH=$3k, XLM=$0.10
+        oracle_client.set_price(&Symbol::new(&env, "BTC"), &(60_000 * PRECISION));
+        oracle_client.set_price(&Symbol::new(&env, "ETH"), &(3_000 * PRECISION));
+        oracle_client.set_price(&Symbol::new(&env, "XLM"), &(PRECISION / 10));
+
+        // Deploy vault (simplified - use mock that just approves liquidity)
+        let vault_id = env.register_contract_wasm(None, vault::WASM);
+
+        // Deploy NOE token for vault
+        let noe_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let noe_token = noe_sac.address();
+
+        // Deploy market
+        let market_id = env.register_contract(None, MarketContract);
+        let market = MarketContractClient::new(&env, &market_id);
+
+        // Initialize vault
+        let vault_client = vault::Client::new(&env, &vault_id);
+        vault_client.initialize(
+            &admin,
+            &usdc_token,
+            &noe_token,
+            &market_id,
+            &30,  // 0.3% deposit fee
+            &30,  // 0.3% withdraw fee
+        );
+
+        // Mint NOE to vault (pre-mint model)
+        let noe_admin = StellarAssetClient::new(&env, &noe_token);
+        noe_admin.mint(&vault_id, &(1_000_000_000 * PRECISION));
+
+        // Deposit USDC into vault for liquidity
+        let usdc_admin = StellarAssetClient::new(&env, &usdc_token);
+        usdc_admin.mint(&admin, &(10_000_000 * PRECISION)); // $10M
+        vault_client.deposit(&admin, &(10_000_000 * PRECISION));
+
+        // Initialize market with config
+        let config = MarketConfig::default();
+        market.initialize(&admin, &oracle_id, &vault_id, &usdc_token, &config);
+
+        TestEnv { env, admin, market_id, market, usdc_token, vault_id, oracle_id }
+    }
+
+    fn fund_trader(test: &TestEnv, amount: i128) -> Address {
+        let trader = Address::generate(&test.env);
+        let usdc_admin = StellarAssetClient::new(&test.env, &test.usdc_token);
+        usdc_admin.mint(&trader, &amount);
+        trader
+    }
+
+    // Import contract WASMs for cross-contract testing
+    mod mock_oracle {
+        soroban_sdk::contractimport!(
+            file = "../target/wasm32-unknown-unknown/release/mock_oracle.wasm"
+        );
+    }
+
+    mod vault {
+        soroban_sdk::contractimport!(
+            file = "../target/wasm32-unknown-unknown/release/vault.wasm"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // T1.3 Fee Tier Tests - Contract Integration
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_open_position_charges_taker_fee() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION); // $1000
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION), // $100 collateral
+            &5,                  // 5x leverage = $500 position
+            &Direction::Long,
+        );
+
+        // Taker fee at tier 0 = 0.05% of $500 = $0.25
+        // net_collateral = $100 - $0.25 = $99.75
+        let expected_fee = 500 * PRECISION * 5 / 10_000; // 0.05% of $500
+        let expected_collateral = 100 * PRECISION - expected_fee;
+        assert_eq!(position.collateral, expected_collateral);
+    }
+
+    #[test]
+    fn test_default_fee_tiers_set_on_init() {
+        let test = setup();
+
+        let tiers = test.market.get_fee_tiers_config();
+        assert_eq!(tiers.len(), 4);
+
+        // Tier 0: base
+        let t0 = tiers.get(0).unwrap();
+        assert_eq!(t0.maker_fee_bps, 2);
+        assert_eq!(t0.taker_fee_bps, 5);
+    }
+
+    #[test]
+    fn test_get_trader_fee_info_no_volume() {
+        let test = setup();
+        let trader = Address::generate(&test.env);
+
+        let info = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info.volume_14d, 0);
+        assert_eq!(info.tier, 0);
+        assert_eq!(info.maker_fee_bps, 2);
+        assert_eq!(info.taker_fee_bps, 5);
+    }
+
+    #[test]
+    fn test_volume_recorded_on_open_position() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        // Open position: $100 collateral, 5x = $500 size
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        let info = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info.volume_14d, 500 * PRECISION); // $500 position size recorded
+    }
+
+    #[test]
+    fn test_volume_accumulates_multiple_trades() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        // Trade 1: $500
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Trade 2: $1000
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &10,
+            &Direction::Short,
+        );
+
+        let info = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info.volume_14d, 1500 * PRECISION); // $500 + $1000
+    }
+
+    #[test]
+    fn test_admin_set_fee_tiers() {
+        let test = setup();
+
+        // Set custom tiers
+        let mut tiers = Vec::new(&test.env);
+        tiers.push_back(FeeTier {
+            min_volume: 0,
+            maker_fee_bps: 3,
+            taker_fee_bps: 8,
+        });
+        tiers.push_back(FeeTier {
+            min_volume: 500_000 * PRECISION,
+            maker_fee_bps: 1,
+            taker_fee_bps: 4,
+        });
+
+        test.market.set_fee_tiers_config(&tiers);
+
+        let stored = test.market.get_fee_tiers_config();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored.get(0).unwrap().taker_fee_bps, 8);
+        assert_eq!(stored.get(1).unwrap().taker_fee_bps, 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #5)")] // InvalidParameter
+    fn test_set_fee_tiers_invalid_order() {
+        let test = setup();
+
+        // Tiers not sorted by min_volume - should fail
+        let mut tiers = Vec::new(&test.env);
+        tiers.push_back(FeeTier {
+            min_volume: 1_000_000 * PRECISION,
+            maker_fee_bps: 1,
+            taker_fee_bps: 3,
+        });
+        tiers.push_back(FeeTier {
+            min_volume: 0, // lower than previous - invalid!
+            maker_fee_bps: 2,
+            taker_fee_bps: 5,
+        });
+
+        test.market.set_fee_tiers_config(&tiers);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #5)")] // InvalidParameter
+    fn test_set_fee_tiers_empty() {
+        let test = setup();
+        let tiers = Vec::new(&test.env);
+        test.market.set_fee_tiers_config(&tiers);
+    }
+
+    #[test]
+    fn test_custom_taker_fee_applied() {
+        let test = setup();
+
+        // Set higher taker fee
+        let mut tiers = Vec::new(&test.env);
+        tiers.push_back(FeeTier {
+            min_volume: 0,
+            maker_fee_bps: 2,
+            taker_fee_bps: 10, // 0.1% (same as old flat fee)
+        });
+        test.market.set_fee_tiers_config(&tiers);
+
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION), // $100
+            &10,                 // 10x = $1000
+            &Direction::Long,
+        );
+
+        // 0.1% of $1000 = $1
+        let expected_fee = 1000 * PRECISION * 10 / 10_000;
+        let expected_collateral = 100 * PRECISION - expected_fee;
+        assert_eq!(position.collateral, expected_collateral);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Core Trading Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_open_position_long() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        assert_eq!(position.id, 1);
+        assert_eq!(position.size, 500 * PRECISION);
+        assert_eq!(position.leverage, 5);
+        assert_eq!(position.entry_price, PRECISION / 10); // $0.10
+    }
+
+    #[test]
+    fn test_open_position_short() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Short,
+        );
+
+        assert_eq!(position.id, 1);
+        assert_eq!(position.size, 500 * PRECISION);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #22)")] // InsufficientCollateral
+    fn test_open_position_below_min_collateral() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Min collateral is 10 USDC
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(5 * PRECISION), // $5 - below minimum
+            &5,
+            &Direction::Long,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #21)")] // InvalidLeverage
+    fn test_open_position_leverage_too_high() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &20, // max is 10
+            &Direction::Long,
+        );
+    }
+
+    #[test]
+    fn test_close_position_profit() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Open long at $0.10
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Price goes up 10% to $0.11
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 11 / 100));
+
+        // Close position - should profit
+        let pnl = test.market.close_position(&trader, &position.id);
+        assert!(pnl > 0);
+    }
+
+    #[test]
+    fn test_close_position_loss() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Open long at $0.10
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Price goes down 5% to $0.095
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 95 / 1000));
+
+        // Close position - should lose
+        let pnl = test.market.close_position(&trader, &position.id);
+        assert!(pnl < 0);
+    }
+
+    #[test]
+    fn test_close_position_records_volume() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Volume after open: $500
+        let info1 = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info1.volume_14d, 500 * PRECISION);
+
+        // Close - volume should add another $500
+        test.market.close_position(&trader, &position.id);
+
+        let info2 = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info2.volume_14d, 1000 * PRECISION);
+    }
+
+    #[test]
+    fn test_add_collateral() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        let original_collateral = position.collateral;
+
+        // Add $50 collateral
+        test.market.add_collateral(&trader, &position.id, &(50 * PRECISION));
+
+        let updated = test.market.get_position(&position.id).unwrap();
+        assert_eq!(updated.collateral, original_collateral + 50 * PRECISION);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Liquidation Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_is_liquidatable_healthy_position() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &10,
+            &Direction::Long,
+        );
+
+        assert_eq!(test.market.is_liquidatable(&position.id), false);
+    }
+
+    #[test]
+    fn test_is_liquidatable_underwater() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Open 10x long at $0.10
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &10,
+            &Direction::Long,
+        );
+
+        // Crash price to $0.05 (50% drop, 10x leverage = 500% loss)
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 5 / 100));
+
+        assert_eq!(test.market.is_liquidatable(&position.id), true);
+    }
+
+    #[test]
+    fn test_liquidation_execution() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = Address::generate(&test.env);
+
+        // Open 10x long at $0.10
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &10,
+            &Direction::Long,
+        );
+
+        // Crash price below liquidation
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 5 / 100));
+
+        // Keeper liquidates
+        let reward = test.market.liquidate(&keeper, &position.id);
+        assert!(reward >= 0);
+
+        // Position should be deleted
+        let pos = test.market.get_position(&position.id);
+        assert!(pos.is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Order Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_place_limit_order() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Place limit long: buy XLM if price drops to $0.08
+        let order = test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION), // $100 collateral
+            &5,                  // 5x
+            &(PRECISION * 8 / 100), // trigger at $0.08
+            &false,              // trigger below
+            &100,                // 1% slippage
+        );
+
+        assert_eq!(order.id, 1);
+        assert_eq!(order.collateral, 100 * PRECISION);
+    }
+
+    #[test]
+    fn test_cancel_limit_order_refund() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let usdc = token::Client::new(&test.env, &test.usdc_token);
+        let balance_before = usdc.balance(&trader);
+
+        // Place limit order - locks $100
+        let order = test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION * 8 / 100),
+            &false,
+            &100,
+        );
+
+        let balance_after_order = usdc.balance(&trader);
+        assert_eq!(balance_after_order, balance_before - 100 * PRECISION);
+
+        // Cancel - should refund
+        test.market.cancel_order(&trader, &order.id);
+
+        let balance_after_cancel = usdc.balance(&trader);
+        assert_eq!(balance_after_cancel, balance_before);
+    }
+
+    #[test]
+    fn test_set_stop_loss() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Set SL at $0.09 (below entry of $0.10)
+        let sl = test.market.set_stop_loss(
+            &trader,
+            &position.id,
+            &(PRECISION * 9 / 100),
+            &200, // 2% slippage
+        );
+
+        assert_eq!(sl.position_id, position.id);
+    }
+
+    #[test]
+    fn test_set_take_profit() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let position = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Set TP at $0.12 (above entry of $0.10)
+        let tp = test.market.set_take_profit(
+            &trader,
+            &position.id,
+            &(PRECISION * 12 / 100),
+            &200,
+        );
+
+        assert_eq!(tp.position_id, position.id);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Market Stats & View Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_market_stats_update() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        let stats_before = test.market.get_market_stats();
+        assert_eq!(stats_before.total_long_size, 0);
+        assert_eq!(stats_before.total_short_size, 0);
+        assert_eq!(stats_before.open_position_count, 0);
+
+        // Open long $500
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        let stats = test.market.get_market_stats();
+        assert_eq!(stats.total_long_size, 500 * PRECISION);
+        assert_eq!(stats.open_position_count, 1);
+
+        // Open short $1000
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &10,
+            &Direction::Short,
+        );
+
+        let stats2 = test.market.get_market_stats();
+        assert_eq!(stats2.total_short_size, 1000 * PRECISION);
+        assert_eq!(stats2.open_position_count, 2);
+    }
+
+    #[test]
+    fn test_get_config() {
+        let test = setup();
+        let config = test.market.get_config();
+
+        assert_eq!(config.max_leverage, 10);
+        assert_eq!(config.min_collateral, 10 * PRECISION);
+        assert_eq!(config.base_maker_fee_bps, 2);
+        assert_eq!(config.base_taker_fee_bps, 5);
+    }
+
+    #[test]
+    fn test_pause_unpause() {
+        let test = setup();
+
+        assert_eq!(test.market.is_paused(), false);
+
+        test.market.pause();
+        assert_eq!(test.market.is_paused(), true);
+
+        test.market.unpause();
+        assert_eq!(test.market.is_paused(), false);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #4)")] // Paused
+    fn test_cannot_trade_when_paused() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        test.market.pause();
+
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+    }
+
+    #[test]
+    fn test_multiple_positions_same_trader() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        let p1 = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        let p2 = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "BTC"),
+            &(200 * PRECISION),
+            &3,
+            &Direction::Short,
+        );
+
+        assert_ne!(p1.id, p2.id);
+
+        let positions = test.market.get_positions(&trader);
+        assert_eq!(positions.len(), 2);
+    }
 }

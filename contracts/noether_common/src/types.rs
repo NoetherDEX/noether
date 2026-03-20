@@ -140,6 +140,8 @@ pub struct MarketConfig {
     /// Liquidation fee in basis points (e.g., 500 = 5%)
     pub liquidation_fee_bps: u32,
     /// Trading fee in basis points (e.g., 10 = 0.1%)
+    /// DEPRECATED: Use base_maker_fee_bps / base_taker_fee_bps instead.
+    /// Kept for backward compatibility with existing deployments.
     pub trading_fee_bps: u32,
     /// Base funding rate in basis points per hour
     pub base_funding_rate_bps: u32,
@@ -149,6 +151,12 @@ pub struct MarketConfig {
     pub max_price_staleness: u64,
     /// Maximum allowed oracle deviation in basis points
     pub max_oracle_deviation_bps: u32,
+    /// Base maker fee in basis points (e.g., 2 = 0.02%)
+    /// Maker = limit orders resting on the order book
+    pub base_maker_fee_bps: u32,
+    /// Base taker fee in basis points (e.g., 5 = 0.05%)
+    /// Taker = market orders, immediate fills
+    pub base_taker_fee_bps: u32,
 }
 
 impl Default for MarketConfig {
@@ -158,13 +166,59 @@ impl Default for MarketConfig {
             max_leverage: 10,                         // 10x max
             maintenance_margin_bps: 100,              // 1% maintenance margin
             liquidation_fee_bps: 500,                 // 5% liquidation fee
-            trading_fee_bps: 10,                      // 0.1% trading fee
+            trading_fee_bps: 10,                      // 0.1% (deprecated, fallback)
             base_funding_rate_bps: 1,                 // 0.01% per hour base rate
             max_position_size: 100_000 * PRECISION,  // 100,000 USDC max position
             max_price_staleness: 60,                  // 60 seconds max staleness
             max_oracle_deviation_bps: 100,            // 1% max oracle deviation
+            base_maker_fee_bps: 2,                    // 0.02% maker fee
+            base_taker_fee_bps: 5,                    // 0.05% taker fee
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fee Tier System (Maker/Taker with Volume Discounts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A volume-based fee tier.
+/// Users with higher 14-day rolling volume get lower fees.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeTier {
+    /// Minimum 14-day rolling volume to qualify for this tier (7 decimals)
+    pub min_volume: i128,
+    /// Maker fee rate in basis points
+    pub maker_fee_bps: u32,
+    /// Taker fee rate in basis points
+    pub taker_fee_bps: u32,
+}
+
+/// Per-trader 14-day rolling volume record.
+/// Uses a fixed 14-slot circular buffer, one slot per day.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VolumeRecord {
+    /// Daily volume for each of the last 14 days (7 decimals each)
+    pub daily_volumes: soroban_sdk::Vec<i128>,
+    /// The day number (unix_timestamp / 86400) when this record was last updated
+    pub last_update_day: u64,
+}
+
+/// Fee information for a specific trader (view return type)
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct TraderFeeInfo {
+    /// Total 14-day rolling volume (7 decimals)
+    pub volume_14d: i128,
+    /// Current fee tier index (0-3)
+    pub tier: u32,
+    /// Maker fee rate applied to this trader (basis points)
+    pub maker_fee_bps: u32,
+    /// Taker fee rate applied to this trader (basis points)
+    pub taker_fee_bps: u32,
+    /// Volume needed to reach next tier (7 decimals, 0 if already max tier)
+    pub next_tier_volume: i128,
 }
 
 /// Asset type for oracle price queries (SEP-0040 compatible)

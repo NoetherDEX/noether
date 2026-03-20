@@ -3,7 +3,7 @@
 //! Storage keys and helpers for the Market contract.
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
-use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus};
+use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
@@ -54,6 +54,10 @@ pub enum DataKey {
     PositionStopLoss(u64),
     /// Take-profit order ID attached to a position
     PositionTakeProfit(u64),
+    /// Per-trader 14-day rolling volume record
+    TraderVolume(Address),
+    /// Fee tier configuration (Vec<FeeTier>)
+    FeeTiers,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -502,4 +506,30 @@ pub fn set_position_take_profit(env: &Env, position_id: u64, order_id: u64) {
 
 pub fn remove_position_take_profit(env: &Env, position_id: u64) {
     env.storage().persistent().remove(&DataKey::PositionTakeProfit(position_id));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fee Tier Storage
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub fn get_fee_tiers(env: &Env) -> Vec<FeeTier> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::FeeTiers)
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn set_fee_tiers(env: &Env, tiers: &Vec<FeeTier>) {
+    env.storage().persistent().set(&DataKey::FeeTiers, tiers);
+    extend_persistent_ttl(env, &DataKey::FeeTiers);
+}
+
+pub fn get_trader_volume(env: &Env, trader: &Address) -> Option<VolumeRecord> {
+    env.storage().persistent().get(&DataKey::TraderVolume(trader.clone()))
+}
+
+pub fn set_trader_volume(env: &Env, trader: &Address, record: &VolumeRecord) {
+    let key = DataKey::TraderVolume(trader.clone());
+    env.storage().persistent().set(&key, record);
+    extend_persistent_ttl(env, &key);
 }
