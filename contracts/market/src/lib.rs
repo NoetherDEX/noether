@@ -39,7 +39,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec, Into
 use noether_common::{
     NoetherError, Position, Direction, MarketConfig, MarketStats,
     Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
-    FeeTier, TraderFeeInfo, VolumeRecord, CrossMarginInfo, PRECISION, BASIS_POINTS,
+    FeeTier, TraderFeeInfo, VolumeRecord, PRECISION, BASIS_POINTS,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
     calculate_trading_fee, calculate_funding_rate, calculate_funding_payment,
     calculate_keeper_reward, should_liquidate,
@@ -677,13 +677,7 @@ impl MarketContract {
     }
 
     /// Get current funding rate.
-    pub fn get_funding_rate(env: Env) -> i128 {
-        let config = get_config(&env);
-        let total_long = get_total_long_size(&env);
-        let total_short = get_total_short_size(&env);
-
-        calculate_funding_rate(total_long, total_short, config.base_funding_rate_bps)
-    }
+    // get_funding_rate removed - use get_market_stats().funding_rate instead
 
     // ═══════════════════════════════════════════════════════════════════════
     // View Functions
@@ -699,24 +693,19 @@ impl MarketContract {
         get_trader_positions(&env, &trader)
     }
 
-    /// Get position PnL at current price.
-    pub fn get_position_pnl(env: Env, position_id: u64) -> Result<i128, NoetherError> {
-        let position = get_position(&env, position_id)
-            .ok_or(NoetherError::PositionNotFound)?;
-
-        let current_price = Self::get_oracle_price(&env, &position.asset)?;
-        calculate_pnl(&position, current_price)
-    }
+    // get_position_pnl removed - frontend calculates from position + price
 
     /// Get market statistics.
     pub fn get_market_stats(env: Env) -> MarketStats {
-        let funding_rate = Self::get_funding_rate(env.clone());
+        let config = get_config(&env);
+        let total_long = get_total_long_size(&env);
+        let total_short = get_total_short_size(&env);
 
         MarketStats {
-            total_long_size: get_total_long_size(&env),
-            total_short_size: get_total_short_size(&env),
+            total_long_size: total_long,
+            total_short_size: total_short,
             open_position_count: get_position_count(&env),
-            funding_rate,
+            funding_rate: calculate_funding_rate(total_long, total_short, config.base_funding_rate_bps),
             last_funding_time: get_last_funding_time(&env),
         }
     }
@@ -736,25 +725,8 @@ impl MarketContract {
         get_config(&env)
     }
 
-    /// Get vault address.
-    pub fn get_vault(env: Env) -> Result<Address, NoetherError> {
-        require_initialized(&env)?;
-        Ok(get_vault(&env))
-    }
-
-    /// Get USDC token address.
-    pub fn get_usdc_token(env: Env) -> Result<Address, NoetherError> {
-        require_initialized(&env)?;
-        Ok(get_usdc_token(&env))
-    }
-
-    /// Get USDC balance held by Market contract.
-    pub fn get_usdc_balance(env: Env) -> Result<i128, NoetherError> {
-        require_initialized(&env)?;
-        let usdc_token = get_usdc_token(&env);
-        let token_client = token::Client::new(&env, &usdc_token);
-        Ok(token_client.balance(&env.current_contract_address()))
-    }
+    // get_vault, get_usdc_token, get_usdc_balance removed for WASM size
+    // Clients read these from contracts.json or instance storage directly
 
     // ═══════════════════════════════════════════════════════════════════════
     // Admin Functions
@@ -1381,16 +1353,15 @@ impl MarketContract {
     }
 
     /// Get cross-margin account info for a trader.
-    pub fn get_cross_margin_info(env: Env, trader: Address) -> CrossMarginInfo {
-        let get_price = |asset: &Symbol| -> i128 {
-            Self::get_oracle_price(&env, asset).unwrap_or(0)
-        };
-        position::build_cross_margin_info(&env, &trader, &get_price)
+    /// Get cross-margin balance for a trader (pool balance only).
+    /// Frontend calculates equity, free margin etc. client-side.
+    pub fn get_cross_margin_balance(env: Env, trader: Address) -> i128 {
+        get_cross_margin_balance(&env, &trader)
     }
 
-    /// Get all traders with cross-margin accounts (for keeper scanning).
-    pub fn get_cross_margin_traders(env: Env) -> Vec<Address> {
-        get_all_cross_margin_traders(&env)
+    /// Get cross-margin position IDs for a trader.
+    pub fn get_cross_margin_positions(env: Env, trader: Address) -> Vec<u64> {
+        get_cross_margin_position_ids(&env, &trader)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2002,14 +1973,12 @@ impl MarketContract {
         get_all_order_ids(&env)
     }
 
-    /// Get stop-loss order ID attached to a position.
-    pub fn get_position_sl(env: Env, position_id: u64) -> Option<u64> {
-        get_position_stop_loss(&env, position_id)
-    }
-
-    /// Get take-profit order ID attached to a position.
-    pub fn get_position_tp(env: Env, position_id: u64) -> Option<u64> {
-        get_position_take_profit(&env, position_id)
+    /// Get SL/TP order IDs attached to a position. Returns (sl_order_id, tp_order_id).
+    pub fn get_position_orders(env: Env, position_id: u64) -> (Option<u64>, Option<u64>) {
+        (
+            get_position_stop_loss(&env, position_id),
+            get_position_take_profit(&env, position_id),
+        )
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2160,51 +2129,35 @@ impl MarketContract {
         Ok(order)
     }
 
-    /// Update trailing stop peak prices for an asset.
-    /// Called by keeper every cycle to track price peaks.
-    pub fn update_trailing_stops(
+    /// Update trailing stop peak price for a specific order.
+    /// Called by keeper for each trailing stop order per cycle.
+    pub fn update_trailing_peak(
         env: Env,
-        keeper: Address,
-        asset: Symbol,
-    ) -> Result<u32, NoetherError> {
+        order_id: u64,
+    ) -> Result<bool, NoetherError> {
         require_initialized(&env)?;
-        keeper.require_auth();
 
-        let current_price = Self::get_oracle_price(&env, &asset)?;
-        let order_ids = get_all_order_ids(&env);
-        let mut updated: u32 = 0;
+        let order = get_order(&env, order_id)
+            .ok_or(NoetherError::OrderNotFound)?;
 
-        for i in 0..order_ids.len() {
-            let oid = order_ids.get(i).unwrap();
-            if let Some(order) = get_order(&env, oid) {
-                if order.order_type != OrderType::TrailingStop {
-                    continue;
-                }
-                if order.status != OrderStatus::Pending {
-                    continue;
-                }
-                if order.asset != asset {
-                    continue;
-                }
+        if order.order_type != OrderType::TrailingStop || order.status != OrderStatus::Pending {
+            return Ok(false);
+        }
 
-                if let Some(peak) = get_trailing_stop_peak(&env, oid) {
-                    let new_peak = match order.direction {
-                        Direction::Long => {
-                            if current_price > peak { current_price } else { peak }
-                        }
-                        Direction::Short => {
-                            if current_price < peak { current_price } else { peak }
-                        }
-                    };
-                    if new_peak != peak {
-                        set_trailing_stop_peak(&env, oid, new_peak);
-                        updated += 1;
-                    }
-                }
+        let current_price = Self::get_oracle_price(&env, &order.asset)?;
+
+        if let Some(peak) = get_trailing_stop_peak(&env, order_id) {
+            let new_peak = match order.direction {
+                Direction::Long => if current_price > peak { current_price } else { peak },
+                Direction::Short => if current_price < peak { current_price } else { peak },
+            };
+            if new_peak != peak {
+                set_trailing_stop_peak(&env, order_id, new_peak);
+                return Ok(true);
             }
         }
 
-        Ok(updated)
+        Ok(false)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3240,9 +3193,9 @@ mod tests {
 
         test.market.deposit_cross_margin(&trader, &(500 * PRECISION));
 
-        let info = test.market.get_cross_margin_info(&trader);
-        assert_eq!(info.balance, 500 * PRECISION);
-        assert_eq!(info.position_count, 0);
+        let cm_balance = test.market.get_cross_margin_balance(&trader); let cm_positions = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cm_balance, 500 * PRECISION);
+        assert_eq!(cm_positions.len(), 0);
     }
 
     #[test]
@@ -3253,8 +3206,8 @@ mod tests {
         test.market.deposit_cross_margin(&trader, &(500 * PRECISION));
         test.market.withdraw_cross_margin(&trader, &(200 * PRECISION));
 
-        let info = test.market.get_cross_margin_info(&trader);
-        assert_eq!(info.balance, 300 * PRECISION);
+        let cm_balance = test.market.get_cross_margin_balance(&trader); let cm_positions = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cm_balance, 300 * PRECISION);
     }
 
     #[test]
@@ -3289,9 +3242,9 @@ mod tests {
         assert_eq!(pos.size, 500 * PRECISION);
 
         // Pool balance should decrease by collateral
-        let info = test.market.get_cross_margin_info(&trader);
-        assert_eq!(info.balance, 900 * PRECISION); // $1000 - $100
-        assert_eq!(info.position_count, 1);
+        let cm_balance = test.market.get_cross_margin_balance(&trader); let cm_positions = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cm_balance, 900 * PRECISION); // $1000 - $100
+        assert_eq!(cm_positions.len(), 1);
     }
 
     #[test]
@@ -3337,9 +3290,9 @@ mod tests {
             &Direction::Short,
         );
 
-        let info = test.market.get_cross_margin_info(&trader);
-        assert_eq!(info.balance, 500 * PRECISION); // $1000 - $200 - $300
-        assert_eq!(info.position_count, 2);
+        let cm_balance = test.market.get_cross_margin_balance(&trader); let cm_positions = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cm_balance, 500 * PRECISION); // $1000 - $200 - $300
+        assert_eq!(cm_positions.len(), 2);
     }
 
     #[test]
@@ -3357,7 +3310,7 @@ mod tests {
             &Direction::Long,
         );
 
-        let info_before = test.market.get_cross_margin_info(&trader);
+        let cm_balance_before = test.market.get_cross_margin_balance(&trader);
 
         // Price goes up 10%
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
@@ -3366,10 +3319,10 @@ mod tests {
         let pnl = test.market.close_position_cross(&trader, &pos.id);
         assert!(pnl > 0);
 
-        let info_after = test.market.get_cross_margin_info(&trader);
+        let cm_balance_after = test.market.get_cross_margin_balance(&trader); let cm_positions_after = test.market.get_cross_margin_positions(&trader);
         // Pool should have received collateral + profit back
-        assert!(info_after.balance > info_before.balance);
-        assert_eq!(info_after.position_count, 0);
+        assert!(cm_balance_after > cm_balance_before);
+        assert_eq!(cm_positions_after.len(), 0);
     }
 
     #[test]
@@ -3438,9 +3391,9 @@ mod tests {
         assert!(reward >= 0);
 
         // All positions should be gone
-        let info = test.market.get_cross_margin_info(&trader);
-        assert_eq!(info.position_count, 0);
-        assert_eq!(info.balance, 0);
+        let cm_balance = test.market.get_cross_margin_balance(&trader); let cm_positions = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cm_positions.len(), 0);
+        assert_eq!(cm_balance, 0);
     }
 
     #[test]
@@ -3467,8 +3420,8 @@ mod tests {
             &Direction::Long,
         );
 
-        let info = test.market.get_cross_margin_info(&trader);
-        assert_eq!(info.position_count, 2);
+        let cm_balance = test.market.get_cross_margin_balance(&trader); let cm_positions = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cm_positions.len(), 2);
 
         // Crash both prices
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
@@ -3481,9 +3434,9 @@ mod tests {
         // Liquidate - closes ALL positions
         test.market.liquidate_cross_account(&keeper, &trader);
 
-        let info_after = test.market.get_cross_margin_info(&trader);
-        assert_eq!(info_after.position_count, 0);
-        assert_eq!(info_after.balance, 0);
+        let cm_balance_after = test.market.get_cross_margin_balance(&trader); let cm_positions_after = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cm_positions_after.len(), 0);
+        assert_eq!(cm_balance_after, 0);
     }
 
     #[test]
@@ -3558,22 +3511,11 @@ mod tests {
         let all_positions = test.market.get_positions(&trader);
         assert_eq!(all_positions.len(), 2);
 
-        let cross_info = test.market.get_cross_margin_info(&trader);
-        assert_eq!(cross_info.position_count, 1); // Only cross counted here
+        let cm_balance_cross = test.market.get_cross_margin_balance(&trader); let cm_positions_cross = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cm_positions_cross.len(), 1); // Only cross counted here
     }
 
-    #[test]
-    fn test_get_cross_margin_traders() {
-        let test = setup();
-        let trader1 = fund_trader(&test, 5_000 * PRECISION);
-        let trader2 = fund_trader(&test, 5_000 * PRECISION);
-
-        test.market.deposit_cross_margin(&trader1, &(100 * PRECISION));
-        test.market.deposit_cross_margin(&trader2, &(200 * PRECISION));
-
-        let traders = test.market.get_cross_margin_traders();
-        assert_eq!(traders.len(), 2);
-    }
+    // test_get_cross_margin_traders removed - function removed for WASM size
 
     #[test]
     fn test_cross_margin_volume_recorded() {
@@ -3709,8 +3651,11 @@ mod tests {
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 12 / 100));
 
-        let updated = test.market.update_trailing_stops(&keeper, &Symbol::new(&test.env, "XLM"));
-        assert_eq!(updated, 1); // Peak updated
+        // Get trailing stop order ID and update peak
+        let order_ids = test.market.get_all_order_ids();
+        let ts_order_id = order_ids.get(0).unwrap();
+        let updated = test.market.update_trailing_peak(&ts_order_id);
+        assert_eq!(updated, true); // Peak updated
 
         // Price goes down slightly: $0.12 → $0.118 (< 3% drop from $0.12)
         oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 118 / 1000));

@@ -3,7 +3,7 @@
 //! Storage keys and helpers for the Market contract.
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
-use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord, CrossMarginInfo};
+use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
