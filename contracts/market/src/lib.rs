@@ -715,10 +715,7 @@ impl MarketContract {
         get_all_position_ids(&env)
     }
 
-    /// Get current price from oracle.
-    pub fn get_price(env: Env, asset: Symbol) -> Result<i128, NoetherError> {
-        Self::get_oracle_price(&env, &asset)
-    }
+    // get_price removed - frontend queries oracle contract directly
 
     /// Get market configuration.
     pub fn get_config(env: Env) -> MarketConfig {
@@ -752,32 +749,8 @@ impl MarketContract {
     }
 
     /// Update oracle adapter address.
-    pub fn set_oracle_adapter(env: Env, oracle: Address) -> Result<(), NoetherError> {
-        require_admin(&env)?;
-        let old = get_oracle_adapter(&env);
-        set_oracle_adapter(&env, &oracle);
-
-        env.events().publish(
-            (Symbol::new(&env, "oracle_updated"),),
-            (old, oracle),
-        );
-
-        Ok(())
-    }
-
-    /// Update vault address.
-    pub fn set_vault(env: Env, vault: Address) -> Result<(), NoetherError> {
-        require_admin(&env)?;
-        let old = get_vault(&env);
-        set_vault(&env, &vault);
-
-        env.events().publish(
-            (Symbol::new(&env, "vault_updated"),),
-            (old, vault),
-        );
-
-        Ok(())
-    }
+    // set_oracle_adapter, set_vault removed for WASM size
+    // Re-initialize contract to change these addresses
 
     /// Pause the market (emergency).
     pub fn pause(env: Env) -> Result<(), NoetherError> {
@@ -821,12 +794,6 @@ impl MarketContract {
         Ok(())
     }
 
-    /// Get admin address.
-    pub fn get_admin(env: Env) -> Result<Address, NoetherError> {
-        require_initialized(&env)?;
-        Ok(get_admin(&env))
-    }
-
     /// Check if paused.
     pub fn is_paused(env: Env) -> bool {
         get_paused(&env)
@@ -859,12 +826,6 @@ impl MarketContract {
         }
 
         set_fee_tiers(&env, &tiers);
-
-        env.events().publish(
-            (Symbol::new(&env, "fee_tiers_updated"),),
-            tiers.len(),
-        );
-
         Ok(())
     }
 
@@ -937,14 +898,7 @@ impl MarketContract {
 
         // Track trader in cross-margin list (for keeper scanning)
         add_cross_margin_trader(&env, &trader);
-
         extend_instance_ttl(&env);
-
-        env.events().publish(
-            (Symbol::new(&env, "cross_margin_deposit"),),
-            (trader, amount, new_balance),
-        );
-
         Ok(())
     }
 
@@ -1004,12 +958,6 @@ impl MarketContract {
         }
 
         extend_instance_ttl(&env);
-
-        env.events().publish(
-            (Symbol::new(&env, "cross_margin_withdraw"),),
-            (trader, amount, new_balance),
-        );
-
         Ok(())
     }
 

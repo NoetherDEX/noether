@@ -6,7 +6,7 @@
 //! - Atomic equity checks in withdrawal path
 
 use soroban_sdk::{Address, Env, Symbol};
-use noether_common::{Direction, Position, PRECISION, BASIS_POINTS, calculate_pnl};
+use noether_common::{Direction, BASIS_POINTS, calculate_pnl};
 use crate::storage::{
     get_position, get_all_position_ids,
     get_cross_margin_balance, get_cross_margin_position_ids,
