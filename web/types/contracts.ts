@@ -2,7 +2,10 @@
 export type Direction = 'Long' | 'Short';
 
 // Order type
-export type OrderType = 'LimitEntry' | 'StopLoss' | 'TakeProfit';
+export type OrderType = 'LimitEntry' | 'StopLoss' | 'TakeProfit' | 'StopLimit' | 'TrailingStop';
+
+// Margin mode
+export type MarginMode = 'Isolated' | 'Cross';
 
 // Order status
 export type OrderStatus = 'Pending' | 'Executed' | 'Cancelled' | 'CancelledSlippage' | 'Expired';
@@ -23,6 +26,7 @@ export interface Position {
   openedAt: number;
   lastFundingAt: number;
   accumulatedFunding: bigint;
+  marginMode: MarginMode;
 }
 
 // Order from market contract
@@ -41,6 +45,10 @@ export interface Order {
   hasPosition: boolean;
   createdAt: number;
   status: OrderStatus;
+  limitPrice: bigint;
+  trailingPercentBps: number;
+  timeInForce: number;
+  stopLimitPhase: number;
 }
 
 // Display-friendly order
@@ -74,6 +82,17 @@ export interface MarketConfig {
   maxPositionSize: bigint;
   maxPriceStaleness: number;
   maxOracleDeviationBps: number;
+  baseMakerFeeBps: number;
+  baseTakerFeeBps: number;
+}
+
+// Trader fee info
+export interface TraderFeeInfo {
+  volume14d: bigint;
+  tier: number;
+  makerFeeBps: number;
+  takerFeeBps: number;
+  nextTierVolume: bigint;
 }
 
 // Pool/Vault information
@@ -106,6 +125,7 @@ export interface DisplayPosition {
   pnlPercent: number;
   leverage: number;
   openedAt: Date;
+  marginMode: MarginMode;
 }
 
 // Trade for history

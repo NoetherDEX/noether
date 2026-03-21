@@ -20,6 +20,7 @@ interface RawPosition {
   opened_at: number | bigint; // snake_case from contract
   last_funding_at: number | bigint;
   accumulated_funding: bigint;
+  margin_mode?: number | bigint; // 0 = Isolated, 1 = Cross
 }
 
 /**
@@ -38,6 +39,7 @@ function parsePosition(raw: RawPosition): Position {
     openedAt: Number(raw.opened_at),
     lastFundingAt: Number(raw.last_funding_at),
     accumulatedFunding: raw.accumulated_funding,
+    marginMode: Number(raw.margin_mode ?? 0) === 1 ? 'Cross' : 'Isolated',
   };
 }
 
@@ -967,4 +969,245 @@ function parseEventsToTrades(events: rpc.Api.EventResponse[], traderPublicKey: s
   }
 
   return trades;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Cross-Margin Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Deposit USDC into cross-margin pool
+ */
+export async function depositCrossMargin(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  amount: bigint
+): Promise<void> {
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(amount, 'i128'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'deposit_cross_margin', args);
+  const signedXdr = await signTransaction(xdrStr);
+  await submitTransaction(signedXdr);
+}
+
+/**
+ * Withdraw USDC from cross-margin pool
+ */
+export async function withdrawCrossMargin(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  amount: bigint
+): Promise<void> {
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(amount, 'i128'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'withdraw_cross_margin', args);
+  const signedXdr = await signTransaction(xdrStr);
+  await submitTransaction(signedXdr);
+}
+
+/**
+ * Open a cross-margin position (uses shared collateral pool)
+ */
+export async function openPositionCross(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  params: {
+    asset: string;
+    collateral: bigint;
+    leverage: number;
+    direction: Direction;
+  }
+): Promise<Position> {
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(params.asset, 'symbol'),
+    toScVal(params.collateral, 'i128'),
+    toScVal(params.leverage, 'u32'),
+    toScVal(params.direction, 'direction'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position_cross', args);
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    return scValToNative(result.returnValue) as Position;
+  }
+  throw new Error('Failed to open cross-margin position');
+}
+
+/**
+ * Close a cross-margin position (PnL returns to pool)
+ */
+export async function closePositionCross(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  positionId: number
+): Promise<{ pnl: bigint }> {
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(positionId, 'u64'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_cross', args);
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    return { pnl: scValToNative(result.returnValue) as bigint };
+  }
+  throw new Error('Failed to close cross-margin position');
+}
+
+/**
+ * Get cross-margin balance for a trader (read-only)
+ */
+export async function getCrossMarginBalance(traderPublicKey: string): Promise<bigint> {
+  try {
+    const args = [toScVal(traderPublicKey, 'address')];
+    const result = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(traderPublicKey, 'get_cross_margin_balance', args)
+    );
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      return scValToNative(result.result.retval) as bigint;
+    }
+    return BigInt(0);
+  } catch {
+    return BigInt(0);
+  }
+}
+
+/**
+ * Get cross-margin position IDs for a trader (read-only)
+ */
+export async function getCrossMarginPositions(traderPublicKey: string): Promise<number[]> {
+  try {
+    const args = [toScVal(traderPublicKey, 'address')];
+    const result = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(traderPublicKey, 'get_cross_margin_positions', args)
+    );
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      const ids = scValToNative(result.result.retval) as (number | bigint)[];
+      return ids.map(id => Number(id));
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Advanced Order Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Place a stop-limit order (two-phase: stop triggers, then limit activates)
+ */
+export async function placeStopLimitOrder(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  params: {
+    asset: string;
+    direction: Direction;
+    collateral: bigint;
+    leverage: number;
+    triggerPrice: bigint;
+    limitPrice: bigint;
+    triggerAbove: boolean;
+    slippageToleranceBps: number;
+  }
+): Promise<Order> {
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(params.asset, 'symbol'),
+    toScVal(params.direction, 'direction'),
+    toScVal(params.collateral, 'i128'),
+    toScVal(params.leverage, 'u32'),
+    toScVal(params.triggerPrice, 'i128'),
+    toScVal(params.limitPrice, 'i128'),
+    toScVal(params.triggerAbove, 'bool'),
+    toScVal(params.slippageToleranceBps, 'u32'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'place_stop_limit_order', args);
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    return scValToNative(result.returnValue) as Order;
+  }
+  throw new Error('Failed to place stop-limit order');
+}
+
+/**
+ * Place a trailing stop order (tracks peak price, triggers at % drop)
+ */
+export async function placeTrailingStop(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  params: {
+    positionId: number;
+    trailingPercentBps: number;
+    slippageToleranceBps: number;
+  }
+): Promise<Order> {
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(params.positionId, 'u64'),
+    toScVal(params.trailingPercentBps, 'u32'),
+    toScVal(params.slippageToleranceBps, 'u32'),
+  ];
+
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'place_trailing_stop', args);
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    return scValToNative(result.returnValue) as Order;
+  }
+  throw new Error('Failed to place trailing stop');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Fee Tier Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get trader's fee tier info (volume, tier, rates)
+ */
+export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
+  volume14d: bigint;
+  tier: number;
+  makerFeeBps: number;
+  takerFeeBps: number;
+  nextTierVolume: bigint;
+} | null> {
+  try {
+    const args = [toScVal(traderPublicKey, 'address')];
+    const result = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(traderPublicKey, 'get_trader_fee_info', args)
+    );
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      const raw = scValToNative(result.result.retval) as any;
+      return {
+        volume14d: BigInt(raw.volume_14d || 0),
+        tier: Number(raw.tier || 0),
+        makerFeeBps: Number(raw.maker_fee_bps || 2),
+        takerFeeBps: Number(raw.taker_fee_bps || 5),
+        nextTierVolume: BigInt(raw.next_tier_volume || 0),
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

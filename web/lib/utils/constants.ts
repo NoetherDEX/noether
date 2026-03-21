@@ -24,12 +24,24 @@ export const NETWORK = {
 
 // Trading constants
 export const TRADING = {
-  MIN_COLLATERAL: 10, // 10 XLM minimum
+  MIN_COLLATERAL: 10, // 10 USDC minimum
   MAX_LEVERAGE: 10,
   PRECISION: 10_000_000, // 7 decimals
-  TRADING_FEE_BPS: 10, // 0.1%
+  // Legacy flat fee (deprecated - now using maker/taker tiers)
+  TRADING_FEE_BPS: 10, // 0.1% (fallback)
   LIQUIDATION_FEE_BPS: 500, // 5%
+  // Maker/Taker base fees
+  BASE_MAKER_FEE_BPS: 2, // 0.02%
+  BASE_TAKER_FEE_BPS: 5, // 0.05%
 } as const;
+
+// Fee tier thresholds (for display)
+export const FEE_TIERS = [
+  { name: 'Base', minVolume: 0, makerBps: 2, takerBps: 5 },
+  { name: 'Tier 1', minVolume: 1_000_000, makerBps: 1, takerBps: 4 },
+  { name: 'Tier 2', minVolume: 5_000_000, makerBps: 1, takerBps: 3 },
+  { name: 'Tier 3', minVolume: 25_000_000, makerBps: 0, takerBps: 2 },
+] as const;
 
 // Supported assets
 export const ASSETS = [
