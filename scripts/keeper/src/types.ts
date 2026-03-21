@@ -6,7 +6,7 @@
 export type Direction = 'Long' | 'Short';
 
 // Order type matching contract
-export type OrderType = 'LimitEntry' | 'StopLoss' | 'TakeProfit';
+export type OrderType = 'LimitEntry' | 'StopLoss' | 'TakeProfit' | 'StopLimit' | 'TrailingStop';
 
 // Order status matching contract
 export type OrderStatus = 'Pending' | 'Executed' | 'Cancelled' | 'CancelledSlippage' | 'Expired';
@@ -28,6 +28,7 @@ export interface Position {
   timestamp: bigint;
   last_funding_time: bigint;
   accumulated_funding: bigint;
+  margin_mode: number; // 0 = Isolated, 1 = Cross
 }
 
 // Order from contract
@@ -46,6 +47,10 @@ export interface Order {
   has_position: boolean;
   created_at: bigint;
   status: OrderStatus;
+  limit_price: bigint;
+  trailing_percent_bps: number;
+  time_in_force: number; // 0=GTC, 1=IOC, 2=PostOnly
+  stop_limit_phase: number; // 0=WaitingForStop, 1=LimitActive
 }
 
 // Price data

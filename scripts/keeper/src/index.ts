@@ -145,10 +145,12 @@ class KeeperBot {
       this.updateOraclePrices().catch(e => console.error('Oracle update error:', e));
     }
 
-    // 2. Check and execute liquidations
+    // 2. Check and execute liquidations (isolated + cross-margin)
     await this.checkLiquidations();
+    await this.checkCrossMarginLiquidations();
 
-    // 3. Check and execute orders
+    // 3. Update trailing stop peaks + check and execute orders
+    await this.updateTrailingStopPeaks();
     await this.checkOrders();
 
     // 4. Apply funding rate (every hour)
@@ -288,6 +290,76 @@ class KeeperBot {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Cross-Margin Liquidations
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Check cross-margin accounts for liquidation.
+   * Scans all positions to find unique cross-margin traders, then checks each.
+   */
+  private async checkCrossMarginLiquidations(): Promise<void> {
+    try {
+      // Find unique cross-margin traders from positions
+      const positionIds = await this.stellar.getAllPositionIds();
+      const crossTraders = new Set<string>();
+
+      for (const pid of positionIds) {
+        const pos = await this.stellar.getPosition(pid);
+        if (pos && pos.margin_mode === 1) {
+          crossTraders.add(pos.trader);
+        }
+      }
+
+      for (const trader of crossTraders) {
+        try {
+          const isLiquidatable = await this.stellar.isCrossLiquidatable(trader);
+          if (isLiquidatable) {
+            console.log(`\n⚠️  Cross-margin account ${trader.slice(0, 8)}... is liquidatable!`);
+            const result = await this.stellar.liquidateCrossAccount(trader);
+            if (result.success) {
+              this.stats.liquidationsExecuted++;
+              if (result.reward) this.stats.totalRewardsEarned += result.reward;
+              console.log(`   ✅ Cross-margin liquidation successful! Reward: ${this.formatAmount(result.reward || BigInt(0))} USDC`);
+            } else {
+              console.log(`   ❌ Cross-margin liquidation failed: ${result.error}`);
+            }
+          }
+        } catch (error) {
+          // Ignore errors for individual accounts
+        }
+      }
+    } catch (error) {
+      // No cross-margin accounts, ignore
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Trailing Stop Peak Updates
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Update trailing stop peak prices for all active trailing stop orders.
+   */
+  private async updateTrailingStopPeaks(): Promise<void> {
+    try {
+      const orderIds = await this.stellar.getAllOrderIds();
+
+      for (const orderId of orderIds) {
+        const order = await this.stellar.getOrder(orderId);
+        if (order && order.order_type === 'TrailingStop' && order.status === 'Pending') {
+          try {
+            await this.stellar.updateTrailingPeak(orderId);
+          } catch (error) {
+            // Ignore individual peak update errors
+          }
+        }
+      }
+    } catch (error) {
+      // Ignore errors
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Order Execution
   // ═══════════════════════════════════════════════════════════════════════
 
@@ -325,10 +397,14 @@ class KeeperBot {
     const result = await this.stellar.executeOrder(orderId);
 
     if (result.success) {
-      // Check if order was cancelled due to slippage (reward = 0)
+      // Check if order was cancelled due to slippage or StopLimit phase transition (reward = 0)
       if (result.reward === BigInt(0)) {
-        this.stats.ordersCancelledSlippage++;
-        console.log(`   ⚠️  Order ${orderId} cancelled due to slippage exceeded (collateral refunded)`);
+        if (orderType === 'StopLimit') {
+          console.log(`   🔄 StopLimit order ${orderId} stop triggered → limit phase active`);
+        } else {
+          this.stats.ordersCancelledSlippage++;
+          console.log(`   ⚠️  Order ${orderId} cancelled due to slippage exceeded (collateral refunded)`);
+        }
       } else {
         this.stats.ordersExecuted++;
         this.stats.totalRewardsEarned += result.reward!;

@@ -231,6 +231,73 @@ export class StellarClient {
   // Funding Rate Functions
   // ═══════════════════════════════════════════════════════════════════════
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Cross-Margin Functions
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Check if a cross-margin account is liquidatable
+   */
+  async isCrossLiquidatable(trader: string): Promise<boolean> {
+    try {
+      return await this.invokeContractRead<boolean>(
+        this.marketContract,
+        'is_cross_liquidatable',
+        [new Address(trader).toScVal()]
+      );
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Liquidate a cross-margin account (closes all cross positions)
+   */
+  async liquidateCrossAccount(trader: string): Promise<ExecutionResult> {
+    return this.invokeContractWriteWithRetry(
+      this.marketContract,
+      'liquidate_cross_account',
+      [
+        new Address(this.publicKey).toScVal(),
+        new Address(trader).toScVal(),
+      ]
+    );
+  }
+
+  /**
+   * Get cross-margin position IDs for a trader
+   */
+  async getCrossMarginPositions(trader: string): Promise<bigint[]> {
+    try {
+      return await this.invokeContractRead<bigint[]>(
+        this.marketContract,
+        'get_cross_margin_positions',
+        [new Address(trader).toScVal()]
+      );
+    } catch (error) {
+      return [];
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Trailing Stop Functions
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Update trailing stop peak for a single order
+   */
+  async updateTrailingPeak(orderId: bigint): Promise<ExecutionResult> {
+    return this.invokeContractWriteWithRetry(
+      this.marketContract,
+      'update_trailing_peak',
+      [nativeToScVal(orderId, { type: 'u64' })]
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Funding Rate Functions
+  // ═══════════════════════════════════════════════════════════════════════
+
   /**
    * Apply funding rate (hourly)
    */
@@ -395,6 +462,7 @@ export class StellarClient {
       timestamp: BigInt(raw.timestamp),
       last_funding_time: BigInt(raw.last_funding_time),
       accumulated_funding: BigInt(raw.accumulated_funding),
+      margin_mode: Number(raw.margin_mode ?? 0),
     };
   }
 
@@ -406,6 +474,8 @@ export class StellarClient {
       0: 'LimitEntry',
       1: 'StopLoss',
       2: 'TakeProfit',
+      3: 'StopLimit',
+      4: 'TrailingStop',
     };
 
     const statusMap: Record<number, Order['status']> = {
@@ -431,6 +501,10 @@ export class StellarClient {
       has_position: Boolean(raw.has_position),
       created_at: BigInt(raw.created_at),
       status: statusMap[raw.status] || 'Pending',
+      limit_price: BigInt(raw.limit_price ?? 0),
+      trailing_percent_bps: Number(raw.trailing_percent_bps ?? 0),
+      time_in_force: Number(raw.time_in_force ?? 0),
+      stop_limit_phase: Number(raw.stop_limit_phase ?? 0),
     };
   }
 
