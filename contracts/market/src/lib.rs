@@ -1481,6 +1481,10 @@ impl MarketContract {
             has_position: false,
             created_at: env.ledger().timestamp(),
             status: OrderStatus::Pending,
+            limit_price: 0,
+            trailing_percent_bps: 0,
+            time_in_force: 0, // GTC
+            stop_limit_phase: 0,
         };
 
         // Store order
@@ -1578,6 +1582,10 @@ impl MarketContract {
             has_position: true,
             created_at: env.ledger().timestamp(),
             status: OrderStatus::Pending,
+            limit_price: 0,
+            trailing_percent_bps: 0,
+            time_in_force: 0,
+            stop_limit_phase: 0,
         };
 
         // Store order and link to position
@@ -1676,6 +1684,10 @@ impl MarketContract {
             has_position: true,
             created_at: env.ledger().timestamp(),
             status: OrderStatus::Pending,
+            limit_price: 0,
+            trailing_percent_bps: 0,
+            time_in_force: 0,
+            stop_limit_phase: 0,
         };
 
         // Store order and link to position
@@ -1721,14 +1733,19 @@ impl MarketContract {
             return Err(NoetherError::OrderNotPending);
         }
 
-        // Refund collateral for limit orders
-        if order.order_type == OrderType::LimitEntry && order.collateral > 0 {
+        // Refund collateral for orders that lock funds
+        if (order.order_type == OrderType::LimitEntry || order.order_type == OrderType::StopLimit)
+            && order.collateral > 0
+        {
             let usdc_token = get_usdc_token(&env);
             let token_client = token::Client::new(&env, &usdc_token);
             token_client.transfer(&env.current_contract_address(), &trader, &order.collateral);
         }
 
-        // Remove SL/TP links if attached to position
+        // Clean up linked data
+        if order.order_type == OrderType::TrailingStop {
+            remove_trailing_stop_peak(&env, order_id);
+        }
         if order.has_position {
             match order.order_type {
                 OrderType::StopLoss => remove_position_stop_loss(&env, order.position_id),
@@ -1781,23 +1798,44 @@ impl MarketContract {
         // Get current price
         let current_price = Self::get_oracle_price(&env, &order.asset)?;
 
+        // Determine reference price for trigger/slippage check
+        let ref_price = match order.order_type {
+            OrderType::StopLimit if order.stop_limit_phase == 1 => order.limit_price,
+            OrderType::TrailingStop => {
+                // Calculate dynamic trigger from peak
+                if let Some(peak) = get_trailing_stop_peak(&env, order_id) {
+                    match order.direction {
+                        Direction::Long => peak - peak * (order.trailing_percent_bps as i128) / 10000,
+                        Direction::Short => peak + peak * (order.trailing_percent_bps as i128) / 10000,
+                    }
+                } else {
+                    order.trigger_price
+                }
+            }
+            _ => order.trigger_price,
+        };
+
         // Check if trigger condition is met
         let triggered = match order.trigger_condition {
-            TriggerCondition::Above => current_price >= order.trigger_price,
-            TriggerCondition::Below => current_price <= order.trigger_price,
+            TriggerCondition::Above => current_price >= ref_price,
+            TriggerCondition::Below => current_price <= ref_price,
         };
 
         if !triggered {
             return Err(NoetherError::OrderNotTriggered);
         }
 
-        // Check slippage
-        let price_diff = if current_price > order.trigger_price {
-            current_price - order.trigger_price
+        // Check slippage against reference price
+        let price_diff = if current_price > ref_price {
+            current_price - ref_price
         } else {
-            order.trigger_price - current_price
+            ref_price - current_price
         };
-        let actual_slippage_bps = (price_diff * 10_000) / order.trigger_price;
+        let actual_slippage_bps = if ref_price > 0 {
+            (price_diff * 10_000) / ref_price
+        } else {
+            0
+        };
 
         if actual_slippage_bps > order.slippage_tolerance_bps as i128 {
             // Slippage exceeded - cancel the order and commit the cancellation
@@ -1805,14 +1843,18 @@ impl MarketContract {
             // and the order is properly removed from the pending list. Returning Err()
             // would rollback all state changes, leaving the order stuck in pending.
 
-            if order.order_type == OrderType::LimitEntry && order.collateral > 0 {
-                // Refund collateral
+            if (order.order_type == OrderType::LimitEntry || order.order_type == OrderType::StopLimit)
+                && order.collateral > 0
+            {
                 let usdc_token = get_usdc_token(&env);
                 let token_client = token::Client::new(&env, &usdc_token);
                 token_client.transfer(&env.current_contract_address(), &order.trader, &order.collateral);
             }
 
-            // Remove SL/TP links
+            // Clean up linked data
+            if order.order_type == OrderType::TrailingStop {
+                remove_trailing_stop_peak(&env, order_id);
+            }
             if order.has_position {
                 match order.order_type {
                     OrderType::StopLoss => remove_position_stop_loss(&env, order.position_id),
@@ -1845,6 +1887,27 @@ impl MarketContract {
             OrderType::StopLoss | OrderType::TakeProfit => {
                 Self::execute_close_order(&env, &order, current_price, keeper_fee, &keeper)
             }
+            OrderType::StopLimit => {
+                if order.stop_limit_phase == 0 {
+                    // Phase 0→1: Stop triggered, activate limit phase
+                    let mut updated = order.clone();
+                    updated.stop_limit_phase = 1;
+                    env.storage().persistent().set(
+                        &storage::DataKey::Order(order_id), &updated,
+                    );
+                    // No execution yet, no keeper reward for phase transition
+                    return Ok(0);
+                } else {
+                    // Phase 1: Limit price reached, execute as limit entry
+                    Self::execute_limit_entry(&env, &order, current_price, keeper_fee, &keeper)
+                }
+            }
+            OrderType::TrailingStop => {
+                // Clean up peak tracking
+                remove_trailing_stop_peak(&env, order_id);
+                // Execute as close order (same as SL/TP)
+                Self::execute_close_order(&env, &order, current_price, keeper_fee, &keeper)
+            }
         };
 
         match result {
@@ -1875,12 +1938,53 @@ impl MarketContract {
 
         let current_price = Self::get_oracle_price(&env, &order.asset)?;
 
-        let triggered = match order.trigger_condition {
-            TriggerCondition::Above => current_price >= order.trigger_price,
-            TriggerCondition::Below => current_price <= order.trigger_price,
-        };
-
-        Ok(triggered)
+        match order.order_type {
+            OrderType::TrailingStop => {
+                // Check if price has dropped trailing_percent from peak
+                if let Some(peak) = get_trailing_stop_peak(&env, order_id) {
+                    let trigger = match order.direction {
+                        Direction::Long => {
+                            // Trigger when price drops below peak * (1 - trailing%)
+                            let threshold = peak - peak * (order.trailing_percent_bps as i128) / 10000;
+                            current_price <= threshold
+                        }
+                        Direction::Short => {
+                            // Trigger when price rises above peak * (1 + trailing%)
+                            let threshold = peak + peak * (order.trailing_percent_bps as i128) / 10000;
+                            current_price >= threshold
+                        }
+                    };
+                    Ok(trigger)
+                } else {
+                    Ok(false)
+                }
+            }
+            OrderType::StopLimit => {
+                if order.stop_limit_phase == 0 {
+                    // Phase 0: check if stop price is hit
+                    let stop_triggered = match order.trigger_condition {
+                        TriggerCondition::Above => current_price >= order.trigger_price,
+                        TriggerCondition::Below => current_price <= order.trigger_price,
+                    };
+                    Ok(stop_triggered)
+                } else {
+                    // Phase 1: check if limit price is reached
+                    let limit_triggered = match order.trigger_condition {
+                        TriggerCondition::Above => current_price >= order.limit_price,
+                        TriggerCondition::Below => current_price <= order.limit_price,
+                    };
+                    Ok(limit_triggered)
+                }
+            }
+            _ => {
+                // Standard trigger check for LimitEntry, StopLoss, TakeProfit
+                let triggered = match order.trigger_condition {
+                    TriggerCondition::Above => current_price >= order.trigger_price,
+                    TriggerCondition::Below => current_price <= order.trigger_price,
+                };
+                Ok(triggered)
+            }
+        }
     }
 
     /// Get all orders for a trader.
@@ -1906,6 +2010,201 @@ impl MarketContract {
     /// Get take-profit order ID attached to a position.
     pub fn get_position_tp(env: Env, position_id: u64) -> Option<u64> {
         get_position_take_profit(&env, position_id)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Advanced Order Types
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Place a stop-limit order.
+    /// Phase 1: waits for price to hit trigger_price (stop).
+    /// Phase 2: once triggered, acts as limit order at limit_price.
+    pub fn place_stop_limit_order(
+        env: Env,
+        trader: Address,
+        asset: Symbol,
+        direction: Direction,
+        collateral: i128,
+        leverage: u32,
+        trigger_price: i128,
+        limit_price: i128,
+        trigger_above: bool,
+        slippage_tolerance_bps: u32,
+    ) -> Result<Order, NoetherError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        trader.require_auth();
+
+        let config = get_config(&env);
+        if collateral < config.min_collateral {
+            return Err(NoetherError::InsufficientCollateral);
+        }
+        if leverage < 1 || leverage > config.max_leverage {
+            return Err(NoetherError::InvalidLeverage);
+        }
+        if trigger_price <= 0 || limit_price <= 0 {
+            return Err(NoetherError::InvalidTriggerPrice);
+        }
+        if slippage_tolerance_bps == 0 || slippage_tolerance_bps > 10000 {
+            return Err(NoetherError::InvalidSlippageTolerance);
+        }
+
+        let size = calculate_position_size(collateral, leverage);
+        if size > config.max_position_size {
+            return Err(NoetherError::PositionTooLarge);
+        }
+
+        // Lock collateral
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        token_client.transfer(&trader, &env.current_contract_address(), &collateral);
+
+        let order_id = next_order_id(&env);
+        let trigger_condition = if trigger_above {
+            TriggerCondition::Above
+        } else {
+            TriggerCondition::Below
+        };
+
+        let order = Order {
+            id: order_id,
+            trader: trader.clone(),
+            asset,
+            order_type: OrderType::StopLimit,
+            direction,
+            collateral,
+            leverage,
+            trigger_price,
+            trigger_condition,
+            slippage_tolerance_bps,
+            position_id: 0,
+            has_position: false,
+            created_at: env.ledger().timestamp(),
+            status: OrderStatus::Pending,
+            limit_price,
+            trailing_percent_bps: 0,
+            time_in_force: 0,
+            stop_limit_phase: 0, // WaitingForStop
+        };
+
+        save_order(&env, &order);
+        extend_instance_ttl(&env);
+        Ok(order)
+    }
+
+    /// Place a trailing stop order attached to a position.
+    /// Tracks peak price, triggers when price drops trailing_percent from peak.
+    pub fn place_trailing_stop(
+        env: Env,
+        trader: Address,
+        position_id: u64,
+        trailing_percent_bps: u32,
+        slippage_tolerance_bps: u32,
+    ) -> Result<Order, NoetherError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        trader.require_auth();
+
+        if trailing_percent_bps == 0 || trailing_percent_bps > 5000 {
+            return Err(NoetherError::InvalidTrailingPercent);
+        }
+        if slippage_tolerance_bps == 0 || slippage_tolerance_bps > 10000 {
+            return Err(NoetherError::InvalidSlippageTolerance);
+        }
+
+        let position = get_position(&env, position_id)
+            .ok_or(NoetherError::PositionNotFound)?;
+        if position.trader != trader {
+            return Err(NoetherError::NotPositionOwner);
+        }
+
+        // Get current price as initial peak
+        let current_price = Self::get_oracle_price(&env, &position.asset)?;
+
+        // Set trigger condition based on direction
+        // Long: trailing stop triggers below peak (price drops)
+        // Short: trailing stop triggers above peak (price rises)
+        let trigger_condition = match position.direction {
+            Direction::Long => TriggerCondition::Below,
+            Direction::Short => TriggerCondition::Above,
+        };
+
+        let order_id = next_order_id(&env);
+
+        let order = Order {
+            id: order_id,
+            trader: trader.clone(),
+            asset: position.asset.clone(),
+            order_type: OrderType::TrailingStop,
+            direction: position.direction.clone(),
+            collateral: 0,
+            leverage: position.leverage,
+            trigger_price: 0, // Dynamic, calculated from peak
+            trigger_condition,
+            slippage_tolerance_bps,
+            position_id,
+            has_position: true,
+            created_at: env.ledger().timestamp(),
+            status: OrderStatus::Pending,
+            limit_price: 0,
+            trailing_percent_bps,
+            time_in_force: 0,
+            stop_limit_phase: 0,
+        };
+
+        // Store peak price
+        set_trailing_stop_peak(&env, order_id, current_price);
+
+        save_order(&env, &order);
+        extend_instance_ttl(&env);
+        Ok(order)
+    }
+
+    /// Update trailing stop peak prices for an asset.
+    /// Called by keeper every cycle to track price peaks.
+    pub fn update_trailing_stops(
+        env: Env,
+        keeper: Address,
+        asset: Symbol,
+    ) -> Result<u32, NoetherError> {
+        require_initialized(&env)?;
+        keeper.require_auth();
+
+        let current_price = Self::get_oracle_price(&env, &asset)?;
+        let order_ids = get_all_order_ids(&env);
+        let mut updated: u32 = 0;
+
+        for i in 0..order_ids.len() {
+            let oid = order_ids.get(i).unwrap();
+            if let Some(order) = get_order(&env, oid) {
+                if order.order_type != OrderType::TrailingStop {
+                    continue;
+                }
+                if order.status != OrderStatus::Pending {
+                    continue;
+                }
+                if order.asset != asset {
+                    continue;
+                }
+
+                if let Some(peak) = get_trailing_stop_peak(&env, oid) {
+                    let new_peak = match order.direction {
+                        Direction::Long => {
+                            if current_price > peak { current_price } else { peak }
+                        }
+                        Direction::Short => {
+                            if current_price < peak { current_price } else { peak }
+                        }
+                    };
+                    if new_peak != peak {
+                        set_trailing_stop_peak(&env, oid, new_peak);
+                        updated += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(updated)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -2001,9 +2300,10 @@ impl MarketContract {
         let fee_config = KeeperFeeConfig::default();
 
         let position_size = match order.order_type {
-            OrderType::LimitEntry => calculate_position_size(order.collateral, order.leverage),
-            OrderType::StopLoss | OrderType::TakeProfit => {
-                // For SL/TP, get size from the position
+            OrderType::LimitEntry | OrderType::StopLimit => {
+                calculate_position_size(order.collateral, order.leverage)
+            }
+            OrderType::StopLoss | OrderType::TakeProfit | OrderType::TrailingStop => {
                 if let Some(pos) = get_position(env, order.position_id) {
                     pos.size
                 } else {
@@ -3293,5 +3593,210 @@ mod tests {
 
         let fee_info = test.market.get_trader_fee_info(&trader);
         assert_eq!(fee_info.volume_14d, 500 * PRECISION);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // T1.2 Advanced Order Type Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_place_stop_limit_order() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let order = test.market.place_stop_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION * 8 / 100),  // stop at $0.08
+            &(PRECISION * 75 / 1000), // limit at $0.075
+            &false,                    // trigger below
+            &200,                      // 2% slippage
+        );
+
+        assert_eq!(order.order_type, OrderType::StopLimit);
+        assert_eq!(order.stop_limit_phase, 0); // WaitingForStop
+        assert_eq!(order.limit_price, PRECISION * 75 / 1000);
+        assert_eq!(order.collateral, 100 * PRECISION); // Locked
+    }
+
+    #[test]
+    fn test_cancel_stop_limit_refunds() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let usdc = token::Client::new(&test.env, &test.usdc_token);
+        let before = usdc.balance(&trader);
+
+        let order = test.market.place_stop_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION * 8 / 100),
+            &(PRECISION * 75 / 1000),
+            &false,
+            &200,
+        );
+
+        test.market.cancel_order(&trader, &order.id);
+        assert_eq!(usdc.balance(&trader), before); // Fully refunded
+    }
+
+    #[test]
+    fn test_place_trailing_stop() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Place 3% trailing stop
+        let order = test.market.place_trailing_stop(
+            &trader,
+            &pos.id,
+            &300,  // 3%
+            &200,  // 2% slippage
+        );
+
+        assert_eq!(order.order_type, OrderType::TrailingStop);
+        assert_eq!(order.trailing_percent_bps, 300);
+        assert_eq!(order.position_id, pos.id);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #69)")] // InvalidTrailingPercent
+    fn test_trailing_stop_invalid_percent() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // 0% trailing - invalid
+        test.market.place_trailing_stop(&trader, &pos.id, &0, &200);
+    }
+
+    #[test]
+    fn test_trailing_stop_peak_update() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = Address::generate(&test.env);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        test.market.place_trailing_stop(&trader, &pos.id, &300, &200);
+
+        // Price goes up: $0.10 → $0.12
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 12 / 100));
+
+        let updated = test.market.update_trailing_stops(&keeper, &Symbol::new(&test.env, "XLM"));
+        assert_eq!(updated, 1); // Peak updated
+
+        // Price goes down slightly: $0.12 → $0.118 (< 3% drop from $0.12)
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 118 / 1000));
+
+        // Should NOT trigger yet (1.67% drop, need 3%)
+        let order_ids = test.market.get_all_order_ids();
+        let should = test.market.should_execute_order(&order_ids.get(0).unwrap());
+        assert_eq!(should, false);
+
+        // Price crashes: $0.118 → $0.11 (8.3% drop from peak $0.12)
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 11 / 100));
+
+        let should2 = test.market.should_execute_order(&order_ids.get(0).unwrap());
+        assert_eq!(should2, true); // Now triggers
+    }
+
+    #[test]
+    fn test_stop_limit_two_phase_execution() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = Address::generate(&test.env);
+
+        // Place stop-limit: stop at $0.08, limit at $0.075
+        let order = test.market.place_stop_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION * 8 / 100),
+            &(PRECISION * 75 / 1000),
+            &false,  // trigger below
+            &500,    // 5% slippage
+        );
+
+        // Price drops to $0.08 → stop triggers
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 8 / 100));
+
+        let should = test.market.should_execute_order(&order.id);
+        assert_eq!(should, true);
+
+        // Execute phase 0→1 (returns 0, no reward)
+        let reward = test.market.execute_order(&keeper, &order.id);
+        assert_eq!(reward, 0);
+
+        // Order still pending but now in phase 1
+        let updated_order = test.market.get_order(&order.id).unwrap();
+        assert_eq!(updated_order.stop_limit_phase, 1);
+        assert_eq!(updated_order.status, OrderStatus::Pending);
+
+        // Price drops further to $0.075 → limit triggers
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 75 / 1000));
+
+        let should2 = test.market.should_execute_order(&order.id);
+        assert_eq!(should2, true);
+
+        // Execute phase 1 → position opened
+        let reward2 = test.market.execute_order(&keeper, &order.id);
+        assert!(reward2 > 0); // Keeper gets reward
+
+        // Position should exist
+        let positions = test.market.get_positions(&trader);
+        assert_eq!(positions.len(), 1);
+    }
+
+    #[test]
+    fn test_order_new_fields_default() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Regular limit order should have default values for new fields
+        let order = test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION * 8 / 100),
+            &false,
+            &100,
+        );
+
+        assert_eq!(order.limit_price, 0);
+        assert_eq!(order.trailing_percent_bps, 0);
+        assert_eq!(order.time_in_force, 0); // GTC
+        assert_eq!(order.stop_limit_phase, 0);
     }
 }

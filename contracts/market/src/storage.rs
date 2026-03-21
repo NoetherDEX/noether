@@ -64,6 +64,8 @@ pub enum DataKey {
     CrossMarginPositions(Address),
     /// All traders with cross-margin accounts (Vec<Address>) - for keeper scanning
     AllCrossMarginTraders,
+    /// Peak price tracked for trailing stop orders (order_id -> i128)
+    TrailingStopPeak(u64),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -625,6 +627,20 @@ pub fn add_cross_margin_trader(env: &Env, trader: &Address) {
         env.storage().persistent().set(&DataKey::AllCrossMarginTraders, &traders);
         extend_persistent_ttl(env, &DataKey::AllCrossMarginTraders);
     }
+}
+
+pub fn get_trailing_stop_peak(env: &Env, order_id: u64) -> Option<i128> {
+    env.storage().persistent().get(&DataKey::TrailingStopPeak(order_id))
+}
+
+pub fn set_trailing_stop_peak(env: &Env, order_id: u64, peak: i128) {
+    let key = DataKey::TrailingStopPeak(order_id);
+    env.storage().persistent().set(&key, &peak);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn remove_trailing_stop_peak(env: &Env, order_id: u64) {
+    env.storage().persistent().remove(&DataKey::TrailingStopPeak(order_id));
 }
 
 pub fn remove_cross_margin_trader(env: &Env, trader: &Address) {

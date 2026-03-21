@@ -104,6 +104,12 @@ pub enum NoetherError {
     InvalidSlippageTolerance = 66,
     /// Position already has this type of order attached
     OrderAlreadyExists = 67,
+    /// Invalid limit price for stop-limit order
+    InvalidLimitPrice = 68,
+    /// Invalid trailing percentage (must be 1-5000 bps = 0.01%-50%)
+    InvalidTrailingPercent = 69,
+    /// Post-only order would execute immediately (rejected)
+    PostOnlyViolation = 70,
 
     // ═══════════════════════════════════════════════════════════════
     // Cross-Margin Errors (76-80)

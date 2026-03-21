@@ -296,6 +296,10 @@ pub enum OrderType {
     StopLoss = 1,
     /// Take-profit order - close position to lock in profits
     TakeProfit = 2,
+    /// Stop-limit: when stop price triggers, place a limit order at limit_price
+    StopLimit = 3,
+    /// Trailing stop: dynamic stop that follows peak price by trailing_percent
+    TrailingStop = 4,
 }
 
 /// Trigger condition for order execution
@@ -324,7 +328,7 @@ pub enum OrderStatus {
     Expired = 4,
 }
 
-/// A conditional order (limit entry, stop-loss, or take-profit)
+/// A conditional order (limit entry, stop-loss, take-profit, stop-limit, trailing stop)
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Order {
@@ -334,13 +338,13 @@ pub struct Order {
     pub trader: Address,
     /// Trading asset symbol (e.g., "BTC", "ETH", "XLM")
     pub asset: Symbol,
-    /// Type of order (LimitEntry, StopLoss, TakeProfit)
+    /// Type of order (LimitEntry, StopLoss, TakeProfit, StopLimit, TrailingStop)
     pub order_type: OrderType,
     /// Direction for the position (Long or Short) - used for LimitEntry
     pub direction: Direction,
-    /// USDC collateral locked (for LimitEntry orders)
+    /// USDC collateral locked (for LimitEntry/StopLimit orders)
     pub collateral: i128,
-    /// Leverage multiplier (for LimitEntry orders)
+    /// Leverage multiplier (for LimitEntry/StopLimit orders)
     pub leverage: u32,
     /// Price at which to trigger the order (7 decimals)
     pub trigger_price: i128,
@@ -348,14 +352,22 @@ pub struct Order {
     pub trigger_condition: TriggerCondition,
     /// Maximum allowed slippage in basis points (e.g., 100 = 1%)
     pub slippage_tolerance_bps: u32,
-    /// Position ID this order is attached to (for SL/TP orders)
+    /// Position ID this order is attached to (for SL/TP/TrailingStop orders)
     pub position_id: u64,
-    /// Whether this order is attached to a position (0 = no, position_id value if yes)
+    /// Whether this order is attached to a position
     pub has_position: bool,
     /// Timestamp when order was created (Unix seconds)
     pub created_at: u64,
     /// Current status of the order
     pub status: OrderStatus,
+    /// Limit price for StopLimit orders (7 decimals). 0 = not applicable.
+    pub limit_price: i128,
+    /// Trailing percentage in basis points for TrailingStop (e.g., 200 = 2%). 0 = not applicable.
+    pub trailing_percent_bps: u32,
+    /// Time-in-force: 0=GTC (default), 1=IOC, 2=PostOnly
+    pub time_in_force: u32,
+    /// StopLimit phase: 0=WaitingForStop, 1=LimitActive
+    pub stop_limit_phase: u32,
 }
 
 /// Keeper fee configuration for order execution
