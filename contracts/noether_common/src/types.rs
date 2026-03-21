@@ -35,6 +35,20 @@ pub enum PositionStatus {
     Liquidated = 2,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Margin Mode
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Margin mode for a position
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq, Copy)]
+pub enum MarginMode {
+    /// Isolated margin - each position has its own collateral (default)
+    Isolated = 0,
+    /// Cross margin - shares collateral pool across all cross positions
+    Cross = 1,
+}
+
 /// A trader's leveraged position
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -57,6 +71,7 @@ pub struct Position {
     /// Leverage multiplier (1-10)
     pub leverage: u32,
     /// Price at which position will be liquidated (7 decimals)
+    /// For cross-margin positions, this is 0 (liquidation is account-level)
     pub liquidation_price: i128,
     /// Timestamp when position was opened (Unix seconds)
     pub timestamp: u64,
@@ -64,6 +79,26 @@ pub struct Position {
     pub last_funding_time: u64,
     /// Accumulated funding payments (positive = paid, negative = received)
     pub accumulated_funding: i128,
+    /// Margin mode: 0 = Isolated, 1 = Cross
+    pub margin_mode: u32,
+}
+
+/// Cross-margin account info (view return type)
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CrossMarginInfo {
+    /// Total balance in cross-margin pool (7 decimals)
+    pub balance: i128,
+    /// Account equity = balance + sum(unrealized PnL) - sum(funding) (7 decimals)
+    pub equity: i128,
+    /// Total initial margin used by cross positions (7 decimals)
+    pub used_margin: i128,
+    /// Free margin available = equity - used_margin (7 decimals)
+    pub free_margin: i128,
+    /// Margin ratio = equity / used_margin * 10000 (basis points)
+    pub margin_ratio_bps: i128,
+    /// Number of open cross-margin positions
+    pub position_count: u32,
 }
 
 /// Price data from oracles

@@ -25,6 +25,7 @@ lto = true                # Link-time optimization
 codegen-units = 1         # Single codegen unit for better optimization
 panic = "abort"           # Smaller binary, no unwinding
 strip = "symbols"         # Remove debug symbols
+overflow-checks = true    # Keep overflow checks (security)
 
 [profile.release-with-logs]
 inherits = "release"

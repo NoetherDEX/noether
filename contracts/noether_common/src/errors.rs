@@ -104,4 +104,17 @@ pub enum NoetherError {
     InvalidSlippageTolerance = 66,
     /// Position already has this type of order attached
     OrderAlreadyExists = 67,
+
+    // ═══════════════════════════════════════════════════════════════
+    // Cross-Margin Errors (76-80)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Cross-margin pool has insufficient balance for operation
+    CrossMarginInsufficientBalance = 76,
+    /// Cannot withdraw: would leave insufficient free margin
+    CrossMarginInsufficientFreeMargin = 77,
+    /// Cross-margin account is not liquidatable
+    CrossMarginNotLiquidatable = 78,
+    /// No cross-margin positions found for this trader
+    CrossMarginNoPositions = 79,
 }

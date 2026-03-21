@@ -271,6 +271,7 @@ mod tests {
             timestamp: 1000000,
             last_funding_time: 1000000,
             accumulated_funding: 0,
+            margin_mode: 0,
         }
     }
 

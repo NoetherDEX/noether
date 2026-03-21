@@ -3,7 +3,7 @@
 //! Storage keys and helpers for the Market contract.
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
-use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord};
+use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord, CrossMarginInfo};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
@@ -58,6 +58,12 @@ pub enum DataKey {
     TraderVolume(Address),
     /// Fee tier configuration (Vec<FeeTier>)
     FeeTiers,
+    /// Cross-margin balance per trader (i128)
+    CrossMarginBalance(Address),
+    /// Cross-margin position IDs per trader (Vec<u64>)
+    CrossMarginPositions(Address),
+    /// All traders with cross-margin accounts (Vec<Address>) - for keeper scanning
+    AllCrossMarginTraders,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -532,4 +538,103 @@ pub fn set_trader_volume(env: &Env, trader: &Address, record: &VolumeRecord) {
     let key = DataKey::TraderVolume(trader.clone());
     env.storage().persistent().set(&key, record);
     extend_persistent_ttl(env, &key);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Cross-Margin Storage
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub fn get_cross_margin_balance(env: &Env, trader: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CrossMarginBalance(trader.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_cross_margin_balance(env: &Env, trader: &Address, balance: i128) {
+    let key = DataKey::CrossMarginBalance(trader.clone());
+    env.storage().persistent().set(&key, &balance);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn get_cross_margin_position_ids(env: &Env, trader: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CrossMarginPositions(trader.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn add_cross_margin_position(env: &Env, trader: &Address, position_id: u64) {
+    let key = DataKey::CrossMarginPositions(trader.clone());
+    let mut ids: Vec<u64> = env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+
+    // Only add if not already present
+    let mut found = false;
+    for i in 0..ids.len() {
+        if ids.get(i).unwrap() == position_id {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        ids.push_back(position_id);
+        env.storage().persistent().set(&key, &ids);
+        extend_persistent_ttl(env, &key);
+    }
+}
+
+pub fn remove_cross_margin_position(env: &Env, trader: &Address, position_id: u64) {
+    let key = DataKey::CrossMarginPositions(trader.clone());
+    let ids: Vec<u64> = env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+
+    let mut new_ids = Vec::new(env);
+    for i in 0..ids.len() {
+        let id = ids.get(i).unwrap();
+        if id != position_id {
+            new_ids.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &new_ids);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn get_all_cross_margin_traders(env: &Env) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AllCrossMarginTraders)
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn add_cross_margin_trader(env: &Env, trader: &Address) {
+    let mut traders = get_all_cross_margin_traders(env);
+    let mut found = false;
+    for i in 0..traders.len() {
+        if traders.get(i).unwrap() == *trader {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        traders.push_back(trader.clone());
+        env.storage().persistent().set(&DataKey::AllCrossMarginTraders, &traders);
+        extend_persistent_ttl(env, &DataKey::AllCrossMarginTraders);
+    }
+}
+
+pub fn remove_cross_margin_trader(env: &Env, trader: &Address) {
+    let traders = get_all_cross_margin_traders(env);
+    let mut new_list = Vec::new(env);
+    for i in 0..traders.len() {
+        let t = traders.get(i).unwrap();
+        if t != *trader {
+            new_list.push_back(t);
+        }
+    }
+    env.storage().persistent().set(&DataKey::AllCrossMarginTraders, &new_list);
 }
