@@ -265,6 +265,7 @@ export function toDisplayPosition(
     pnlPercent: isNaN(pnlPercent) ? 0 : pnlPercent,
     leverage: isNaN(leverage) ? 0 : leverage,
     openedAt: new Date(position.openedAt * 1000),
+    marginMode: position.marginMode || 'Isolated',
   };
 }
 
@@ -519,17 +520,21 @@ interface RawOrder {
   id: number | bigint;
   trader: string;
   asset: string;
-  order_type: number | bigint; // 0 = LimitEntry, 1 = StopLoss, 2 = TakeProfit
-  direction: number | bigint; // 0 = Long, 1 = Short
+  order_type: number | bigint;
+  direction: number | bigint;
   collateral: bigint;
   leverage: number | bigint;
   trigger_price: bigint;
-  trigger_condition: number | bigint; // 0 = Above, 1 = Below
+  trigger_condition: number | bigint;
   slippage_tolerance_bps: number | bigint;
   position_id: number | bigint;
   has_position: boolean;
   created_at: number | bigint;
-  status: number | bigint; // 0 = Pending, 1 = Executed, 2 = Cancelled, 3 = CancelledSlippage, 4 = Expired
+  status: number | bigint;
+  limit_price?: bigint;
+  trailing_percent_bps?: number | bigint;
+  time_in_force?: number | bigint;
+  stop_limit_phase?: number | bigint;
 }
 
 /**
@@ -540,6 +545,8 @@ function parseOrder(raw: RawOrder): Order {
     0: 'LimitEntry',
     1: 'StopLoss',
     2: 'TakeProfit',
+    3: 'StopLimit',
+    4: 'TrailingStop',
   };
 
   const statusMap: Record<number, OrderStatus> = {
@@ -565,6 +572,10 @@ function parseOrder(raw: RawOrder): Order {
     hasPosition: raw.has_position,
     createdAt: Number(raw.created_at),
     status: statusMap[Number(raw.status)] || 'Pending',
+    limitPrice: raw.limit_price ?? BigInt(0),
+    trailingPercentBps: Number(raw.trailing_percent_bps ?? 0),
+    timeInForce: Number(raw.time_in_force ?? 0),
+    stopLimitPhase: Number(raw.stop_limit_phase ?? 0),
   };
 }
 
