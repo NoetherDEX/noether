@@ -1,10 +1,14 @@
-import { oracleContract, toScVal, rpc as sorobanRpc } from './client';
+import { toScVal, rpc as sorobanRpc } from './client';
 import type { PriceData } from '@/types';
-import { rpc, scValToNative, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk';
-import { NETWORK } from '@/lib/utils/constants';
+import { rpc, scValToNative, TransactionBuilder, BASE_FEE, Contract } from '@stellar/stellar-sdk';
+import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
+
+// Use mock oracle directly (market contract points to mock oracle, not adapter)
+const oracleContract = new Contract(CONTRACTS.MOCK_ORACLE);
 
 /**
- * Get price from oracle adapter (read-only)
+ * Get price from oracle (read-only)
+ * Calls `lastprice` on mock oracle which returns (price, timestamp)
  */
 export async function getPrice(
   publicKey: string,
@@ -12,7 +16,7 @@ export async function getPrice(
 ): Promise<PriceData | null> {
   try {
     const account = await sorobanRpc.getAccount(publicKey);
-    const operation = oracleContract.call('get_price', toScVal(asset, 'symbol'));
+    const operation = oracleContract.call('lastprice', toScVal(asset, 'symbol'));
 
     const transaction = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -25,7 +29,12 @@ export async function getPrice(
     const result = await sorobanRpc.simulateTransaction(transaction);
 
     if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      return scValToNative(result.result.retval) as PriceData;
+      const raw = scValToNative(result.result.retval) as [bigint, bigint];
+      // lastprice returns tuple (price, timestamp)
+      return {
+        price: raw[0],
+        timestamp: Number(raw[1]),
+      };
     }
 
     return null;
