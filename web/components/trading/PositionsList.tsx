@@ -681,6 +681,9 @@ function PositionRow({
           )}
         >
           {position.direction.toUpperCase()}
+          {position.marginMode === 'Cross' && (
+            <span className="ml-1 text-[8px] px-1 py-0.5 bg-amber-500/20 text-amber-500 rounded">CROSS</span>
+          )}
         </span>
       </td>
 
