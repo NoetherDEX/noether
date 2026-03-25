@@ -232,6 +232,44 @@ export class StellarClient {
   // ═══════════════════════════════════════════════════════════════════════
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Reflector Oracle (On-Chain Price Feed)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  private reflectorContract = new Contract(
+    'CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63' // Reflector testnet
+  );
+
+  /**
+   * Get price from Reflector on-chain oracle
+   * Reflector uses SEP-40 with Asset enum: {Other: Symbol} for non-XLM assets
+   */
+  async getReflectorPrice(asset: string): Promise<{ price: bigint; timestamp: bigint } | null> {
+    try {
+      // SEP-40 asset format: Vec<ScVal> with ["Other", "BTC"]
+      const assetScVal = xdr.ScVal.scvVec([
+        nativeToScVal('Other', { type: 'symbol' }),
+        nativeToScVal(asset, { type: 'symbol' }),
+      ]);
+
+      const result = await this.invokeContractRead<any>(
+        this.reflectorContract,
+        'lastprice',
+        [assetScVal]
+      );
+
+      if (result && result.price !== undefined) {
+        return {
+          price: BigInt(result.price),
+          timestamp: BigInt(result.timestamp),
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Cross-Margin Functions
   // ═══════════════════════════════════════════════════════════════════════
 

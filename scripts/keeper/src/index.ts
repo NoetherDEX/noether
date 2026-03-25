@@ -177,11 +177,20 @@ class KeeperBot {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Fetch prices from Binance and update oracle
+   * Fetch prices and update oracle.
+   * Primary: Reflector on-chain oracle (real decentralized prices)
+   * Fallback: Binance API (if Reflector unavailable)
    */
   private async updateOraclePrices(): Promise<void> {
     try {
-      const prices = await this.fetchBinancePrices();
+      // Try Reflector first (on-chain oracle), fallback to Binance
+      let prices = await this.fetchReflectorPrices();
+      let source = 'Reflector';
+
+      if (prices.size === 0) {
+        prices = await this.fetchBinancePrices();
+        source = 'Binance';
+      }
 
       for (const asset of this.config.assets) {
         const price = prices.get(asset.symbol);
@@ -210,13 +219,47 @@ class KeeperBot {
         // Delay between assets to avoid sequence conflicts
         await this.sleep(1500);
       }
+
+      if (prices.size > 0 && this.stats.oracleUpdates % 10 === 1) {
+        console.log(`\n📡 Prices from ${source}`);
+      }
     } catch (error) {
-      console.error('\nError fetching Binance prices:', error);
+      console.error('\nError updating oracle prices:', error);
     }
   }
 
   /**
-   * Fetch current prices from Binance
+   * Fetch prices from Reflector on-chain oracle (testnet)
+   * Reflector is a decentralized oracle used by Blend, Slender, OrbitCDP etc.
+   * Uses SEP-40 interface with 14 decimal precision
+   */
+  private async fetchReflectorPrices(): Promise<Map<string, number>> {
+    const prices = new Map<string, number>();
+    const REFLECTOR_DECIMALS = 14;
+
+    try {
+      for (const asset of this.config.assets) {
+        try {
+          const result = await this.stellar.getReflectorPrice(asset.symbol);
+          if (result) {
+            const price = Number(result.price) / (10 ** REFLECTOR_DECIMALS);
+            if (price > 0) {
+              prices.set(asset.symbol, price);
+            }
+          }
+        } catch {
+          // Individual asset failure, continue with others
+        }
+      }
+    } catch {
+      // Reflector unavailable, will fallback to Binance
+    }
+
+    return prices;
+  }
+
+  /**
+   * Fetch current prices from Binance (fallback)
    */
   private async fetchBinancePrices(): Promise<Map<string, number>> {
     const symbols = this.config.assets.map(a => a.binanceSymbol);
