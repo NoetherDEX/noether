@@ -3,12 +3,12 @@ import type { PriceData } from '@/types';
 import { rpc, scValToNative, TransactionBuilder, BASE_FEE, Contract } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
-// Use mock oracle directly (market contract points to mock oracle, not adapter)
-const oracleContract = new Contract(CONTRACTS.MOCK_ORACLE);
+// Use oracle adapter (aggregates prices with staleness + deviation checks)
+const oracleContract = new Contract(CONTRACTS.ORACLE_ADAPTER);
 
 /**
- * Get price from oracle (read-only)
- * Calls `lastprice` on mock oracle which returns (price, timestamp)
+ * Get price from oracle adapter (read-only)
+ * Calls `lastprice` which fetches from configured sources, validates, and returns (price, timestamp)
  */
 export async function getPrice(
   publicKey: string,
