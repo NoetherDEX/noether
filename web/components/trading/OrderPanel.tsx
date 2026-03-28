@@ -127,7 +127,9 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
   // Validation
   const errors: string[] = [];
   if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
-  if (collateralNum > usdcBalance) errors.push('Insufficient USDC balance');
+  if (orderType !== 'TrailingStop') {
+    if (collateralNum > usdcBalance) errors.push('Insufficient USDC balance');
+  }
   if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
   if (xlmBalance < 1) errors.push('Need XLM for gas fees');
   if (orderType === 'Limit') {
@@ -214,42 +216,71 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
 
     if (orderType === 'Market') {
       // Market order - immediate execution
-      const openFn = marginMode === 'Cross' ? openPositionCross : openPosition;
-      const openPositionPromise = openFn(publicKey, sign, {
-        asset,
-        collateral: toPrecision(collateralNum),
-        leverage,
-        direction,
-      });
+      if (marginMode === 'Cross') {
+        // Cross-margin: auto-deposit to pool if needed, then open
+        const openCrossPromise = (async () => {
+          const currentPoolBalance = await getCrossMarginBalance(publicKey);
+          const poolNum = Number(currentPoolBalance) / 10_000_000;
+          if (poolNum < collateralNum) {
+            // Need to deposit the difference (or full amount) to pool first
+            const depositNeeded = collateralNum - poolNum;
+            await depositCrossMargin(publicKey, sign, toPrecision(depositNeeded));
+          }
+          return openPositionCross(publicKey, sign, { asset, collateral: toPrecision(collateralNum), leverage, direction });
+        })();
 
-      toast.promise(openPositionPromise, {
-        loading: `Opening ${direction} ${asset} position...`,
-        success: (position) => {
-          setCollateral('');
-          refreshBalances();
-          onSubmit?.();
-          onPositionOpened?.();
-          return `${direction} ${asset} position opened!`;
-        },
-        error: (err) => {
-          console.error('Failed to open position:', err);
-          if (err?.message?.includes('InsufficientCollateral')) {
-            return 'Insufficient collateral. Minimum is 10 USDC.';
-          }
-          if (err?.message?.includes('InvalidLeverage')) {
-            return 'Invalid leverage. Must be between 1x and 10x.';
-          }
-          if (err?.message?.includes('AllOraclesFailed')) {
-            return 'Price feed unavailable. Please try again.';
-          }
-          return err?.message || 'Failed to open position';
-        },
-      });
+        toast.promise(openCrossPromise, {
+          loading: `Opening Cross ${direction} ${asset}...`,
+          success: () => {
+            setCollateral('');
+            refreshBalances();
+            onSubmit?.();
+            onPositionOpened?.();
+            getCrossMarginBalance(publicKey).then(b => setCrossBalance(Number(b) / 10_000_000)).catch(() => {});
+            return `Cross ${direction} ${asset} position opened!`;
+          },
+          error: (err) => err?.message || 'Failed to open cross position',
+        });
 
-      try {
-        await openPositionPromise;
-      } catch {
-        // Error handled by toast
+        try { await openCrossPromise; } catch {}
+      } else {
+        // Isolated margin - direct open
+        const openPositionPromise = openPosition(publicKey, sign, {
+          asset,
+          collateral: toPrecision(collateralNum),
+          leverage,
+          direction,
+        });
+
+        toast.promise(openPositionPromise, {
+          loading: `Opening ${direction} ${asset} position...`,
+          success: (position) => {
+            setCollateral('');
+            refreshBalances();
+            onSubmit?.();
+            onPositionOpened?.();
+            return `${direction} ${asset} position opened!`;
+          },
+          error: (err) => {
+            console.error('Failed to open position:', err);
+            if (err?.message?.includes('InsufficientCollateral')) {
+              return 'Insufficient collateral. Minimum is 10 USDC.';
+            }
+            if (err?.message?.includes('InvalidLeverage')) {
+              return 'Invalid leverage. Must be between 1x and 10x.';
+            }
+            if (err?.message?.includes('AllOraclesFailed')) {
+              return 'Price feed unavailable. Please try again.';
+            }
+            return err?.message || 'Failed to open position';
+          },
+        });
+
+        try {
+          await openPositionPromise;
+        } catch {
+          // Error handled by toast
+        }
       }
     } else {
       // Limit order - conditional execution
