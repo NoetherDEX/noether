@@ -24,6 +24,7 @@ import {
   getPositions,
   toDisplayPosition,
   closePosition,
+  closePositionCross,
   getOrders,
   toDisplayOrder,
   setStopLoss,
@@ -140,15 +141,22 @@ function TradePage() {
     if (!publicKey) throw new Error('Wallet not connected');
 
     try {
-      const result = await closePosition(publicKey, sign, positionId);
-      console.log('Position closed:', result);
+      // Check if this is a cross-margin position
+      const pos = positions.find(p => p.id === positionId);
+      if (pos?.marginMode === 'Cross') {
+        const result = await closePositionCross(publicKey, sign, positionId);
+        console.log('Cross position closed:', result);
+      } else {
+        const result = await closePosition(publicKey, sign, positionId);
+        console.log('Position closed:', result);
+      }
 
       // Refresh positions and balances
       await fetchPositions(false);
       refreshBalances();
     } catch (error) {
       console.error('Failed to close position:', error);
-      throw error; // Re-throw so the modal knows it failed
+      throw error;
     }
   };
 

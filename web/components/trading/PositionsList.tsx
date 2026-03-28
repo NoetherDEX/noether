@@ -148,7 +148,10 @@ export function PositionsList({
   };
 
   // Check if position is at liquidation risk (within 10% of mark price)
+  // Cross-margin positions don't have per-position liq price
   const isLiquidationRisk = (pos: DisplayPosition) => {
+    if (pos.marginMode === 'Cross') return false;
+    if (pos.currentPrice === 0) return false;
     const diff = Math.abs(pos.liquidationPrice - pos.currentPrice) / pos.currentPrice;
     return diff < 0.1;
   };
@@ -720,7 +723,9 @@ function PositionRow({
               isLiquidationRisk ? 'text-[#f97316]' : 'text-muted-foreground'
             )}
           >
-            {formatPrice(position.liquidationPrice)}
+            {position.marginMode === 'Cross'
+              ? <span className="text-amber-500 text-xs">Account Level</span>
+              : formatPrice(position.liquidationPrice)}
           </span>
         </div>
       </td>
@@ -850,7 +855,11 @@ function PositionCard({
         </div>
         <div>
           <p className="text-muted-foreground mb-1">Liq. Price</p>
-          <p className="text-[#f97316]/70 font-mono">{formatPrice(position.liquidationPrice)}</p>
+          <p className="text-[#f97316]/70 font-mono">
+            {position.marginMode === 'Cross'
+              ? <span className="text-amber-500">Account Level</span>
+              : formatPrice(position.liquidationPrice)}
+          </p>
         </div>
       </div>
 
