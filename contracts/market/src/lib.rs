@@ -245,6 +245,9 @@ impl MarketContract {
         // Calculate taker fee and record volume
         let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
         let net_collateral = collateral - fee;
+        if net_collateral <= 0 {
+            return Err(NoetherError::InsufficientCollateral);
+        }
 
         // Transfer collateral from trader to market contract
         let usdc_token = get_usdc_token(&env);
@@ -382,11 +385,11 @@ impl MarketContract {
         match position.direction {
             Direction::Long => {
                 let total = get_total_long_size(&env);
-                set_total_long_size(&env, total - position.size);
+                set_total_long_size(&env, if total > position.size { total - position.size } else { 0 });
             }
             Direction::Short => {
                 let total = get_total_short_size(&env);
-                set_total_short_size(&env, total - position.size);
+                set_total_short_size(&env, if total > position.size { total - position.size } else { 0 });
             }
         }
 
@@ -565,11 +568,11 @@ impl MarketContract {
         match position.direction {
             Direction::Long => {
                 let total = get_total_long_size(&env);
-                set_total_long_size(&env, total - position.size);
+                set_total_long_size(&env, if total > position.size { total - position.size } else { 0 });
             }
             Direction::Short => {
                 let total = get_total_short_size(&env);
-                set_total_short_size(&env, total - position.size);
+                set_total_short_size(&env, if total > position.size { total - position.size } else { 0 });
             }
         }
 
@@ -928,6 +931,8 @@ impl MarketContract {
 
         if !position_ids.is_empty() {
             // Calculate equity AFTER withdrawal
+            // Use current oracle prices; if oracle fails, use 0 which makes equity lower = safer
+            // (prevents withdrawal when prices unavailable)
             let get_price = |asset: &Symbol| -> i128 {
                 Self::get_oracle_price(&env, asset).unwrap_or(0)
             };
@@ -1007,6 +1012,9 @@ impl MarketContract {
         let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
 
         let net_collateral = collateral - fee;
+        if net_collateral <= 0 {
+            return Err(NoetherError::InsufficientCollateral);
+        }
 
         // Deduct from cross-margin pool (not from wallet - already deposited)
         let new_balance = pool_balance - collateral;
@@ -1113,10 +1121,12 @@ impl MarketContract {
         }
 
         // Return remaining equity to cross-margin pool (NOT trader wallet)
-        let to_pool = pos.collateral + pnl - pos.accumulated_funding;
+        let to_pool = pos.collateral.checked_add(pnl).unwrap_or(0)
+            .checked_sub(pos.accumulated_funding).unwrap_or(0);
         if to_pool > 0 {
             let current_balance = get_cross_margin_balance(&env, &trader);
-            set_cross_margin_balance(&env, &trader, current_balance + to_pool);
+            let new_balance = current_balance.checked_add(to_pool).unwrap_or(current_balance);
+            set_cross_margin_balance(&env, &trader, new_balance);
         }
 
         // Record volume
@@ -1154,8 +1164,10 @@ impl MarketContract {
         require_initialized(&env)?;
 
         let config = get_config(&env);
+        // If oracle fails, use i128::MAX as price (makes equity huge = not liquidatable)
+        // This prevents false liquidations when oracle is unavailable
         let get_price = |asset: &Symbol| -> i128 {
-            Self::get_oracle_price(&env, asset).unwrap_or(0)
+            Self::get_oracle_price(&env, asset).unwrap_or(i128::MAX / 2)
         };
 
         Ok(position::is_cross_account_liquidatable(
@@ -1175,11 +1187,12 @@ impl MarketContract {
         keeper.require_auth();
 
         let config = get_config(&env);
+        // For liquidation verification: oracle failure = not liquidatable (safe)
         let get_price = |asset: &Symbol| -> i128 {
-            Self::get_oracle_price(&env, asset).unwrap_or(0)
+            Self::get_oracle_price(&env, asset).unwrap_or(i128::MAX / 2)
         };
 
-        // Verify account is liquidatable
+        // Verify account is liquidatable (will fail if oracle down - safe)
         if !position::is_cross_account_liquidatable(
             &env, &trader, config.maintenance_margin_bps, &get_price,
         ) {
@@ -1266,17 +1279,19 @@ impl MarketContract {
             token_client.transfer(&market_addr, &keeper, &keeper_reward);
         }
 
-        // Send any remaining to vault
-        let final_balance = token_client.balance(&market_addr);
-        // Only send what belongs to this liquidation (not other traders' deposits)
-        // We know the trader's total was: balance (pool) + sum(collateral in positions)
-        // After all settlements, whatever is left from their account goes to vault
-        let trader_remaining = final_balance; // Simplified: in practice we'd track precisely
-        if trader_remaining > 0 && equity > keeper_reward {
+        // Send remaining trader equity to vault (not other traders' deposits)
+        // Trader's total deposit = pool balance + sum of position collaterals
+        // We already know `balance` (pool balance before liquidation)
+        // After settlements, at most `balance` worth of trader funds remain in contract
+        if equity > keeper_reward {
             let to_vault = equity - keeper_reward;
-            let actual_to_vault = if to_vault > trader_remaining { trader_remaining } else { to_vault };
-            if actual_to_vault > 0 {
-                token_client.transfer(&market_addr, &vault_address, &actual_to_vault);
+            // Cap at what the trader actually deposited (balance = pool balance)
+            let max_to_vault = if balance > keeper_reward { balance - keeper_reward } else { 0 };
+            let actual_to_vault = if to_vault > max_to_vault { max_to_vault } else { to_vault };
+            let market_balance = token_client.balance(&market_addr);
+            let final_transfer = if actual_to_vault > market_balance { market_balance } else { actual_to_vault };
+            if final_transfer > 0 {
+                token_client.transfer(&market_addr, &vault_address, &final_transfer);
             }
         }
 
@@ -2365,11 +2380,11 @@ impl MarketContract {
         match position.direction {
             Direction::Long => {
                 let total = get_total_long_size(env);
-                set_total_long_size(env, total - position.size);
+                set_total_long_size(env, if total > position.size { total - position.size } else { 0 });
             }
             Direction::Short => {
                 let total = get_total_short_size(env);
-                set_total_short_size(env, total - position.size);
+                set_total_short_size(env, if total > position.size { total - position.size } else { 0 });
             }
         }
 

@@ -82,12 +82,16 @@ pub fn calculate_pnl(position: &Position, current_price: i128) -> Result<i128, N
 
     let pnl = match position.direction {
         Direction::Long => {
-            // Long profits when price goes up
-            position.size * (current_price - position.entry_price) / position.entry_price
+            let price_diff = current_price - position.entry_price;
+            position.size.checked_mul(price_diff)
+                .ok_or(NoetherError::Overflow)?
+                / position.entry_price
         }
         Direction::Short => {
-            // Short profits when price goes down
-            position.size * (position.entry_price - current_price) / position.entry_price
+            let price_diff = position.entry_price - current_price;
+            position.size.checked_mul(price_diff)
+                .ok_or(NoetherError::Overflow)?
+                / position.entry_price
         }
     };
 

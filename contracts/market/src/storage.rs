@@ -253,6 +253,7 @@ pub fn delete_position(env: &Env, id: u64, trader: &Address) {
         }
     }
     env.storage().persistent().set(&trader_key, &new_list);
+    extend_persistent_ttl(env, &trader_key);
 
     // Remove from global index
     let all_positions = get_all_position_ids(env);
@@ -264,6 +265,7 @@ pub fn delete_position(env: &Env, id: u64, trader: &Address) {
         }
     }
     env.storage().persistent().set(&DataKey::AllPositions, &new_all);
+    extend_persistent_ttl(env, &DataKey::AllPositions);
 }
 
 pub fn get_trader_positions(env: &Env, trader: &Address) -> Vec<Position> {
@@ -328,12 +330,17 @@ pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
 // TTL Management
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Stellar best practice: threshold (check if TTL < this) + extend_to (set TTL to this)
+// Only extends if current TTL < threshold, avoiding wasted gas on every call
+const TTL_THRESHOLD: u32 = 17_280; // ~1 day at 5s ledgers
+const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
+
 pub fn extend_instance_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(2_592_000, 2_592_000); // 30 days
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 fn extend_persistent_ttl(env: &Env, key: &DataKey) {
-    env.storage().persistent().extend_ttl(key, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -433,6 +440,7 @@ pub fn remove_order_from_lists(env: &Env, order_id: u64, trader: &Address) {
         }
     }
     env.storage().persistent().set(&trader_key, &new_list);
+    extend_persistent_ttl(env, &trader_key);
 
     // Remove from global index
     let all_orders = get_all_order_ids(env);
@@ -444,6 +452,7 @@ pub fn remove_order_from_lists(env: &Env, order_id: u64, trader: &Address) {
         }
     }
     env.storage().persistent().set(&DataKey::AllOrders, &new_all);
+    extend_persistent_ttl(env, &DataKey::AllOrders);
 }
 
 pub fn delete_order(env: &Env, order_id: u64, trader: &Address) {
