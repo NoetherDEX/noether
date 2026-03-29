@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
-import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, depositCrossMargin, withdrawCrossMargin, getCrossMarginBalance, getTraderFeeInfo } from '@/lib/stellar/market';
+import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, getTraderFeeInfo } from '@/lib/stellar/market';
 import {
   formatUSD,
   formatNumber,
@@ -16,15 +16,16 @@ import {
 import { cn } from '@/lib/utils/cn';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { TRADING } from '@/lib/utils/constants';
-import type { TriggerCondition } from '@/types';
+import type { TriggerCondition, DisplayPosition } from '@/types';
 
 interface OrderPanelProps {
   asset: string;
+  positions?: DisplayPosition[];
   onSubmit?: () => void;
   onPositionOpened?: () => void;
 }
 
-export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProps) {
+export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }: OrderPanelProps) {
   const { isConnected, publicKey, xlmBalance, usdcBalance, sign, refreshBalances } = useWallet();
   const {
     direction,
@@ -41,8 +42,6 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
   // Margin mode
   const [marginMode, setMarginMode] = useState<'Isolated' | 'Cross'>('Isolated');
   const [crossBalance, setCrossBalance] = useState<number>(0);
-  const [crossDepositAmount, setCrossDepositAmount] = useState<string>('');
-  const [showCrossDeposit, setShowCrossDeposit] = useState(false);
 
   // Price states
   const [assetPrice, setAssetPrice] = useState<number>(0);
@@ -126,39 +125,27 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
 
   // Validation
   const errors: string[] = [];
-  if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
-  if (orderType !== 'TrailingStop') {
+  if (orderType === 'TrailingStop') {
+    if (!trailingPositionId) errors.push('Select a position');
+    if (xlmBalance < 1) errors.push('Need XLM for gas fees');
+  } else {
+    if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
     if (collateralNum > usdcBalance) errors.push('Insufficient USDC balance');
-  }
-  if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
-  if (xlmBalance < 1) errors.push('Need XLM for gas fees');
-  if (orderType === 'Limit') {
-    if (slippageTolerance <= 0 || slippageTolerance > 10000) errors.push('Slippage must be between 0.01% and 100%');
-    const triggerPriceNum = parseFloat(triggerPrice) || 0;
-    if (triggerPriceNum <= 0) errors.push('Enter a valid trigger price');
-  }
-
-  const canSubmit = isConnected && collateralNum >= 10 && errors.length === 0;
-
-  // Handle cross-margin deposit
-  const handleCrossDeposit = async () => {
-    if (!publicKey) return;
-    const amount = parseFloat(crossDepositAmount) || 0;
-    if (amount <= 0) return;
-    setIsSubmitting(true);
-    try {
-      await depositCrossMargin(publicKey, sign, toPrecision(amount));
-      toast.success(`Deposited ${amount} USDC to cross-margin pool`);
-      setCrossDepositAmount('');
-      setShowCrossDeposit(false);
-      refreshBalances();
-      const bal = await getCrossMarginBalance(publicKey);
-      setCrossBalance(Number(bal) / 10_000_000);
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to deposit');
+    if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
+    if (xlmBalance < 1) errors.push('Need XLM for gas fees');
+    if (orderType === 'Limit') {
+      if (slippageTolerance <= 0 || slippageTolerance > 10000) errors.push('Slippage must be between 0.01% and 100%');
+      const triggerPriceNum = parseFloat(triggerPrice) || 0;
+      if (triggerPriceNum <= 0) errors.push('Enter a valid trigger price');
     }
-    setIsSubmitting(false);
-  };
+    if (orderType === 'StopLimit') {
+      if (!(parseFloat(stopPrice) > 0)) errors.push('Enter stop price');
+      if (!(parseFloat(limitPrice) > 0)) errors.push('Enter limit price');
+    }
+  }
+
+  const canSubmit = isConnected && errors.length === 0 &&
+    (orderType === 'TrailingStop' ? !!trailingPositionId : collateralNum >= 10);
 
   // Handle position submission (market or limit)
   const handleSubmit = async () => {
@@ -431,8 +418,8 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
           </button>
         </div>
 
-        {/* Pay (Collateral) Input */}
-        <div className="space-y-2">
+        {/* Pay (Collateral) Input - hidden for TrailingStop */}
+        {orderType !== 'TrailingStop' && <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-xs text-muted-foreground flex items-center gap-1.5">
               Pay (Collateral)
@@ -470,10 +457,10 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
-        {/* Leverage Slider */}
-        <div className="space-y-3 p-3 bg-secondary/20 rounded-lg border border-white/5">
+        {/* Leverage Slider - hidden for TrailingStop */}
+        {orderType !== 'TrailingStop' && <div className="space-y-3 p-3 bg-secondary/20 rounded-lg border border-white/5">
           <div className="flex items-center justify-between">
             <label className="text-xs text-muted-foreground flex items-center gap-1.5">
               Leverage
@@ -520,7 +507,7 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
         {/* Limit Order Settings (only show when Limit is selected) */}
         {orderType === 'Limit' && (
@@ -624,32 +611,40 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
         {orderType === 'StopLimit' && (
           <div className="space-y-3 p-3 bg-purple-500/10 rounded-lg border border-purple-500/20">
             <h4 className="text-xs font-medium text-purple-400 uppercase tracking-wider">
-              Stop Limit Settings
+              Stop Limit
             </h4>
             <div className="space-y-2">
-              <label className="text-xs text-muted-foreground">Stop Price (triggers monitoring)</label>
+              <div className="flex justify-between">
+                <label className="text-xs text-muted-foreground">Stop Price</label>
+                <span className="text-[10px] text-purple-400/60">Activates the order</span>
+              </div>
               <input
                 type="text"
                 inputMode="decimal"
                 value={stopPrice}
                 onChange={(e) => setStopPrice(e.target.value.replace(/[^0-9.]/g, ''))}
-                placeholder="Stop price"
+                placeholder={`e.g. ${assetPrice > 0 ? (assetPrice * 0.95).toFixed(2) : '0'}`}
                 className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-purple-500"
               />
             </div>
             <div className="space-y-2">
-              <label className="text-xs text-muted-foreground">Limit Price (execution price)</label>
+              <div className="flex justify-between">
+                <label className="text-xs text-muted-foreground">Limit Price</label>
+                <span className="text-[10px] text-purple-400/60">Max entry price</span>
+              </div>
               <input
                 type="text"
                 inputMode="decimal"
                 value={limitPrice}
                 onChange={(e) => setLimitPrice(e.target.value.replace(/[^0-9.]/g, ''))}
-                placeholder="Limit price"
+                placeholder={`e.g. ${assetPrice > 0 ? (assetPrice * 0.94).toFixed(2) : '0'}`}
                 className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-purple-500"
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              When price hits stop, a limit order at your limit price activates.
+              {direction === 'Long'
+                ? 'When price drops to stop, a buy limit at your limit price activates.'
+                : 'When price rises to stop, a sell limit at your limit price activates.'}
             </p>
           </div>
         )}
@@ -658,18 +653,26 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
         {orderType === 'TrailingStop' && (
           <div className="space-y-3 p-3 bg-cyan-500/10 rounded-lg border border-cyan-500/20">
             <h4 className="text-xs font-medium text-cyan-400 uppercase tracking-wider">
-              Trailing Stop Settings
+              Trailing Stop
             </h4>
             <div className="space-y-2">
-              <label className="text-xs text-muted-foreground">Position ID</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={trailingPositionId}
-                onChange={(e) => setTrailingPositionId(e.target.value.replace(/[^0-9]/g, ''))}
-                placeholder="Enter position ID"
-                className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-cyan-500"
-              />
+              <label className="text-xs text-muted-foreground">Select Position</label>
+              {positions.length > 0 ? (
+                <select
+                  value={trailingPositionId}
+                  onChange={(e) => setTrailingPositionId(e.target.value)}
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                >
+                  <option value="">Select a position...</option>
+                  {positions.map((pos) => (
+                    <option key={pos.id} value={pos.id.toString()}>
+                      #{pos.id} {pos.asset} {pos.direction} {pos.leverage}x — ${pos.size.toLocaleString(undefined, {maximumFractionDigits: 0})}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-muted-foreground py-2">No open positions. Open a position first.</p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground">Trailing %</label>

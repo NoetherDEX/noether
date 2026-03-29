@@ -367,6 +367,7 @@ function TradePage() {
               <div className="sticky top-20 space-y-4">
                 <OrderPanel
                   asset={selectedAsset}
+                  positions={positions}
                   onPositionOpened={() => {
                     fetchPositions(false);
                     refreshBalances();
