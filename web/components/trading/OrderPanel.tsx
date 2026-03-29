@@ -369,30 +369,18 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
           </button>
         </div>
 
-        {/* Cross-Margin Balance */}
+        {/* Cross-Margin Info */}
         {marginMode === 'Cross' && (
-          <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20 space-y-2">
+          <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20">
             <div className="flex justify-between text-xs">
-              <span className="text-amber-500">Cross Balance</span>
-              <span className="font-mono text-foreground">{formatNumber(crossBalance)} USDC</span>
+              <span className="text-amber-500">Cross Margin</span>
+              <span className="text-amber-500/70">Positions share collateral</span>
             </div>
-            {showCrossDeposit ? (
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={crossDepositAmount}
-                  onChange={(e) => setCrossDepositAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-                  placeholder="Amount"
-                  className="flex-1 bg-zinc-900/50 border border-white/10 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
-                />
-                <button onClick={handleCrossDeposit} disabled={isSubmitting} className="px-3 py-1.5 text-xs bg-amber-500 text-black rounded font-medium">Deposit</button>
-                <button onClick={() => setShowCrossDeposit(false)} className="px-2 py-1.5 text-xs text-muted-foreground border border-white/10 rounded">X</button>
+            {crossBalance > 0 && (
+              <div className="flex justify-between text-xs mt-1">
+                <span className="text-muted-foreground">Pool Balance</span>
+                <span className="font-mono text-foreground">{formatNumber(crossBalance)} USDC</span>
               </div>
-            ) : (
-              <button onClick={() => setShowCrossDeposit(true)} className="w-full py-1.5 text-xs text-amber-500 border border-amber-500/30 rounded hover:bg-amber-500/10">
-                + Deposit to Pool
-              </button>
             )}
           </div>
         )}
