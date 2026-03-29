@@ -966,9 +966,9 @@ impl MarketContract {
         Ok(())
     }
 
-    /// Open a position using cross-margin pool.
-    /// Collateral param = initial margin deducted from pool.
-    /// Liquidation is account-level (no per-position liquidation price).
+    /// Open a cross-margin position. Single transaction: if pool balance is
+    /// insufficient, automatically transfers the shortfall from trader's wallet.
+    /// Works like Binance cross-margin: no separate deposit step needed.
     pub fn open_position_cross(
         env: Env,
         trader: Address,
@@ -995,11 +995,22 @@ impl MarketContract {
             return Err(NoetherError::PositionTooLarge);
         }
 
-        // Check cross-margin pool has enough balance
+        // Auto-deposit: if pool balance is insufficient, pull from wallet
         let pool_balance = get_cross_margin_balance(&env, &trader);
         if collateral > pool_balance {
-            return Err(NoetherError::CrossMarginInsufficientBalance);
+            let shortfall = collateral - pool_balance;
+            // Transfer shortfall from trader wallet to market contract
+            let usdc_token = get_usdc_token(&env);
+            let token_client = token::Client::new(&env, &usdc_token);
+            token_client.transfer(&trader, &env.current_contract_address(), &shortfall);
+            // Update pool balance (old balance + shortfall = collateral)
+            let new_pool = pool_balance.checked_add(shortfall).ok_or(NoetherError::Overflow)?;
+            set_cross_margin_balance(&env, &trader, new_pool);
+            add_cross_margin_trader(&env, &trader);
         }
+
+        // Now pool has enough - deduct collateral
+        let updated_pool = get_cross_margin_balance(&env, &trader);
 
         // Check vault liquidity
         let vault_address = get_vault(&env);
@@ -1016,8 +1027,8 @@ impl MarketContract {
             return Err(NoetherError::InsufficientCollateral);
         }
 
-        // Deduct from cross-margin pool (not from wallet - already deposited)
-        let new_balance = pool_balance - collateral;
+        // Deduct collateral from pool
+        let new_balance = updated_pool - collateral;
         set_cross_margin_balance(&env, &trader, new_balance);
 
         // Generate position ID
@@ -3211,21 +3222,25 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #76)")] // CrossMarginInsufficientBalance
-    fn test_open_cross_exceeds_pool_balance() {
+    fn test_open_cross_auto_deposits_from_wallet() {
         let test = setup();
         let trader = fund_trader(&test, 5_000 * PRECISION);
 
+        // Pool has $50 but we open with $100 → auto-deposits $50 from wallet
         test.market.deposit_cross_margin(&trader, &(50 * PRECISION));
 
-        // Try to open with $100 margin but only $50 in pool
-        test.market.open_position_cross(
+        let pos = test.market.open_position_cross(
             &trader,
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
             &Direction::Long,
         );
+
+        assert_eq!(pos.margin_mode, 1); // Cross
+        // Pool should have $50 (initial) + $50 (auto-deposit) - $100 (used) = $0
+        let balance = test.market.get_cross_margin_balance(&trader);
+        assert_eq!(balance, 0);
     }
 
     #[test]

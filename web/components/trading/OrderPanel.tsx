@@ -217,17 +217,13 @@ export function OrderPanel({ asset, onSubmit, onPositionOpened }: OrderPanelProp
     if (orderType === 'Market') {
       // Market order - immediate execution
       if (marginMode === 'Cross') {
-        // Cross-margin: auto-deposit to pool if needed, then open
-        const openCrossPromise = (async () => {
-          const currentPoolBalance = await getCrossMarginBalance(publicKey);
-          const poolNum = Number(currentPoolBalance) / 10_000_000;
-          if (poolNum < collateralNum) {
-            // Need to deposit the difference (or full amount) to pool first
-            const depositNeeded = collateralNum - poolNum;
-            await depositCrossMargin(publicKey, sign, toPrecision(depositNeeded));
-          }
-          return openPositionCross(publicKey, sign, { asset, collateral: toPrecision(collateralNum), leverage, direction });
-        })();
+        // Cross-margin: single tx - contract auto-deposits from wallet if pool insufficient
+        const openCrossPromise = openPositionCross(publicKey, sign, {
+          asset,
+          collateral: toPrecision(collateralNum),
+          leverage,
+          direction,
+        });
 
         toast.promise(openCrossPromise, {
           loading: `Opening Cross ${direction} ${asset}...`,
