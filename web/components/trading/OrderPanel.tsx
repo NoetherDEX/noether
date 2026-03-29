@@ -390,8 +390,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
           ))}
         </div>
 
-        {/* Long/Short Tabs */}
-        <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden border border-white/10">
+        {/* Long/Short Tabs - hidden for TrailingStop (uses position's direction) */}
+        {orderType !== 'TrailingStop' && <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden border border-white/10">
           <button
             onClick={() => setDirection('Long')}
             className={cn(
@@ -416,7 +416,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
             Short
             {direction === 'Short' && <div className="absolute inset-0 bg-[#ef4444]/20 animate-pulse" />}
           </button>
-        </div>
+        </div>}
 
         {/* Pay (Collateral) Input - hidden for TrailingStop */}
         {orderType !== 'TrailingStop' && <div className="space-y-2">
