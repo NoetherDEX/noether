@@ -1233,7 +1233,11 @@ impl MarketContract {
         for i in 0..position_ids.len() {
             let pid = position_ids.get(i).unwrap();
             if let Some(pos) = get_position(&env, pid) {
-                let current_price = Self::get_oracle_price(&env, &pos.asset).unwrap_or(0);
+                // Use actual oracle price for settlement; skip position if oracle fails
+                let current_price = match Self::get_oracle_price(&env, &pos.asset) {
+                    Ok(p) if p > 0 => p,
+                    _ => continue, // Skip this position if oracle unavailable
+                };
                 let pnl = calculate_pnl(&pos, current_price).unwrap_or(0);
 
                 // Settle accounting with vault

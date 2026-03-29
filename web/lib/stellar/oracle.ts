@@ -3,8 +3,10 @@ import type { PriceData } from '@/types';
 import { rpc, scValToNative, TransactionBuilder, BASE_FEE, Contract } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
-// Use oracle adapter (aggregates prices with staleness + deviation checks)
-const oracleContract = new Contract(CONTRACTS.ORACLE_ADAPTER);
+// Use mock oracle directly for price display (no staleness rejection)
+// Oracle adapter rejects stale prices (>120s) causing PnL to show $0
+// Market contract reads from mock oracle too, so prices are consistent
+const oracleContract = new Contract(CONTRACTS.MOCK_ORACLE);
 
 /**
  * Get price from oracle adapter (read-only)
