@@ -104,14 +104,28 @@ pub fn validate_position_params(
 
 /// Aggregated cross-margin account state from single position iteration.
 struct CrossAggregates {
+    /// Sum of collateral locked in all cross positions
+    total_collateral: i128,
+    /// Sum of unrealized PnL across all cross positions
     unrealized_pnl: i128,
+    /// Sum of accumulated funding payments
     total_funding: i128,
+    /// Sum of maintenance margin required
     maintenance_margin: i128,
+    /// Sum of initial margin used (size / leverage)
     used_margin: i128,
+    /// Number of cross positions
     count: u32,
 }
 
 /// Calculate all cross-margin aggregates in a single pass over positions.
+///
+/// Equity formula (matches Binance cross-margin):
+///   equity = pool_balance + total_collateral + unrealized_pnl - total_funding
+///
+/// Where pool_balance is the residual in the pool after positions took collateral,
+/// and total_collateral is the sum of collateral locked in open positions.
+/// Together they equal the total amount deposited + PnL - funding.
 fn aggregate_cross_positions(
     env: &Env,
     trader: &Address,
@@ -120,6 +134,7 @@ fn aggregate_cross_positions(
 ) -> CrossAggregates {
     let position_ids = get_cross_margin_position_ids(env, trader);
     let mut agg = CrossAggregates {
+        total_collateral: 0,
         unrealized_pnl: 0,
         total_funding: 0,
         maintenance_margin: 0,
@@ -130,6 +145,8 @@ fn aggregate_cross_positions(
     for i in 0..position_ids.len() {
         let id = position_ids.get(i).unwrap();
         if let Some(pos) = get_position(env, id) {
+            // Collateral in position (must be counted toward equity!)
+            agg.total_collateral = agg.total_collateral.checked_add(pos.collateral).unwrap_or(agg.total_collateral);
             // PnL
             let price = get_price(&pos.asset);
             if let Ok(pnl) = calculate_pnl(&pos, price) {
@@ -150,6 +167,11 @@ fn aggregate_cross_positions(
 }
 
 /// Calculate cross-margin account equity.
+///
+/// equity = pool_balance + sum(position_collateral) + sum(unrealized_pnl) - sum(funding)
+///
+/// This correctly accounts for collateral locked inside positions.
+/// pool_balance + total_collateral = total amount originally deposited (minus fees).
 pub fn calculate_cross_equity(
     env: &Env,
     trader: &Address,
@@ -157,8 +179,11 @@ pub fn calculate_cross_equity(
 ) -> i128 {
     let balance = get_cross_margin_balance(env, trader);
     let agg = aggregate_cross_positions(env, trader, 0, get_price);
-    balance.checked_add(agg.unrealized_pnl).unwrap_or(balance)
-           .checked_sub(agg.total_funding).unwrap_or(0)
+    // equity = pool_balance + collateral_in_positions + unrealized_pnl - funding
+    balance
+        .checked_add(agg.total_collateral).unwrap_or(balance)
+        .checked_add(agg.unrealized_pnl).unwrap_or(balance)
+        .checked_sub(agg.total_funding).unwrap_or(0)
 }
 
 /// Calculate aggregate maintenance margin for all cross positions.
@@ -186,8 +211,10 @@ pub fn is_cross_account_liquidatable(
 
     let balance = get_cross_margin_balance(env, trader);
     let agg = aggregate_cross_positions(env, trader, maintenance_margin_bps, get_price);
-    let equity = balance.checked_add(agg.unrealized_pnl).unwrap_or(balance)
-                        .checked_sub(agg.total_funding).unwrap_or(0);
+    let equity = balance
+        .checked_add(agg.total_collateral).unwrap_or(balance)
+        .checked_add(agg.unrealized_pnl).unwrap_or(balance)
+        .checked_sub(agg.total_funding).unwrap_or(0);
     equity < agg.maintenance_margin
 }
 

@@ -3443,14 +3443,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #77)")] // CrossMarginInsufficientFreeMargin
-    fn test_cannot_withdraw_when_margin_insufficient() {
+    #[should_panic(expected = "Error(Contract, #76)")] // CrossMarginInsufficientBalance
+    fn test_cannot_withdraw_more_than_pool() {
         let test = setup();
         let trader = fund_trader(&test, 5_000 * PRECISION);
 
-        test.market.deposit_cross_margin(&trader, &(200 * PRECISION));
+        test.market.deposit_cross_margin(&trader, &(110 * PRECISION));
 
-        // Open position using $100 from pool
+        // Open position using $100 → pool left ~$10
         test.market.open_position_cross(
             &trader,
             &Symbol::new(&test.env, "XLM"),
@@ -3459,8 +3459,8 @@ mod tests {
             &Direction::Long,
         );
 
-        // Try to withdraw almost all remaining - should fail (would breach maintenance)
-        test.market.withdraw_cross_margin(&trader, &(95 * PRECISION));
+        // Pool has ~$10 but try to withdraw $50 → exceeds pool balance
+        test.market.withdraw_cross_margin(&trader, &(50 * PRECISION));
     }
 
     #[test]
