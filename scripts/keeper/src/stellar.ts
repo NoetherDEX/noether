@@ -441,7 +441,13 @@ export class StellarClient {
     const sendResponse = await this.server.sendTransaction(tx);
 
     if (sendResponse.status === 'ERROR') {
-      throw new Error(`Transaction failed: ${sendResponse.errorResult}`);
+      const errDetail = sendResponse.errorResult ? JSON.stringify(sendResponse.errorResult).slice(0, 200) : 'no detail';
+      throw new Error(`Transaction send failed: ${errDetail}`);
+    }
+    if (sendResponse.status === 'PENDING') {
+      // Normal - wait for confirmation below
+    } else if (sendResponse.status !== 'PENDING') {
+      throw new Error(`Unexpected send status: ${sendResponse.status}`);
     }
 
     // Wait for confirmation
@@ -467,7 +473,18 @@ export class StellarClient {
       }
       return { success: true, txHash: sendResponse.hash, reward };
     } else {
-      throw new Error(`Transaction failed: ${getResponse.status}`);
+      // Extract detailed error info
+      let detail = getResponse.status;
+      try {
+        const txRes = getResponse as any;
+        if (txRes.resultXdr) {
+          detail += ` | resultXdr: ${typeof txRes.resultXdr === 'string' ? txRes.resultXdr.slice(0, 100) : JSON.stringify(txRes.resultXdr).slice(0, 100)}`;
+        }
+        if (txRes.envelopeXdr) {
+          detail += ' | has envelope';
+        }
+      } catch {}
+      throw new Error(`Transaction failed: ${detail}`);
     }
   }
 
