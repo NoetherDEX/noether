@@ -36,6 +36,9 @@ Thumbs.db
 # Soroban local config
 .soroban/
 
+# Stellar CLI identity (contains seed phrases!)
+.stellar/
+
 # Auto-generated contract files
 frontend/lib/deployed_contracts.json
 frontend/public/contracts.json
