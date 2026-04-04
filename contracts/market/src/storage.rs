@@ -268,22 +268,7 @@ pub fn delete_position(env: &Env, id: u64, trader: &Address) {
     extend_persistent_ttl(env, &DataKey::AllPositions);
 }
 
-pub fn get_trader_positions(env: &Env, trader: &Address) -> Vec<Position> {
-    let trader_key = DataKey::TraderPositions(trader.clone());
-    let position_ids: Vec<u64> = env.storage()
-        .persistent()
-        .get(&trader_key)
-        .unwrap_or(Vec::new(env));
-
-    let mut positions = Vec::new(env);
-    for i in 0..position_ids.len() {
-        let id = position_ids.get(i).unwrap();
-        if let Some(pos) = get_position(env, id) {
-            positions.push_back(pos);
-        }
-    }
-    positions
-}
+// get_trader_positions removed for WASM size - use get_all_position_ids + get_position
 
 pub fn init_position_index(env: &Env) {
     let empty: Vec<u64> = Vec::new(env);
@@ -455,37 +440,11 @@ pub fn remove_order_from_lists(env: &Env, order_id: u64, trader: &Address) {
     extend_persistent_ttl(env, &DataKey::AllOrders);
 }
 
-pub fn delete_order(env: &Env, order_id: u64, trader: &Address) {
-    // Remove from storage
-    env.storage().persistent().remove(&DataKey::Order(order_id));
+// delete_order removed for WASM size - orders are status-updated, not deleted
 
-    // Remove from lists
-    remove_order_from_lists(env, order_id, trader);
-}
+// get_trader_orders removed for WASM size - use get_all_order_ids + get_order
 
-pub fn get_trader_orders(env: &Env, trader: &Address) -> Vec<Order> {
-    let trader_key = DataKey::TraderOrders(trader.clone());
-    let order_ids: Vec<u64> = env.storage()
-        .persistent()
-        .get(&trader_key)
-        .unwrap_or(Vec::new(env));
-
-    let mut orders = Vec::new(env);
-    for i in 0..order_ids.len() {
-        let id = order_ids.get(i).unwrap();
-        if let Some(order) = get_order(env, id) {
-            if order.status == OrderStatus::Pending {
-                orders.push_back(order);
-            }
-        }
-    }
-    orders
-}
-
-pub fn init_order_index(env: &Env) {
-    let empty: Vec<u64> = Vec::new(env);
-    env.storage().persistent().set(&DataKey::AllOrders, &empty);
-}
+// init_order_index removed - orders auto-create their index via save_order
 
 pub fn get_all_order_ids(env: &Env) -> Vec<u64> {
     env.storage()
@@ -494,9 +453,7 @@ pub fn get_all_order_ids(env: &Env) -> Vec<u64> {
         .unwrap_or(Vec::new(env))
 }
 
-pub fn get_order_count(env: &Env) -> u64 {
-    get_all_order_ids(env).len() as u64
-}
+// get_order_count removed for WASM size
 
 // Position SL/TP attachment helpers
 pub fn get_position_stop_loss(env: &Env, position_id: u64) -> Option<u64> {

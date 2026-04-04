@@ -107,6 +107,9 @@ export interface KeeperConfig {
   pollIntervalMs: number;
   oracleUpdateIntervalMs: number;
 
+  // Reflector oracle contract ID
+  reflectorContractId: string;
+
   // Assets to monitor
   assets: AssetConfig[];
 }

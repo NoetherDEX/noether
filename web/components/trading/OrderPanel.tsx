@@ -118,7 +118,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
 
   const isMaker = orderType === 'Limit' || orderType === 'StopLimit';
   const feeBps = isMaker ? makerFeeBps : takerFeeBps;
-  const tradingFee = positionSize * feeBps / 10000;
+  const tradingFee = positionSize * feeBps / 100000; // deci-bps: divide by FEE_PRECISION
 
   // Risk assessment based on leverage
   const liquidationRisk = leverage >= 8 ? 'high' : leverage >= 5 ? 'medium' : 'low';
@@ -759,7 +759,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
             {/* Trading Fee */}
             <div className="flex justify-between items-center">
               <span className="text-xs text-muted-foreground">
-                Fee ({isMaker ? 'Maker' : 'Taker'} {(feeBps / 100).toFixed(2)}%)
+                Fee ({isMaker ? 'Maker' : 'Taker'} {(feeBps / 1000).toFixed(3)}%)
               </span>
               <span className="font-mono text-xs text-muted-foreground">{formatUSD(tradingFee)}</span>
             </div>

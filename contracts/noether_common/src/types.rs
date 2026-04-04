@@ -13,6 +13,11 @@ pub const PRECISION: i128 = 10_000_000; // 10^7
 /// 10000 basis points = 100%
 pub const BASIS_POINTS: u32 = 10_000;
 
+/// Fee precision for sub-basis-point fee rates.
+/// 1 unit = 0.1 bps = 0.001%. 100_000 units = 100%.
+/// This allows representing rates like 1.5 bps (= 15 fee units).
+pub const FEE_PRECISION: i128 = 100_000;
+
 /// Direction of a trading position
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq, Copy)]
@@ -218,14 +223,17 @@ impl Default for MarketConfig {
 
 /// A volume-based fee tier.
 /// Users with higher 14-day rolling volume get lower fees.
+/// Fee rates use deci-bps (0.1 bps = 0.001%) for sub-basis-point precision.
+/// Example: maker_fee_bps=15 means 1.5 bps = 0.015%.
+/// Divide by FEE_PRECISION (100_000) when calculating fee amounts.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct FeeTier {
     /// Minimum 14-day rolling volume to qualify for this tier (7 decimals)
     pub min_volume: i128,
-    /// Maker fee rate in basis points
+    /// Maker fee rate in deci-bps (1 unit = 0.001%)
     pub maker_fee_bps: u32,
-    /// Taker fee rate in basis points
+    /// Taker fee rate in deci-bps (1 unit = 0.001%)
     pub taker_fee_bps: u32,
 }
 
@@ -248,9 +256,9 @@ pub struct TraderFeeInfo {
     pub volume_14d: i128,
     /// Current fee tier index (0-3)
     pub tier: u32,
-    /// Maker fee rate applied to this trader (basis points)
+    /// Maker fee rate in deci-bps (1 unit = 0.001%). E.g., 15 = 1.5 bps = 0.015%
     pub maker_fee_bps: u32,
-    /// Taker fee rate applied to this trader (basis points)
+    /// Taker fee rate in deci-bps (1 unit = 0.001%). E.g., 50 = 5.0 bps = 0.050%
     pub taker_fee_bps: u32,
     /// Volume needed to reach next tier (7 decimals, 0 if already max tier)
     pub next_tier_volume: i128,

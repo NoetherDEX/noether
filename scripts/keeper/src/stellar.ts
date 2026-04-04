@@ -30,6 +30,7 @@ export class StellarClient {
   private networkPassphrase: string;
   private marketContract: Contract;
   private oracleContract: Contract;
+  private reflectorContract: Contract;
 
   constructor(private config: KeeperConfig) {
     this.server = new rpc.Server(config.rpcUrl);
@@ -37,6 +38,7 @@ export class StellarClient {
     this.networkPassphrase = config.networkPassphrase;
     this.marketContract = new Contract(config.marketContractId);
     this.oracleContract = new Contract(config.oracleContractId);
+    this.reflectorContract = new Contract(config.reflectorContractId);
   }
 
   get publicKey(): string {
@@ -235,10 +237,6 @@ export class StellarClient {
   // Reflector Oracle (On-Chain Price Feed)
   // ═══════════════════════════════════════════════════════════════════════
 
-  private reflectorContract = new Contract(
-    'CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63' // Reflector testnet
-  );
-
   /**
    * Get price from Reflector on-chain oracle
    * Reflector uses SEP-40 with Asset enum: {Other: Symbol} for non-XLM assets
@@ -273,20 +271,8 @@ export class StellarClient {
   // Cross-Margin Functions
   // ═══════════════════════════════════════════════════════════════════════
 
-  /**
-   * Check if a cross-margin account is liquidatable
-   */
-  async isCrossLiquidatable(trader: string): Promise<boolean> {
-    try {
-      return await this.invokeContractRead<boolean>(
-        this.marketContract,
-        'is_cross_liquidatable',
-        [new Address(trader).toScVal()]
-      );
-    } catch (error) {
-      return false;
-    }
-  }
+  // isCrossLiquidatable removed - contract function removed for WASM size.
+  // Keeper now attempts liquidation directly; contract rejects if healthy.
 
   /**
    * Liquidate a cross-margin account (closes all cross positions)
@@ -399,10 +385,12 @@ export class StellarClient {
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
 
-        // Don't retry on certain errors
+        // Don't retry on certain errors (business logic, not transient)
         if (lastError.includes('SlippageExceeded') ||
             lastError.includes('OrderNotTriggered') ||
             lastError.includes('NotLiquidatable') ||
+            lastError.includes('CrossMarginNotLiquidatable') ||
+            lastError.includes('#78') || // CrossMarginNotLiquidatable
             lastError.includes('PositionNotFound') ||
             lastError.includes('#20')) {
           return { success: false, error: lastError };

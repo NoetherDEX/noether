@@ -119,93 +119,67 @@ export async function closePosition(
 }
 
 /**
- * Add collateral to a position
+ * Add collateral to a position.
+ * NOTE: Contract function removed for WASM size. Close and reopen with more collateral.
  */
 export async function addCollateral(
-  signerPublicKey: string,
-  signTransaction: (xdr: string) => Promise<string>,
-  positionId: number,
-  amount: bigint
+  _signerPublicKey: string,
+  _signTransaction: (xdr: string) => Promise<string>,
+  _positionId: number,
+  _amount: bigint
 ): Promise<void> {
-  // Contract signature: add_collateral(trader: Address, position_id: u64, amount: i128)
-  const args = [
-    toScVal(signerPublicKey, 'address'),  // trader: Address
-    toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
-    toScVal(amount, 'i128'),               // amount: i128
-  ];
-
-  const xdr = await buildTransaction(signerPublicKey, marketContract, 'add_collateral', args);
-  const signedXdr = await signTransaction(xdr);
-  await submitTransaction(signedXdr);
+  throw new Error('Add collateral is not available. Close the position and reopen with more collateral.');
 }
 
 /**
- * Get all positions for a trader (read-only)
+ * Get all positions for a trader (read-only).
+ * Uses get_all_position_ids + get_position (per-ID) since get_positions was
+ * removed from the contract to stay under the 64KB WASM limit.
  */
 export async function getPositions(traderPublicKey: string): Promise<Position[]> {
   try {
-    const args = [toScVal(traderPublicKey, 'address')];
-
-    const result = await sorobanRpc.simulateTransaction(
-      await buildSimulateTransaction(traderPublicKey, 'get_positions', args)
+    // 1. Fetch all position IDs
+    const idsResult = await sorobanRpc.simulateTransaction(
+      await buildSimulateTransaction(traderPublicKey, 'get_all_position_ids', [])
     );
 
-    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      const rawPositions = scValToNative(result.result.retval) as RawPosition[];
-      console.log('[DEBUG] Raw positions from contract:', rawPositions);
-      return rawPositions.map(parsePosition);
+    if (!rpc.Api.isSimulationSuccess(idsResult) || !idsResult.result?.retval) {
+      return [];
     }
 
-    return [];
+    const allIds = (scValToNative(idsResult.result.retval) as (number | bigint)[]).map(Number);
+
+    // 2. Fetch each position and filter by trader
+    const positions: Position[] = [];
+    for (const id of allIds) {
+      try {
+        const args = [toScVal(id, 'u64')];
+        const posResult = await sorobanRpc.simulateTransaction(
+          await buildSimulateTransaction(traderPublicKey, 'get_position', args)
+        );
+        if (rpc.Api.isSimulationSuccess(posResult) && posResult.result?.retval) {
+          const raw = scValToNative(posResult.result.retval) as RawPosition | null;
+          if (raw && raw.trader === traderPublicKey) {
+            positions.push(parsePosition(raw));
+          }
+        }
+      } catch {
+        // Position might have been closed between ID fetch and detail fetch
+      }
+    }
+
+    return positions;
   } catch (error) {
     console.error('Error fetching positions:', error);
     return [];
   }
 }
 
-/**
- * Get position PnL (read-only)
- */
-export async function getPositionPnL(
-  traderPublicKey: string,
-  positionId: number
-): Promise<bigint> {
-  try {
-    // Contract signature: get_position_pnl(position_id: u64)
-    const args = [toScVal(positionId, 'u64')];
+// getPositionPnL removed - contract function removed for WASM size.
+// Frontend calculates PnL client-side from position data + oracle price.
 
-    const result = await sorobanRpc.simulateTransaction(
-      await buildSimulateTransaction(traderPublicKey, 'get_position_pnl', args)
-    );
-
-    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      return scValToNative(result.result.retval) as bigint;
-    }
-
-    return BigInt(0);
-  } catch {
-    return BigInt(0);
-  }
-}
-
-/**
- * Get market configuration (read-only)
- */
-export async function getMarketConfig(publicKey: string): Promise<MarketConfig | null> {
-  try {
-    const result = await sorobanRpc.simulateTransaction(
-      await buildSimulateTransaction(publicKey, 'get_config', [])
-    );
-
-    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      return scValToNative(result.result.retval) as MarketConfig;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
+// getMarketConfig removed - contract function removed for WASM size.
+// Config is static and set at initialization. Use constants from TRADING config.
 
 /**
  * Build transaction for simulation (read-only calls)
@@ -754,23 +728,26 @@ export async function cancelOrder(
 }
 
 /**
- * Get all orders for a trader (read-only)
+ * Get all orders for a trader (read-only).
+ * Uses get_all_order_ids + get_order since get_orders was removed for WASM size.
  */
 export async function getOrders(traderPublicKey: string): Promise<Order[]> {
   try {
-    const args = [toScVal(traderPublicKey, 'address')];
+    const allIds = await getAllOrderIds(traderPublicKey);
+    const orders: Order[] = [];
 
-    const result = await sorobanRpc.simulateTransaction(
-      await buildSimulateTransaction(traderPublicKey, 'get_orders', args)
-    );
-
-    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      const rawOrders = scValToNative(result.result.retval) as RawOrder[];
-      console.log('[DEBUG] Raw orders from contract:', rawOrders);
-      return rawOrders.map(parseOrder);
+    for (const id of allIds) {
+      try {
+        const order = await getOrderById(traderPublicKey, id);
+        if (order && order.trader === traderPublicKey) {
+          orders.push(order);
+        }
+      } catch {
+        // Order might have been executed/cancelled
+      }
     }
 
-    return [];
+    return orders;
   } catch (error) {
     console.error('Error fetching orders:', error);
     return [];
@@ -847,50 +824,36 @@ export async function getAllPendingOrders(publicKey: string): Promise<Order[]> {
 }
 
 /**
- * Get stop-loss order for a position (read-only)
+ * Get stop-loss order for a position.
+ * Searches through trader's orders since per-position SL/TP view was removed.
  */
 export async function getPositionStopLoss(
   publicKey: string,
   positionId: number
 ): Promise<Order | null> {
   try {
-    const args = [toScVal(positionId, 'u64')];
-
-    const result = await sorobanRpc.simulateTransaction(
-      await buildSimulateTransaction(publicKey, 'get_position_sl', args)
-    );
-
-    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      const rawOrder = scValToNative(result.result.retval) as RawOrder | null;
-      return rawOrder ? parseOrder(rawOrder) : null;
-    }
-
-    return null;
+    const orders = await getOrders(publicKey);
+    return orders.find(o =>
+      o.orderType === 'StopLoss' && o.positionId === positionId && o.status === 'Pending'
+    ) || null;
   } catch {
     return null;
   }
 }
 
 /**
- * Get take-profit order for a position (read-only)
+ * Get take-profit order for a position.
+ * Searches through trader's orders since per-position SL/TP view was removed.
  */
 export async function getPositionTakeProfit(
   publicKey: string,
   positionId: number
 ): Promise<Order | null> {
   try {
-    const args = [toScVal(positionId, 'u64')];
-
-    const result = await sorobanRpc.simulateTransaction(
-      await buildSimulateTransaction(publicKey, 'get_position_tp', args)
-    );
-
-    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      const rawOrder = scValToNative(result.result.retval) as RawOrder | null;
-      return rawOrder ? parseOrder(rawOrder) : null;
-    }
-
-    return null;
+    const orders = await getOrders(publicKey);
+    return orders.find(o =>
+      o.orderType === 'TakeProfit' && o.positionId === positionId && o.status === 'Pending'
+    ) || null;
   } catch {
     return null;
   }
@@ -1192,33 +1155,25 @@ export async function placeTrailingStop(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Get trader's fee tier info (volume, tier, rates)
+ * Get trader's fee tier info.
+ * Contract view was removed for WASM size - returns default tier 0 rates.
+ * Fee rates use deci-bps (1 unit = 0.001%). E.g., 20 = 2.0 bps = 0.020%.
+ * Frontend divides by FEE_PRECISION (100,000) for calculations.
  */
-export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
+export async function getTraderFeeInfo(_traderPublicKey: string): Promise<{
   volume14d: bigint;
   tier: number;
   makerFeeBps: number;
   takerFeeBps: number;
   nextTierVolume: bigint;
 } | null> {
-  try {
-    const args = [toScVal(traderPublicKey, 'address')];
-    const result = await sorobanRpc.simulateTransaction(
-      await buildSimulateTransaction(traderPublicKey, 'get_trader_fee_info', args)
-    );
-
-    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
-      const raw = scValToNative(result.result.retval) as any;
-      return {
-        volume14d: BigInt(raw.volume_14d || 0),
-        tier: Number(raw.tier || 0),
-        makerFeeBps: Number(raw.maker_fee_bps || 2),
-        takerFeeBps: Number(raw.taker_fee_bps || 5),
-        nextTierVolume: BigInt(raw.next_tier_volume || 0),
-      };
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  // Fee tiers are set at contract initialization and volume-based lookup
+  // was removed for WASM size. Return default tier 0 rates (deci-bps).
+  return {
+    volume14d: BigInt(0),
+    tier: 0,
+    makerFeeBps: 20,  // 2.0 deci-bps = 0.020%
+    takerFeeBps: 50,  // 5.0 deci-bps = 0.050%
+    nextTierVolume: BigInt(0),
+  };
 }

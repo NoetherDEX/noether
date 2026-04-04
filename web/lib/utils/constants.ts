@@ -30,17 +30,19 @@ export const TRADING = {
   // Legacy flat fee (deprecated - now using maker/taker tiers)
   TRADING_FEE_BPS: 10, // 0.1% (fallback)
   LIQUIDATION_FEE_BPS: 500, // 5%
-  // Maker/Taker base fees
-  BASE_MAKER_FEE_BPS: 2, // 0.02%
-  BASE_TAKER_FEE_BPS: 5, // 0.05%
+  // Maker/Taker base fees in deci-bps (1 unit = 0.001%)
+  // E.g., 20 = 2.0 bps = 0.020%
+  BASE_MAKER_FEE_BPS: 20, // 0.020%
+  BASE_TAKER_FEE_BPS: 50, // 0.050%
+  FEE_PRECISION: 100_000, // Divisor for deci-bps: fee = size * feeBps / FEE_PRECISION
 } as const;
 
-// Fee tier thresholds (for display)
+// Fee tier thresholds (for display) - values in deci-bps
 export const FEE_TIERS = [
-  { name: 'Base', minVolume: 0, makerBps: 2, takerBps: 5 },
-  { name: 'Tier 1', minVolume: 1_000_000, makerBps: 1, takerBps: 4 },
-  { name: 'Tier 2', minVolume: 5_000_000, makerBps: 1, takerBps: 3 },
-  { name: 'Tier 3', minVolume: 25_000_000, makerBps: 0, takerBps: 2 },
+  { name: 'Base', minVolume: 0, makerBps: 20, takerBps: 50 },
+  { name: 'Tier 1', minVolume: 1_000_000, makerBps: 15, takerBps: 40 },
+  { name: 'Tier 2', minVolume: 5_000_000, makerBps: 10, takerBps: 30 },
+  { name: 'Tier 3', minVolume: 25_000_000, makerBps: 5, takerBps: 20 },
 ] as const;
 
 // Supported assets

@@ -41,7 +41,10 @@ class KeeperBot {
   private stats: KeeperStats;
   private lastOracleUpdate: number = 0;
   private lastFundingApplication: number = 0;
+  private oracleUpdateInProgress: boolean = false;
   private currentPrices: Map<string, PriceData> = new Map();
+  private knownCrossTraders: Set<string> = new Set();
+  private lastCrossTraderScan: number = 0;
 
   constructor() {
     this.config = loadConfig();
@@ -139,10 +142,12 @@ class KeeperBot {
     const timestamp = new Date().toLocaleTimeString();
 
     // 1. Update oracle prices (every oracleUpdateIntervalMs) - run in background, don't block
-    if (now - this.lastOracleUpdate >= this.config.oracleUpdateIntervalMs) {
+    if (now - this.lastOracleUpdate >= this.config.oracleUpdateIntervalMs && !this.oracleUpdateInProgress) {
       this.lastOracleUpdate = now;
-      // Run in background without await
-      this.updateOraclePrices().catch(e => console.error('Oracle update error:', e));
+      this.oracleUpdateInProgress = true;
+      this.updateOraclePrices()
+        .catch(e => console.error('Oracle update error:', e))
+        .finally(() => { this.oracleUpdateInProgress = false; });
     }
 
     // 2. Check and execute liquidations (isolated + cross-margin)
@@ -156,8 +161,14 @@ class KeeperBot {
     // 4. Apply funding rate (every hour)
     const ONE_HOUR = 60 * 60 * 1000;
     if (now - this.lastFundingApplication >= ONE_HOUR) {
-      this.applyFundingRate().catch(e => console.error('Funding rate error:', e));
-      this.lastFundingApplication = now;
+      try {
+        await this.applyFundingRate();
+        // Only update timestamp on success or "not yet time" (so we don't skip an hour on transient failure)
+        this.lastFundingApplication = now;
+      } catch (e) {
+        console.error('Funding rate error:', e);
+        // Don't update timestamp — retry next cycle
+      }
     }
 
     // Status line
@@ -183,18 +194,50 @@ class KeeperBot {
    */
   private async updateOraclePrices(): Promise<void> {
     try {
-      // Try Reflector first (on-chain oracle), fallback to Binance
-      let prices = await this.fetchReflectorPrices();
+      // Try Reflector first (on-chain oracle), fallback to Binance with retry
+      let prices = new Map<string, number>();
       let source = 'Reflector';
 
-      if (prices.size === 0) {
-        prices = await this.fetchBinancePrices();
-        source = 'Binance';
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          prices = await this.fetchReflectorPrices();
+          if (prices.size > 0) {
+            source = 'Reflector';
+            break;
+          }
+          prices = await this.fetchBinancePrices();
+          if (prices.size > 0) {
+            source = 'Binance';
+            break;
+          }
+        } catch (e) {
+          if (attempt === 3) {
+            console.error(`\n⚠️  All price fetch attempts failed:`, e);
+            return;
+          }
+          await this.sleep(2000);
+        }
       }
 
       for (const asset of this.config.assets) {
         const price = prices.get(asset.symbol);
         if (price === undefined) continue;
+
+        // Validate price sanity
+        if (price <= 0 || !isFinite(price)) {
+          console.warn(`\n⚠️  Invalid price for ${asset.symbol}: ${price} — skipping`);
+          continue;
+        }
+
+        // Sanity bounds: reject obviously wrong prices
+        const lastPrice = this.currentPrices.get(asset.symbol);
+        if (lastPrice && lastPrice.price > 0) {
+          const changePercent = Math.abs(price - lastPrice.price) / lastPrice.price;
+          if (changePercent > 0.5) {
+            console.warn(`\n⚠️  ${asset.symbol} price changed ${(changePercent * 100).toFixed(1)}% ($${lastPrice.price} → $${price}) — skipping (>50% change)`);
+            continue;
+          }
+        }
 
         const priceScaled = this.toPrecision(price);
 
@@ -342,33 +385,37 @@ class KeeperBot {
    */
   private async checkCrossMarginLiquidations(): Promise<void> {
     try {
-      // Find unique cross-margin traders from positions
-      const positionIds = await this.stellar.getAllPositionIds();
-      const crossTraders = new Set<string>();
+      const now = Date.now();
+      const CROSS_SCAN_INTERVAL = 60_000; // Full scan every 60s, use cache between
 
-      for (const pid of positionIds) {
-        const pos = await this.stellar.getPosition(pid);
-        if (pos && pos.margin_mode === 1) {
-          crossTraders.add(pos.trader);
+      if (now - this.lastCrossTraderScan >= CROSS_SCAN_INTERVAL) {
+        const positionIds = await this.stellar.getAllPositionIds();
+        this.knownCrossTraders.clear();
+
+        for (const pid of positionIds) {
+          const pos = await this.stellar.getPosition(pid);
+          if (pos && pos.margin_mode === 1) {
+            this.knownCrossTraders.add(pos.trader);
+          }
         }
+        this.lastCrossTraderScan = now;
       }
 
-      for (const trader of crossTraders) {
+      for (const trader of this.knownCrossTraders) {
         try {
-          const isLiquidatable = await this.stellar.isCrossLiquidatable(trader);
-          if (isLiquidatable) {
-            console.log(`\n⚠️  Cross-margin account ${trader.slice(0, 8)}... is liquidatable!`);
-            const result = await this.stellar.liquidateCrossAccount(trader);
-            if (result.success) {
-              this.stats.liquidationsExecuted++;
-              if (result.reward) this.stats.totalRewardsEarned += result.reward;
-              console.log(`   ✅ Cross-margin liquidation successful! Reward: ${this.formatAmount(result.reward || BigInt(0))} USDC`);
-            } else {
-              console.log(`   ❌ Cross-margin liquidation failed: ${result.error}`);
-            }
+          // is_cross_liquidatable was removed for WASM size.
+          // Instead, attempt liquidation directly - contract rejects with
+          // CrossMarginNotLiquidatable (#78) if account is healthy.
+          const result = await this.stellar.liquidateCrossAccount(trader);
+          if (result.success) {
+            this.stats.liquidationsExecuted++;
+            if (result.reward) this.stats.totalRewardsEarned += result.reward;
+            console.log(`\n⚠️  Cross-margin account ${trader.slice(0, 8)}... liquidated!`);
+            console.log(`   ✅ Reward: ${this.formatAmount(result.reward || BigInt(0))} USDC`);
           }
+          // If result.error contains CrossMarginNotLiquidatable (#78), account is healthy - silent skip
         } catch (error) {
-          // Ignore errors for individual accounts
+          // Account healthy or other error - ignore
         }
       }
     } catch (error) {
@@ -502,7 +549,7 @@ class KeeperBot {
     const divisor = BigInt(10 ** decimals);
     const whole = amount / divisor;
     const fraction = amount % divisor;
-    return `${whole}.${fraction.toString().padStart(decimals, '0').slice(0, 2)}`;
+    return `${whole}.${fraction.toString().padStart(decimals, '0').slice(0, 4)}`;
   }
 
   private formatDuration(ms: number): string {
