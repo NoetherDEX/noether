@@ -7,9 +7,10 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { KeeperConfig, AssetConfig } from './types';
 
-// Load .env from project root
+// Load .env - try local first, then project root (for monorepo)
+dotenv.config(); // loads .env from cwd (Railway sets env vars directly)
 const projectRoot = path.resolve(__dirname, '../../../');
-dotenv.config({ path: path.join(projectRoot, '.env') });
+dotenv.config({ path: path.join(projectRoot, '.env') }); // fallback for monorepo
 
 // Default assets to monitor
 const DEFAULT_ASSETS: AssetConfig[] = [
