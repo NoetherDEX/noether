@@ -437,17 +437,45 @@ export class StellarClient {
     // Sign
     tx.sign(this.keypair);
 
-    // Submit
-    const sendResponse = await this.server.sendTransaction(tx);
+    // Submit with retry on TRY_AGAIN_LATER
+    let sendResponse;
+    for (let sendAttempt = 0; sendAttempt < 3; sendAttempt++) {
+      sendResponse = await this.server.sendTransaction(tx);
 
-    if (sendResponse.status === 'ERROR') {
-      const errDetail = sendResponse.errorResult ? JSON.stringify(sendResponse.errorResult).slice(0, 200) : 'no detail';
-      throw new Error(`Transaction send failed: ${errDetail}`);
-    }
-    if (sendResponse.status === 'PENDING') {
-      // Normal - wait for confirmation below
-    } else if (sendResponse.status !== 'PENDING') {
+      if (sendResponse.status === 'PENDING') break;
+
+      if (sendResponse.status === 'TRY_AGAIN_LATER') {
+        await this.sleep(3000);
+        // Re-fetch account for fresh sequence number
+        const freshAccount = await this.getAccount();
+        tx = new TransactionBuilder(freshAccount, {
+          fee: '10000000',
+          networkPassphrase: this.networkPassphrase,
+        })
+          .addOperation(contract.call(method, ...args))
+          .setTimeout(TX_TIMEOUT_SECONDS)
+          .build();
+        const freshSim = await this.server.simulateTransaction(tx);
+        if (rpc.Api.isSimulationError(freshSim)) {
+          throw new Error(`Simulation failed on retry: ${freshSim.error}`);
+        }
+        tx = rpc.assembleTransaction(tx, freshSim).build();
+        tx.sign(this.keypair);
+        continue;
+      }
+
+      if (sendResponse.status === 'ERROR') {
+        const errDetail = (sendResponse as any).errorResult
+          ? JSON.stringify((sendResponse as any).errorResult).slice(0, 200)
+          : 'no detail';
+        throw new Error(`Transaction send failed: ${errDetail}`);
+      }
+
       throw new Error(`Unexpected send status: ${sendResponse.status}`);
+    }
+
+    if (!sendResponse || sendResponse.status !== 'PENDING') {
+      throw new Error(`Transaction not accepted after retries: ${sendResponse?.status}`);
     }
 
     // Wait for confirmation

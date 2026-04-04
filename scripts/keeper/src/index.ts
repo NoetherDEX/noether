@@ -267,7 +267,7 @@ class KeeperBot {
         }
 
         // Delay between assets to avoid sequence conflicts
-        await this.sleep(1500);
+        await this.sleep(4000);
       }
 
       if (prices.size > 0 && this.stats.oracleUpdates % 10 === 1) {

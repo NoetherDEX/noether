@@ -66,7 +66,7 @@ export function loadConfig(): KeeperConfig {
 
     // Timing
     pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '5000', 10),
-    oracleUpdateIntervalMs: parseInt(process.env.ORACLE_UPDATE_INTERVAL_MS || '10000', 10),
+    oracleUpdateIntervalMs: parseInt(process.env.ORACLE_UPDATE_INTERVAL_MS || '30000', 10),
 
     // Reflector oracle
     reflectorContractId:
