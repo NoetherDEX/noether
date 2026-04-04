@@ -501,18 +501,7 @@ export class StellarClient {
       }
       return { success: true, txHash: sendResponse.hash, reward };
     } else {
-      // Extract detailed error info
-      let detail = getResponse.status;
-      try {
-        const txRes = getResponse as any;
-        if (txRes.resultXdr) {
-          detail += ` | resultXdr: ${typeof txRes.resultXdr === 'string' ? txRes.resultXdr.slice(0, 100) : JSON.stringify(txRes.resultXdr).slice(0, 100)}`;
-        }
-        if (txRes.envelopeXdr) {
-          detail += ' | has envelope';
-        }
-      } catch {}
-      throw new Error(`Transaction failed: ${detail}`);
+      throw new Error(`Transaction failed: ${getResponse.status}`);
     }
   }
 
