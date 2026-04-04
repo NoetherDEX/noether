@@ -1,4 +1,3 @@
-import { BINANCE_API } from '@/lib/utils/constants';
 import type { Candle, Ticker } from '@/types';
 
 // Asset symbol mapping to Binance pairs
@@ -9,7 +8,7 @@ const BINANCE_SYMBOLS: Record<string, string> = {
 };
 
 /**
- * Fetch OHLCV candle data from Binance
+ * Fetch OHLCV candle data via server-side proxy (avoids Binance geo-blocks)
  */
 export async function fetchCandles(
   asset: string,
@@ -21,7 +20,7 @@ export async function fetchCandles(
     throw new Error(`Unknown asset: ${asset}`);
   }
 
-  const url = `${BINANCE_API}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  const url = `/api/price?endpoint=klines&symbol=${symbol}&interval=${interval}&limit=${limit}`;
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -42,7 +41,7 @@ export async function fetchCandles(
 }
 
 /**
- * Fetch current ticker price from Binance
+ * Fetch current ticker price via server-side proxy
  */
 export async function fetchTicker(asset: string): Promise<Ticker> {
   const symbol = BINANCE_SYMBOLS[asset];
@@ -50,7 +49,7 @@ export async function fetchTicker(asset: string): Promise<Ticker> {
     throw new Error(`Unknown asset: ${asset}`);
   }
 
-  const url = `${BINANCE_API}/ticker/24hr?symbol=${symbol}`;
+  const url = `/api/price?endpoint=ticker&symbol=${symbol}`;
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -91,37 +90,29 @@ export async function fetchAllTickers(): Promise<Record<string, Ticker>> {
 }
 
 /**
- * Subscribe to real-time price updates via WebSocket
+ * Subscribe to real-time price updates via polling (WebSocket blocked by geo-restrictions)
  */
 export function subscribeToPriceUpdates(
   asset: string,
   onUpdate: (price: number) => void
 ): () => void {
-  const symbol = BINANCE_SYMBOLS[asset]?.toLowerCase();
-  if (!symbol) {
-    console.error(`Unknown asset: ${asset}`);
-    return () => {};
-  }
+  let active = true;
 
-  const ws = new WebSocket(`wss://stream.binance.us:9443/ws/${symbol}@ticker`);
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      onUpdate(parseFloat(data.c)); // 'c' is the current close price
-    } catch (error) {
-      console.error('WebSocket parse error:', error);
+  const poll = async () => {
+    while (active) {
+      try {
+        const ticker = await fetchTicker(asset);
+        if (active) onUpdate(ticker.price);
+      } catch {
+        // Silently retry
+      }
+      await new Promise(r => setTimeout(r, 5000)); // Poll every 5s
     }
   };
 
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-  };
+  poll();
 
-  // Return cleanup function
-  return () => {
-    ws.close();
-  };
+  return () => { active = false; };
 }
 
 /**

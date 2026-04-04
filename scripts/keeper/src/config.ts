@@ -33,10 +33,13 @@ export function loadConfig(): KeeperConfig {
   }
 
   // Validate required environment variables
-  const secretKey = process.env.KEEPER_SECRET_KEY || process.env.ORACLE_SECRET_KEY || process.env.ADMIN_SECRET_KEY;
-  if (!secretKey) {
+  const rawKey = process.env.KEEPER_SECRET_KEY || process.env.ORACLE_SECRET_KEY || process.env.ADMIN_SECRET_KEY;
+  if (!rawKey) {
     throw new Error('❌ KEEPER_SECRET_KEY, ORACLE_SECRET_KEY, or ADMIN_SECRET_KEY must be set in .env');
   }
+  // Strip quotes, whitespace, newlines that Railway might inject
+  const secretKey = rawKey.replace(/['"\s\n\r]/g, '').trim();
+  console.log(`🔑 Key loaded: ${secretKey.substring(0, 4)}...${secretKey.substring(secretKey.length - 4)} (${secretKey.length} chars)`);
 
   const config: KeeperConfig = {
     // Network configuration

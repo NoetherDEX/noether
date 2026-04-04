@@ -63,4 +63,5 @@ export const TIMEFRAMES = [
 ] as const;
 
 // Binance API for chart data
-export const BINANCE_API = 'https://api.binance.us/api/v3';
+// Binance API accessed via server-side proxy at /api/price to avoid geo-blocks
+// export const BINANCE_API = 'https://api.binance.com/api/v3';

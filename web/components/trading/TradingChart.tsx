@@ -135,40 +135,37 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
     loadData();
   }, [loadData]);
 
-  // Set up real-time updates
+  // Set up real-time updates via polling (WebSocket geo-blocked)
   useEffect(() => {
     if (!candlestickSeriesRef.current || disposedRef.current) return;
 
-    const symbol = asset.toLowerCase();
-    const binanceInterval = toBinanceInterval(interval);
-    const ws = new WebSocket(
-      `wss://stream.binance.us:9443/ws/${symbol}usdt@kline_${binanceInterval}`
-    );
+    let active = true;
 
-    ws.onmessage = (event) => {
-      try {
-        if (disposedRef.current || !candlestickSeriesRef.current) return;
-
-        const data = JSON.parse(event.data);
-        const kline = data.k;
-
-        if (kline) {
-          candlestickSeriesRef.current.update({
-            time: Math.floor(kline.t / 1000) as Time,
-            open: parseFloat(kline.o),
-            high: parseFloat(kline.h),
-            low: parseFloat(kline.l),
-            close: parseFloat(kline.c),
-          });
+    const poll = async () => {
+      while (active && !disposedRef.current) {
+        try {
+          const candles = await fetchCandles(asset, interval, 2);
+          if (!active || disposedRef.current || !candlestickSeriesRef.current) break;
+          const latest = candles[candles.length - 1];
+          if (latest) {
+            candlestickSeriesRef.current.update({
+              time: latest.time as Time,
+              open: latest.open,
+              high: latest.high,
+              low: latest.low,
+              close: latest.close,
+            });
+          }
+        } catch {
+          // Silently retry
         }
-      } catch (err) {
-        console.error('WebSocket parse error:', err);
+        await new Promise(r => setTimeout(r, 5000));
       }
     };
 
-    return () => {
-      ws.close();
-    };
+    poll();
+
+    return () => { active = false; };
   }, [asset, interval]);
 
   return (
