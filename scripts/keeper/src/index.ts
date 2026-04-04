@@ -141,13 +141,17 @@ class KeeperBot {
     const now = Date.now();
     const timestamp = new Date().toLocaleTimeString();
 
-    // 1. Update oracle prices (every oracleUpdateIntervalMs) - run in background, don't block
+    // 1. Update oracle prices (every oracleUpdateIntervalMs) - await to ensure completion
     if (now - this.lastOracleUpdate >= this.config.oracleUpdateIntervalMs && !this.oracleUpdateInProgress) {
       this.lastOracleUpdate = now;
       this.oracleUpdateInProgress = true;
-      this.updateOraclePrices()
-        .catch(e => console.error('Oracle update error:', e))
-        .finally(() => { this.oracleUpdateInProgress = false; });
+      try {
+        await this.updateOraclePrices();
+      } catch (e) {
+        console.error('\n❌ Oracle update cycle error:', e);
+      } finally {
+        this.oracleUpdateInProgress = false;
+      }
     }
 
     // 2. Check and execute liquidations (isolated + cross-margin)
@@ -252,11 +256,14 @@ class KeeperBot {
               timestamp: Date.now(),
             });
             this.stats.oracleUpdates++;
+            if (this.stats.oracleUpdates <= 3 || this.stats.oracleUpdates % 50 === 0) {
+              console.log(`\n✅ Oracle ${asset.symbol} = $${price.toLocaleString()} (tx: ${result.txHash?.slice(0,8)}...)`);
+            }
           } else {
-            console.log(`\n⚠️  Oracle update failed for ${asset.symbol}: ${result.error}`);
+            console.log(`\n⚠️  Oracle update FAILED for ${asset.symbol}: ${result.error}`);
           }
         } catch (error) {
-          console.error(`\nError updating oracle for ${asset.symbol}:`, error);
+          console.error(`\n❌ Oracle update ERROR for ${asset.symbol}:`, error instanceof Error ? error.message : error);
         }
 
         // Delay between assets to avoid sequence conflicts
