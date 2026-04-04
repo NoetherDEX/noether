@@ -142,7 +142,7 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
     const symbol = asset.toLowerCase();
     const binanceInterval = toBinanceInterval(interval);
     const ws = new WebSocket(
-      `wss://stream.binance.com:9443/ws/${symbol}usdt@kline_${binanceInterval}`
+      `wss://stream.binance.us:9443/ws/${symbol}usdt@kline_${binanceInterval}`
     );
 
     ws.onmessage = (event) => {

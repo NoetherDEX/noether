@@ -103,7 +103,7 @@ export function subscribeToPriceUpdates(
     return () => {};
   }
 
-  const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol}@ticker`);
+  const ws = new WebSocket(`wss://stream.binance.us:9443/ws/${symbol}@ticker`);
 
   ws.onmessage = (event) => {
     try {
