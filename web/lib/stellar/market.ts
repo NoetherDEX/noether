@@ -576,6 +576,9 @@ export function toDisplayOrder(order: Order): DisplayOrder {
     hasPosition: order.hasPosition,
     createdAt: new Date(order.createdAt * 1000),
     status: order.status,
+    limitPrice: bigIntToNumber(order.limitPrice),
+    trailingPercentBps: order.trailingPercentBps,
+    stopLimitPhase: order.stopLimitPhase,
     positionSize,
   };
 }

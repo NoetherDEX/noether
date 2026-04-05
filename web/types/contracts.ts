@@ -67,6 +67,10 @@ export interface DisplayOrder {
   hasPosition: boolean;
   createdAt: Date;
   status: OrderStatus;
+  // Advanced order fields
+  limitPrice: number;
+  trailingPercentBps: number;
+  stopLimitPhase: number;
   // Calculated fields
   positionSize: number;
 }

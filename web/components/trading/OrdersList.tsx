@@ -86,7 +86,7 @@ export function OrdersList({
     }
   };
 
-  const getOrderTypeLabel = (orderType: string) => {
+  const getOrderTypeLabel = (orderType: string, stopLimitPhase?: number) => {
     switch (orderType) {
       case 'LimitEntry':
         return 'Limit';
@@ -94,6 +94,10 @@ export function OrdersList({
         return 'SL';
       case 'TakeProfit':
         return 'TP';
+      case 'StopLimit':
+        return stopLimitPhase === 1 ? 'StopLimit ⚡' : 'StopLimit';
+      case 'TrailingStop':
+        return 'TrailingStop';
       default:
         return orderType;
     }
@@ -105,6 +109,10 @@ export function OrdersList({
         return 'text-[#ef4444] bg-[#ef4444]/10';
       case 'TakeProfit':
         return 'text-[#22c55e] bg-[#22c55e]/10';
+      case 'TrailingStop':
+        return 'text-orange-400 bg-orange-400/10';
+      case 'StopLimit':
+        return 'text-blue-400 bg-blue-400/10';
       default:
         return 'text-amber-500 bg-amber-500/10';
     }
@@ -159,7 +167,7 @@ export function OrdersList({
                 <td className="px-3 py-3">
                   <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium', getOrderTypeColor(order.orderType))}>
                     {getOrderTypeIcon(order.orderType)}
-                    {getOrderTypeLabel(order.orderType)}
+                    {getOrderTypeLabel(order.orderType, order.stopLimitPhase)}
                   </div>
                 </td>
 
@@ -188,21 +196,68 @@ export function OrdersList({
                 </td>
 
                 <td className="px-3 py-3 text-right">
-                  <div className="font-mono text-foreground">
-                    ${order.positionSize.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </div>
-                  <div className="font-mono text-muted-foreground text-[10px]">
-                    {order.collateral.toFixed(2)} USDC
-                  </div>
+                  {order.orderType === 'TrailingStop' ? (
+                    <>
+                      <div className="font-mono text-foreground">Trailing</div>
+                      <div className="font-mono text-orange-400 text-[10px]">
+                        {(order.trailingPercentBps / 100).toFixed(1)}% trail
+                      </div>
+                    </>
+                  ) : order.orderType === 'StopLoss' || order.orderType === 'TakeProfit' ? (
+                    <>
+                      <div className="font-mono text-foreground">Position</div>
+                      <div className="font-mono text-muted-foreground text-[10px]">
+                        #{order.positionId}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="font-mono text-foreground">
+                        ${order.positionSize.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </div>
+                      <div className="font-mono text-muted-foreground text-[10px]">
+                        {order.collateral.toFixed(2)} USDC
+                      </div>
+                    </>
+                  )}
                 </td>
 
                 <td className="px-3 py-3 text-right">
-                  <div className="font-mono text-foreground">
-                    {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {order.triggerCondition}
-                  </div>
+                  {order.orderType === 'TrailingStop' ? (
+                    <>
+                      <div className="font-mono text-orange-400">Dynamic</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        Tracks peak
+                      </div>
+                    </>
+                  ) : order.orderType === 'StopLimit' && order.stopLimitPhase === 1 ? (
+                    <>
+                      <div className="font-mono text-foreground">
+                        {formatUSD(order.limitPrice, order.asset === 'XLM' ? 4 : 2)}
+                      </div>
+                      <div className="text-[10px] text-blue-400">
+                        Limit active
+                      </div>
+                    </>
+                  ) : order.orderType === 'StopLimit' ? (
+                    <>
+                      <div className="font-mono text-foreground">
+                        {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        Stop → {formatUSD(order.limitPrice, order.asset === 'XLM' ? 4 : 2)}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="font-mono text-foreground">
+                        {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {order.triggerCondition}
+                      </div>
+                    </>
+                  )}
                 </td>
 
                 <td className="px-3 py-3 text-right">
@@ -262,18 +317,36 @@ export function OrdersList({
 
             <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
               <div>
-                <p className="text-muted-foreground mb-1 text-xs">Size</p>
-                <p className="text-foreground font-mono">{formatUSD(order.positionSize)}</p>
+                <p className="text-muted-foreground mb-1 text-xs">
+                  {order.orderType === 'TrailingStop' ? 'Trail' : 'Size'}
+                </p>
+                <p className="text-foreground font-mono">
+                  {order.orderType === 'TrailingStop'
+                    ? `${(order.trailingPercentBps / 100).toFixed(1)}%`
+                    : order.hasPosition
+                    ? `Position #${order.positionId}`
+                    : formatUSD(order.positionSize)}
+                </p>
               </div>
               <div>
                 <p className="text-muted-foreground mb-1 text-xs">Trigger</p>
                 <p className="text-foreground font-mono">
-                  {formatUSD(order.triggerPrice, 2)}
+                  {order.orderType === 'TrailingStop'
+                    ? 'Dynamic'
+                    : formatUSD(order.triggerPrice, 2)}
                 </p>
               </div>
               <div>
-                <p className="text-muted-foreground mb-1 text-xs">Collateral</p>
-                <p className="text-foreground font-mono">{order.collateral.toFixed(2)} USDC</p>
+                <p className="text-muted-foreground mb-1 text-xs">
+                  {order.orderType === 'StopLimit' ? 'Limit Price' : 'Collateral'}
+                </p>
+                <p className="text-foreground font-mono">
+                  {order.orderType === 'StopLimit'
+                    ? formatUSD(order.limitPrice, 2)
+                    : order.hasPosition
+                    ? '—'
+                    : `${order.collateral.toFixed(2)} USDC`}
+                </p>
               </div>
               <div>
                 <p className="text-muted-foreground mb-1 text-xs">Slippage</p>
