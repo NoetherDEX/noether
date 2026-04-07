@@ -602,12 +602,11 @@ export async function placeLimitOrder(
     triggerPrice: bigint;
     triggerCondition: TriggerCondition;
     slippageToleranceBps: number;
+    timeInForce?: number; // 0=GTC, 1=IOC, 2=PostOnly. Bit 8 = reduce_only
   }
 ): Promise<Order> {
   console.log('[DEBUG] Placing limit order...');
 
-  // Contract signature: place_limit_order(trader, asset, direction, collateral, leverage, trigger_price, trigger_above, slippage_tolerance_bps)
-  // trigger_above is a boolean: true = trigger when price >= trigger_price, false = trigger when price <= trigger_price
   const args = [
     toScVal(signerPublicKey, 'address'),
     toScVal(params.asset, 'symbol'),
@@ -615,8 +614,9 @@ export async function placeLimitOrder(
     toScVal(params.collateral, 'i128'),
     toScVal(params.leverage, 'u32'),
     toScVal(params.triggerPrice, 'i128'),
-    toScVal(params.triggerCondition === 'Above', 'bool'),  // trigger_above: bool
+    toScVal(params.triggerCondition === 'Above', 'bool'),
     toScVal(params.slippageToleranceBps, 'u32'),
+    toScVal(params.timeInForce ?? 0, 'u32'),
   ];
 
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'place_limit_order', args);
@@ -1100,6 +1100,7 @@ export async function placeStopLimitOrder(
     limitPrice: bigint;
     triggerAbove: boolean;
     slippageToleranceBps: number;
+    timeInForce?: number;
   }
 ): Promise<Order> {
   const args = [
@@ -1112,6 +1113,7 @@ export async function placeStopLimitOrder(
     toScVal(params.limitPrice, 'i128'),
     toScVal(params.triggerAbove, 'bool'),
     toScVal(params.slippageToleranceBps, 'u32'),
+    toScVal(params.timeInForce ?? 0, 'u32'),
   ];
 
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'place_stop_limit_order', args);
@@ -1158,25 +1160,63 @@ export async function placeTrailingStop(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Get trader's fee tier info.
- * Contract view was removed for WASM size - returns default tier 0 rates.
- * Fee rates use deci-bps (1 unit = 0.001%). E.g., 20 = 2.0 bps = 0.020%.
- * Frontend divides by FEE_PRECISION (100,000) for calculations.
+ * Get trader's fee tier info by reading volume record from contract storage.
+ * Calculates tier client-side using the known tier thresholds.
  */
-export async function getTraderFeeInfo(_traderPublicKey: string): Promise<{
+export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
   volume14d: bigint;
   tier: number;
+  tierName: string;
   makerFeeBps: number;
   takerFeeBps: number;
   nextTierVolume: bigint;
+  nextTierName: string;
 } | null> {
-  // Fee tiers are set at contract initialization and volume-based lookup
-  // was removed for WASM size. Return default tier 0 rates (deci-bps).
+  const { FEE_TIERS } = await import('@/lib/utils/constants');
+  const PRECISION_VAL = BigInt(10_000_000);
+
+  let volume14d = BigInt(0);
+
+  try {
+    // Try reading trader volume from contract via get_trader_volume view
+    const args = [toScVal(traderPublicKey, 'address')];
+    const xdrStr = await buildTransaction(traderPublicKey, marketContract, 'get_trader_volume', args);
+    // Simulate only (read-only call)
+    const server = new rpc.Server(NETWORK.RPC_URL);
+    const tx = new (await import('@stellar/stellar-sdk')).Transaction(xdrStr, NETWORK.PASSPHRASE);
+    const simResult = await server.simulateTransaction(tx);
+    if ('result' in simResult && simResult.result) {
+      const rawVolume = scValToNative((simResult.result as any).retval);
+      volume14d = BigInt(rawVolume);
+    }
+  } catch {
+    // get_trader_volume may not exist (removed for WASM size)
+    // Fall back to default tier 0
+    volume14d = BigInt(0);
+  }
+
+  // Convert volume from precision to USD
+  const volumeUsd = Number(volume14d) / Number(PRECISION_VAL);
+
+  // Determine tier
+  let tierIndex = 0;
+  for (let i = FEE_TIERS.length - 1; i >= 0; i--) {
+    if (volumeUsd >= FEE_TIERS[i].minVolume) {
+      tierIndex = i;
+      break;
+    }
+  }
+
+  const currentTier = FEE_TIERS[tierIndex];
+  const nextTier = tierIndex < FEE_TIERS.length - 1 ? FEE_TIERS[tierIndex + 1] : null;
+
   return {
-    volume14d: BigInt(0),
-    tier: 0,
-    makerFeeBps: 20,  // 2.0 deci-bps = 0.020%
-    takerFeeBps: 50,  // 5.0 deci-bps = 0.050%
-    nextTierVolume: BigInt(0),
+    volume14d,
+    tier: tierIndex,
+    tierName: currentTier.name,
+    makerFeeBps: currentTier.makerBps,
+    takerFeeBps: currentTier.takerBps,
+    nextTierVolume: nextTier ? BigInt(Math.round(nextTier.minVolume * Number(PRECISION_VAL))) : BigInt(0),
+    nextTierName: nextTier ? nextTier.name : 'Max',
   };
 }
