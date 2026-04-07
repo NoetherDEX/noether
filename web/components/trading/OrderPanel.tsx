@@ -59,9 +59,19 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
   const [trailingPercent, setTrailingPercent] = useState<string>('3');
   const [trailingPositionId, setTrailingPositionId] = useState<string>('');
 
+  // Time-in-Force & Reduce Only states
+  const [timeInForce, setTimeInForce] = useState<number>(0); // 0=GTC, 1=IOC, 2=PostOnly
+  const [reduceOnly, setReduceOnly] = useState<boolean>(false);
+
   // Fee tier info
   const [makerFeeBps, setMakerFeeBps] = useState<number>(TRADING.BASE_MAKER_FEE_BPS);
   const [takerFeeBps, setTakerFeeBps] = useState<number>(TRADING.BASE_TAKER_FEE_BPS);
+  const [feeInfo, setFeeInfo] = useState<{
+    tierName: string;
+    volume14d: string;
+    nextTierName: string;
+    nextTierVolume: string;
+  } | null>(null);
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -92,6 +102,16 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
         if (info) {
           setMakerFeeBps(info.makerFeeBps);
           setTakerFeeBps(info.takerFeeBps);
+          const vol = Number(info.volume14d) / 10_000_000;
+          const nextVol = Number(info.nextTierVolume) / 10_000_000;
+          setFeeInfo({
+            tierName: info.tierName,
+            volume14d: vol >= 1_000_000 ? `$${(vol / 1_000_000).toFixed(2)}M` : `$${vol.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            nextTierName: info.nextTierName,
+            nextTierVolume: nextVol > 0
+              ? (nextVol >= 1_000_000 ? `$${(nextVol / 1_000_000).toFixed(0)}M` : `$${nextVol.toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
+              : '',
+          });
         }
       } catch {}
       try {
@@ -178,6 +198,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
       const limitPriceNum = parseFloat(limitPrice) || 0;
       const triggerAbove = direction === 'Short';
       try {
+        const encodedTif = timeInForce | (reduceOnly ? 0x100 : 0);
         await placeStopLimitOrder(publicKey, sign, {
           asset,
           direction,
@@ -187,6 +208,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
           limitPrice: toPrecision(limitPriceNum),
           triggerAbove,
           slippageToleranceBps: slippageTolerance,
+          timeInForce: encodedTif,
         });
         toast.success(`Stop-limit order placed! Stop: $${stopPriceNum}, Limit: $${limitPriceNum}`);
         setCollateral('');
@@ -276,6 +298,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
       const triggerCondition: TriggerCondition =
         direction === 'Long' ? 'Below' : 'Above';
 
+      // Encode time_in_force: bits 0-7 = TIF mode, bit 8 = reduce_only
+      const encodedTif = timeInForce | (reduceOnly ? 0x100 : 0);
+
       const placeLimitOrderPromise = placeLimitOrder(publicKey, sign, {
         asset,
         direction,
@@ -284,6 +309,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
         triggerPrice: triggerPricePrecision,
         triggerCondition,
         slippageToleranceBps: slippageTolerance,
+        timeInForce: encodedTif,
       });
 
       toast.promise(placeLimitOrderPromise, {
@@ -604,6 +630,60 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
                 Order cancelled if execution price differs by more than this (default: 0.5%)
               </p>
             </div>
+
+            {/* Time-in-Force */}
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                Time-in-Force
+                <Info className="h-3 w-3 opacity-50" />
+              </label>
+              <div className="flex gap-1.5">
+                {([
+                  { value: 0, label: 'GTC' },
+                  { value: 1, label: 'IOC' },
+                  { value: 2, label: 'Post Only' },
+                ] as const).map((tif) => (
+                  <button
+                    key={tif.value}
+                    onClick={() => setTimeInForce(tif.value)}
+                    className={cn(
+                      'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
+                      timeInForce === tif.value
+                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
+                        : 'border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20'
+                    )}
+                  >
+                    {tif.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {timeInForce === 0
+                  ? 'Good Till Cancel — order stays open until filled or cancelled'
+                  : timeInForce === 1
+                  ? 'Immediate Or Cancel — fills now or cancels instantly'
+                  : 'Post Only — rejected if it would fill immediately (maker only)'}
+              </p>
+            </div>
+
+            {/* Reduce Only */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={reduceOnly}
+                onChange={(e) => setReduceOnly(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-white/20 bg-zinc-900/50 text-amber-500 focus:ring-amber-500 focus:ring-offset-0"
+              />
+              <span className="text-xs text-muted-foreground">
+                Reduce Only
+              </span>
+              <Info className="h-3 w-3 opacity-50 text-muted-foreground" />
+            </label>
+            {reduceOnly && (
+              <p className="text-xs text-muted-foreground -mt-1 ml-5">
+                Order will only execute if it reduces an existing position
+              </p>
+            )}
           </div>
         )}
 
@@ -763,6 +843,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
               </span>
               <span className="font-mono text-xs text-muted-foreground">{formatUSD(tradingFee)}</span>
             </div>
+
+            {/* Fee Tier Info */}
+            {feeInfo && (
+              <>
+                <div className="border-t border-white/5 my-1" />
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">Fee Tier</span>
+                  <span className="font-mono text-xs text-primary">{feeInfo.tierName}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">14d Volume</span>
+                  <span className="font-mono text-xs text-muted-foreground">{feeInfo.volume14d}</span>
+                </div>
+                {feeInfo.nextTierVolume && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Next: {feeInfo.nextTierName}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{feeInfo.nextTierVolume}</span>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
 

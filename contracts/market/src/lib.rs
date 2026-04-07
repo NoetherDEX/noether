@@ -1124,6 +1124,17 @@ impl MarketContract {
     ///
     /// # Returns
     /// The created Order
+    /// Place a limit order.
+    ///
+    /// # Time-in-Force (`time_in_force` parameter)
+    /// - `0` = GTC (Good Till Cancel) — stays open until triggered or cancelled
+    /// - `1` = IOC (Immediate Or Cancel) — executes immediately if conditions met, else cancelled
+    /// - `2` = Post Only — rejected if it would execute immediately (guarantees maker fee)
+    ///
+    /// # Reduce Only (bit 8 of `time_in_force`)
+    /// If `time_in_force` has bit 8 set (e.g., `0x100` or `0x101`), the order is reduce-only:
+    /// it will only execute if the trader has an existing position in the opposite direction.
+    /// Bits 0-7 still encode the TIF mode.
     pub fn place_limit_order(
         env: Env,
         trader: Address,
@@ -1134,6 +1145,7 @@ impl MarketContract {
         trigger_price: i128,
         trigger_above: bool,
         slippage_tolerance_bps: u32,
+        time_in_force: u32,
     ) -> Result<Order, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -1156,10 +1168,34 @@ impl MarketContract {
             return Err(NoetherError::InvalidSlippageTolerance);
         }
 
+        // Extract TIF mode (bits 0-7) and validate
+        let tif_mode = time_in_force & 0xFF;
+        if tif_mode > 2 {
+            return Err(NoetherError::InvalidParameter);
+        }
+
         // Calculate position size to check against limits
         let size = calculate_position_size(collateral, leverage);
         if size > config.max_position_size {
             return Err(NoetherError::PositionTooLarge);
+        }
+
+        let trigger_condition = if trigger_above {
+            TriggerCondition::Above
+        } else {
+            TriggerCondition::Below
+        };
+
+        // Post Only (tif_mode == 2): reject if trigger condition is already met
+        if tif_mode == 2 {
+            let current_price = Self::get_oracle_price(&env, &asset)?;
+            let would_fill = match trigger_condition {
+                TriggerCondition::Above => current_price >= trigger_price,
+                TriggerCondition::Below => current_price <= trigger_price,
+            };
+            if would_fill {
+                return Err(NoetherError::PostOnlyViolation);
+            }
         }
 
         // Transfer collateral from trader to market contract (lock it)
@@ -1167,16 +1203,52 @@ impl MarketContract {
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&trader, &env.current_contract_address(), &collateral);
 
+        // IOC (tif_mode == 1): check if trigger is met now, execute or cancel
+        if tif_mode == 1 {
+            let current_price = Self::get_oracle_price(&env, &asset)?;
+            let triggered = match trigger_condition {
+                TriggerCondition::Above => current_price >= trigger_price,
+                TriggerCondition::Below => current_price <= trigger_price,
+            };
+            if !triggered {
+                // Cancel: refund collateral immediately
+                token_client.transfer(&env.current_contract_address(), &trader, &collateral);
+                // Create cancelled order record
+                let order_id = next_order_id(&env);
+                let order = Order {
+                    id: order_id,
+                    trader: trader.clone(),
+                    asset,
+                    order_type: OrderType::LimitEntry,
+                    direction,
+                    collateral,
+                    leverage,
+                    trigger_price,
+                    trigger_condition,
+                    slippage_tolerance_bps,
+                    position_id: 0,
+                    has_position: false,
+                    created_at: env.ledger().timestamp(),
+                    status: OrderStatus::Cancelled,
+                    limit_price: 0,
+                    trailing_percent_bps: 0,
+                    time_in_force,
+                    stop_limit_phase: 0,
+                };
+                env.storage().persistent().set(&storage::DataKey::Order(order_id), &order);
+                env.events().publish(
+                    (Symbol::new(&env, "order_cancelled"),),
+                    (order_id, Symbol::new(&env, "ioc_not_filled")),
+                );
+                return Ok(order);
+            }
+            // Trigger met — fall through to create as Pending, keeper executes immediately
+        }
+
         // Generate order ID
         let order_id = next_order_id(&env);
 
         // Create order
-        let trigger_condition = if trigger_above {
-            TriggerCondition::Above
-        } else {
-            TriggerCondition::Below
-        };
-
         let order = Order {
             id: order_id,
             trader: trader.clone(),
@@ -1194,7 +1266,7 @@ impl MarketContract {
             status: OrderStatus::Pending,
             limit_price: 0,
             trailing_percent_bps: 0,
-            time_in_force: 0, // GTC
+            time_in_force,
             stop_limit_phase: 0,
         };
 
@@ -1719,6 +1791,9 @@ impl MarketContract {
     /// Place a stop-limit order.
     /// Phase 1: waits for price to hit trigger_price (stop).
     /// Phase 2: once triggered, acts as limit order at limit_price.
+    /// Place a stop-limit order with optional time-in-force and reduce-only flags.
+    /// See `place_limit_order` for `time_in_force` encoding details.
+    /// Note: IOC and PostOnly apply to the limit phase (phase 1), not the stop phase.
     pub fn place_stop_limit_order(
         env: Env,
         trader: Address,
@@ -1730,6 +1805,7 @@ impl MarketContract {
         limit_price: i128,
         trigger_above: bool,
         slippage_tolerance_bps: u32,
+        time_in_force: u32,
     ) -> Result<Order, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -1747,6 +1823,12 @@ impl MarketContract {
         }
         if slippage_tolerance_bps == 0 || slippage_tolerance_bps > 10000 {
             return Err(NoetherError::InvalidSlippageTolerance);
+        }
+
+        // Validate TIF mode (bits 0-7)
+        let tif_mode = time_in_force & 0xFF;
+        if tif_mode > 2 {
+            return Err(NoetherError::InvalidParameter);
         }
 
         let size = calculate_position_size(collateral, leverage);
@@ -1783,7 +1865,7 @@ impl MarketContract {
             status: OrderStatus::Pending,
             limit_price,
             trailing_percent_bps: 0,
-            time_in_force: 0,
+            time_in_force,
             stop_limit_phase: 0, // WaitingForStop
         };
 
@@ -2021,6 +2103,34 @@ impl MarketContract {
         keeper: &Address,
     ) -> Result<i128, NoetherError> {
         let config = get_config(env);
+
+        // Reduce Only check: bit 8 of time_in_force
+        // A reduce-only entry order is only valid if the trader has an existing
+        // position in the OPPOSITE direction that it would offset.
+        if order.time_in_force & 0x100 != 0 {
+            let all_ids = get_all_position_ids(env);
+            let has_opposing = all_ids.iter().any(|pid| {
+                if let Some(pos) = get_position(env, pid) {
+                    pos.trader == order.trader
+                        && pos.asset == order.asset
+                        && pos.direction != order.direction
+                } else {
+                    false
+                }
+            });
+            if !has_opposing {
+                // No opposing position — cancel and refund
+                let usdc_token = get_usdc_token(env);
+                let token_client = token::Client::new(env, &usdc_token);
+                token_client.transfer(&env.current_contract_address(), &order.trader, &order.collateral);
+                update_order_status(env, order.id, OrderStatus::Cancelled);
+                env.events().publish(
+                    (Symbol::new(env, "order_cancelled"),),
+                    (order.id, Symbol::new(env, "reduce_only_no_position")),
+                );
+                return Ok(0);
+            }
+        }
 
         // Calculate position size
         let size = calculate_position_size(order.collateral, order.leverage);
@@ -2442,7 +2552,231 @@ mod tests {
         assert!(pnl < 0);
     }
 
-    // Remaining tests removed during WASM size optimization.
-    // Tests for: cross-margin, orders, fee tiers, liquidation, trailing stops
-    // will be restored when WASM size budget allows.
+    // ═══════════════════════════════════════════════════════════════════
+    // Cross-Margin Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_cross_margin_open_two_positions() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        // Deposit into cross-margin pool
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+
+        // Open first cross position
+        let pos1 = test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "BTC"),
+            &(200 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+        assert_eq!(pos1.margin_mode, 1); // Cross
+
+        // Open second cross position sharing collateral
+        let pos2 = test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "ETH"),
+            &(200 * PRECISION),
+            &3,
+            &Direction::Short,
+        );
+        assert_eq!(pos2.margin_mode, 1);
+        assert_ne!(pos1.id, pos2.id);
+    }
+
+    #[test]
+    fn test_cross_margin_close_returns_pnl_to_pool() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+
+        let pos = test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Price up 10% — profit
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 11 / 100));
+
+        let pnl = test.market.close_position_cross(&trader, &pos.id);
+        assert!(pnl > 0); // Profitable close returns to pool
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #77)")] // CrossMarginInsufficientFreeMargin
+    fn test_cross_margin_insufficient_free_margin() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        // Deposit small amount
+        test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
+
+        // Open first position using most of margin
+        test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "BTC"),
+            &(80 * PRECISION),
+            &10,
+            &Direction::Long,
+        );
+
+        // Try to open second position — should fail (not enough free margin)
+        test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "ETH"),
+            &(80 * PRECISION),
+            &10,
+            &Direction::Short,
+        );
+    }
+
+    #[test]
+    fn test_cross_margin_liquidation() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+
+        test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
+
+        // Open leveraged long
+        test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(90 * PRECISION),
+            &10,
+            &Direction::Long,
+        );
+
+        // Crash price 15% — should make account liquidatable
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 85 / 1000)); // $0.085
+
+        // Liquidate
+        let reward = test.market.liquidate_cross_account(&keeper, &trader);
+        assert!(reward > 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Order Type Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_limit_order_gtc() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Place GTC limit order (time_in_force=0)
+        let order = test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20), // trigger at $0.05 (below current $0.10)
+            &false,             // trigger below
+            &100,               // 1% slippage
+            &0,                 // GTC
+        );
+        assert_eq!(order.status, OrderStatus::Pending);
+        assert_eq!(order.time_in_force, 0);
+    }
+
+    #[test]
+    fn test_limit_order_ioc_cancel() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Place IOC order with trigger NOT met (current XLM = $0.10, trigger below $0.05)
+        let order = test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20), // $0.05 — not triggered (price is $0.10)
+            &false,
+            &100,
+            &1, // IOC
+        );
+        // IOC not filled → cancelled, collateral refunded
+        assert_eq!(order.status, OrderStatus::Cancelled);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #70)")] // PostOnlyViolation
+    fn test_limit_order_post_only_rejected() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Place Post Only order that WOULD fill immediately
+        // Current XLM = $0.10, trigger above $0.05 → already met
+        test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20), // $0.05 — already above this
+            &true,              // trigger above
+            &100,
+            &2, // Post Only
+        );
+    }
+
+    #[test]
+    fn test_limit_order_post_only_accepted() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Place Post Only order that would NOT fill immediately
+        // Current XLM = $0.10, trigger below $0.05 → not met → accepted as maker
+        let order = test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20), // $0.05
+            &false,             // trigger below
+            &100,
+            &2, // Post Only
+        );
+        assert_eq!(order.status, OrderStatus::Pending);
+    }
+
+    #[test]
+    fn test_reduce_only_cancels_without_position() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+
+        // Place reduce-only limit order (bit 8 set: 0x100 | GTC = 256)
+        let order = test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20),
+            &false,
+            &500, // 5% slippage
+            &0x100, // reduce_only + GTC
+        );
+        assert_eq!(order.status, OrderStatus::Pending);
+
+        // Move price to trigger the order
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION / 20)); // $0.05
+
+        // Execute — should cancel because no opposing position exists
+        let reward = test.market.execute_order(&keeper, &order.id);
+        assert_eq!(reward, 0); // 0 = cancelled, not executed
+    }
 }
