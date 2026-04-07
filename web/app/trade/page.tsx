@@ -160,11 +160,6 @@ function TradePage() {
     }
   };
 
-  const handleAddCollateral = async (positionId: number, amount: number) => {
-    // TODO: Implement add collateral
-    console.log('Adding collateral:', positionId, amount);
-  };
-
   const handleSetStopLoss = async (positionId: number, triggerPrice: number, slippageBps: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
 
@@ -248,7 +243,6 @@ function TradePage() {
           isLoading={isLoadingPositions}
           isRefreshing={isRefreshing}
           onClosePosition={handleClosePosition}
-          onAddCollateral={handleAddCollateral}
           onSetStopLoss={handleSetStopLoss}
           onSetTakeProfit={handleSetTakeProfit}
           onRefresh={handleRefreshPositions}

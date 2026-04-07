@@ -1,11 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { TrendingUp, X, Plus, RefreshCw, Share2, AlertTriangle, Shield, Target } from 'lucide-react';
+import { TrendingUp, X, RefreshCw, Share2, AlertTriangle, Shield, Target } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPrice, formatPercent, formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
-import { TokenIcon } from '@/components/ui/TokenIcon';
 import type { DisplayPosition, PnlShareData } from '@/types';
 import { PnlShareModal } from '@/components/share/PnlShareModal';
 
@@ -14,7 +13,6 @@ interface PositionsListProps {
   isLoading?: boolean;
   isRefreshing?: boolean;
   onClosePosition?: (id: number) => Promise<void>;
-  onAddCollateral?: (id: number, amount: number) => void;
   onSetStopLoss?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
   onSetTakeProfit?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
   onRefresh?: () => void;
@@ -25,14 +23,12 @@ export function PositionsList({
   isLoading,
   isRefreshing,
   onClosePosition,
-  onAddCollateral,
   onSetStopLoss,
   onSetTakeProfit,
   onRefresh,
 }: PositionsListProps) {
   const [selectedPosition, setSelectedPosition] = useState<DisplayPosition | null>(null);
-  const [actionModal, setActionModal] = useState<'close' | 'add-collateral' | 'stop-loss' | 'take-profit' | null>(null);
-  const [addCollateralAmount, setAddCollateralAmount] = useState('');
+  const [actionModal, setActionModal] = useState<'close' | 'stop-loss' | 'take-profit' | null>(null);
   const [slTpPrice, setSlTpPrice] = useState('');
   const [slTpSlippage, setSlTpSlippage] = useState(50); // 0.5% default
   const [customSlTpSlippage, setCustomSlTpSlippage] = useState('');
@@ -104,15 +100,6 @@ export function PositionsList({
     } finally {
       setIsClosing(false);
     }
-  };
-
-  const handleAddCollateral = () => {
-    if (selectedPosition && onAddCollateral && addCollateralAmount) {
-      onAddCollateral(selectedPosition.id, parseFloat(addCollateralAmount));
-    }
-    setActionModal(null);
-    setSelectedPosition(null);
-    setAddCollateralAmount('');
   };
 
   const handleSetStopLoss = async () => {
@@ -206,10 +193,6 @@ export function PositionsList({
                   setSelectedPosition(position);
                   setActionModal('close');
                 }}
-                onAddCollateral={() => {
-                  setSelectedPosition(position);
-                  setActionModal('add-collateral');
-                }}
                 onSetStopLoss={() => {
                   setSelectedPosition(position);
                   // Suggest a stop-loss 5% below entry for long, 5% above for short
@@ -245,10 +228,6 @@ export function PositionsList({
             onClose={() => {
               setSelectedPosition(position);
               setActionModal('close');
-            }}
-            onAddCollateral={() => {
-              setSelectedPosition(position);
-              setActionModal('add-collateral');
             }}
             onSetStopLoss={() => {
               setSelectedPosition(position);
@@ -317,55 +296,6 @@ export function PositionsList({
                 isLoading={isClosing}
               >
                 {isClosing ? 'Closing...' : 'Close Position'}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* Add Collateral Modal */}
-      <Modal
-        isOpen={actionModal === 'add-collateral'}
-        onClose={() => setActionModal(null)}
-        title="Add Collateral"
-        size="sm"
-      >
-        {selectedPosition && (
-          <div>
-            <div className="mb-6">
-              <p className="text-sm text-muted-foreground mb-4">
-                Adding collateral will lower your liquidation price and reduce risk.
-              </p>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={addCollateralAmount}
-                  onChange={(e) => setAddCollateralAmount(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-16"
-                />
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                  <TokenIcon symbol="USDC" size={16} />
-                  <span className="text-xs font-medium text-foreground">USDC</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <Button
-                variant="secondary"
-                className="flex-1"
-                onClick={() => setActionModal(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                className="flex-1"
-                onClick={handleAddCollateral}
-                disabled={!addCollateralAmount}
-              >
-                Add Collateral
               </Button>
             </div>
           </div>
@@ -476,6 +406,23 @@ export function PositionsList({
               </p>
             </div>
 
+            {/* Validation warning */}
+            {slTpPrice && selectedPosition && (() => {
+              const price = parseFloat(slTpPrice);
+              const isLong = selectedPosition.direction === 'Long';
+              const invalid = isLong ? price >= selectedPosition.entryPrice : price <= selectedPosition.entryPrice;
+              return invalid ? (
+                <div className="mb-4 p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-[#ef4444] mt-0.5 shrink-0" />
+                  <p className="text-xs text-[#ef4444]">
+                    {isLong
+                      ? 'Stop-loss must be below entry price for Long positions'
+                      : 'Stop-loss must be above entry price for Short positions'}
+                  </p>
+                </div>
+              ) : null;
+            })()}
+
             <div className="flex gap-3">
               <Button
                 variant="secondary"
@@ -489,7 +436,11 @@ export function PositionsList({
                 variant="danger"
                 className="flex-1"
                 onClick={handleSetStopLoss}
-                disabled={!slTpPrice || isSettingSLTP}
+                disabled={!slTpPrice || isSettingSLTP || (() => {
+                  const price = parseFloat(slTpPrice);
+                  const isLong = selectedPosition?.direction === 'Long';
+                  return isLong ? price >= (selectedPosition?.entryPrice ?? 0) : price <= (selectedPosition?.entryPrice ?? 0);
+                })()}
                 isLoading={isSettingSLTP}
               >
                 <Shield className="w-4 h-4 mr-1" />
@@ -604,6 +555,23 @@ export function PositionsList({
               </p>
             </div>
 
+            {/* Validation warning */}
+            {slTpPrice && selectedPosition && (() => {
+              const price = parseFloat(slTpPrice);
+              const isLong = selectedPosition.direction === 'Long';
+              const invalid = isLong ? price <= selectedPosition.entryPrice : price >= selectedPosition.entryPrice;
+              return invalid ? (
+                <div className="mb-4 p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-[#ef4444] mt-0.5 shrink-0" />
+                  <p className="text-xs text-[#ef4444]">
+                    {isLong
+                      ? 'Take-profit must be above entry price for Long positions'
+                      : 'Take-profit must be below entry price for Short positions'}
+                  </p>
+                </div>
+              ) : null;
+            })()}
+
             <div className="flex gap-3">
               <Button
                 variant="secondary"
@@ -617,7 +585,11 @@ export function PositionsList({
                 variant="primary"
                 className="flex-1"
                 onClick={handleSetTakeProfit}
-                disabled={!slTpPrice || isSettingSLTP}
+                disabled={!slTpPrice || isSettingSLTP || (() => {
+                  const price = parseFloat(slTpPrice);
+                  const isLong = selectedPosition?.direction === 'Long';
+                  return isLong ? price <= (selectedPosition?.entryPrice ?? 0) : price >= (selectedPosition?.entryPrice ?? 0);
+                })()}
                 isLoading={isSettingSLTP}
               >
                 <Target className="w-4 h-4 mr-1" />
@@ -643,7 +615,6 @@ function PositionRow({
   position,
   isLiquidationRisk,
   onClose,
-  onAddCollateral,
   onSetStopLoss,
   onSetTakeProfit,
   hasSlTpCallbacks,
@@ -652,7 +623,6 @@ function PositionRow({
   position: DisplayPosition;
   isLiquidationRisk: boolean;
   onClose: () => void;
-  onAddCollateral: () => void;
   onSetStopLoss: () => void;
   onSetTakeProfit: () => void;
   hasSlTpCallbacks: boolean;
@@ -767,13 +737,6 @@ function PositionRow({
             <Share2 className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={onAddCollateral}
-            className="p-1.5 rounded hover:bg-zinc-900/50 text-muted-foreground hover:text-foreground transition-colors"
-            title="Add Collateral"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-          <button
             onClick={onClose}
             className="px-2.5 py-1 rounded text-[10px] font-medium bg-[#ef4444]/10 text-[#ef4444] hover:bg-[#ef4444]/20 transition-colors flex items-center gap-1"
             title="Close Position"
@@ -791,7 +754,6 @@ function PositionRow({
 function PositionCard({
   position,
   onClose,
-  onAddCollateral,
   onSetStopLoss,
   onSetTakeProfit,
   hasSlTpCallbacks,
@@ -799,7 +761,6 @@ function PositionCard({
 }: {
   position: DisplayPosition;
   onClose: () => void;
-  onAddCollateral: () => void;
   onSetStopLoss: () => void;
   onSetTakeProfit: () => void;
   hasSlTpCallbacks: boolean;
@@ -877,10 +838,6 @@ function PositionCard({
       )}
 
       <div className="flex gap-2">
-        <Button variant="secondary" size="sm" className="flex-1" onClick={onAddCollateral}>
-          <Plus className="w-4 h-4 mr-1" />
-          Add Collateral
-        </Button>
         <Button variant="danger" size="sm" className="flex-1" onClick={onClose}>
           Close
         </Button>
