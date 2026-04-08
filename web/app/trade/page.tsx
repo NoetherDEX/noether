@@ -16,6 +16,7 @@ import {
   TradeHistoryContainer,
   RecentTrades,
   OrderBook,
+  CrossMarginBanner,
 } from '@/components/trading';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { TIMEFRAMES } from '@/lib/utils/constants';
@@ -238,15 +239,18 @@ function TradePage() {
       label: 'Positions',
       count: positions.length,
       content: (
-        <PositionsList
-          positions={positions}
-          isLoading={isLoadingPositions}
-          isRefreshing={isRefreshing}
-          onClosePosition={handleClosePosition}
-          onSetStopLoss={handleSetStopLoss}
-          onSetTakeProfit={handleSetTakeProfit}
-          onRefresh={handleRefreshPositions}
-        />
+        <>
+          <CrossMarginBanner positions={positions} publicKey={publicKey ?? null} />
+          <PositionsList
+            positions={positions}
+            isLoading={isLoadingPositions}
+            isRefreshing={isRefreshing}
+            onClosePosition={handleClosePosition}
+            onSetStopLoss={handleSetStopLoss}
+            onSetTakeProfit={handleSetTakeProfit}
+            onRefresh={handleRefreshPositions}
+          />
+        </>
       ),
     },
     {
