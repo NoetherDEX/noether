@@ -401,7 +401,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(&env, "position_closed"),),
-            (position_id, trader, pnl, current_price),
+            (position_id, trader, position.asset, position.direction, position.size, position.entry_price, current_price, pnl),
         );
 
         extend_instance_ttl(&env);
@@ -942,7 +942,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(&env, "position_closed"),),
-            (position_id, trader, pnl, current_price),
+            (position_id, trader, pos.asset, pos.direction, pos.size, pos.entry_price, current_price, pnl),
         );
 
         Ok(pnl)
@@ -2311,7 +2311,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(env, "position_closed"),),
-            (position.id, position.trader, pnl, current_price),
+            (position.id, position.trader.clone(), position.asset.clone(), position.direction.clone(), position.size, position.entry_price, current_price, pnl),
         );
 
         Ok(keeper_fee)

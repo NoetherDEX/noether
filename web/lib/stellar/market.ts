@@ -890,35 +890,33 @@ function parseEventsToTrades(events: rpc.Api.EventResponse[], traderPublicKey: s
       let fee: bigint = BigInt(0);
 
       if (Array.isArray(data)) {
-        // NEW FORMAT: [position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid]
+        // Format: [position_id, trader, asset, direction, size, entry_price, current_price, pnl]
         trader = data[1] as string;
-        asset = data[2] as string;
+        asset = String(data[2] || 'Unknown');
         const dirVal = data[3];
         if (typeof dirVal === 'number') {
           direction = dirVal === 0 ? 'Long' : 'Short';
         } else if (typeof dirVal === 'object' && dirVal !== null) {
           direction = 'Long' in dirVal ? 'Long' : 'Short';
         }
-        size = data[4] as bigint;
-        entryPrice = data[5] as bigint;
-        exitPrice = data[6] as bigint;
-        pnl = data[7] as bigint;
-        fee = data[8] as bigint;
+        size = BigInt(data[4] ?? 0);
+        entryPrice = BigInt(data[5] ?? 0);
+        exitPrice = BigInt(data[6] ?? 0);
+        pnl = BigInt(data[7] ?? 0);
       } else if (typeof data === 'object' && data !== null) {
         const obj = data as Record<string, unknown>;
         trader = (obj[1] || obj.trader || '') as string;
-        asset = (obj[2] || obj.asset || 'Unknown') as string;
+        asset = String(obj[2] || obj.asset || 'Unknown');
         const dirVal = obj[3] || obj.direction;
         if (typeof dirVal === 'number') {
           direction = dirVal === 0 ? 'Long' : 'Short';
         } else if (typeof dirVal === 'object' && dirVal !== null) {
           direction = 'Long' in (dirVal as object) ? 'Long' : 'Short';
         }
-        size = (obj[4] || obj.size || BigInt(0)) as bigint;
-        entryPrice = (obj[5] || obj.entry_price || BigInt(0)) as bigint;
-        exitPrice = (obj[6] || obj.exit_price || BigInt(0)) as bigint;
-        pnl = (obj[7] || obj.pnl || BigInt(0)) as bigint;
-        fee = (obj[8] || obj.funding_paid || BigInt(0)) as bigint;
+        size = BigInt((obj[4] || obj.size || 0) as number | bigint);
+        entryPrice = BigInt((obj[5] || obj.entry_price || 0) as number | bigint);
+        exitPrice = BigInt((obj[6] || obj.exit_price || 0) as number | bigint);
+        pnl = BigInt((obj[7] || obj.pnl || 0) as number | bigint);
       } else {
         continue;
       }

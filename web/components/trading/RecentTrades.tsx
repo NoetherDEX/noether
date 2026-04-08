@@ -99,8 +99,9 @@ export function RecentTrades() {
           // Contract event: (position_id, trader, size, entry_price)
           size = bigIntToNumber(data[2] as bigint);
         } else if (eventType === 'position_closed') {
-          // Contract event: (position_id, trader, pnl, current_price)
-          size = Math.abs(bigIntToNumber(data[2] as bigint)); // pnl as size indicator
+          // Contract event: (position_id, trader, asset, direction, size, entry_price, current_price, pnl)
+          asset = String(data[2] || 'BTC').toUpperCase();
+          size = bigIntToNumber(data[4] as bigint);
           side = 'Close';
         } else if (eventType === 'position_liquidated') {
           // Contract event: (position_id, trader, keeper_reward, current_price)

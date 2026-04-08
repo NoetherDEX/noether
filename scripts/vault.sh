@@ -1,16 +1,11 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# Deploy Vault Contract Only
+# Vault Contract — Build, Deploy, Initialize (All-in-One)
 # ═══════════════════════════════════════════════════════════════════════════════
-# Deploys only the vault contract, initializes it, and links it to the market.
+# Builds, optimizes, deploys, and initializes the vault contract.
 # Reads existing contract addresses from .env. Does NOT modify .env.
 #
-# Prerequisites:
-#   - Build contracts first: ./scripts/build_contracts.sh
-#   - .env must have: ADMIN_SECRET_KEY, NEXT_PUBLIC_MARKET_ID,
-#     NEXT_PUBLIC_USDC_TOKEN_ID, NEXT_PUBLIC_NOE_TOKEN_ID
-#
-# Usage: ./scripts/deploy_vault.sh
+# Usage: ./scripts/vault.sh
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -e
@@ -22,13 +17,13 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-WASM_DIR="$PROJECT_ROOT/contracts/target/wasm"
+CONTRACTS_DIR="$PROJECT_ROOT/contracts"
+WASM_DIR="$CONTRACTS_DIR/target/wasm"
 
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}                    Deploy Vault Contract                                       ${NC}"
+echo -e "${CYAN}              Vault Contract — Build + Deploy + Initialize                      ${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${NC}"
 echo ""
 
@@ -42,26 +37,13 @@ else
     exit 1
 fi
 
-# Validate required variables
-if [ -z "$ADMIN_SECRET_KEY" ]; then
-    echo -e "${RED}Error: ADMIN_SECRET_KEY not set in .env${NC}"
-    exit 1
-fi
-if [ -z "$NEXT_PUBLIC_MARKET_ID" ]; then
-    echo -e "${RED}Error: NEXT_PUBLIC_MARKET_ID not set in .env${NC}"
-    exit 1
-fi
-if [ -z "$NEXT_PUBLIC_USDC_TOKEN_ID" ]; then
-    echo -e "${RED}Error: NEXT_PUBLIC_USDC_TOKEN_ID not set in .env${NC}"
-    exit 1
-fi
+# Validate
+if [ -z "$ADMIN_SECRET_KEY" ]; then echo -e "${RED}Error: ADMIN_SECRET_KEY not set${NC}"; exit 1; fi
+if [ -z "$NEXT_PUBLIC_MARKET_ID" ]; then echo -e "${RED}Error: NEXT_PUBLIC_MARKET_ID not set${NC}"; exit 1; fi
+if [ -z "$NEXT_PUBLIC_USDC_TOKEN_ID" ]; then echo -e "${RED}Error: NEXT_PUBLIC_USDC_TOKEN_ID not set${NC}"; exit 1; fi
 
 # CLI detection
-if command -v stellar &> /dev/null; then
-    CLI="stellar"
-else
-    CLI="soroban"
-fi
+if command -v stellar &> /dev/null; then CLI="stellar"; else CLI="soroban"; fi
 
 # Identity
 IDENTITY="noether_admin"
@@ -74,17 +56,39 @@ echo "  Market:     $NEXT_PUBLIC_MARKET_ID"
 echo "  USDC Token: $NEXT_PUBLIC_USDC_TOKEN_ID"
 echo ""
 
-# Check WASM
-if [ ! -f "$WASM_DIR/vault.wasm" ]; then
-    echo -e "${RED}Error: vault.wasm not found. Run ./scripts/build_contracts.sh first.${NC}"
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 1: Build
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}[1/4] Building contracts...${NC}"
+cd "$CONTRACTS_DIR"
+cargo build --release --target wasm32-unknown-unknown 2>&1 | tail -3
+echo -e "${GREEN}✓ Build complete${NC}"
+echo ""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Step 2: Optimize
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}[2/4] Optimizing vault.wasm...${NC}"
+mkdir -p "$WASM_DIR"
+RELEASE_WASM="$CONTRACTS_DIR/target/wasm32-unknown-unknown/release/vault.wasm"
+
+if [ ! -f "$RELEASE_WASM" ]; then
+    echo -e "${RED}Error: vault.wasm not found after build.${NC}"
     exit 1
 fi
 
+$CLI contract optimize --wasm "$RELEASE_WASM" --wasm-out "$WASM_DIR/vault.wasm" 2>/dev/null || cp "$RELEASE_WASM" "$WASM_DIR/vault.wasm"
+WASM_SIZE=$(wc -c < "$WASM_DIR/vault.wasm" | tr -d ' ')
+echo -e "${GREEN}✓ Optimized: ${WASM_SIZE} bytes${NC}"
+echo ""
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# Deploy
+# Step 3: Deploy
 # ═══════════════════════════════════════════════════════════════════════════════
 
-echo -e "${YELLOW}Deploying Vault contract...${NC}"
+echo -e "${YELLOW}[3/4] Deploying Vault contract...${NC}"
 VAULT_ID=$($CLI contract deploy \
     --wasm "$WASM_DIR/vault.wasm" \
     --source "$IDENTITY" \
@@ -93,10 +97,10 @@ echo -e "${GREEN}✓ Vault deployed: $VAULT_ID${NC}"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Initialize Vault
+# Step 4: Initialize
 # ═══════════════════════════════════════════════════════════════════════════════
 
-echo -e "${YELLOW}Initializing Vault...${NC}"
+echo -e "${YELLOW}[4/4] Initializing Vault...${NC}"
 $CLI contract invoke \
     --id "$VAULT_ID" \
     --source "$IDENTITY" \
@@ -115,24 +119,17 @@ echo ""
 # ═══════════════════════════════════════════════════════════════════════════════
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-
-MOCK_ORACLE_ID="${NEXT_PUBLIC_MOCK_ORACLE_ID}"
-ORACLE_ADAPTER_ID="${NEXT_PUBLIC_ORACLE_ADAPTER_ID}"
-MARKET_ID="${NEXT_PUBLIC_MARKET_ID}"
-USDC_TOKEN_ID="${NEXT_PUBLIC_USDC_TOKEN_ID}"
-NOE_TOKEN_ID="${NEXT_PUBLIC_NOE_TOKEN_ID}"
-
 cat > "$PROJECT_ROOT/contracts.json" << EOF
 {
   "network": "testnet",
   "deployedAt": "$TIMESTAMP",
   "contracts": {
-    "mockOracle": "$MOCK_ORACLE_ID",
-    "oracleAdapter": "$ORACLE_ADAPTER_ID",
+    "mockOracle": "${NEXT_PUBLIC_MOCK_ORACLE_ID}",
+    "oracleAdapter": "${NEXT_PUBLIC_ORACLE_ADAPTER_ID}",
     "vault": "$VAULT_ID",
-    "market": "$MARKET_ID",
-    "usdcToken": "$USDC_TOKEN_ID",
-    "noeToken": "$NOE_TOKEN_ID"
+    "market": "${NEXT_PUBLIC_MARKET_ID}",
+    "usdcToken": "${NEXT_PUBLIC_USDC_TOKEN_ID}",
+    "noeToken": "${NEXT_PUBLIC_NOE_TOKEN_ID}"
   },
   "admin": "$ADMIN_PUBLIC_KEY",
   "noeAsset": {
@@ -141,15 +138,13 @@ cat > "$PROJECT_ROOT/contracts.json" << EOF
   }
 }
 EOF
-echo -e "${GREEN}✓ New Vault address added to contracts.json${NC}"
-echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo -e "${GREEN}═══════════════════════════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}                         Vault Deployment Complete!                              ${NC}"
+echo -e "${GREEN}                              All Done!                                         ${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  Here is the new Vault contract ---> ${CYAN}$VAULT_ID${NC}"
