@@ -17,6 +17,7 @@ import {
   withdraw,
   approveNoeForWithdraw,
   getPoolInfo,
+  getVaultUsdcBalance,
   getNoeBalance,
   getNoePrice,
 } from '@/lib/stellar/vault';
@@ -59,8 +60,9 @@ function VaultPage() {
 
     setIsLoading(true);
     try {
-      const [poolInfo, noeBalance, noePrice, trustlineStatus] = await Promise.all([
+      const [poolInfo, vaultBalance, noeBalance, noePrice, trustlineStatus] = await Promise.all([
         getPoolInfo(publicKey),
+        getVaultUsdcBalance(publicKey),
         getNoeBalance(publicKey, publicKey),
         getNoePrice(publicKey),
         hasNoeTrustline(publicKey),
@@ -85,17 +87,12 @@ function VaultPage() {
 
         const poolData = poolInfo as unknown as Record<string, unknown>;
 
-        // Calculate AUM: Total USDC + Fees - Unrealized PnL
-        const totalUsdc = fromPrecision(Number(getField(poolData, 'totalUsdc', 'total_usdc')));
-        const totalFees = fromPrecision(Number(getField(poolData, 'totalFees', 'total_fees')));
-        const unrealizedPnl = fromPrecision(Number(getField(poolData, 'unrealizedPnl', 'unrealized_pnl')));
-
-        const aum = totalUsdc + totalFees - unrealizedPnl;
-
-        console.log('[Vault] Calculated values:', { totalUsdc, totalFees, unrealizedPnl, aum, noePriceNum, noeBalanceNum });
+        // TVL = actual USDC token balance held by vault contract
+        // This reflects all deposits, fees, settlements, and direct transfers
+        const tvl = vaultBalance;
 
         setPoolStats({
-          tvl: isNaN(aum) ? 0 : aum,
+          tvl: isNaN(tvl) ? 0 : tvl,
           noePrice: isNaN(noePriceNum) ? 1.0 : noePriceNum,
           apy: 12.5, // TODO: Calculate from actual fees
           noeBalance: isNaN(noeBalanceNum) ? 0 : noeBalanceNum,

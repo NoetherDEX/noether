@@ -89,6 +89,39 @@ export async function withdraw(
 }
 
 /**
+ * Get actual USDC token balance held by the vault contract (read-only)
+ * Uses the user's account as transaction source for simulation
+ */
+export async function getVaultUsdcBalance(publicKey: string): Promise<number> {
+  try {
+    const { TransactionBuilder, BASE_FEE, Address } = await import('@stellar/stellar-sdk');
+
+    const usdcContract = new Contract(CONTRACTS.USDC_TOKEN);
+    const account = await sorobanRpc.getAccount(publicKey);
+    const operation = usdcContract.call('balance', new Address(CONTRACTS.VAULT).toScVal());
+
+    const transaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK.PASSPHRASE,
+    })
+      .addOperation(operation)
+      .setTimeout(300)
+      .build();
+
+    const result = await sorobanRpc.simulateTransaction(transaction);
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      const balance = scValToNative(result.result.retval) as bigint;
+      return Number(balance) / 10_000_000;
+    }
+    return 0;
+  } catch (error) {
+    console.error('Error fetching vault USDC balance:', error);
+    return 0;
+  }
+}
+
+/**
  * Get pool information (read-only)
  */
 export async function getPoolInfo(publicKey: string): Promise<PoolInfo | null> {
