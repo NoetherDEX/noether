@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
-import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, getTraderFeeInfo } from '@/lib/stellar/market';
+import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo } from '@/lib/stellar/market';
 import {
   formatUSD,
   formatNumber,
@@ -42,6 +42,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
   // Margin mode
   const [marginMode, setMarginMode] = useState<'Isolated' | 'Cross'>('Isolated');
   const [crossBalance, setCrossBalance] = useState<number>(0);
+  const [crossDepositAmount, setCrossDepositAmount] = useState<string>('');
+  const [crossWithdrawAmount, setCrossWithdrawAmount] = useState<string>('');
+  const [isCrossDepositing, setIsCrossDepositing] = useState(false);
+  const [isCrossWithdrawing, setIsCrossWithdrawing] = useState(false);
 
   // Price states
   const [assetPrice, setAssetPrice] = useState<number>(0);
@@ -348,6 +352,55 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
     setCollateral(Math.floor(usdcBalance * (pct / 100)).toString());
   };
 
+  // Cross-margin deposit handler
+  const handleCrossDeposit = async () => {
+    if (!publicKey || isCrossDepositing) return;
+    const amount = parseFloat(crossDepositAmount) || 0;
+    if (amount < 1) { toast.error('Minimum deposit is 1 USDC'); return; }
+    if (amount > usdcBalance) { toast.error('Insufficient USDC balance'); return; }
+
+    setIsCrossDepositing(true);
+    try {
+      await depositCrossMargin(publicKey, sign, toPrecision(amount));
+      toast.success(`Deposited ${amount} USDC to cross-margin pool`);
+      setCrossDepositAmount('');
+      refreshBalances();
+      const bal = await getCrossMarginBalance(publicKey);
+      setCrossBalance(Number(bal) / 10_000_000);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to deposit');
+    } finally {
+      setIsCrossDepositing(false);
+    }
+  };
+
+  // Cross-margin withdraw handler
+  const handleCrossWithdraw = async () => {
+    if (!publicKey || isCrossWithdrawing) return;
+    const amount = parseFloat(crossWithdrawAmount) || 0;
+    if (amount < 1) { toast.error('Minimum withdrawal is 1 USDC'); return; }
+    if (amount > crossBalance) { toast.error('Exceeds pool balance'); return; }
+
+    setIsCrossWithdrawing(true);
+    try {
+      await withdrawCrossMargin(publicKey, sign, toPrecision(amount));
+      toast.success(`Withdrew ${amount} USDC from cross-margin pool`);
+      setCrossWithdrawAmount('');
+      refreshBalances();
+      const bal = await getCrossMarginBalance(publicKey);
+      setCrossBalance(Number(bal) / 10_000_000);
+    } catch (err: any) {
+      const msg = err?.message || '';
+      if (msg.includes('CrossMarginInsufficientFreeMargin')) {
+        toast.error('Insufficient free margin — reduce positions first');
+      } else {
+        toast.error(msg || 'Failed to withdraw');
+      }
+    } finally {
+      setIsCrossWithdrawing(false);
+    }
+  };
+
   return (
     <div className="h-full rounded-lg border border-white/10 bg-[#0a0a0a] overflow-hidden flex flex-col">
       {/* Header */}
@@ -382,17 +435,65 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
           </button>
         </div>
 
-        {/* Cross-Margin Info */}
+        {/* Cross-Margin Info + Deposit/Withdraw */}
         {marginMode === 'Cross' && (
-          <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20">
-            <div className="flex justify-between text-xs">
-              <span className="text-amber-500">Cross Margin</span>
-              <span className="text-amber-500/70">Positions share collateral</span>
-            </div>
-            {crossBalance > 0 && (
+          <div className="space-y-2">
+            <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20">
+              <div className="flex justify-between text-xs">
+                <span className="text-amber-500">Cross Margin</span>
+                <span className="text-amber-500/70">Positions share collateral</span>
+              </div>
               <div className="flex justify-between text-xs mt-1">
                 <span className="text-muted-foreground">Pool Balance</span>
                 <span className="font-mono text-foreground">{formatNumber(crossBalance)} USDC</span>
+              </div>
+            </div>
+
+            {/* Deposit/Withdraw Controls */}
+            {isConnected && (
+              <div className="p-2 bg-zinc-900/50 rounded border border-white/10 space-y-2">
+                {/* Deposit */}
+                <div className="flex gap-1.5">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      value={crossDepositAmount}
+                      onChange={(e) => setCrossDepositAmount(e.target.value)}
+                      placeholder="Deposit USDC"
+                      className="w-full bg-zinc-900/80 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                    />
+                  </div>
+                  <button
+                    onClick={handleCrossDeposit}
+                    disabled={isCrossDepositing || !crossDepositAmount}
+                    className="px-3 py-1.5 text-xs font-medium rounded bg-amber-500/20 text-amber-500 border border-amber-500/30 hover:bg-amber-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    {isCrossDepositing ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Deposit'}
+                  </button>
+                </div>
+                {/* Withdraw */}
+                <div className="flex gap-1.5">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      value={crossWithdrawAmount}
+                      onChange={(e) => setCrossWithdrawAmount(e.target.value)}
+                      placeholder="Withdraw USDC"
+                      className="w-full bg-zinc-900/80 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                    />
+                  </div>
+                  <button
+                    onClick={handleCrossWithdraw}
+                    disabled={isCrossWithdrawing || !crossWithdrawAmount}
+                    className="px-3 py-1.5 text-xs font-medium rounded bg-zinc-800 text-foreground border border-white/10 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    {isCrossWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Withdraw'}
+                  </button>
+                </div>
               </div>
             )}
           </div>

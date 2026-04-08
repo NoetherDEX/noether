@@ -8,3 +8,4 @@ export { AssetSelector } from './AssetSelector';
 export { AssetSelectorDropdown } from './AssetSelectorDropdown';
 export { RecentTrades } from './RecentTrades';
 export { OrderBook } from './OrderBook';
+export { CrossMarginBanner } from './CrossMarginBanner';
