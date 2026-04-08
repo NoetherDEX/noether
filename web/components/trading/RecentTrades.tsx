@@ -96,19 +96,15 @@ export function RecentTrades() {
 
       if (Array.isArray(data)) {
         if (eventType === 'position_opened') {
-          // Format: [position_id, trader, asset, size, direction]
-          asset = String(data[2] || 'BTC').toUpperCase();
-          size = bigIntToNumber(data[3] as bigint);
-          side = parseDirection(data[4]);
+          // Contract event: (position_id, trader, size, entry_price)
+          size = bigIntToNumber(data[2] as bigint);
         } else if (eventType === 'position_closed') {
-          // Format: [position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid]
-          asset = String(data[2] || 'BTC').toUpperCase();
-          size = bigIntToNumber(data[4] as bigint);
+          // Contract event: (position_id, trader, pnl, current_price)
+          size = Math.abs(bigIntToNumber(data[2] as bigint)); // pnl as size indicator
           side = 'Close';
         } else if (eventType === 'position_liquidated') {
-          // Format: similar to position_closed
-          asset = String(data[2] || 'BTC').toUpperCase();
-          size = bigIntToNumber(data[4] as bigint);
+          // Contract event: (position_id, trader, keeper_reward, current_price)
+          size = bigIntToNumber(data[2] as bigint);
           side = 'Liq';
         }
       }
