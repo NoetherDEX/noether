@@ -230,6 +230,18 @@ mod tests {
     }
 
     #[test]
+    fn test_determine_fee_tier_volume_5m() {
+        let env = Env::default();
+        let tiers = default_fee_tiers(&env);
+
+        // $7M volume → tier 2
+        let volume = 7_000_000 * PRECISION;
+        let tier = determine_fee_tier(volume, &tiers);
+        assert_eq!(tier.maker_fee_bps, 10);
+        assert_eq!(tier.taker_fee_bps, 30);
+    }
+
+    #[test]
     fn test_determine_fee_tier_max() {
         let env = Env::default();
         let tiers = default_fee_tiers(&env);

@@ -677,16 +677,18 @@ export async function setTakeProfit(
     positionId: number;
     triggerPrice: bigint;
     slippageToleranceBps: number;
+    limitPrice?: bigint;
   }
 ): Promise<Order> {
   console.log('[DEBUG] Setting take-profit for position:', params.positionId);
 
-  // Contract signature: set_take_profit(trader, position_id, trigger_price, slippage_tolerance_bps)
+  // Contract signature: set_take_profit(trader, position_id, trigger_price, slippage_tolerance_bps, limit_price)
   const args = [
     toScVal(signerPublicKey, 'address'),
     toScVal(params.positionId, 'u64'),
     toScVal(params.triggerPrice, 'i128'),
     toScVal(params.slippageToleranceBps, 'u32'),
+    toScVal(params.limitPrice ?? BigInt(0), 'i128'),
   ];
 
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'set_take_profit', args);

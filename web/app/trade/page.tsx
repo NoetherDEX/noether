@@ -185,13 +185,14 @@ function TradePage() {
     await promise;
   };
 
-  const handleSetTakeProfit = async (positionId: number, triggerPrice: number, slippageBps: number): Promise<void> => {
+  const handleSetTakeProfit = async (positionId: number, triggerPrice: number, slippageBps: number, limitPrice?: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
 
     const promise = setTakeProfit(publicKey, sign, {
       positionId,
       triggerPrice: toPrecision(triggerPrice),
       slippageToleranceBps: slippageBps,
+      limitPrice: limitPrice ? toPrecision(limitPrice) : undefined,
     });
 
     toast.promise(promise, {

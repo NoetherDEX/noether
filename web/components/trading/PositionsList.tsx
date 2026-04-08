@@ -14,7 +14,7 @@ interface PositionsListProps {
   isRefreshing?: boolean;
   onClosePosition?: (id: number) => Promise<void>;
   onSetStopLoss?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
-  onSetTakeProfit?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
+  onSetTakeProfit?: (id: number, triggerPrice: number, slippageBps: number, limitPrice?: number) => Promise<void>;
   onRefresh?: () => void;
 }
 
@@ -32,6 +32,7 @@ export function PositionsList({
   const [slTpPrice, setSlTpPrice] = useState('');
   const [slTpSlippage, setSlTpSlippage] = useState(50); // 0.5% default
   const [customSlTpSlippage, setCustomSlTpSlippage] = useState('');
+  const [tpLimitPrice, setTpLimitPrice] = useState('');
   const [isClosing, setIsClosing] = useState(false);
   const [isSettingSLTP, setIsSettingSLTP] = useState(false);
   const [shareData, setShareData] = useState<PnlShareData | null>(null);
@@ -123,10 +124,12 @@ export function PositionsList({
 
     setIsSettingSLTP(true);
     try {
-      await onSetTakeProfit(selectedPosition.id, parseFloat(slTpPrice), slTpSlippage);
+      const limitPriceNum = parseFloat(tpLimitPrice) || 0;
+      await onSetTakeProfit(selectedPosition.id, parseFloat(slTpPrice), slTpSlippage, limitPriceNum > 0 ? limitPriceNum : undefined);
       setActionModal(null);
       setSelectedPosition(null);
       setSlTpPrice('');
+      setTpLimitPrice('');
     } catch (error) {
       console.error('Failed to set take-profit:', error);
     } finally {
@@ -496,6 +499,26 @@ export function PositionsList({
                 {selectedPosition.direction === 'Long'
                   ? 'Position closes when price rises to this level'
                   : 'Position closes when price drops to this level'}
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <label className="text-sm text-muted-foreground mb-2 block">
+                Limit Price (USD) <span className="text-muted-foreground/50">— optional</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="0.0001"
+                  value={tpLimitPrice}
+                  onChange={(e) => setTpLimitPrice(e.target.value)}
+                  placeholder="Market execution"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Set a limit price to execute as a Take Limit order. Leave empty for market execution.
               </p>
             </div>
 

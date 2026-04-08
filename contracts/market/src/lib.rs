@@ -1399,6 +1399,7 @@ impl MarketContract {
         position_id: u64,
         trigger_price: i128,
         slippage_tolerance_bps: u32,
+        limit_price: i128,
     ) -> Result<Order, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -1451,6 +1452,24 @@ impl MarketContract {
         // Generate order ID
         let order_id = next_order_id(&env);
 
+        // Validate limit_price if provided (must be between entry and trigger for TP)
+        if limit_price > 0 {
+            match position.direction {
+                Direction::Long => {
+                    // Long TP: limit_price should be >= entry (still profitable) and <= trigger
+                    if limit_price > trigger_price || limit_price < position.entry_price {
+                        return Err(NoetherError::InvalidParameter);
+                    }
+                }
+                Direction::Short => {
+                    // Short TP: limit_price should be <= entry (still profitable) and >= trigger
+                    if limit_price < trigger_price || limit_price > position.entry_price {
+                        return Err(NoetherError::InvalidParameter);
+                    }
+                }
+            }
+        }
+
         // Create order
         let order = Order {
             id: order_id,
@@ -1467,7 +1486,7 @@ impl MarketContract {
             has_position: true,
             created_at: env.ledger().timestamp(),
             status: OrderStatus::Pending,
-            limit_price: 0,
+            limit_price,
             trailing_percent_bps: 0,
             time_in_force: 0,
             stop_limit_phase: 0,
@@ -1582,8 +1601,11 @@ impl MarketContract {
         let current_price = Self::get_oracle_price(&env, &order.asset)?;
 
         // Determine reference price for trigger/slippage check
+        // TakeProfit with limit_price > 0 acts as "Take Limit": trigger at trigger_price,
+        // but slippage is checked against limit_price (the desired exit price)
         let ref_price = match order.order_type {
             OrderType::StopLimit if order.stop_limit_phase == 1 => order.limit_price,
+            OrderType::TakeProfit if order.limit_price > 0 => order.limit_price,
             OrderType::TrailingStop => {
                 // Calculate dynamic trigger from peak
                 if let Some(peak) = get_trailing_stop_peak(&env, order_id) {
@@ -2663,6 +2685,45 @@ mod tests {
         assert!(reward > 0);
     }
 
+    #[test]
+    fn test_cross_margin_partial_close() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        // Deposit into cross-margin pool
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+
+        // Open two cross positions
+        let pos1 = test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "BTC"),
+            &(200 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+        let pos2 = test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "ETH"),
+            &(150 * PRECISION),
+            &3,
+            &Direction::Short,
+        );
+
+        // Close only the first position (partial account close)
+        let pnl = test.market.close_position_cross(&trader, &pos1.id);
+        // PnL can be positive or negative depending on price movement
+        let _ = pnl;
+
+        // Second position must still exist
+        let remaining_ids = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(remaining_ids.len(), 1);
+        assert_eq!(remaining_ids.get(0).unwrap(), pos2.id);
+
+        // Pool balance should still be > 0 (collateral returned to pool)
+        let pool_bal = test.market.get_cross_margin_balance(&trader);
+        assert!(pool_bal > 0);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // Order Type Tests
     // ═══════════════════════════════════════════════════════════════════
@@ -2749,6 +2810,80 @@ mod tests {
             &2, // Post Only
         );
         assert_eq!(order.status, OrderStatus::Pending);
+    }
+
+    #[test]
+    fn test_take_profit_with_limit_price() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Open a long position at XLM $0.10
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Set take-profit with limit_price (Take Limit):
+        // trigger at $0.12, limit at $0.115
+        let order = test.market.set_take_profit(
+            &trader,
+            &pos.id,
+            &(PRECISION * 12 / 100), // trigger $0.12
+            &200,                     // 2% slippage
+            &(PRECISION * 115 / 1000), // limit $0.115
+        );
+        assert_eq!(order.limit_price, PRECISION * 115 / 1000);
+        assert_eq!(order.status, OrderStatus::Pending);
+    }
+
+    #[test]
+    fn test_stop_limit_with_ioc_tif() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Place StopLimit order with IOC (time_in_force=1)
+        // Stop not triggered → IOC applies to limit phase, order stays pending in stop phase
+        let order = test.market.place_stop_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20),   // stop at $0.05 (below current $0.10)
+            &(PRECISION / 25),   // limit at $0.04
+            &false,              // trigger below
+            &100,                // 1% slippage
+            &1,                  // IOC — applies to limit phase (phase 1), not stop phase
+        );
+        // Stop phase — order is pending (IOC doesn't cancel in stop phase)
+        assert_eq!(order.status, OrderStatus::Pending);
+        assert_eq!(order.stop_limit_phase, 0);
+    }
+
+    #[test]
+    fn test_stop_limit_with_post_only_stored() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Place StopLimit with PostOnly — PostOnly applies to limit phase (phase 1), not stop phase
+        let order = test.market.place_stop_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20),   // stop at $0.05 (below current $0.10)
+            &(PRECISION / 25),   // limit at $0.04
+            &false,              // trigger below
+            &100,
+            &2,                  // PostOnly — stored for limit phase enforcement
+        );
+        assert_eq!(order.status, OrderStatus::Pending);
+        assert_eq!(order.time_in_force, 2); // PostOnly stored
+        assert_eq!(order.stop_limit_phase, 0); // Still in stop phase
     }
 
     #[test]
