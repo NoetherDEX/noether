@@ -33,7 +33,9 @@ echo ""
 
 # Load environment
 if [ -f "$PROJECT_ROOT/.env" ]; then
-    export $(cat "$PROJECT_ROOT/.env" | grep -v '^#' | xargs)
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
 else
     echo -e "${RED}Error: .env file not found. Please copy .env.example to .env and configure it.${NC}"
     exit 1
@@ -211,7 +213,9 @@ CONFIG='{
     "base_funding_rate_bps": 1,
     "max_position_size": 1000000000000,
     "max_price_staleness": 60,
-    "max_oracle_deviation_bps": 100
+    "max_oracle_deviation_bps": 100,
+    "base_maker_fee_bps": 2,
+    "base_taker_fee_bps": 5
 }'
 
 $CLI contract invoke \
@@ -236,24 +240,8 @@ echo -e "${CYAN}                       Saving Contract IDs                      
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${NC}"
 echo ""
 
-# Create/update .env with contract IDs
+# Save to contracts.json
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-cat >> "$PROJECT_ROOT/.env" << EOF
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Deployed Contract IDs - $TIMESTAMP
-# ═══════════════════════════════════════════════════════════════════════════════
-NEXT_PUBLIC_MOCK_ORACLE_ID=$MOCK_ORACLE_ID
-NEXT_PUBLIC_ORACLE_ADAPTER_ID=$ORACLE_ADAPTER_ID
-NEXT_PUBLIC_VAULT_ID=$VAULT_ID
-NEXT_PUBLIC_MARKET_ID=$MARKET_ID
-NEXT_PUBLIC_USDC_TOKEN_ID=$USDC_TOKEN_ID
-EOF
-
-echo -e "${GREEN}Contract IDs saved to .env${NC}"
-echo ""
-
-# Also create a contracts.json for easy programmatic access
 cat > "$PROJECT_ROOT/contracts.json" << EOF
 {
   "network": "testnet",
@@ -288,8 +276,13 @@ echo "  USDC Token:     $USDC_TOKEN_ID"
 echo ""
 echo -e "${CYAN}Admin:${NC} $ADMIN_PUBLIC_KEY"
 echo ""
+echo ""
+echo -e "${RED}═══════════════════════════════════════════════════════════════════════════════${NC}"
+echo -e "${RED}  DO NOT FORGET TO UPDATE .env FILE WITH THE NEW CONTRACT ADDRESSES ABOVE     ${NC}"
+echo -e "${RED}═══════════════════════════════════════════════════════════════════════════════${NC}"
+echo ""
 echo -e "${YELLOW}Next steps:${NC}"
-echo "  1. Start the frontend: cd web && npm run dev"
-echo "  2. Start the keeper bot: cd scripts/keeper && npm start"
-echo "  3. Open http://localhost:3000 to use the application"
+echo "  1. Update .env with the new contract addresses"
+echo "  2. Start the frontend: cd web && npm run dev"
+echo "  3. Start the keeper bot: cd scripts/keeper && npm start"
 echo ""
