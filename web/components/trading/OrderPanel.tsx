@@ -15,7 +15,7 @@ import {
 } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import { TokenIcon } from '@/components/ui/TokenIcon';
-import { TRADING } from '@/lib/utils/constants';
+import { TRADING, FEE_TIERS } from '@/lib/utils/constants';
 import type { TriggerCondition, DisplayPosition } from '@/types';
 
 interface OrderPanelProps {
@@ -67,15 +67,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
   const [timeInForce, setTimeInForce] = useState<number>(0); // 0=GTC, 1=IOC, 2=PostOnly
   const [reduceOnly, setReduceOnly] = useState<boolean>(false);
 
-  // Fee tier info
-  const [makerFeeBps, setMakerFeeBps] = useState<number>(TRADING.BASE_MAKER_FEE_BPS);
-  const [takerFeeBps, setTakerFeeBps] = useState<number>(TRADING.BASE_TAKER_FEE_BPS);
-  const [feeInfo, setFeeInfo] = useState<{
-    tierName: string;
-    volume14d: string;
-    nextTierName: string;
-    nextTierVolume: string;
-  } | null>(null);
+  // Fee tier info — existing 14d volume fetched from contract
+  const [existing14dVolume, setExisting14dVolume] = useState<number>(0);
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -97,25 +90,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
     return () => clearInterval(interval);
   }, [asset]);
 
-  // Fetch fee tier info and cross-margin balance
+  // Fetch existing 14d volume and cross-margin balance
   useEffect(() => {
     if (!publicKey) return;
-    const loadFeeInfo = async () => {
+    const load = async () => {
       try {
         const info = await getTraderFeeInfo(publicKey);
         if (info) {
-          setMakerFeeBps(info.makerFeeBps);
-          setTakerFeeBps(info.takerFeeBps);
-          const vol = Number(info.volume14d) / 10_000_000;
-          const nextVol = Number(info.nextTierVolume) / 10_000_000;
-          setFeeInfo({
-            tierName: info.tierName,
-            volume14d: vol >= 1_000_000 ? `$${(vol / 1_000_000).toFixed(2)}M` : `$${vol.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
-            nextTierName: info.nextTierName,
-            nextTierVolume: nextVol > 0
-              ? (nextVol >= 1_000_000 ? `$${(nextVol / 1_000_000).toFixed(0)}M` : `$${nextVol.toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
-              : '',
-          });
+          setExisting14dVolume(Number(info.volume14d) / 10_000_000);
         }
       } catch {}
       try {
@@ -123,7 +105,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
         setCrossBalance(Number(bal) / 10_000_000);
       } catch {}
     };
-    loadFeeInfo();
+    load();
   }, [publicKey]);
 
   // Calculate derived values
@@ -141,8 +123,39 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
   );
 
   const isMaker = orderType === 'Limit' || orderType === 'StopLimit';
-  const feeBps = isMaker ? makerFeeBps : takerFeeBps;
-  const tradingFee = positionSize * feeBps / 100000; // deci-bps: divide by FEE_PRECISION
+
+  // Dynamically compute fee tier based on projected volume (existing + this trade)
+  const projectedFee = useMemo(() => {
+    const projectedVolume = existing14dVolume + positionSize;
+    let tierIndex = 0;
+    for (let i = FEE_TIERS.length - 1; i >= 0; i--) {
+      if (projectedVolume >= FEE_TIERS[i].minVolume) {
+        tierIndex = i;
+        break;
+      }
+    }
+    const tier = FEE_TIERS[tierIndex];
+    const nextTier = tierIndex < FEE_TIERS.length - 1 ? FEE_TIERS[tierIndex + 1] : null;
+    const feeBps = isMaker ? tier.makerBps : tier.takerBps;
+    const feeAmount = positionSize * feeBps / 100000;
+    const volStr = projectedVolume >= 1_000_000
+      ? `$${(projectedVolume / 1_000_000).toFixed(2)}M`
+      : `$${projectedVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    const nextVolStr = nextTier
+      ? (nextTier.minVolume >= 1_000_000 ? `$${(nextTier.minVolume / 1_000_000).toFixed(0)}M` : `$${nextTier.minVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
+      : '';
+    return {
+      tierName: tier.name,
+      feeBps,
+      feeAmount,
+      volume14d: volStr,
+      nextTierName: nextTier?.name ?? 'Max',
+      nextTierVolume: nextVolStr,
+    };
+  }, [existing14dVolume, positionSize, isMaker]);
+
+  const feeBps = projectedFee.feeBps;
+  const tradingFee = projectedFee.feeAmount;
 
   // Risk assessment based on leverage
   const liquidationRisk = leverage >= 8 ? 'high' : leverage >= 5 ? 'medium' : 'low';
@@ -241,6 +254,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
         toast.promise(openCrossPromise, {
           loading: `Opening Cross ${direction} ${asset}...`,
           success: () => {
+            setExisting14dVolume(prev => prev + positionSize);
             setCollateral('');
             refreshBalances();
             onSubmit?.();
@@ -264,6 +278,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
         toast.promise(openPositionPromise, {
           loading: `Opening ${direction} ${asset} position...`,
           success: (position) => {
+            setExisting14dVolume(prev => prev + positionSize);
             setCollateral('');
             refreshBalances();
             onSubmit?.();
@@ -946,21 +961,21 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
             </div>
 
             {/* Fee Tier Info */}
-            {feeInfo && (
+            {positionSize > 0 && (
               <>
                 <div className="border-t border-white/5 my-1" />
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-muted-foreground">Fee Tier</span>
-                  <span className="font-mono text-xs text-primary">{feeInfo.tierName}</span>
+                  <span className="font-mono text-xs text-primary">{projectedFee.tierName}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-muted-foreground">14d Volume</span>
-                  <span className="font-mono text-xs text-muted-foreground">{feeInfo.volume14d}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{projectedFee.volume14d}</span>
                 </div>
-                {feeInfo.nextTierVolume && (
+                {projectedFee.nextTierVolume && (
                   <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Next: {feeInfo.nextTierName}</span>
-                    <span className="font-mono text-xs text-muted-foreground">{feeInfo.nextTierVolume}</span>
+                    <span className="text-xs text-muted-foreground">Next: {projectedFee.nextTierName}</span>
+                    <span className="font-mono text-xs text-muted-foreground">{projectedFee.nextTierVolume}</span>
                   </div>
                 )}
               </>
