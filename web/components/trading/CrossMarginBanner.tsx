@@ -43,7 +43,7 @@ export function CrossMarginBanner({ positions, publicKey }: CrossMarginBannerPro
   const equity = poolBalance + totalCollateral + totalUnrealizedPnl;
   const maintenanceMargin = totalSize * MAINTENANCE_MARGIN_BPS / 10000;
   const usedMargin = totalCollateral;
-  const freeMargin = equity - maintenanceMargin;
+  const freeMargin = equity - usedMargin;
   const marginRatio = maintenanceMargin > 0 ? (equity / maintenanceMargin) * 100 : Infinity;
 
   const healthColor = marginRatio === Infinity
