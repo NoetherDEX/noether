@@ -112,10 +112,15 @@ async function getTransactionEvents(txHash: string): Promise<TradeEvent[]> {
         let size = 0;
         let pnl = 0;
         if (topicName === 'position_opened') {
-          size = bigIntToNumber(data[3] as bigint);
-        } else {
+          // Event: (id, trader, asset, direction, size, entry_price)
+          size = bigIntToNumber(data[4] as bigint);
+        } else if (topicName === 'position_closed') {
+          // Event: (id, trader, asset, direction, size, entry_price, current_price, pnl)
           size = bigIntToNumber(data[4] as bigint);
           pnl = bigIntToNumber(data[7] as bigint);
+        } else if (topicName === 'position_liquidated') {
+          // Event: (id, trader, asset, direction, size, keeper_reward, current_price)
+          size = bigIntToNumber(data[4] as bigint);
         }
         events.push({ type: topicName, trader, size, pnl });
       } catch { /* skip */ }

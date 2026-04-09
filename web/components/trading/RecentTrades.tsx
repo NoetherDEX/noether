@@ -96,16 +96,24 @@ export function RecentTrades() {
 
       if (Array.isArray(data)) {
         if (eventType === 'position_opened') {
-          // Contract event: (position_id, trader, size, entry_price)
-          size = bigIntToNumber(data[2] as bigint);
+          // Contract event: (position_id, trader, asset, direction, size, entry_price)
+          asset = String(data[2] || 'BTC').toUpperCase();
+          const dirVal = data[3];
+          if (typeof dirVal === 'number') {
+            side = dirVal === 0 ? 'Long' : 'Short';
+          } else if (typeof dirVal === 'object' && dirVal !== null) {
+            side = 'Long' in dirVal ? 'Long' : 'Short';
+          }
+          size = bigIntToNumber(data[4] as bigint);
         } else if (eventType === 'position_closed') {
           // Contract event: (position_id, trader, asset, direction, size, entry_price, current_price, pnl)
           asset = String(data[2] || 'BTC').toUpperCase();
           size = bigIntToNumber(data[4] as bigint);
           side = 'Close';
         } else if (eventType === 'position_liquidated') {
-          // Contract event: (position_id, trader, keeper_reward, current_price)
-          size = bigIntToNumber(data[2] as bigint);
+          // Contract event: (position_id, trader, asset, direction, size, keeper_reward, current_price)
+          asset = String(data[2] || 'BTC').toUpperCase();
+          size = bigIntToNumber(data[4] as bigint);
           side = 'Liq';
         }
       }

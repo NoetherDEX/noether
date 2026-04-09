@@ -295,7 +295,7 @@ impl MarketContract {
         // Emit event
         env.events().publish(
             (Symbol::new(&env, "position_opened"),),
-            (position.id, trader, size, entry_price),
+            (position.id, trader, asset, direction, size, entry_price),
         );
 
         extend_instance_ttl(&env);
@@ -516,7 +516,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(&env, "position_liquidated"),),
-            (position_id, position.trader, actual_keeper_reward, current_price),
+            (position_id, position.trader, position.asset, position.direction, position.size, actual_keeper_reward, current_price),
         );
 
         extend_instance_ttl(&env);
@@ -855,7 +855,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(&env, "position_opened"),),
-            (position_id, trader, size, entry_price),
+            (position_id, trader, asset, direction, size, entry_price),
         );
 
         Ok(position)
@@ -993,6 +993,7 @@ impl MarketContract {
         // Losses can exceed this with leverage, so cap transfers at available balance.
         let market_addr = env.current_contract_address();
         let mut total_loss_to_vault: i128 = 0;
+        let mut total_pnl: i128 = 0;
 
         for i in 0..position_ids.len() {
             let pid = position_ids.get(i).unwrap();
@@ -1003,6 +1004,7 @@ impl MarketContract {
                     _ => continue, // Skip this position if oracle unavailable
                 };
                 let pnl = calculate_pnl(&pos, current_price).unwrap_or(0);
+                total_pnl += pnl;
 
                 // Settle accounting with vault
                 let _ = Self::settle_with_vault(&env, &vault_address, pnl);
@@ -1088,7 +1090,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(&env, "cross_liq"),),
-            (trader, keeper_reward),
+            (trader, total_pnl, keeper_reward),
         );
 
         Ok(keeper_reward)
@@ -2227,7 +2229,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(env, "position_opened"),),
-            (position.id, order.trader.clone(), size, current_price),
+            (position.id, order.trader.clone(), position.asset.clone(), position.direction.clone(), size, current_price),
         );
 
         Ok(keeper_fee)
