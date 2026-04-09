@@ -32,17 +32,17 @@ pub fn default_fee_tiers(env: &Env) -> Vec<FeeTier> {
         taker_fee_bps: 50,  // 5.0 deci-bps = 0.050%
     });
     tiers.push_back(FeeTier {
-        min_volume: 1_000_000 * PRECISION, // $1M
+        min_volume: 20_000 * PRECISION, // $20K (testnet)
         maker_fee_bps: 15,  // 1.5 deci-bps = 0.015%
         taker_fee_bps: 40,  // 4.0 deci-bps = 0.040%
     });
     tiers.push_back(FeeTier {
-        min_volume: 5_000_000 * PRECISION, // $5M
+        min_volume: 50_000 * PRECISION, // $50K (testnet)
         maker_fee_bps: 10,  // 1.0 deci-bps = 0.010%
         taker_fee_bps: 30,  // 3.0 deci-bps = 0.030%
     });
     tiers.push_back(FeeTier {
-        min_volume: 25_000_000 * PRECISION, // $25M
+        min_volume: 100_000 * PRECISION, // $100K (testnet)
         maker_fee_bps: 5,   // 0.5 deci-bps = 0.005%
         taker_fee_bps: 20,  // 2.0 deci-bps = 0.020%
     });
@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(t1.maker_fee_bps, 15);  // 1.5 deci-bps = 0.015% (previously couldn't represent!)
 
         let t3 = tiers.get(3).unwrap();
-        assert_eq!(t3.min_volume, 25_000_000 * PRECISION);
+        assert_eq!(t3.min_volume, 100_000 * PRECISION);
         assert_eq!(t3.maker_fee_bps, 5);   // 0.5 deci-bps = 0.005%
         assert_eq!(t3.taker_fee_bps, 20);  // 2.0 deci-bps = 0.020%
     }

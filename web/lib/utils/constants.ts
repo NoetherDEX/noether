@@ -40,9 +40,9 @@ export const TRADING = {
 // Fee tier thresholds (for display) - values in deci-bps
 export const FEE_TIERS = [
   { name: 'Base', minVolume: 0, makerBps: 20, takerBps: 50 },
-  { name: 'Tier 1', minVolume: 1_000_000, makerBps: 15, takerBps: 40 },
-  { name: 'Tier 2', minVolume: 5_000_000, makerBps: 10, takerBps: 30 },
-  { name: 'Tier 3', minVolume: 25_000_000, makerBps: 5, takerBps: 20 },
+  { name: 'Tier 1', minVolume: 20_000, makerBps: 15, takerBps: 40 },
+  { name: 'Tier 2', minVolume: 50_000, makerBps: 10, takerBps: 30 },
+  { name: 'Tier 3', minVolume: 100_000, makerBps: 5, takerBps: 20 },
 ] as const;
 
 // Supported assets
