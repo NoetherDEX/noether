@@ -34,6 +34,7 @@ export function PositionsList({
   const [customSlTpSlippage, setCustomSlTpSlippage] = useState('');
   const [tpLimitPrice, setTpLimitPrice] = useState('');
   const [customPct, setCustomPct] = useState('');
+  const [selectedPct, setSelectedPct] = useState<number | null>(null);
   const [isClosing, setIsClosing] = useState(false);
   const [isSettingSLTP, setIsSettingSLTP] = useState(false);
   const [shareData, setShareData] = useState<PnlShareData | null>(null);
@@ -354,8 +355,14 @@ export function PositionsList({
                       const price = entry * (1 + pct / 100);
                       setSlTpPrice(price.toFixed(decimals));
                       setCustomPct('');
+                      setSelectedPct(pct);
                     }}
-                    className="flex-1 py-1.5 text-[10px] font-medium rounded border border-white/10 text-muted-foreground hover:text-[#ef4444] hover:border-[#ef4444]/30 transition-all"
+                    className={cn(
+                      'flex-1 py-1.5 text-[10px] font-medium rounded border transition-all',
+                      selectedPct === pct
+                        ? 'bg-[#ef4444]/20 border-[#ef4444]/50 text-[#ef4444]'
+                        : 'border-white/10 text-muted-foreground hover:text-[#ef4444] hover:border-[#ef4444]/30'
+                    )}
                   >
                     {pct > 0 ? '+' : ''}{pct}%
                   </button>
@@ -368,6 +375,7 @@ export function PositionsList({
                     onChange={(e) => {
                       const val = e.target.value.replace(/[^0-9.]/g, '');
                       setCustomPct(val);
+                      setSelectedPct(null);
                       const parsed = parseFloat(val);
                       if (!isNaN(parsed) && parsed > 0) {
                         const pct = isLong ? -parsed : parsed;
@@ -399,7 +407,7 @@ export function PositionsList({
                     type="number"
                     step="0.0001"
                     value={slTpPrice}
-                    onChange={(e) => setSlTpPrice(e.target.value)}
+                    onChange={(e) => { setSlTpPrice(e.target.value); setSelectedPct(null); setCustomPct(''); }}
                     placeholder="0.00"
                     className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-12"
                   />
@@ -542,8 +550,14 @@ export function PositionsList({
                       const price = entry * (1 + pct / 100);
                       setSlTpPrice(price.toFixed(decimals));
                       setCustomPct('');
+                      setSelectedPct(pct);
                     }}
-                    className="flex-1 py-1.5 text-[10px] font-medium rounded border border-white/10 text-muted-foreground hover:text-[#22c55e] hover:border-[#22c55e]/30 transition-all"
+                    className={cn(
+                      'flex-1 py-1.5 text-[10px] font-medium rounded border transition-all',
+                      selectedPct === pct
+                        ? 'bg-[#22c55e]/20 border-[#22c55e]/50 text-[#22c55e]'
+                        : 'border-white/10 text-muted-foreground hover:text-[#22c55e] hover:border-[#22c55e]/30'
+                    )}
                   >
                     {pct > 0 ? '+' : ''}{pct}%
                   </button>
@@ -556,6 +570,7 @@ export function PositionsList({
                     onChange={(e) => {
                       const val = e.target.value.replace(/[^0-9.]/g, '');
                       setCustomPct(val);
+                      setSelectedPct(null);
                       const parsed = parseFloat(val);
                       if (!isNaN(parsed) && parsed > 0) {
                         const pct = isLong ? parsed : -parsed;
@@ -587,7 +602,7 @@ export function PositionsList({
                     type="number"
                     step="0.0001"
                     value={slTpPrice}
-                    onChange={(e) => setSlTpPrice(e.target.value)}
+                    onChange={(e) => { setSlTpPrice(e.target.value); setSelectedPct(null); setCustomPct(''); }}
                     placeholder="0.00"
                     className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
                   />
