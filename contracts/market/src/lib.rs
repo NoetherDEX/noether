@@ -445,6 +445,11 @@ impl MarketContract {
         let position = get_position(&env, position_id)
             .ok_or(NoetherError::PositionNotFound)?;
 
+        // Cross-margin positions use account-level liquidation, not per-position
+        if position.margin_mode == 1 {
+            return Err(NoetherError::NotLiquidatable);
+        }
+
         // Get current price
         let current_price = Self::get_oracle_price(&env, &position.asset)?;
 
@@ -525,9 +530,16 @@ impl MarketContract {
     }
 
     /// Check if a position can be liquidated (includes pending funding).
+    /// Cross-margin positions (margin_mode=1) are never individually liquidatable —
+    /// they use account-level liquidation via `liquidate_cross_account`.
     pub fn is_liquidatable(env: Env, position_id: u64) -> Result<bool, NoetherError> {
         let position = get_position(&env, position_id)
             .ok_or(NoetherError::PositionNotFound)?;
+
+        // Cross-margin positions use account-level liquidation, not per-position
+        if position.margin_mode == 1 {
+            return Ok(false);
+        }
 
         let current_price = Self::get_oracle_price(&env, &position.asset)?;
 

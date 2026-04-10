@@ -347,6 +347,10 @@ class KeeperBot {
 
     for (const positionId of positionIds) {
       try {
+        // Skip cross-margin positions — they use account-level liquidation
+        const pos = await this.stellar.getPosition(positionId);
+        if (pos && pos.margin_mode === 1) continue;
+
         const isLiquidatable = await this.stellar.isLiquidatable(positionId);
 
         if (isLiquidatable) {
