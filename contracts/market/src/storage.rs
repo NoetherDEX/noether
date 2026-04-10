@@ -30,8 +30,10 @@ pub enum DataKey {
     TotalShortSize,
     /// Last funding time
     LastFundingTime,
-    /// Current funding rate
+    /// Current funding rate (latest hourly rate)
     CurrentFundingRate,
+    /// Cumulative funding rate (accumulated over time for accurate per-position funding)
+    CumulativeFundingRate,
     /// Whether initialized
     Initialized,
     /// Whether paused
@@ -182,6 +184,15 @@ pub fn get_current_funding_rate(env: &Env) -> i128 {
 pub fn set_current_funding_rate(env: &Env, rate: i128) {
     env.storage().persistent().set(&DataKey::CurrentFundingRate, &rate);
     extend_persistent_ttl(env, &DataKey::CurrentFundingRate);
+}
+
+pub fn get_cumulative_funding_rate(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::CumulativeFundingRate).unwrap_or(0)
+}
+
+pub fn set_cumulative_funding_rate(env: &Env, rate: i128) {
+    env.storage().persistent().set(&DataKey::CumulativeFundingRate, &rate);
+    extend_persistent_ttl(env, &DataKey::CumulativeFundingRate);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

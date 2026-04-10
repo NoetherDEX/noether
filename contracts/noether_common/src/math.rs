@@ -98,20 +98,22 @@ pub fn calculate_pnl(position: &Position, current_price: i128) -> Result<i128, N
     Ok(pnl)
 }
 
-/// Calculate the net value of a position (collateral + unrealized PnL).
+/// Calculate the net value of a position (collateral + unrealized PnL - funding).
 ///
 /// # Arguments
 /// * `position` - The position
 /// * `current_price` - Current market price (7 decimals)
+/// * `funding` - Funding amount owed (from calculate_cumulative_funding)
 ///
 /// # Returns
 /// Net value in USDC (7 decimals), can be negative if deeply underwater
 pub fn calculate_position_value(
     position: &Position,
     current_price: i128,
+    funding: i128,
 ) -> Result<i128, NoetherError> {
     let pnl = calculate_pnl(position, current_price)?;
-    let value = position.collateral + pnl - position.accumulated_funding;
+    let value = position.collateral + pnl - funding;
     Ok(value)
 }
 
@@ -148,8 +150,8 @@ pub fn calculate_keeper_reward(remaining_collateral: i128, liquidation_fee_bps: 
 /// Calculate funding rate based on long/short imbalance.
 ///
 /// # Formula
-/// If longs > shorts: funding_rate = base_rate × (longs - shorts) / longs
-/// If shorts > longs: funding_rate = -base_rate × (shorts - longs) / shorts
+/// If longs > shorts: funding_rate = base_rate_bps × (longs - shorts) × PRECISION / (longs × BASIS_POINTS)
+/// If shorts > longs: funding_rate = -base_rate_bps × (shorts - longs) × PRECISION / (shorts × BASIS_POINTS)
 ///
 /// Positive rate = longs pay shorts
 /// Negative rate = shorts pay longs
@@ -160,7 +162,8 @@ pub fn calculate_keeper_reward(remaining_collateral: i128, liquidation_fee_bps: 
 /// * `base_rate_bps` - Base funding rate in basis points per hour
 ///
 /// # Returns
-/// Funding rate in basis points (can be negative)
+/// Funding rate in PRECISION units (7 decimals, can be negative).
+/// PRECISION = 100% = 0.01% per hour at full imbalance with base_rate_bps=1.
 pub fn calculate_funding_rate(
     total_long_size: i128,
     total_short_size: i128,
@@ -178,47 +181,48 @@ pub fn calculate_funding_rate(
     let base_rate = base_rate_bps as i128;
 
     if total_long_size > total_short_size {
-        // More longs than shorts - longs pay shorts
         if total_long_size == 0 {
             return 0;
         }
-        let imbalance = (total_long_size - total_short_size) * (BASIS_POINTS as i128) / total_long_size;
-        base_rate * imbalance / (BASIS_POINTS as i128)
+        // Multiply before divide to preserve sub-bps precision
+        base_rate * (total_long_size - total_short_size) * PRECISION
+            / (total_long_size * (BASIS_POINTS as i128))
     } else {
-        // More shorts than longs - shorts pay longs
         if total_short_size == 0 {
             return 0;
         }
-        let imbalance = (total_short_size - total_long_size) * (BASIS_POINTS as i128) / total_short_size;
-        -(base_rate * imbalance / (BASIS_POINTS as i128))
+        -(base_rate * (total_short_size - total_long_size) * PRECISION
+            / (total_short_size * (BASIS_POINTS as i128)))
     }
 }
 
-/// Apply funding to a position.
+/// Calculate funding owed for a position using cumulative funding rate.
+///
+/// The cumulative model tracks total accumulated rate over time.
+/// Each position stores the cumulative rate at open. Funding = size * delta / PRECISION.
 ///
 /// # Arguments
 /// * `position_size` - Size of the position (7 decimals)
-/// * `funding_rate` - Current funding rate in basis points
 /// * `direction` - Position direction
-/// * `hours_elapsed` - Number of hours since last funding
+/// * `entry_cumulative` - Cumulative funding rate when position was opened
+/// * `current_cumulative` - Current cumulative funding rate
 ///
 /// # Returns
-/// Funding amount to pay (positive) or receive (negative)
-pub fn calculate_funding_payment(
+/// Funding amount: positive = position pays, negative = position receives
+pub fn calculate_cumulative_funding(
     position_size: i128,
-    funding_rate: i128,
     direction: Direction,
-    hours_elapsed: u64,
+    entry_cumulative: i128,
+    current_cumulative: i128,
 ) -> i128 {
-    if hours_elapsed == 0 {
+    let delta = current_cumulative - entry_cumulative;
+    if delta == 0 {
         return 0;
     }
-
-    let payment = position_size * funding_rate * (hours_elapsed as i128) / (BASIS_POINTS as i128);
-
+    let raw = position_size * delta / PRECISION;
     match direction {
-        Direction::Long => payment,   // Longs pay when rate is positive
-        Direction::Short => -payment, // Shorts receive when rate is positive
+        Direction::Long => raw,      // Longs pay when cumulative increased
+        Direction::Short => -raw,    // Shorts receive when cumulative increased
     }
 }
 
@@ -338,8 +342,7 @@ mod tests {
             leverage: 10,
             liquidation_price: 0, // Will be calculated
             timestamp: 1000000,
-            last_funding_time: 1000000,
-            accumulated_funding: 0,
+            entry_cumulative_funding: 0,
             margin_mode: 0, // Isolated
         }
     }
@@ -461,15 +464,52 @@ mod tests {
 
     #[test]
     fn test_funding_rate_more_longs() {
-        let rate = calculate_funding_rate(2000 * PRECISION, 1000 * PRECISION, 10);
-        // 50% imbalance, longs pay shorts
+        // 50% imbalance with base_rate=1: rate = 1 * 1000 * PRECISION / (2000 * 10000) = 500
+        let rate = calculate_funding_rate(2000 * PRECISION, 1000 * PRECISION, 1);
         assert!(rate > 0);
+        assert_eq!(rate, 500); // 0.005% per hour in PRECISION units
     }
 
     #[test]
     fn test_funding_rate_more_shorts() {
-        let rate = calculate_funding_rate(1000 * PRECISION, 2000 * PRECISION, 10);
-        // 50% imbalance, shorts pay longs (negative rate)
+        let rate = calculate_funding_rate(1000 * PRECISION, 2000 * PRECISION, 1);
         assert!(rate < 0);
+        assert_eq!(rate, -500); // symmetric
+    }
+
+    #[test]
+    fn test_funding_rate_full_imbalance() {
+        // 100% imbalance (no shorts): rate = 1 * longs * PRECISION / (longs * 10000) = 1000
+        let rate = calculate_funding_rate(1000 * PRECISION, 0, 1);
+        assert_eq!(rate, 1000); // 0.01% per hour = base rate
+    }
+
+    #[test]
+    fn test_cumulative_funding_long_pays() {
+        // $1500 position, cumulative went from 0 to 500 (1 hour at 50% imbalance)
+        let funding = calculate_cumulative_funding(
+            1500 * PRECISION, Direction::Long, 0, 500,
+        );
+        // 1500 * PRECISION * 500 / PRECISION = 750_000 = $0.075
+        assert_eq!(funding, 750_000);
+    }
+
+    #[test]
+    fn test_cumulative_funding_short_receives() {
+        // Short receives when cumulative increases (longs pay shorts)
+        let funding = calculate_cumulative_funding(
+            1500 * PRECISION, Direction::Short, 0, 500,
+        );
+        assert_eq!(funding, -750_000); // negative = receives
+    }
+
+    #[test]
+    fn test_cumulative_funding_multi_hour() {
+        // 3 hours: rate 500, 300, -200 → cumulative = 600
+        let funding = calculate_cumulative_funding(
+            1500 * PRECISION, Direction::Long, 0, 600,
+        );
+        // 1500 * PRECISION * 600 / PRECISION = 900_000 = $0.09
+        assert_eq!(funding, 900_000);
     }
 }

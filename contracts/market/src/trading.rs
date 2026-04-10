@@ -166,8 +166,7 @@ mod tests {
             leverage: 10,
             liquidation_price: PRECISION * 91 / 100,
             timestamp: 1000000,
-            last_funding_time: 1000000,
-            accumulated_funding: 0,
+            entry_cumulative_funding: 0,
             margin_mode: 0,
         }
     }
@@ -218,24 +217,24 @@ mod tests {
     }
 
     #[test]
-    fn test_determine_fee_tier_volume_1m() {
+    fn test_determine_fee_tier_volume_20k() {
         let env = Env::default();
         let tiers = default_fee_tiers(&env);
 
-        // $1.5M volume → tier 1
-        let volume = 1_500_000 * PRECISION;
+        // $25K volume → tier 1 (> $20K testnet threshold)
+        let volume = 25_000 * PRECISION;
         let tier = determine_fee_tier(volume, &tiers);
         assert_eq!(tier.taker_fee_bps, 40);
-        assert_eq!(tier.maker_fee_bps, 15); // Now correctly represents 1.5 bps!
+        assert_eq!(tier.maker_fee_bps, 15);
     }
 
     #[test]
-    fn test_determine_fee_tier_volume_5m() {
+    fn test_determine_fee_tier_volume_50k() {
         let env = Env::default();
         let tiers = default_fee_tiers(&env);
 
-        // $7M volume → tier 2
-        let volume = 7_000_000 * PRECISION;
+        // $60K volume → tier 2 (> $50K testnet threshold)
+        let volume = 60_000 * PRECISION;
         let tier = determine_fee_tier(volume, &tiers);
         assert_eq!(tier.maker_fee_bps, 10);
         assert_eq!(tier.taker_fee_bps, 30);

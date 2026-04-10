@@ -80,10 +80,8 @@ pub struct Position {
     pub liquidation_price: i128,
     /// Timestamp when position was opened (Unix seconds)
     pub timestamp: u64,
-    /// Last funding rate applied (for tracking)
-    pub last_funding_time: u64,
-    /// Accumulated funding payments (positive = paid, negative = received)
-    pub accumulated_funding: i128,
+    /// Cumulative funding rate at position open (for accurate funding calc)
+    pub entry_cumulative_funding: i128,
     /// Margin mode: 0 = Isolated, 1 = Cross
     pub margin_mode: u32,
 }

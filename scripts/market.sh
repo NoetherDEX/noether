@@ -15,6 +15,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+NEON='\033[38;5;198m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -163,8 +164,9 @@ echo -e "  Here is the new Market contract ---> ${CYAN}$MARKET_ID${NC}"
 echo ""
 echo -e "  ${GREEN}✓ New Market address added to contracts.json${NC}"
 echo ""
-echo -e "${RED}═══════════════════════════════════════════════════════════════════════════════${NC}"
-echo -e "${RED}  DO NOT FORGET TO UPDATE .env FILE                                           ${NC}"
-echo -e "${RED}  NEXT_PUBLIC_MARKET_ID=$MARKET_ID${NC}"
-echo -e "${RED}═══════════════════════════════════════════════════════════════════════════════${NC}"
+echo -e "${NEON}───────────────────────────────────────────────────────────────────────────────${NC}"
+echo -e "${NEON}  Sync the new address:${NC}"
+echo -e "${NEON}  □ .env   □ Vercel   □ Railway${NC}"
+echo -e "${NEON}  NEXT_PUBLIC_MARKET_ID=$MARKET_ID${NC}"
+echo -e "${NEON}───────────────────────────────────────────────────────────────────────────────${NC}"
 echo ""

@@ -6,11 +6,11 @@
 //! - Atomic equity checks in withdrawal path
 
 use soroban_sdk::{Address, Env, Symbol};
-use noether_common::{Direction, BASIS_POINTS, calculate_pnl, calculate_funding_payment};
+use noether_common::{BASIS_POINTS, calculate_pnl, calculate_cumulative_funding};
 use crate::storage::{
-    get_position, get_all_position_ids,
+    get_position,
     get_cross_margin_balance, get_cross_margin_position_ids,
-    get_current_funding_rate,
+    get_cumulative_funding_rate,
 };
 
 // Removed unused helpers for WASM size: has_open_positions, get_trader_total_value,
@@ -27,14 +27,12 @@ struct CrossAggregates {
     total_collateral: i128,
     /// Sum of unrealized PnL across all cross positions
     unrealized_pnl: i128,
-    /// Sum of accumulated funding payments
+    /// Sum of funding payments (from cumulative model)
     total_funding: i128,
     /// Sum of maintenance margin required
     maintenance_margin: i128,
     /// Sum of initial margin used (size / leverage)
     used_margin: i128,
-    /// Number of cross positions
-    count: u32,
 }
 
 /// Calculate all cross-margin aggregates in a single pass over positions.
@@ -52,8 +50,7 @@ fn aggregate_cross_positions(
     get_price: &dyn Fn(&Symbol) -> i128,
 ) -> CrossAggregates {
     let position_ids = get_cross_margin_position_ids(env, trader);
-    let current_time = env.ledger().timestamp();
-    let current_funding_rate = get_current_funding_rate(env);
+    let current_cumulative = get_cumulative_funding_rate(env);
 
     let mut agg = CrossAggregates {
         total_collateral: 0,
@@ -61,7 +58,6 @@ fn aggregate_cross_positions(
         total_funding: 0,
         maintenance_margin: 0,
         used_margin: 0,
-        count: position_ids.len(),
     };
 
     for i in 0..position_ids.len() {
@@ -74,16 +70,12 @@ fn aggregate_cross_positions(
             if let Ok(pnl) = calculate_pnl(&pos, price) {
                 agg.unrealized_pnl = agg.unrealized_pnl.checked_add(pnl).unwrap_or(agg.unrealized_pnl);
             }
-            // Funding: stored accumulated + pending (not yet applied)
-            // This is critical: without pending funding, equity is overestimated
-            // and positions that should be liquidated might survive.
-            let hours_since = (current_time.saturating_sub(pos.last_funding_time)) / 3600;
-            let pending_funding = calculate_funding_payment(
-                pos.size, current_funding_rate, pos.direction.clone(), hours_since,
+            // Funding from cumulative model (accurate, no pending calculation needed)
+            let pos_funding = calculate_cumulative_funding(
+                pos.size, pos.direction.clone(),
+                pos.entry_cumulative_funding, current_cumulative,
             );
-            let total_pos_funding = pos.accumulated_funding
-                .checked_add(pending_funding).unwrap_or(pos.accumulated_funding);
-            agg.total_funding = agg.total_funding.checked_add(total_pos_funding).unwrap_or(agg.total_funding);
+            agg.total_funding = agg.total_funding.checked_add(pos_funding).unwrap_or(agg.total_funding);
             // Maintenance margin
             let mm = pos.size * (maintenance_margin_bps as i128) / (BASIS_POINTS as i128);
             agg.maintenance_margin = agg.maintenance_margin.checked_add(mm).unwrap_or(agg.maintenance_margin);
@@ -149,5 +141,3 @@ pub fn is_cross_account_liquidatable(
 }
 
 // build_cross_margin_info removed for WASM size - frontend computes client-side
-
-// Tests removed - validate_position_params was removed for WASM size

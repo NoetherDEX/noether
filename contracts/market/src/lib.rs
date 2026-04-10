@@ -41,7 +41,7 @@ use noether_common::{
     Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
     FeeTier, TraderFeeInfo, VolumeRecord, PRECISION, BASIS_POINTS,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
-    calculate_trading_fee, calculate_funding_rate, calculate_funding_payment,
+    calculate_trading_fee, calculate_funding_rate, calculate_cumulative_funding,
     calculate_keeper_reward, should_liquidate,
 };
 
@@ -154,6 +154,7 @@ impl MarketContract {
         set_total_long_size(&env, 0);
         set_total_short_size(&env, 0);
         set_last_funding_time(&env, env.ledger().timestamp());
+        set_cumulative_funding_rate(&env, 0);
         init_position_index(&env);
 
         // Initialize fee tiers with defaults
@@ -269,8 +270,7 @@ impl MarketContract {
             leverage,
             liquidation_price,
             timestamp: env.ledger().timestamp(),
-            last_funding_time: env.ledger().timestamp(),
-            accumulated_funding: 0,
+            entry_cumulative_funding: get_cumulative_funding_rate(&env),
             margin_mode: 0, // Isolated
         };
 
@@ -330,7 +330,7 @@ impl MarketContract {
         trader.require_auth();
 
         // Get position
-        let mut position = get_position(&env, position_id)
+        let position = get_position(&env, position_id)
             .ok_or(NoetherError::PositionNotFound)?;
 
         // Verify ownership
@@ -338,8 +338,12 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
-        // Apply pending funding
-        Self::apply_funding_to_position(&env, &mut position)?;
+        // Calculate funding from cumulative rate
+        let cumulative = get_cumulative_funding_rate(&env);
+        let funding = calculate_cumulative_funding(
+            position.size, position.direction.clone(),
+            position.entry_cumulative_funding, cumulative,
+        );
 
         // Get current price
         let current_price = Self::get_oracle_price(&env, &position.asset)?;
@@ -348,11 +352,9 @@ impl MarketContract {
         let pnl = calculate_pnl(&position, current_price)?;
 
         // Calculate amount to return to trader
-        let to_trader = position.collateral + pnl - position.accumulated_funding;
+        let to_trader = position.collateral + pnl - funding;
 
         // Settle with vault
-        // - If pnl > 0: Vault transfers profit to Market
-        // - If pnl < 0: Vault just updates accounting
         let vault_address = get_vault(&env);
         Self::settle_with_vault(&env, &vault_address, pnl)?;
 
@@ -361,18 +363,17 @@ impl MarketContract {
         let token_client = token::Client::new(&env, &usdc_token);
 
         // If trader lost, transfer the loss amount to Vault
-        // (Vault's settle_pnl already updated accounting, now transfer actual tokens)
         if pnl < 0 {
             let loss = -pnl;
             token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
         }
 
-        // Transfer remaining funding to vault (if any)
-        if position.accumulated_funding > 0 {
+        // Transfer funding to vault (if trader owes funding)
+        if funding > 0 {
             token_client.transfer(
                 &env.current_contract_address(),
                 &vault_address,
-                &position.accumulated_funding,
+                &funding,
             );
         }
 
@@ -460,11 +461,16 @@ impl MarketContract {
 
         let config = get_config(&env);
 
-        // Calculate PnL
+        // Calculate PnL and funding
         let pnl = calculate_pnl(&position, current_price)?;
+        let cumulative = get_cumulative_funding_rate(&env);
+        let funding = calculate_cumulative_funding(
+            position.size, position.direction.clone(),
+            position.entry_cumulative_funding, cumulative,
+        );
 
         // Calculate remaining collateral after PnL and funding
-        let remaining = position.collateral + pnl - position.accumulated_funding;
+        let remaining = position.collateral + pnl - funding;
 
         // Calculate keeper reward (only from remaining equity, if positive)
         let keeper_reward = if remaining > 0 {
@@ -583,9 +589,14 @@ impl MarketContract {
             config.base_funding_rate_bps,
         );
 
-        // Store for reference
+        // Store current rate for reference
         set_current_funding_rate(&env, funding_rate);
         set_last_funding_time(&env, current_time);
+
+        // Accumulate into cumulative rate (enables accurate per-position funding)
+        let cumulative = get_cumulative_funding_rate(&env);
+        let new_cumulative = cumulative + funding_rate * (hours_elapsed as i128);
+        set_cumulative_funding_rate(&env, new_cumulative);
 
         env.events().publish(
             (Symbol::new(&env, "funding_applied"),),
@@ -837,8 +848,7 @@ impl MarketContract {
             leverage,
             liquidation_price: 0, // Cross-margin: no per-position liq price
             timestamp: env.ledger().timestamp(),
-            last_funding_time: env.ledger().timestamp(),
-            accumulated_funding: 0,
+            entry_cumulative_funding: get_cumulative_funding_rate(&env),
             margin_mode: 1, // Cross
         };
 
@@ -883,7 +893,7 @@ impl MarketContract {
         require_not_paused(&env)?;
         trader.require_auth();
 
-        let mut pos = get_position(&env, position_id)
+        let pos = get_position(&env, position_id)
             .ok_or(NoetherError::PositionNotFound)?;
 
         if pos.trader != trader {
@@ -893,8 +903,12 @@ impl MarketContract {
             return Err(NoetherError::InvalidParameter); // Not a cross-margin position
         }
 
-        // Apply pending funding
-        Self::apply_funding_to_position(&env, &mut pos)?;
+        // Calculate funding from cumulative rate
+        let cumulative = get_cumulative_funding_rate(&env);
+        let funding = calculate_cumulative_funding(
+            pos.size, pos.direction.clone(),
+            pos.entry_cumulative_funding, cumulative,
+        );
 
         // Get current price and calculate PnL
         let current_price = Self::get_oracle_price(&env, &pos.asset)?;
@@ -914,17 +928,17 @@ impl MarketContract {
         }
 
         // Transfer funding to vault if needed
-        if pos.accumulated_funding > 0 {
+        if funding > 0 {
             token_client.transfer(
                 &env.current_contract_address(),
                 &vault_address,
-                &pos.accumulated_funding,
+                &funding,
             );
         }
 
         // Return remaining equity to cross-margin pool (NOT trader wallet)
         let to_pool = pos.collateral.checked_add(pnl).unwrap_or(0)
-            .checked_sub(pos.accumulated_funding).unwrap_or(0);
+            .checked_sub(funding).unwrap_or(0);
         if to_pool > 0 {
             let current_balance = get_cross_margin_balance(&env, &trader);
             let new_balance = current_balance.checked_add(to_pool).unwrap_or(current_balance);
@@ -1006,6 +1020,7 @@ impl MarketContract {
         let market_addr = env.current_contract_address();
         let mut total_loss_to_vault: i128 = 0;
         let mut total_pnl: i128 = 0;
+        let cumulative = get_cumulative_funding_rate(&env);
 
         for i in 0..position_ids.len() {
             let pid = position_ids.get(i).unwrap();
@@ -1018,6 +1033,12 @@ impl MarketContract {
                 let pnl = calculate_pnl(&pos, current_price).unwrap_or(0);
                 total_pnl += pnl;
 
+                // Calculate funding from cumulative rate
+                let funding = calculate_cumulative_funding(
+                    pos.size, pos.direction.clone(),
+                    pos.entry_cumulative_funding, cumulative,
+                );
+
                 // Settle accounting with vault
                 let _ = Self::settle_with_vault(&env, &vault_address, pnl);
 
@@ -1025,15 +1046,20 @@ impl MarketContract {
                     total_loss_to_vault += -pnl;
                 }
 
-                // Update market stats
+                // Include funding owed to vault
+                if funding > 0 {
+                    total_loss_to_vault += funding;
+                }
+
+                // Update market stats (saturating to prevent underflow)
                 match pos.direction {
                     Direction::Long => {
                         let total = get_total_long_size(&env);
-                        set_total_long_size(&env, total - pos.size);
+                        set_total_long_size(&env, if total > pos.size { total - pos.size } else { 0 });
                     }
                     Direction::Short => {
                         let total = get_total_short_size(&env);
-                        set_total_short_size(&env, total - pos.size);
+                        set_total_short_size(&env, if total > pos.size { total - pos.size } else { 0 });
                     }
                 }
 
@@ -2013,14 +2039,17 @@ impl MarketContract {
     // Internal Functions
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Check if position should be liquidated, including pending funding.
+    /// Check if position should be liquidated, including cumulative funding.
     fn should_liquidate_with_funding(env: &Env, pos: &Position, price: i128) -> bool {
         if should_liquidate(pos, price) { return true; }
-        // Margin check with pending funding
+        // Margin check with cumulative funding
         let pnl = calculate_pnl(pos, price).unwrap_or(0);
-        let hrs = (env.ledger().timestamp().saturating_sub(pos.last_funding_time)) / 3600;
-        let pending = calculate_funding_payment(pos.size, get_current_funding_rate(env), pos.direction.clone(), hrs);
-        let margin = pos.collateral + pnl - pos.accumulated_funding - pending;
+        let cumulative = get_cumulative_funding_rate(env);
+        let funding = calculate_cumulative_funding(
+            pos.size, pos.direction.clone(),
+            pos.entry_cumulative_funding, cumulative,
+        );
+        let margin = pos.collateral + pnl - funding;
         let config = get_config(env);
         margin < pos.size * (config.maintenance_margin_bps as i128) / (BASIS_POINTS as i128)
     }
@@ -2081,28 +2110,8 @@ impl MarketContract {
         Ok(())
     }
 
-    /// Apply pending funding to a position.
-    fn apply_funding_to_position(env: &Env, position: &mut Position) -> Result<(), NoetherError> {
-        let current_time = env.ledger().timestamp();
-        let hours_elapsed = (current_time - position.last_funding_time) / 3600;
-
-        if hours_elapsed == 0 {
-            return Ok(());
-        }
-
-        let funding_rate = get_current_funding_rate(env);
-        let funding_payment = calculate_funding_payment(
-            position.size,
-            funding_rate,
-            position.direction.clone(),
-            hours_elapsed,
-        );
-
-        position.accumulated_funding += funding_payment;
-        position.last_funding_time = current_time;
-
-        Ok(())
-    }
+    // apply_funding_to_position removed — replaced by cumulative funding model.
+    // Funding is now computed on-the-fly via calculate_cumulative_funding().
 
     // ═══════════════════════════════════════════════════════════════════════
     // Internal Order Functions
@@ -2209,8 +2218,7 @@ impl MarketContract {
             leverage: order.leverage,
             liquidation_price,
             timestamp: env.ledger().timestamp(),
-            last_funding_time: env.ledger().timestamp(),
-            accumulated_funding: 0,
+            entry_cumulative_funding: get_cumulative_funding_rate(env),
             margin_mode: 0, // Isolated
         };
 
@@ -2256,17 +2264,21 @@ impl MarketContract {
         keeper: &Address,
     ) -> Result<i128, NoetherError> {
         // Get position
-        let mut position = get_position(env, order.position_id)
+        let position = get_position(env, order.position_id)
             .ok_or(NoetherError::PositionNotFound)?;
 
-        // Apply pending funding
-        Self::apply_funding_to_position(env, &mut position)?;
+        // Calculate funding from cumulative rate
+        let cumulative = get_cumulative_funding_rate(env);
+        let funding = calculate_cumulative_funding(
+            position.size, position.direction.clone(),
+            position.entry_cumulative_funding, cumulative,
+        );
 
         // Calculate PnL
         let pnl = calculate_pnl(&position, current_price)?;
 
         // Calculate amount to return to trader
-        let to_trader = position.collateral + pnl - position.accumulated_funding - keeper_fee;
+        let to_trader = position.collateral + pnl - funding - keeper_fee;
 
         // Settle with vault
         let vault_address = get_vault(env);
@@ -2282,12 +2294,12 @@ impl MarketContract {
             token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
         }
 
-        // Transfer remaining funding to vault
-        if position.accumulated_funding > 0 {
+        // Transfer funding to vault if trader owes funding
+        if funding > 0 {
             token_client.transfer(
                 &env.current_contract_address(),
                 &vault_address,
-                &position.accumulated_funding,
+                &funding,
             );
         }
 
@@ -2651,25 +2663,28 @@ mod tests {
         let test = setup();
         let trader = fund_trader(&test, 10_000 * PRECISION);
 
-        // Deposit small amount
+        // Deposit and open a large position
         test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
 
-        // Open first position using most of margin
         test.market.open_position_cross(
             &trader,
-            &Symbol::new(&test.env, "BTC"),
-            &(80 * PRECISION),
+            &Symbol::new(&test.env, "XLM"),
+            &(90 * PRECISION),
             &10,
             &Direction::Long,
         );
 
-        // Try to open second position — should fail (not enough free margin)
+        // Drop XLM price 9% — erodes equity
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 91 / 1000)); // $0.091
+
+        // Try second position — equity too low after loss, should fail
         test.market.open_position_cross(
             &trader,
-            &Symbol::new(&test.env, "ETH"),
-            &(80 * PRECISION),
+            &Symbol::new(&test.env, "XLM"),
+            &(15 * PRECISION),
             &10,
-            &Direction::Short,
+            &Direction::Long,
         );
     }
 
@@ -2690,9 +2705,9 @@ mod tests {
             &Direction::Long,
         );
 
-        // Crash price 15% — should make account liquidatable
+        // Drop price ~10.5% — makes account liquidatable but keeps equity > 0 for keeper reward
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
-        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 85 / 1000)); // $0.085
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 895 / 10000)); // $0.0895
 
         // Liquidate
         let reward = test.market.liquidate_cross_account(&keeper, &trader);
