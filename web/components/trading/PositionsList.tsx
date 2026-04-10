@@ -33,6 +33,7 @@ export function PositionsList({
   const [slTpSlippage, setSlTpSlippage] = useState(50); // 0.5% default
   const [customSlTpSlippage, setCustomSlTpSlippage] = useState('');
   const [tpLimitPrice, setTpLimitPrice] = useState('');
+  const [customPct, setCustomPct] = useState('');
   const [isClosing, setIsClosing] = useState(false);
   const [isSettingSLTP, setIsSettingSLTP] = useState(false);
   const [shareData, setShareData] = useState<PnlShareData | null>(null);
@@ -321,7 +322,7 @@ export function PositionsList({
           const estPnlPct = selectedPosition.size > 0 ? (estPnl / (selectedPosition.size / selectedPosition.leverage)) * 100 : 0;
           const invalid = triggerPrice > 0 && (isLong ? triggerPrice >= entry : triggerPrice <= entry);
           const decimals = selectedPosition.asset === 'XLM' ? 4 : 2;
-          const slQuickPcts = isLong ? [-2, -5, -10, -15] : [2, 5, 10, 15];
+          const slQuickPcts = isLong ? [-2, -5, -10] : [2, 5, 10];
 
           return (
             <div>
@@ -352,12 +353,36 @@ export function PositionsList({
                     onClick={() => {
                       const price = entry * (1 + pct / 100);
                       setSlTpPrice(price.toFixed(decimals));
+                      setCustomPct('');
                     }}
                     className="flex-1 py-1.5 text-[10px] font-medium rounded border border-white/10 text-muted-foreground hover:text-[#ef4444] hover:border-[#ef4444]/30 transition-all"
                   >
                     {pct > 0 ? '+' : ''}{pct}%
                   </button>
                 ))}
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customPct}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9.]/g, '');
+                      setCustomPct(val);
+                      const parsed = parseFloat(val);
+                      if (!isNaN(parsed) && parsed > 0) {
+                        const pct = isLong ? -parsed : parsed;
+                        const price = entry * (1 + pct / 100);
+                        setSlTpPrice(price.toFixed(decimals));
+                      }
+                    }}
+                    placeholder="Custom"
+                    className={cn(
+                      'w-full bg-zinc-900/50 border rounded-md px-2 py-1.5 text-[10px] font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-5',
+                      customPct !== '' ? 'border-[#ef4444]/50' : 'border-white/10'
+                    )}
+                  />
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-muted-foreground">%</span>
+                </div>
               </div>
 
               <div className="mb-1">
@@ -485,7 +510,7 @@ export function PositionsList({
           const estPnlPct = selectedPosition.size > 0 ? (estPnl / (selectedPosition.size / selectedPosition.leverage)) * 100 : 0;
           const invalid = triggerPrice > 0 && (isLong ? triggerPrice <= entry : triggerPrice >= entry);
           const decimals = selectedPosition.asset === 'XLM' ? 4 : 2;
-          const tpQuickPcts = isLong ? [5, 10, 15, 25] : [-5, -10, -15, -25];
+          const tpQuickPcts = isLong ? [5, 10, 15] : [-5, -10, -15];
 
           return (
             <div>
@@ -516,12 +541,36 @@ export function PositionsList({
                     onClick={() => {
                       const price = entry * (1 + pct / 100);
                       setSlTpPrice(price.toFixed(decimals));
+                      setCustomPct('');
                     }}
                     className="flex-1 py-1.5 text-[10px] font-medium rounded border border-white/10 text-muted-foreground hover:text-[#22c55e] hover:border-[#22c55e]/30 transition-all"
                   >
                     {pct > 0 ? '+' : ''}{pct}%
                   </button>
                 ))}
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customPct}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9.]/g, '');
+                      setCustomPct(val);
+                      const parsed = parseFloat(val);
+                      if (!isNaN(parsed) && parsed > 0) {
+                        const pct = isLong ? parsed : -parsed;
+                        const price = entry * (1 + pct / 100);
+                        setSlTpPrice(price.toFixed(decimals));
+                      }
+                    }}
+                    placeholder="Custom"
+                    className={cn(
+                      'w-full bg-zinc-900/50 border rounded-md px-2 py-1.5 text-[10px] font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-5',
+                      customPct !== '' ? 'border-[#22c55e]/50' : 'border-white/10'
+                    )}
+                  />
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-muted-foreground">%</span>
+                </div>
               </div>
 
               <div className="mb-1">
