@@ -312,146 +312,161 @@ export function PositionsList({
         title="Set Stop-Loss"
         size="sm"
       >
-        {selectedPosition && (
-          <div>
-            <div className="mb-6 p-4 bg-zinc-900/50 rounded-xl space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Position</span>
-                <span className="text-foreground">
-                  {selectedPosition.asset} {selectedPosition.direction}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Entry Price</span>
-                <span className="text-foreground">{formatUSD(selectedPosition.entryPrice, 2)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Current Price</span>
-                <span className="text-foreground">{formatUSD(selectedPosition.currentPrice, 2)}</span>
-              </div>
-            </div>
+        {selectedPosition && (() => {
+          const triggerPrice = parseFloat(slTpPrice) || 0;
+          const entry = selectedPosition.entryPrice;
+          const isLong = selectedPosition.direction === 'Long';
+          const distFromEntry = entry > 0 ? ((triggerPrice - entry) / entry) * 100 : 0;
+          const estPnl = entry > 0 ? selectedPosition.size * (isLong ? (triggerPrice - entry) / entry : (entry - triggerPrice) / entry) : 0;
+          const estPnlPct = selectedPosition.size > 0 ? (estPnl / (selectedPosition.size / selectedPosition.leverage)) * 100 : 0;
+          const invalid = triggerPrice > 0 && (isLong ? triggerPrice >= entry : triggerPrice <= entry);
+          const decimals = selectedPosition.asset === 'XLM' ? 4 : 2;
+          const slQuickPcts = isLong ? [-2, -5, -10, -15] : [2, 5, 10, 15];
 
-            <div className="mb-4">
-              <label className="text-sm text-muted-foreground mb-2 block">
-                Trigger Price (USD)
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  step="0.0001"
-                  value={slTpPrice}
-                  onChange={(e) => setSlTpPrice(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-12"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {selectedPosition.direction === 'Long'
-                  ? 'Position closes when price drops to this level'
-                  : 'Position closes when price rises to this level'}
-              </p>
-            </div>
-
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm text-muted-foreground">
-                  Slippage Tolerance
-                </label>
-                <span className="text-xs font-mono text-foreground">
-                  {(slTpSlippage / 100).toFixed(2)}%
-                </span>
-              </div>
-              <div className="flex gap-2">
-                {[50, 100, 200].map((bps) => (
-                  <button
-                    key={bps}
-                    onClick={() => {
-                      setSlTpSlippage(bps);
-                      setCustomSlTpSlippage('');
-                    }}
-                    className={cn(
-                      'flex-1 py-2 text-xs font-medium rounded border transition-all',
-                      slTpSlippage === bps && customSlTpSlippage === ''
-                        ? 'bg-[#ef4444]/20 border-[#ef4444]/50 text-[#ef4444]'
-                        : 'border-white/10 text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    {(bps / 100).toFixed(1)}%
-                  </button>
-                ))}
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={customSlTpSlippage}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/[^0-9.]/g, '');
-                      setCustomSlTpSlippage(val);
-                      const parsed = parseFloat(val);
-                      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
-                        setSlTpSlippage(Math.round(parsed * 100));
-                      }
-                    }}
-                    placeholder="Custom"
-                    className={cn(
-                      'w-full bg-zinc-900/50 border rounded-md px-2 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-5',
-                      customSlTpSlippage !== ''
-                        ? 'border-[#ef4444]/50'
-                        : 'border-white/10'
-                    )}
-                  />
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+          return (
+            <div>
+              <div className="mb-4 p-4 bg-zinc-900/50 rounded-xl space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Position</span>
+                  <span className="text-foreground">{selectedPosition.asset} {selectedPosition.direction}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Size</span>
+                  <span className="text-foreground">{formatUSD(selectedPosition.size)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Entry Price</span>
+                  <span className="text-foreground">{formatUSD(entry, decimals)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Current Price</span>
+                  <span className="text-foreground">{formatUSD(selectedPosition.currentPrice, decimals)}</span>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Order cancelled if execution price differs by more than this (default: 0.5%)
-              </p>
-            </div>
 
-            {/* Validation warning */}
-            {slTpPrice && selectedPosition && (() => {
-              const price = parseFloat(slTpPrice);
-              const isLong = selectedPosition.direction === 'Long';
-              const invalid = isLong ? price >= selectedPosition.entryPrice : price <= selectedPosition.entryPrice;
-              return invalid ? (
+              {/* Quick-set % buttons */}
+              <div className="flex gap-1.5 mb-3">
+                {slQuickPcts.map((pct) => (
+                  <button
+                    key={pct}
+                    onClick={() => {
+                      const price = entry * (1 + pct / 100);
+                      setSlTpPrice(price.toFixed(decimals));
+                    }}
+                    className="flex-1 py-1.5 text-[10px] font-medium rounded border border-white/10 text-muted-foreground hover:text-[#ef4444] hover:border-[#ef4444]/30 transition-all"
+                  >
+                    {pct > 0 ? '+' : ''}{pct}%
+                  </button>
+                ))}
+              </div>
+
+              <div className="mb-1">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-muted-foreground">Trigger Price (USD)</label>
+                  {triggerPrice > 0 && (
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {Math.abs(distFromEntry).toFixed(1)}% from entry
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={slTpPrice}
+                    onChange={(e) => setSlTpPrice(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-12"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
+                </div>
+              </div>
+
+              {/* PnL Preview */}
+              {triggerPrice > 0 && !invalid && (
+                <div className="mb-4 p-3 bg-[#ef4444]/5 border border-[#ef4444]/10 rounded-lg">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Est. loss at trigger</span>
+                    <span className="text-[#ef4444] font-mono font-medium">
+                      {estPnl >= 0 ? '+' : ''}{formatUSD(estPnl, 2)} ({estPnlPct >= 0 ? '+' : ''}{estPnlPct.toFixed(1)}%)
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {!triggerPrice && (
+                <p className="text-xs text-muted-foreground mb-4">
+                  {isLong ? 'Position closes when price drops to this level' : 'Position closes when price rises to this level'}
+                </p>
+              )}
+
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-muted-foreground">Slippage Tolerance</label>
+                  <span className="text-xs font-mono text-foreground">{(slTpSlippage / 100).toFixed(2)}%</span>
+                </div>
+                <div className="flex gap-2">
+                  {[50, 100, 200].map((bps) => (
+                    <button
+                      key={bps}
+                      onClick={() => { setSlTpSlippage(bps); setCustomSlTpSlippage(''); }}
+                      className={cn(
+                        'flex-1 py-2 text-xs font-medium rounded border transition-all',
+                        slTpSlippage === bps && customSlTpSlippage === ''
+                          ? 'bg-[#ef4444]/20 border-[#ef4444]/50 text-[#ef4444]'
+                          : 'border-white/10 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {(bps / 100).toFixed(1)}%
+                    </button>
+                  ))}
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={customSlTpSlippage}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^0-9.]/g, '');
+                        setCustomSlTpSlippage(val);
+                        const parsed = parseFloat(val);
+                        if (!isNaN(parsed) && parsed > 0 && parsed <= 100) setSlTpSlippage(Math.round(parsed * 100));
+                      }}
+                      placeholder="Custom"
+                      className={cn(
+                        'w-full bg-zinc-900/50 border rounded-md px-2 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-5',
+                        customSlTpSlippage !== '' ? 'border-[#ef4444]/50' : 'border-white/10'
+                      )}
+                    />
+                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+                  </div>
+                </div>
+              </div>
+
+              {invalid && (
                 <div className="mb-4 p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-[#ef4444] mt-0.5 shrink-0" />
                   <p className="text-xs text-[#ef4444]">
-                    {isLong
-                      ? 'Stop-loss must be below entry price for Long positions'
-                      : 'Stop-loss must be above entry price for Short positions'}
+                    {isLong ? 'Stop-loss must be below entry price for Long positions' : 'Stop-loss must be above entry price for Short positions'}
                   </p>
                 </div>
-              ) : null;
-            })()}
+              )}
 
-            <div className="flex gap-3">
-              <Button
-                variant="secondary"
-                className="flex-1"
-                onClick={() => setActionModal(null)}
-                disabled={isSettingSLTP}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                className="flex-1"
-                onClick={handleSetStopLoss}
-                disabled={!slTpPrice || isSettingSLTP || (() => {
-                  const price = parseFloat(slTpPrice);
-                  const isLong = selectedPosition?.direction === 'Long';
-                  return isLong ? price >= (selectedPosition?.entryPrice ?? 0) : price <= (selectedPosition?.entryPrice ?? 0);
-                })()}
-                isLoading={isSettingSLTP}
-              >
-                <Shield className="w-4 h-4 mr-1" />
-                Set Stop-Loss
-              </Button>
+              <div className="flex gap-3">
+                <Button variant="secondary" className="flex-1" onClick={() => setActionModal(null)} disabled={isSettingSLTP}>Cancel</Button>
+                <Button
+                  variant="danger"
+                  className="flex-1"
+                  onClick={handleSetStopLoss}
+                  disabled={!slTpPrice || isSettingSLTP || invalid}
+                  isLoading={isSettingSLTP}
+                >
+                  <Shield className="w-4 h-4 mr-1" />
+                  Set Stop-Loss
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </Modal>
 
       {/* Take-Profit Modal */}
@@ -461,166 +476,181 @@ export function PositionsList({
         title="Set Take-Profit"
         size="sm"
       >
-        {selectedPosition && (
-          <div>
-            <div className="mb-6 p-4 bg-zinc-900/50 rounded-xl space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Position</span>
-                <span className="text-foreground">
-                  {selectedPosition.asset} {selectedPosition.direction}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Entry Price</span>
-                <span className="text-foreground">{formatUSD(selectedPosition.entryPrice, 2)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Current Price</span>
-                <span className="text-foreground">{formatUSD(selectedPosition.currentPrice, 2)}</span>
-              </div>
-            </div>
+        {selectedPosition && (() => {
+          const triggerPrice = parseFloat(slTpPrice) || 0;
+          const entry = selectedPosition.entryPrice;
+          const isLong = selectedPosition.direction === 'Long';
+          const distFromEntry = entry > 0 ? ((triggerPrice - entry) / entry) * 100 : 0;
+          const estPnl = entry > 0 ? selectedPosition.size * (isLong ? (triggerPrice - entry) / entry : (entry - triggerPrice) / entry) : 0;
+          const estPnlPct = selectedPosition.size > 0 ? (estPnl / (selectedPosition.size / selectedPosition.leverage)) * 100 : 0;
+          const invalid = triggerPrice > 0 && (isLong ? triggerPrice <= entry : triggerPrice >= entry);
+          const decimals = selectedPosition.asset === 'XLM' ? 4 : 2;
+          const tpQuickPcts = isLong ? [5, 10, 15, 25] : [-5, -10, -15, -25];
 
-            <div className="mb-4">
-              <label className="text-sm text-muted-foreground mb-2 block">
-                Trigger Price (USD)
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  step="0.0001"
-                  value={slTpPrice}
-                  onChange={(e) => setSlTpPrice(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {selectedPosition.direction === 'Long'
-                  ? 'Position closes when price rises to this level'
-                  : 'Position closes when price drops to this level'}
-              </p>
-            </div>
-
-            <div className="mb-4">
-              <label className="text-sm text-muted-foreground mb-2 block">
-                Limit Price (USD) <span className="text-muted-foreground/50">— optional</span>
-              </label>
-              <div className="relative">
-                <input
-                  type="number"
-                  step="0.0001"
-                  value={tpLimitPrice}
-                  onChange={(e) => setTpLimitPrice(e.target.value)}
-                  placeholder="Market execution"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Set a limit price to execute as a Take Limit order. Leave empty for market execution.
-              </p>
-            </div>
-
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm text-muted-foreground">
-                  Slippage Tolerance
-                </label>
-                <span className="text-xs font-mono text-foreground">
-                  {(slTpSlippage / 100).toFixed(2)}%
-                </span>
-              </div>
-              <div className="flex gap-2">
-                {[50, 100, 200].map((bps) => (
-                  <button
-                    key={bps}
-                    onClick={() => {
-                      setSlTpSlippage(bps);
-                      setCustomSlTpSlippage('');
-                    }}
-                    className={cn(
-                      'flex-1 py-2 text-xs font-medium rounded border transition-all',
-                      slTpSlippage === bps && customSlTpSlippage === ''
-                        ? 'bg-[#22c55e]/20 border-[#22c55e]/50 text-[#22c55e]'
-                        : 'border-white/10 text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    {(bps / 100).toFixed(1)}%
-                  </button>
-                ))}
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={customSlTpSlippage}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/[^0-9.]/g, '');
-                      setCustomSlTpSlippage(val);
-                      const parsed = parseFloat(val);
-                      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
-                        setSlTpSlippage(Math.round(parsed * 100));
-                      }
-                    }}
-                    placeholder="Custom"
-                    className={cn(
-                      'w-full bg-zinc-900/50 border rounded-md px-2 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-5',
-                      customSlTpSlippage !== ''
-                        ? 'border-[#22c55e]/50'
-                        : 'border-white/10'
-                    )}
-                  />
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+          return (
+            <div>
+              <div className="mb-4 p-4 bg-zinc-900/50 rounded-xl space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Position</span>
+                  <span className="text-foreground">{selectedPosition.asset} {selectedPosition.direction}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Size</span>
+                  <span className="text-foreground">{formatUSD(selectedPosition.size)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Entry Price</span>
+                  <span className="text-foreground">{formatUSD(entry, decimals)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Current Price</span>
+                  <span className="text-foreground">{formatUSD(selectedPosition.currentPrice, decimals)}</span>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Order cancelled if execution price differs by more than this (default: 0.5%)
-              </p>
-            </div>
 
-            {/* Validation warning */}
-            {slTpPrice && selectedPosition && (() => {
-              const price = parseFloat(slTpPrice);
-              const isLong = selectedPosition.direction === 'Long';
-              const invalid = isLong ? price <= selectedPosition.entryPrice : price >= selectedPosition.entryPrice;
-              return invalid ? (
+              {/* Quick-set % buttons */}
+              <div className="flex gap-1.5 mb-3">
+                {tpQuickPcts.map((pct) => (
+                  <button
+                    key={pct}
+                    onClick={() => {
+                      const price = entry * (1 + pct / 100);
+                      setSlTpPrice(price.toFixed(decimals));
+                    }}
+                    className="flex-1 py-1.5 text-[10px] font-medium rounded border border-white/10 text-muted-foreground hover:text-[#22c55e] hover:border-[#22c55e]/30 transition-all"
+                  >
+                    {pct > 0 ? '+' : ''}{pct}%
+                  </button>
+                ))}
+              </div>
+
+              <div className="mb-1">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-muted-foreground">Trigger Price (USD)</label>
+                  {triggerPrice > 0 && (
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {Math.abs(distFromEntry).toFixed(1)}% from entry
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={slTpPrice}
+                    onChange={(e) => setSlTpPrice(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
+                </div>
+              </div>
+
+              {/* PnL Preview */}
+              {triggerPrice > 0 && !invalid && (
+                <div className="mb-4 p-3 bg-[#22c55e]/5 border border-[#22c55e]/10 rounded-lg">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Est. profit at trigger</span>
+                    <span className="text-[#22c55e] font-mono font-medium">
+                      +{formatUSD(estPnl, 2)} (+{estPnlPct.toFixed(1)}%)
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {!triggerPrice && (
+                <p className="text-xs text-muted-foreground mb-4">
+                  {isLong ? 'Position closes when price rises to this level' : 'Position closes when price drops to this level'}
+                </p>
+              )}
+
+              <div className="mb-4">
+                <label className="text-sm text-muted-foreground mb-2 block">
+                  Limit Price (USD) <span className="text-muted-foreground/50">— optional</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={tpLimitPrice}
+                    onChange={(e) => setTpLimitPrice(e.target.value)}
+                    placeholder="Market execution"
+                    className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Set a limit price for Take Limit execution. Leave empty for market.
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-muted-foreground">Slippage Tolerance</label>
+                  <span className="text-xs font-mono text-foreground">{(slTpSlippage / 100).toFixed(2)}%</span>
+                </div>
+                <div className="flex gap-2">
+                  {[50, 100, 200].map((bps) => (
+                    <button
+                      key={bps}
+                      onClick={() => { setSlTpSlippage(bps); setCustomSlTpSlippage(''); }}
+                      className={cn(
+                        'flex-1 py-2 text-xs font-medium rounded border transition-all',
+                        slTpSlippage === bps && customSlTpSlippage === ''
+                          ? 'bg-[#22c55e]/20 border-[#22c55e]/50 text-[#22c55e]'
+                          : 'border-white/10 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {(bps / 100).toFixed(1)}%
+                    </button>
+                  ))}
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={customSlTpSlippage}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^0-9.]/g, '');
+                        setCustomSlTpSlippage(val);
+                        const parsed = parseFloat(val);
+                        if (!isNaN(parsed) && parsed > 0 && parsed <= 100) setSlTpSlippage(Math.round(parsed * 100));
+                      }}
+                      placeholder="Custom"
+                      className={cn(
+                        'w-full bg-zinc-900/50 border rounded-md px-2 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-5',
+                        customSlTpSlippage !== '' ? 'border-[#22c55e]/50' : 'border-white/10'
+                      )}
+                    />
+                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+                  </div>
+                </div>
+              </div>
+
+              {invalid && (
                 <div className="mb-4 p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-[#ef4444] mt-0.5 shrink-0" />
                   <p className="text-xs text-[#ef4444]">
-                    {isLong
-                      ? 'Take-profit must be above entry price for Long positions'
-                      : 'Take-profit must be below entry price for Short positions'}
+                    {isLong ? 'Take-profit must be above entry price for Long positions' : 'Take-profit must be below entry price for Short positions'}
                   </p>
                 </div>
-              ) : null;
-            })()}
+              )}
 
-            <div className="flex gap-3">
-              <Button
-                variant="secondary"
-                className="flex-1"
-                onClick={() => setActionModal(null)}
-                disabled={isSettingSLTP}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                className="flex-1"
-                onClick={handleSetTakeProfit}
-                disabled={!slTpPrice || isSettingSLTP || (() => {
-                  const price = parseFloat(slTpPrice);
-                  const isLong = selectedPosition?.direction === 'Long';
-                  return isLong ? price <= (selectedPosition?.entryPrice ?? 0) : price >= (selectedPosition?.entryPrice ?? 0);
-                })()}
-                isLoading={isSettingSLTP}
-              >
-                <Target className="w-4 h-4 mr-1" />
-                Set Take-Profit
-              </Button>
+              <div className="flex gap-3">
+                <Button variant="secondary" className="flex-1" onClick={() => setActionModal(null)} disabled={isSettingSLTP}>Cancel</Button>
+                <Button
+                  variant="primary"
+                  className="flex-1"
+                  onClick={handleSetTakeProfit}
+                  disabled={!slTpPrice || isSettingSLTP || invalid}
+                  isLoading={isSettingSLTP}
+                >
+                  <Target className="w-4 h-4 mr-1" />
+                  Set Take-Profit
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </Modal>
 
       {/* Share PnL Modal */}
