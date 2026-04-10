@@ -1,7 +1,7 @@
 import { marketContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
 import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, DisplayOrder, OrderType, TriggerCondition, OrderStatus } from '@/types';
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
-import { rpc, scValToNative, xdr, Horizon } from '@stellar/stellar-sdk';
+import { rpc, scValToNative, xdr, Horizon, Address } from '@stellar/stellar-sdk';
 import { CONTRACTS, NETWORK } from '@/lib/utils/constants';
 
 /**
@@ -1219,4 +1219,32 @@ export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
     nextTierVolume: nextTier ? BigInt(Math.round(nextTier.minVolume * Number(PRECISION_VAL))) : BigInt(0),
     nextTierName: nextTier ? nextTier.name : 'Max',
   };
+}
+
+/**
+ * Get current funding rate by reading contract storage directly via RPC.
+ * Returns the rate as a percentage (e.g., 0.005 for 0.005% per hour).
+ * Positive = longs pay shorts, negative = shorts pay longs.
+ */
+export async function getFundingRate(): Promise<number> {
+  try {
+    const PRECISION = 10_000_000;
+    const key = xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract: new Address(CONTRACTS.MARKET).toScAddress(),
+        key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('CurrentFundingRate')]),
+        durability: xdr.ContractDataDurability.persistent(),
+      })
+    );
+
+    const entries = await sorobanRpc.getLedgerEntries(key);
+    if (entries.entries && entries.entries.length > 0) {
+      const val = scValToNative(entries.entries[0].val.contractData().val());
+      const rate = typeof val === 'bigint' ? Number(val) : Number(val);
+      return (rate / PRECISION) * 100; // Convert to percentage
+    }
+    return 0;
+  } catch {
+    return 0;
+  }
 }

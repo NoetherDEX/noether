@@ -31,6 +31,7 @@ import {
   setStopLoss,
   setTakeProfit,
   cancelOrder,
+  getFundingRate,
 } from '@/lib/stellar/market';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { toPrecision } from '@/lib/utils';
@@ -46,6 +47,7 @@ function TradePage() {
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
+  const [fundingRate, setFundingRate] = useState<number>(0);
 
   const { isConnected, publicKey, sign, refreshBalances } = useWallet();
 
@@ -137,6 +139,15 @@ function TradePage() {
     }, 60000); // 60 seconds
     return () => clearInterval(interval);
   }, [isConnected, publicKey, fetchPositions, fetchOrders]);
+
+  // Poll funding rate every 60s (updates hourly on-chain, no wallet needed)
+  useEffect(() => {
+    getFundingRate().then(setFundingRate);
+    const interval = setInterval(() => {
+      getFundingRate().then(setFundingRate);
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleClosePosition = async (positionId: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
@@ -387,7 +398,9 @@ function TradePage() {
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Funding Rate</span>
-                      <span className="text-emerald-400">+0.01%</span>
+                      <span className={fundingRate >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                        {fundingRate >= 0 ? '+' : ''}{fundingRate.toFixed(4)}%
+                      </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Max Leverage</span>
