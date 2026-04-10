@@ -71,6 +71,8 @@ export interface DisplayOrder {
   limitPrice: number;
   trailingPercentBps: number;
   stopLimitPhase: number;
+  timeInForce: 'GTC' | 'IOC' | 'PostOnly';
+  reduceOnly: boolean;
   // Calculated fields
   positionSize: number;
 }

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Clock, X, RefreshCw, Shield, Target, ArrowDownCircle } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
-import { formatUSD, formatDateTime } from '@/lib/utils';
+import { formatUSD, formatRelativeTime } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayOrder } from '@/types';
 
@@ -13,6 +13,7 @@ interface OrdersListProps {
   isRefreshing?: boolean;
   onCancelOrder?: (id: number) => Promise<void>;
   onRefresh?: () => void;
+  currentPrices?: Record<string, number>;
 }
 
 export function OrdersList({
@@ -21,13 +22,18 @@ export function OrdersList({
   isRefreshing,
   onCancelOrder,
   onRefresh,
+  currentPrices = {},
 }: OrdersListProps) {
   const [selectedOrder, setSelectedOrder] = useState<DisplayOrder | null>(null);
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
 
-  // Filter only pending orders
+  // Split into pending and history
   const pendingOrders = orders.filter((o) => o.status === 'Pending');
+  const historyOrders = orders
+    .filter((o) => o.status !== 'Pending')
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, 20);
 
   if (isLoading) {
     return (
@@ -42,7 +48,7 @@ export function OrdersList({
     );
   }
 
-  if (pendingOrders.length === 0) {
+  if (pendingOrders.length === 0 && historyOrders.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 px-4">
         <div className="relative mb-4">
@@ -50,7 +56,7 @@ export function OrdersList({
             <Clock className="w-7 h-7 text-muted-foreground/50" />
           </div>
         </div>
-        <h3 className="text-foreground font-medium mb-1">No pending orders</h3>
+        <h3 className="text-foreground font-medium mb-1">No orders</h3>
         <p className="text-muted-foreground text-sm text-center max-w-xs">
           Place a limit order or set stop-loss/take-profit on your positions.
         </p>
@@ -118,31 +124,208 @@ export function OrdersList({
     }
   };
 
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'Executed':
+        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#22c55e]/15 text-[#22c55e]">Filled</span>;
+      case 'Cancelled':
+        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-neutral-400">Cancelled</span>;
+      case 'CancelledSlippage':
+        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400">Slippage</span>;
+      case 'Expired':
+        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-neutral-500">Expired</span>;
+      default:
+        return null;
+    }
+  };
+
+  const getTifBadge = (tif: string) => {
+    switch (tif) {
+      case 'IOC':
+        return <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-400">IOC</span>;
+      case 'PostOnly':
+        return <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-blue-500/15 text-blue-400">Post Only</span>;
+      default:
+        return null; // GTC is default, no badge needed
+    }
+  };
+
+  const getDistanceToTrigger = (order: DisplayOrder) => {
+    if (order.orderType === 'TrailingStop') return null;
+    const currentPrice = currentPrices[order.asset];
+    if (!currentPrice || order.triggerPrice === 0) return null;
+    const distance = ((order.triggerPrice - currentPrice) / currentPrice) * 100;
+    const absDistance = Math.abs(distance);
+    return `${absDistance.toFixed(1)}% away`;
+  };
+
+  const renderOrderRow = (order: DisplayOrder, showActions: boolean) => (
+    <tr
+      key={order.id}
+      className={cn(
+        'border-b border-white/5 transition-colors',
+        showActions ? 'hover:bg-white/[0.03]' : 'opacity-60'
+      )}
+    >
+      <td className="px-3 py-3">
+        <div className="flex items-center gap-1.5">
+          <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium', getOrderTypeColor(order.orderType))}>
+            {getOrderTypeIcon(order.orderType)}
+            {getOrderTypeLabel(order.orderType, order.stopLimitPhase)}
+          </div>
+          {getTifBadge(order.timeInForce)}
+          {order.reduceOnly && (
+            <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-orange-500/15 text-orange-400">RO</span>
+          )}
+        </div>
+      </td>
+
+      <td className="px-3 py-3">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-foreground">{order.asset}-PERP</span>
+          <span
+            className={cn(
+              'px-1.5 py-0.5 rounded text-[10px] font-bold font-mono',
+              order.direction === 'Long'
+                ? 'bg-[#22c55e]/15 text-[#22c55e] ring-1 ring-[#22c55e]/30'
+                : 'bg-[#ef4444]/15 text-[#ef4444] ring-1 ring-[#ef4444]/30'
+            )}
+          >
+            {order.leverage}x
+          </span>
+        </div>
+        <span
+          className={cn(
+            'text-[10px] font-medium',
+            order.direction === 'Long' ? 'text-[#22c55e]' : 'text-[#ef4444]'
+          )}
+        >
+          {order.direction.toUpperCase()}
+        </span>
+      </td>
+
+      <td className="px-3 py-3 text-right">
+        {order.orderType === 'TrailingStop' ? (
+          <>
+            <div className="font-mono text-foreground">Trailing</div>
+            <div className="font-mono text-orange-400 text-[10px]">
+              {(order.trailingPercentBps / 100).toFixed(1)}% trail
+            </div>
+          </>
+        ) : order.orderType === 'StopLoss' || order.orderType === 'TakeProfit' ? (
+          <>
+            <div className="font-mono text-foreground">Position</div>
+            <div className="font-mono text-muted-foreground text-[10px]">
+              #{order.positionId}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="font-mono text-foreground">
+              ${order.positionSize.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </div>
+            <div className="font-mono text-muted-foreground text-[10px]">
+              {order.collateral.toFixed(2)} USDC
+            </div>
+          </>
+        )}
+      </td>
+
+      <td className="px-3 py-3 text-right">
+        {order.orderType === 'TrailingStop' ? (
+          <>
+            <div className="font-mono text-orange-400">Dynamic</div>
+            <div className="text-[10px] text-muted-foreground">
+              Tracks peak
+            </div>
+          </>
+        ) : order.orderType === 'StopLimit' && order.stopLimitPhase === 1 ? (
+          <>
+            <div className="font-mono text-foreground">
+              {formatUSD(order.limitPrice, order.asset === 'XLM' ? 4 : 2)}
+            </div>
+            <div className="text-[10px] text-blue-400">
+              Limit active
+            </div>
+          </>
+        ) : order.orderType === 'StopLimit' ? (
+          <>
+            <div className="font-mono text-foreground">
+              {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              Stop → {formatUSD(order.limitPrice, order.asset === 'XLM' ? 4 : 2)}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="font-mono text-foreground">
+              {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
+            </div>
+            {showActions ? (
+              <div className="text-[10px] text-muted-foreground">
+                {getDistanceToTrigger(order) || order.triggerCondition}
+              </div>
+            ) : (
+              <div className="text-[10px] text-muted-foreground">
+                {order.triggerCondition}
+              </div>
+            )}
+          </>
+        )}
+      </td>
+
+      <td className="px-3 py-3 text-right">
+        <span className="text-muted-foreground text-[10px]">
+          {formatRelativeTime(order.createdAt)}
+        </span>
+      </td>
+
+      <td className="px-3 py-3">
+        <div className="flex items-center justify-center">
+          {showActions ? (
+            <button
+              onClick={() => {
+                setSelectedOrder(order);
+                setIsCancelModalOpen(true);
+              }}
+              className="px-2.5 py-1 rounded text-[10px] font-medium bg-[#ef4444]/10 text-[#ef4444] hover:bg-[#ef4444]/20 transition-colors flex items-center gap-1"
+              title="Cancel Order"
+            >
+              <X className="w-3 h-3" />
+              Cancel
+            </button>
+          ) : (
+            getStatusBadge(order.status)
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+
   return (
     <>
       {/* Header with Refresh Button */}
-      {pendingOrders.length > 0 && (
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs text-muted-foreground">
-            {pendingOrders.length} pending order{pendingOrders.length !== 1 ? 's' : ''}
-          </span>
-          {onRefresh && (
-            <button
-              onClick={onRefresh}
-              disabled={isRefreshing}
-              className={cn(
-                'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all',
-                'text-muted-foreground hover:text-foreground hover:bg-white/5',
-                'disabled:opacity-50 disabled:cursor-not-allowed'
-              )}
-              title="Refresh orders"
-            >
-              <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
-              <span className="hidden sm:inline">Refresh</span>
-            </button>
-          )}
-        </div>
-      )}
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs text-muted-foreground">
+          {pendingOrders.length} pending{historyOrders.length > 0 ? ` · ${historyOrders.length} recent` : ''}
+        </span>
+        {onRefresh && (
+          <button
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all',
+              'text-muted-foreground hover:text-foreground hover:bg-white/5',
+              'disabled:opacity-50 disabled:cursor-not-allowed'
+            )}
+            title="Refresh orders"
+          >
+            <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+        )}
+      </div>
 
       {/* Desktop Table */}
       <div className="hidden lg:block overflow-x-auto">
@@ -153,142 +336,20 @@ export function OrdersList({
               <th className="text-left px-3 py-2.5 font-medium">Market</th>
               <th className="text-right px-3 py-2.5 font-medium">Size</th>
               <th className="text-right px-3 py-2.5 font-medium">Trigger Price</th>
-              <th className="text-right px-3 py-2.5 font-medium">Slippage</th>
-              <th className="text-right px-3 py-2.5 font-medium">Created</th>
-              <th className="text-center px-3 py-2.5 font-medium">Actions</th>
+              <th className="text-right px-3 py-2.5 font-medium">Time</th>
+              <th className="text-center px-3 py-2.5 font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
-            {pendingOrders.map((order) => (
-              <tr
-                key={order.id}
-                className="border-b border-white/5 hover:bg-white/[0.03] transition-colors"
-              >
-                <td className="px-3 py-3">
-                  <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium', getOrderTypeColor(order.orderType))}>
-                    {getOrderTypeIcon(order.orderType)}
-                    {getOrderTypeLabel(order.orderType, order.stopLimitPhase)}
-                  </div>
-                </td>
-
-                <td className="px-3 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-foreground">{order.asset}-PERP</span>
-                    <span
-                      className={cn(
-                        'px-1.5 py-0.5 rounded text-[10px] font-bold font-mono',
-                        order.direction === 'Long'
-                          ? 'bg-[#22c55e]/15 text-[#22c55e] ring-1 ring-[#22c55e]/30'
-                          : 'bg-[#ef4444]/15 text-[#ef4444] ring-1 ring-[#ef4444]/30'
-                      )}
-                    >
-                      {order.leverage}x
-                    </span>
-                  </div>
-                  <span
-                    className={cn(
-                      'text-[10px] font-medium',
-                      order.direction === 'Long' ? 'text-[#22c55e]' : 'text-[#ef4444]'
-                    )}
-                  >
-                    {order.direction.toUpperCase()}
-                  </span>
-                </td>
-
-                <td className="px-3 py-3 text-right">
-                  {order.orderType === 'TrailingStop' ? (
-                    <>
-                      <div className="font-mono text-foreground">Trailing</div>
-                      <div className="font-mono text-orange-400 text-[10px]">
-                        {(order.trailingPercentBps / 100).toFixed(1)}% trail
-                      </div>
-                    </>
-                  ) : order.orderType === 'StopLoss' || order.orderType === 'TakeProfit' ? (
-                    <>
-                      <div className="font-mono text-foreground">Position</div>
-                      <div className="font-mono text-muted-foreground text-[10px]">
-                        #{order.positionId}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="font-mono text-foreground">
-                        ${order.positionSize.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                      </div>
-                      <div className="font-mono text-muted-foreground text-[10px]">
-                        {order.collateral.toFixed(2)} USDC
-                      </div>
-                    </>
-                  )}
-                </td>
-
-                <td className="px-3 py-3 text-right">
-                  {order.orderType === 'TrailingStop' ? (
-                    <>
-                      <div className="font-mono text-orange-400">Dynamic</div>
-                      <div className="text-[10px] text-muted-foreground">
-                        Tracks peak
-                      </div>
-                    </>
-                  ) : order.orderType === 'StopLimit' && order.stopLimitPhase === 1 ? (
-                    <>
-                      <div className="font-mono text-foreground">
-                        {formatUSD(order.limitPrice, order.asset === 'XLM' ? 4 : 2)}
-                      </div>
-                      <div className="text-[10px] text-blue-400">
-                        Limit active
-                      </div>
-                    </>
-                  ) : order.orderType === 'StopLimit' ? (
-                    <>
-                      <div className="font-mono text-foreground">
-                        {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground">
-                        Stop → {formatUSD(order.limitPrice, order.asset === 'XLM' ? 4 : 2)}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="font-mono text-foreground">
-                        {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground">
-                        {order.triggerCondition}
-                      </div>
-                    </>
-                  )}
-                </td>
-
-                <td className="px-3 py-3 text-right">
-                  <span className="font-mono text-muted-foreground">
-                    {(order.slippageToleranceBps / 100).toFixed(1)}%
-                  </span>
-                </td>
-
-                <td className="px-3 py-3 text-right">
-                  <span className="text-muted-foreground text-[10px]">
-                    {formatDateTime(order.createdAt)}
-                  </span>
-                </td>
-
-                <td className="px-3 py-3">
-                  <div className="flex items-center justify-center">
-                    <button
-                      onClick={() => {
-                        setSelectedOrder(order);
-                        setIsCancelModalOpen(true);
-                      }}
-                      className="px-2.5 py-1 rounded text-[10px] font-medium bg-[#ef4444]/10 text-[#ef4444] hover:bg-[#ef4444]/20 transition-colors flex items-center gap-1"
-                      title="Cancel Order"
-                    >
-                      <X className="w-3 h-3" />
-                      Cancel
-                    </button>
-                  </div>
+            {pendingOrders.map((order) => renderOrderRow(order, true))}
+            {historyOrders.length > 0 && pendingOrders.length > 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-2">
+                  <div className="border-t border-white/5" />
                 </td>
               </tr>
-            ))}
+            )}
+            {historyOrders.map((order) => renderOrderRow(order, false))}
           </tbody>
         </table>
       </div>
@@ -299,7 +360,7 @@ export function OrdersList({
           <Card key={order.id} padding="md">
             <div className="flex items-start justify-between mb-3">
               <div>
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
                   <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium', getOrderTypeColor(order.orderType))}>
                     {getOrderTypeIcon(order.orderType)}
                     {getOrderTypeLabel(order.orderType)}
@@ -308,9 +369,16 @@ export function OrdersList({
                   <Badge variant={order.direction === 'Long' ? 'success' : 'danger'} size="sm">
                     {order.direction} {order.leverage}x
                   </Badge>
+                  {getTifBadge(order.timeInForce)}
+                  {order.reduceOnly && (
+                    <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-orange-500/15 text-orange-400">RO</span>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {formatDateTime(order.createdAt)}
+                  {formatRelativeTime(order.createdAt)}
+                  {getDistanceToTrigger(order) && (
+                    <span className="ml-2 text-neutral-400">· {getDistanceToTrigger(order)}</span>
+                  )}
                 </p>
               </div>
             </div>
@@ -370,6 +438,35 @@ export function OrdersList({
             </Button>
           </Card>
         ))}
+
+        {/* Mobile History */}
+        {historyOrders.length > 0 && (
+          <>
+            {pendingOrders.length > 0 && (
+              <div className="border-t border-white/5 my-2" />
+            )}
+            {historyOrders.map((order) => (
+              <Card key={order.id} padding="md" className="opacity-60">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium', getOrderTypeColor(order.orderType))}>
+                      {getOrderTypeIcon(order.orderType)}
+                      {getOrderTypeLabel(order.orderType)}
+                    </div>
+                    <span className="font-medium text-foreground text-sm">{order.asset}</span>
+                    <Badge variant={order.direction === 'Long' ? 'success' : 'danger'} size="sm">
+                      {order.direction}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground">{formatRelativeTime(order.createdAt)}</span>
+                    {getStatusBadge(order.status)}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </>
+        )}
       </div>
 
       {/* Cancel Order Modal */}

@@ -561,6 +561,12 @@ export function toDisplayOrder(order: Order): DisplayOrder {
   const triggerPrice = bigIntToNumber(order.triggerPrice);
   const positionSize = collateral * order.leverage;
 
+  // Decode time_in_force: bits 0-7 = TIF mode, bit 8 = reduce-only flag
+  const tifMode = order.timeInForce & 0xFF;
+  const tifMap: Record<number, 'GTC' | 'IOC' | 'PostOnly'> = { 0: 'GTC', 1: 'IOC', 2: 'PostOnly' };
+  const timeInForce = tifMap[tifMode] || 'GTC';
+  const reduceOnly = (order.timeInForce & 0x100) !== 0;
+
   return {
     id: order.id,
     trader: order.trader,
@@ -579,6 +585,8 @@ export function toDisplayOrder(order: Order): DisplayOrder {
     limitPrice: bigIntToNumber(order.limitPrice),
     trailingPercentBps: order.trailingPercentBps,
     stopLimitPhase: order.stopLimitPhase,
+    timeInForce,
+    reduceOnly,
     positionSize,
   };
 }

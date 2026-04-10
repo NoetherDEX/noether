@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Settings, Clock } from 'lucide-react';
 import { Card, Tabs } from '@/components/ui';
 import { Header } from '@/components/layout';
@@ -48,6 +48,8 @@ function TradePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const [fundingRate, setFundingRate] = useState<number>(0);
+  const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
+  const prevOrdersRef = useRef<Map<number, string>>(new Map());
 
   const { isConnected, publicKey, sign, refreshBalances } = useWallet();
 
@@ -86,6 +88,7 @@ function TradePage() {
       );
 
       setPositions(displayPositions);
+      setCurrentPrices(prev => ({ ...prev, ...priceMap }));
     } catch (error) {
       console.error('Failed to fetch positions:', error);
     } finally {
@@ -99,7 +102,7 @@ function TradePage() {
     fetchPositions(false); // Don't show full loading state for manual refresh
   }, [fetchPositions]);
 
-  // Fetch orders function
+  // Fetch orders function — detects status changes and shows toasts
   const fetchOrders = useCallback(async (showLoading = true) => {
     if (!publicKey) return;
 
@@ -109,6 +112,42 @@ function TradePage() {
     try {
       const contractOrders = await getOrders(publicKey);
       const displayOrders = contractOrders.map(toDisplayOrder);
+
+      // Detect status changes for toast notifications
+      const prev = prevOrdersRef.current;
+      if (prev.size > 0) {
+        for (const order of displayOrders) {
+          const prevStatus = prev.get(order.id);
+          if (prevStatus === 'Pending' && order.status !== 'Pending') {
+            const label = `${order.asset} ${order.direction}`;
+            if (order.status === 'Executed') {
+              toast.success(`${label} order filled`);
+              fetchPositions(false);
+              refreshBalances();
+            } else if (order.status === 'CancelledSlippage') {
+              toast(`${label} order cancelled — slippage exceeded`, { icon: '⚠️' });
+              refreshBalances();
+            } else if (order.status === 'Cancelled') {
+              toast(`${label} order cancelled`, { icon: '🔴' });
+            }
+          }
+        }
+        // Also detect orders that disappeared entirely (deleted from contract)
+        for (const [id, status] of Array.from(prev.entries())) {
+          if (status === 'Pending' && !displayOrders.find(o => o.id === id)) {
+            toast('Order executed or removed', { icon: '⚡' });
+            fetchPositions(false);
+            refreshBalances();
+            break;
+          }
+        }
+      }
+
+      // Update ref for next comparison
+      const newMap = new Map<number, string>();
+      for (const o of displayOrders) newMap.set(o.id, o.status);
+      prevOrdersRef.current = newMap;
+
       setOrders(displayOrders);
     } catch (error) {
       console.error('Failed to fetch orders:', error);
@@ -116,7 +155,7 @@ function TradePage() {
       setIsLoadingOrders(false);
       setIsRefreshingOrders(false);
     }
-  }, [publicKey]);
+  }, [publicKey, fetchPositions, refreshBalances]);
 
   // Manual refresh handler for orders
   const handleRefreshOrders = useCallback(() => {
@@ -276,6 +315,7 @@ function TradePage() {
           isRefreshing={isRefreshingOrders}
           onCancelOrder={handleCancelOrder}
           onRefresh={handleRefreshOrders}
+          currentPrices={currentPrices}
         />
       ),
     },

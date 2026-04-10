@@ -72,16 +72,14 @@ export function truncateAddress(address: string, start = 4, end = 4): string {
 }
 
 /**
- * Format a timestamp as relative time
+ * Format a timestamp or Date as relative time (e.g., "2m ago", "1h ago")
  */
-export function formatRelativeTime(timestamp: number): string {
+export function formatRelativeTime(input: number | Date): string {
+  const timestamp = input instanceof Date ? input.getTime() : input;
   if (!timestamp || isNaN(timestamp)) return 'Unknown';
 
-  const now = Date.now();
-  const diff = now - timestamp;
-
-  if (diff < 0) return 'Just now';
-  if (diff < 60000) return 'Just now';
+  const diff = Date.now() - timestamp;
+  if (diff < 0 || diff < 60000) return 'Just now';
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
   return `${Math.floor(diff / 86400000)}d ago`;
