@@ -52,10 +52,6 @@ frontend/public/contracts.json
 # pnpm-lock.yaml
 # yarn.lock
 
-# Test snapshots (auto-generated)
-**/test_snapshots/**/*.json
-**/test_snapshots/
-
 # Editor directories
 .vscode/settings.json
 .vscode/launch.json
