@@ -653,8 +653,8 @@ Distributed under the MIT License. See [`LICENSE`](./LICENSE) for the full text.
 
 | | Role | |
 |---|---|---|
-| **Yahya Emir Soyer** | Co-founder & CEO — Smart Contracts (Soroban/Rust) | METU Mathematics |
-| **Mert Cicekci** | Co-founder & CTO — Full-stack Web3, DevRel | [@mertcicekci](https://github.com/mertcicekci) |
+| **Yahya Emir Soyer** | Co-founder & CEO — Smart Contracts (Soroban/Rust) | https://github.com/y4hyya |
+| **Mert Cicekci** | Co-founder & CTO — Full-stack Web3, DevRel | https://github.com/mertcicekci0 |
 
 ### Contact & Community
 
