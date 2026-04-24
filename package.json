@@ -1,0 +1,18 @@
+{
+  "name": "noether-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Noether monorepo root — tooling only. New Tranche 2 packages will be added as workspaces in later phases.",
+  "scripts": {
+    "prepare": "husky",
+    "commitlint": "commitlint --edit"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "husky": "^9.1.6"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

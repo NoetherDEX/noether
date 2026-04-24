@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#
+# Validate commit messages against Conventional Commits.
+# See commitlint.config.js.
+
+npx --no -- commitlint --edit "$1"
