@@ -1,31 +1,38 @@
 /**
- * Indexer entry point — Phase 1 skeleton.
+ * Indexer entry point — Phase 2 v0.
  *
- * Phase 1 establishes lifecycle, config, db, and migrations only.
- * The polling loop, event router, and handlers ship in Phase 2.
+ * Boots: config → libsql → migrations → RPC → router → market handlers
+ * → poll loop. Captures market events into events_raw and forwards them
+ * to the in-process bus. Trades, candles, and per-trader projections
+ * land in Phase 3 once the API needs them.
  */
 
 import pino from 'pino';
 import { loadConfig } from './config.js';
 import { createDb } from './db.js';
 import { runMigrations } from './migrations.js';
+import { createRpc } from './rpc.js';
+import { IndexerBus } from './bus.js';
+import { EventRouter } from './router.js';
+import { buildMarketRegistrations } from './handlers/market.js';
+import { IndexerPoller } from './poll.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const log = pino({ level: config.logLevel });
 
+  const market = config.contracts.contracts.market;
   log.info(
     {
       network: config.network,
       rpcUrl: config.rpcUrl,
       pollIntervalMs: config.pollIntervalMs,
-      market: config.contracts.contracts.market,
+      market,
     },
     'Indexer starting',
   );
 
   const db = createDb(config);
-
   const { applied } = await runMigrations(db);
   if (applied.length > 0) {
     log.info({ count: applied.length, migrations: applied.map((m) => m.filename) }, 'Applied migrations');
@@ -33,22 +40,38 @@ async function main(): Promise<void> {
     log.info('Schema up to date');
   }
 
-  // TODO Phase 2: start poll loop, event router, handlers, bus.
-  log.info('Indexer skeleton ready (Phase 1). Polling loop lands in Phase 2.');
+  const rpc = createRpc(config.rpcUrl);
+  const bus = new IndexerBus();
+  const router = new EventRouter();
 
-  const shutdown = (signal: string): void => {
+  for (const reg of buildMarketRegistrations(market)) {
+    router.register(reg.contractId, reg.topic, reg.handler);
+  }
+
+  const poller = new IndexerPoller({
+    db,
+    rpc,
+    bus,
+    router,
+    log,
+    contractIds: [market],
+    pollIntervalMs: config.pollIntervalMs,
+    coldStartLedgers: config.coldStartLedgers,
+  });
+
+  const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, 'Shutting down');
+    poller.stop();
     db.close();
     process.exit(0);
   };
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  await poller.start();
 
-  // Phase 1 stub keeps the process alive for one minute then exits cleanly,
-  // so it can be deployed and observed without blocking on a real loop.
-  await new Promise((r) => setTimeout(r, 60_000));
-  shutdown('idle-exit');
+  // Block forever — the poll loop runs until SIGINT/SIGTERM.
+  await new Promise(() => {});
 }
 
 main().catch((err) => {
