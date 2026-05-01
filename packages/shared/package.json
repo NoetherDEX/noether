@@ -22,6 +22,10 @@
     "./network": {
       "types": "./dist/network.d.ts",
       "import": "./dist/network.js"
+    },
+    "./assets": {
+      "types": "./dist/assets.d.ts",
+      "import": "./dist/assets.js"
     }
   },
   "scripts": {
