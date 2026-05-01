@@ -8,6 +8,7 @@
   "include": ["src/**/*"],
   "references": [
     { "path": "../packages/types" },
-    { "path": "../packages/shared" }
+    { "path": "../packages/shared" },
+    { "path": "../packages/tx-builders" }
   ]
 }

@@ -10,6 +10,8 @@ import { registerOracleRoutes } from './routes/oracle.js';
 import { registerEventsRoutes } from './routes/events.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerAccountRoutes } from './routes/account.js';
+import { registerOrderRoutes, type OrdersRouteDeps } from './routes/orders.js';
+import { registerTxRoutes, type TxRoutesDeps } from './routes/tx.js';
 import { ContractReader } from './services/contractReader.js';
 import { OracleService } from './services/oracle.js';
 import { MarketsService } from './services/markets.js';
@@ -29,6 +31,8 @@ export interface ServerDeps {
   walletAuth: WalletAuth;
   rateLimiter: RateLimiter;
   db: Client;
+  orders: OrdersRouteDeps;
+  tx: TxRoutesDeps;
 }
 
 export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps): Promise<FastifyInstance> {
@@ -63,6 +67,8 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
   await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth));
   await app.register((instance) => registerAccountRoutes(instance, deps.events, deps.db));
+  await app.register((instance) => registerOrderRoutes(instance, deps.orders));
+  await app.register((instance) => registerTxRoutes(instance, deps.tx));
 
   return app;
 }
@@ -81,5 +87,8 @@ function buildDefaultDeps(config: ApiConfig): ServerDeps {
   const apiKeys = new ApiKeyStore(db, pepper);
   const walletAuth = new WalletAuth();
   const rateLimiter = new RateLimiter(db);
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db };
+  const txCtx = { rpcUrl: config.rpcUrl, network: config.network };
+  const orders: OrdersRouteDeps = { txCtx, marketContractId: config.contracts.contracts.market };
+  const tx: TxRoutesDeps = { txCtx };
+  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx };
 }

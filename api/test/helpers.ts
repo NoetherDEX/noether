@@ -15,7 +15,7 @@ export const TEST_CONFIG: ApiConfig = {
   network: 'testnet',
   host: '127.0.0.1',
   port: 0,
-  logLevel: 'error',
+  logLevel: 'debug',
   corsOrigin: '*',
   rpcUrls: ['http://example.invalid'],
   rpcUrl: 'http://example.invalid',
@@ -85,6 +85,8 @@ export async function setupTestServer(opts?: {
   db?: Client;
   /** Seed events_raw with these rows (only when db not provided manually). */
   seedEvents?: { eventId: string; topic: string; ledger: number; payload: object; contractId?: string }[];
+  ordersOverride?: import('../src/routes/orders.js').OrdersRouteDeps;
+  txOverride?: import('../src/routes/tx.js').TxRoutesDeps;
 }) {
   const reader = {
     async read<T>(_contractId: string, _method: string, args: unknown[] = []): Promise<T> {
@@ -121,7 +123,29 @@ export async function setupTestServer(opts?: {
   const apiKeys = new ApiKeyStore(db, 'test-pepper');
   const walletAuth = new WalletAuth();
   const rateLimiter = new RateLimiter(db);
-  const deps: ServerDeps = { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db };
+
+  const stubBuilder = async () => ({
+    xdr: 'AAAAAg==',
+    simulation: { minResourceFee: '1000', latestLedger: 0, transactionData: undefined } as never,
+  });
+  const stubSubmit = async () => ({ hash: 'stub-hash', status: 'SUCCESS' as const, result: undefined });
+
+  const orders = opts?.ordersOverride ?? {
+    txCtx: { rpcUrl: TEST_CONFIG.rpcUrl, network: TEST_CONFIG.network },
+    marketContractId: FAKE_CONTRACT,
+    builders: {
+      openPosition: stubBuilder as never,
+      closePosition: stubBuilder as never,
+      placeLimitOrder: stubBuilder as never,
+      cancelOrder: stubBuilder as never,
+    },
+  };
+  const tx = opts?.txOverride ?? {
+    txCtx: { rpcUrl: TEST_CONFIG.rpcUrl, network: TEST_CONFIG.network },
+    submit: stubSubmit as never,
+  };
+
+  const deps: ServerDeps = { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx };
   const app = await buildServer(TEST_CONFIG, deps);
   return { app, db, deps };
 }
