@@ -1,0 +1,35 @@
+{
+  "name": "@noether/types",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared domain types for the Noether monorepo. Runtime-free; no dependencies on Stellar SDK or any service.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./market": {
+      "types": "./dist/market.d.ts",
+      "import": "./dist/market.js"
+    },
+    "./vault": {
+      "types": "./dist/vault.d.ts",
+      "import": "./dist/vault.js"
+    },
+    "./referral": {
+      "types": "./dist/referral.d.ts",
+      "import": "./dist/referral.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

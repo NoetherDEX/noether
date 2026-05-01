@@ -28,6 +28,13 @@ Thumbs.db
 *.wasm.hash
 *.tsbuildinfo
 
+# Indexer local data
+indexer/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Environment
 .env
 # Keep .env.example as a template

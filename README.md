@@ -495,11 +495,28 @@ noether/
 │   ├── market.sh           # Build + deploy + init market only
 │   ├── vault.sh            # Build + deploy + init vault only
 │   └── fund_market.sh      # Transfer USDC to market (interactive)
-├── docs/                   # README assets (logo, screenshots)
+├── packages/               # Tranche 2 — shared monorepo packages
+│   ├── types/              # @noether/types  · domain types (Position, Order, …)
+│   └── shared/             # @noether/shared · precision, contracts loader, network
+├── api/                    # Tranche 2 — REST + WebSocket gateway (Fastify)
+├── indexer/                # Tranche 2 — Soroban event indexer (libsql)
+├── sdk-ts/                 # Tranche 2 — public TypeScript SDK
+├── docs/                   # README assets + GIT_WORKFLOW.md, CONTRIBUTING.md
+├── .github/                # PR template, CI workflows
+├── .husky/                 # Branch + commit-msg hooks
+├── package.json            # npm workspace root (api, indexer, sdk-ts, packages/*)
+├── tsconfig.base.json      # Shared TypeScript config
 ├── contracts.json          # Authoritative deployed addresses
 ├── LICENSE                 # MIT
 └── .env.example            # Environment template
 ```
+
+> **Monorepo note.** The `web/` and `scripts/keeper/` packages keep their own
+> `package.json` and install paths — they are **not** workspace members for
+> now. Only the new Tranche 2 packages (`api/`, `indexer/`, `sdk-ts/`,
+> `packages/*`) are wired into the root npm workspace.
+> See [`docs/GIT_WORKFLOW.md`](./docs/GIT_WORKFLOW.md) for the branch model
+> and [`docs/CONTRIBUTING.md`](./docs/CONTRIBUTING.md) for setup instructions.
 
 ### Pages
 

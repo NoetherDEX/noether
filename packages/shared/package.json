@@ -1,0 +1,38 @@
+{
+  "name": "@noether/shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runtime helpers shared across services: precision conversions, contracts.json loader, network constants.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./precision": {
+      "types": "./dist/precision.d.ts",
+      "import": "./dist/precision.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    },
+    "./network": {
+      "types": "./dist/network.d.ts",
+      "import": "./dist/network.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@noether/types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
