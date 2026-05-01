@@ -14,6 +14,7 @@ export const TEST_CONFIG: ApiConfig = {
   port: 0,
   logLevel: 'error',
   corsOrigin: '*',
+  rpcUrls: ['http://example.invalid'],
   rpcUrl: 'http://example.invalid',
   sourceAccount: 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN',
   libsqlUrl: ':memory:',
