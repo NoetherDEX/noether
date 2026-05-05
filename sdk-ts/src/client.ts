@@ -1,41 +1,92 @@
+import { Transport, type Credentials } from './transport.js';
+import { HealthApi } from './sub/health.js';
+import { MarketsApi } from './sub/markets.js';
+import { OracleApi } from './sub/oracle.js';
+import { EventsApi } from './sub/events.js';
+import { KeysApi, type ChallengeSigner } from './sub/keys.js';
+import { AccountApi } from './sub/account.js';
+import { OrdersApi, type PrepareRequest, type PreparedTransaction } from './sub/orders.js';
+import { TxApi, type SubmittedTx } from './sub/tx.js';
+
 export interface NoetherClientOptions {
   /** Base URL of the Noether API gateway (e.g. https://api.noether.exchange). */
   baseUrl: string;
-  /** API key id, issued via the dashboard or POST /v1/keys. Optional for public endpoints. */
-  apiKey?: string;
-  /** API key secret, returned once at issuance. Optional for public endpoints. */
-  apiSecret?: string;
-  /** Override the global fetch implementation (e.g. for testing). */
+  /** API key + secret. Required for authed endpoints (account, orders, tx, key mgmt). */
+  credentials?: Credentials;
+  /** Override the global fetch implementation (for testing or custom transports). */
   fetch?: typeof fetch;
 }
 
 /**
- * Top-level Noether SDK client.
- *
- * Phase 1 ships only the constructor and a sanity-check ping method.
- * Markets / account / orders / ws sub-clients land in Phases 5+.
+ * SDK signer that turns a base64 XDR into a signed XDR. Typically wraps
+ * a Stellar Keypair or a wallet adapter (Freighter, Wallets Kit, Ledger).
  */
+export type XdrSigner = (xdr: string) => string | Promise<string>;
+
+export interface ExecuteTradeOptions {
+  request: PrepareRequest;
+  signer: XdrSigner;
+  pollTimeoutMs?: number;
+}
+
+export interface ExecuteTradeResult {
+  prepared: PreparedTransaction;
+  submitted: SubmittedTx;
+}
+
 export class NoetherClient {
   readonly baseUrl: string;
   readonly hasAuth: boolean;
-  private readonly apiKey: string | undefined;
-  private readonly apiSecret: string | undefined;
-  private readonly fetchImpl: typeof fetch;
+  readonly health: HealthApi;
+  readonly markets: MarketsApi;
+  readonly oracle: OracleApi;
+  readonly events: EventsApi;
+  readonly keys: KeysApi;
+  readonly account: AccountApi;
+  readonly orders: OrdersApi;
+  readonly tx: TxApi;
+
+  private readonly transport: Transport;
+  private readonly credentials: Credentials | null;
 
   constructor(options: NoetherClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
-    this.apiKey = options.apiKey;
-    this.apiSecret = options.apiSecret;
-    this.hasAuth = Boolean(options.apiKey && options.apiSecret);
-    this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.credentials = options.credentials ?? null;
+    this.hasAuth = this.credentials !== null;
+
+    this.transport = new Transport({ baseUrl: this.baseUrl, fetch: options.fetch });
+    this.health = new HealthApi(this.transport);
+    this.markets = new MarketsApi(this.transport);
+    this.oracle = new OracleApi(this.transport);
+    this.events = new EventsApi(this.transport);
+    this.keys = new KeysApi(this.transport, this.credentials);
+    this.account = new AccountApi(this.transport, this.credentials);
+    this.orders = new OrdersApi(this.transport, this.credentials);
+    this.tx = new TxApi(this.transport, this.credentials);
   }
 
-  /** GET /v1/health — convenience wrapper for the API liveness probe. */
-  async ping(): Promise<{ status: string; uptime: number; version: string }> {
-    const res = await this.fetchImpl(`${this.baseUrl}/v1/health`);
-    if (!res.ok) {
-      throw new Error(`Noether API health check failed: ${res.status} ${res.statusText}`);
-    }
-    return (await res.json()) as { status: string; uptime: number; version: string };
+  /** Return a new client bound to the given credentials. Original is untouched. */
+  withCredentials(credentials: Credentials): NoetherClient {
+    return new NoetherClient({ baseUrl: this.baseUrl, credentials });
+  }
+
+  /**
+   * One-shot trade execution: prepare → caller signs → submit.
+   * The signer never has to round-trip through the SDK.
+   */
+  async executeTrade(opts: ExecuteTradeOptions): Promise<ExecuteTradeResult> {
+    if (!this.hasAuth) throw new Error('executeTrade requires an authenticated client');
+    const prepared = await this.orders.prepare(opts.request);
+    const signedXdr = await opts.signer(prepared.xdr);
+    const submitted = await this.tx.submit({ signedXdr, pollTimeoutMs: opts.pollTimeoutMs });
+    return { prepared, submitted };
+  }
+
+  /**
+   * Convenience entry-point for the wallet challenge flow when you have
+   * a raw signer (e.g. a Stellar Keypair). Mirrors keys.create.
+   */
+  async issueKey(input: { address: string; signer: ChallengeSigner; label?: string }) {
+    return this.keys.create(input);
   }
 }

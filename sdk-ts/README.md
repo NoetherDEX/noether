@@ -2,36 +2,137 @@
 
 Official TypeScript SDK for the [Noether](https://noether.exchange) decentralized perpetual exchange on Stellar / Soroban.
 
-## Status
+Type-safe, fetch-based, and split into focused sub-clients per resource. Works in Node 18+ and modern browsers.
 
-**Phase 1** — package scaffold with `NoetherClient` + `ping()`. Markets, account, orders, and WebSocket sub-clients ship in Phases 5-8.
-
-## Install (once published)
+## Install
 
 ```bash
-npm install @noether/sdk
+npm install @noether/sdk @stellar/stellar-sdk
 ```
 
-## Quick start
+`@stellar/stellar-sdk` is only required if you want to sign locally with a `Keypair`; for browser wallets you can plug Freighter / Stellar Wallets Kit signers directly into the SDK helpers.
+
+## Quick start — public reads
 
 ```ts
 import { NoetherClient } from '@noether/sdk';
 
+const client = new NoetherClient({ baseUrl: 'https://api.noether.exchange' });
+
+const markets = await client.markets.list();
+const btc = await client.oracle.getPrice('BTC');
+console.log('BTC oracle:', btc.priceFloat, 'at', new Date(btc.timestamp * 1000));
+```
+
+## Authed: account info
+
+```ts
 const client = new NoetherClient({
   baseUrl: 'https://api.noether.exchange',
+  credentials: { keyId: 'nk_...', secret: '...' },
 });
 
-const health = await client.ping();
-console.log(health); // { status: 'ok', uptime: ..., version: ... }
+const me = await client.account.me();
+const positions = await client.account.positions();
 ```
 
-## Build
+## Issue an API key (one-shot)
+
+```ts
+import { Keypair } from '@stellar/stellar-sdk';
+
+const kp = Keypair.fromSecret(process.env.STELLAR_SECRET!);
+const issued = await client.issueKey({
+  address: kp.publicKey(),
+  signer: (challenge) => Buffer.from(kp.sign(challenge)),
+  label: 'mm-bot-1',
+});
+console.log(issued.keyId, issued.secret); // store the secret immediately
+```
+
+## Place an order — `executeTrade`
+
+```ts
+import { Networks, TransactionBuilder } from '@stellar/stellar-sdk';
+
+const result = await client.executeTrade({
+  request: {
+    op: 'open_position',
+    asset: 'XLM',
+    collateral: 1000n * 10_000_000n, // 1000 USDC (7 decimals)
+    leverage: 2,
+    direction: 'Long',
+  },
+  signer: (xdr) => {
+    const tx = TransactionBuilder.fromXDR(xdr, Networks.TESTNET);
+    tx.sign(kp);
+    return tx.toXDR();
+  },
+});
+console.log(result.submitted.hash, result.submitted.status);
+```
+
+`executeTrade` calls `orders.prepare` → asks your `signer` for the signed XDR → calls `tx.submit` and polls until `SUCCESS` / `FAILED` / timeout.
+
+## Sub-client cheatsheet
+
+| Path                            | Method                                 | Auth |
+|---------------------------------|----------------------------------------|------|
+| `client.health.ping()`          | health probe                           | no   |
+| `client.markets.list()`         | all supported markets + oracle prices  | no   |
+| `client.markets.get(asset)`     | single market detail                   | no   |
+| `client.oracle.getPrice(asset)` | live oracle price                      | no   |
+| `client.oracle.getPrices()`     | all asset prices                       | no   |
+| `client.events.list(query)`     | raw indexer events (filterable)        | no   |
+| `client.keys.create({...})`     | challenge → sign → issue key           | no   |
+| `client.keys.list()`            | own API keys                           | yes  |
+| `client.keys.revoke(keyId)`     | revoke own key                         | yes  |
+| `client.account.me()`           | identity / tier                        | yes  |
+| `client.account.positions()`    | position events for owner              | yes  |
+| `client.account.orders()`       | order events for owner                 | yes  |
+| `client.orders.prepare(req)`    | build unsigned XDR                     | yes  |
+| `client.tx.submit(req)`         | submit signed XDR + poll               | yes  |
+| `client.executeTrade({...})`    | prepare + sign + submit one-shot       | yes  |
+
+## Errors
+
+All API failures throw a typed subclass of `NoetherError`:
+
+```ts
+import { AuthError, RateLimitError, BadRequestError, ServerError } from '@noether/sdk';
+
+try {
+  await client.markets.get('DOGE');
+} catch (err) {
+  if (err instanceof BadRequestError) console.error('bad request:', err.body);
+  else if (err instanceof RateLimitError) console.error('retry in', err.retryAfterSec);
+  else if (err instanceof AuthError) console.error('auth failed');
+  else if (err instanceof ServerError) console.error('server boom');
+  else throw err;
+}
+```
+
+## Examples
+
+- [`examples/place-order.ts`](./examples/place-order.ts) — Friendbot funding + key issuance + open_position end-to-end.
+- [`examples/grid-bot.ts`](./examples/grid-bot.ts) — minimal grid market-maker skeleton.
+
+Run with `tsx`:
 
 ```bash
-# From repo root
-npm install
-npm run build -w @noether/sdk
+npx tsx sdk-ts/examples/place-order.ts http://127.0.0.1:4000
 ```
 
-Outputs both ESM (`dist/index.js`) and CJS (`dist/index.cjs`) plus type
-definitions (`dist/index.d.ts`).
+## Development
+
+```bash
+# from repo root
+npm install
+npm run build -w @noether/sdk         # tsup → dual ESM + CJS + .d.ts
+npm run test -w @noether/sdk          # vitest unit tests
+npm run typecheck -w @noether/sdk
+```
+
+## Status
+
+Phase 6 v0 covers the REST surface shipped through Phase 5. WebSocket sub-client lands in Phase 8 and will sit at `client.ws`.
