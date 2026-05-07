@@ -36,6 +36,13 @@ export {
   type VaultListQuery,
   type VaultActivityQuery,
 } from './sub/vaults.js';
+export {
+  type ReferrerRow,
+  type ReferralBindingRow,
+  type ReferralTradeRow,
+  type ReferralClaimRow,
+  type ReferralMeResponse,
+} from './sub/referral.js';
 export { WsClient, type WsClientOptions, type ChannelHandler } from './sub/ws.js';
 
 export {

@@ -8,6 +8,7 @@ import { AccountApi } from './sub/account.js';
 import { OrdersApi, type PrepareRequest, type PreparedTransaction } from './sub/orders.js';
 import { TxApi, type SubmittedTx } from './sub/tx.js';
 import { VaultsApi } from './sub/vaults.js';
+import { ReferralApi } from './sub/referral.js';
 import { WsClient, type WsClientOptions } from './sub/ws.js';
 
 export interface NoetherClientOptions {
@@ -48,6 +49,7 @@ export class NoetherClient {
   readonly orders: OrdersApi;
   readonly tx: TxApi;
   readonly vaults: VaultsApi;
+  readonly referral: ReferralApi;
 
   private readonly transport: Transport;
   private readonly credentials: Credentials | null;
@@ -67,6 +69,7 @@ export class NoetherClient {
     this.orders = new OrdersApi(this.transport, this.credentials);
     this.tx = new TxApi(this.transport, this.credentials);
     this.vaults = new VaultsApi(this.transport);
+    this.referral = new ReferralApi(this.transport, this.credentials);
   }
 
   /** Return a new client bound to the given credentials. Original is untouched. */
