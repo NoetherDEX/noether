@@ -7,6 +7,7 @@ import { KeysApi, type ChallengeSigner } from './sub/keys.js';
 import { AccountApi } from './sub/account.js';
 import { OrdersApi, type PrepareRequest, type PreparedTransaction } from './sub/orders.js';
 import { TxApi, type SubmittedTx } from './sub/tx.js';
+import { VaultsApi } from './sub/vaults.js';
 import { WsClient, type WsClientOptions } from './sub/ws.js';
 
 export interface NoetherClientOptions {
@@ -46,6 +47,7 @@ export class NoetherClient {
   readonly account: AccountApi;
   readonly orders: OrdersApi;
   readonly tx: TxApi;
+  readonly vaults: VaultsApi;
 
   private readonly transport: Transport;
   private readonly credentials: Credentials | null;
@@ -64,6 +66,7 @@ export class NoetherClient {
     this.account = new AccountApi(this.transport, this.credentials);
     this.orders = new OrdersApi(this.transport, this.credentials);
     this.tx = new TxApi(this.transport, this.credentials);
+    this.vaults = new VaultsApi(this.transport);
   }
 
   /** Return a new client bound to the given credentials. Original is untouched. */
