@@ -30,23 +30,23 @@ operator.
 | TypeScript example | ✅ `sdk-ts/examples/ws-ticker.ts` |
 | Python example | ⏳ pending (with P7) |
 
-### D3 — User-Created Vaults · ~90%
+### D3 — User-Created Vaults · ~95%
 
 | Component | Status |
 |-----------|--------|
 | `vault_factory` Soroban contract | ✅ Phases 10.1–10.7 |
-| Math layer (NAV, shares, profit-share, 5% invariant) | ✅ 11 unit tests |
+| Math layer (NAV, shares, profit-share, 5% invariant) | ✅ 15 unit tests |
 | Initialize + create_vault + deposit + withdraw + claim + pause | ✅ 22 contract tests |
-| WASM size verification | ✅ 17 195 bytes (26% of 64 KB cap) |
+| `leader_*` trading proxy (vault-as-trader → market) | ✅ Phase 10.21 — 4 fns + FakeMarket integration tests |
+| WASM size verification | ✅ 22 383 bytes (35% of 64 KB cap) |
 | Indexer migration + decoder + handler | ✅ Phases 10.10–10.12 |
 | API marketplace + per-vault history endpoints | ✅ Phase 10.13 |
 | SDK `client.vaults` sub-client | ✅ Phase 10.14 |
 | Frontend `/vaults` marketplace + `/vaults/[id]` detail | ✅ Phases 10.16–10.17 |
-| `leader_*` trading proxy (vault-as-trader → market) | ⏳ pending (P10.21) |
 | Testnet deploy script + addresses written to contracts.json | ⏳ pending operator step |
-| Frontend deposit / withdraw / leader-manage panels | ⏳ pending (need wallet integration) |
+| Frontend deposit / withdraw / leader-manage panels | ⏳ pending (wallet adapter glue) |
 
-### D4 — Multi-Wallet & On-Chain Referral · ~90%
+### D4 — Multi-Wallet & On-Chain Referral · ~95%
 
 | Component | Status |
 |-----------|--------|
@@ -56,8 +56,8 @@ operator.
 | API endpoints (`lookup`, `me`, `me/trades`, `me/claims`) | ✅ Phase 11.7 |
 | SDK `client.referral` sub-client | ✅ Phase 11.8 |
 | Frontend dashboard scaffold | ✅ Phase 11.9 |
+| `?ref=CODE` URL capture + sticky banner | ✅ Phase 11.10 |
 | Market WASM optimisation + redeploy with referral hook | ⏳ pending operator step |
-| `?ref=CODE` URL capture + auto-set_referrer prompt | ⏳ pending (small client-side helper) |
 
 ## Phase Map
 
@@ -74,16 +74,16 @@ P6   ✅ TypeScript SDK (REST surface)
 P7   ⏳ Python SDK
 P8   ✅ WebSocket gateway + SDK WsClient
 P9   ✅ already shipped in T1 (multi-wallet)
-P10  ✅ Vault Factory contract + indexer/api/sdk/web (sub 14)
-P11  ✅ Referral contract + indexer/api/sdk/web (sub 9)
+P10  ✅ Vault Factory + leader_trade + indexer/api/sdk/web (sub 15)
+P11  ✅ Referral contract + indexer/api/sdk/web + ?ref capture (sub 10)
 P12  ⏳ Hardening + push + testnet deploy
 ```
 
 ## Testing Surface
 
-- Rust: 33 (vault_factory) + 13 (referral) = **46 contract tests**
+- Rust: 37 (vault_factory) + 13 (referral) = **50 contract tests**
 - TypeScript: 10 (indexer) + 37 (api) + 25 (sdk) = **72 off-chain tests**
-- **118 total green tests** at session close.
+- **122 total green tests** at session close.
 
 ## Operator Punch List (cannot be automated from this codebase)
 
@@ -108,14 +108,18 @@ P12  ⏳ Hardening + push + testnet deploy
 
 ## Known Limitations
 
-- The vault-factory `leader_trade` proxy is not yet implemented;
-  vaults can hold capital but the leader cannot trigger market
-  positions on behalf of the pool until that ships. Tracked in
-  contracts/vault_factory/README.md.
+- The leader_trade proxies are unit-tested against an in-process
+  FakeMarket that mirrors the audited market's USDC pull-on-open
+  behaviour (auth chain end-to-end). Production smoke against the
+  live deployed market still needs one human-driven verification
+  post-deploy.
 - The referral discount path requires the market contract to honour
   the on-chain `discount_bps` returned by `record_trade`. Until
-  market is redeployed with that hook, the API gateway may apply the
-  discount off-chain (rate-limit tier remains the volume-gate proxy).
-- Frontend deposit / withdraw / leader-manage pages render but the
-  signing flow needs the existing wallet adapter to be wired in (the
-  `vaults/[id]/manage` route is not yet shipped in this session).
+  market is redeployed with that hook, the gateway may apply the
+  discount off-chain.
+- Frontend deposit / withdraw / leader-manage panels render in the
+  marketplace flow but the wallet signing glue still needs to plug
+  the existing Stellar Wallets Kit adapter into the new
+  `executeTrade` SDK helper. The full sign+submit flow is already
+  proven in `sdk-ts/examples/place-order.ts`, so this is integration
+  glue, not new architecture.
