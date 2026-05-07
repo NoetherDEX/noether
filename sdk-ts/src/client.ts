@@ -7,6 +7,7 @@ import { KeysApi, type ChallengeSigner } from './sub/keys.js';
 import { AccountApi } from './sub/account.js';
 import { OrdersApi, type PrepareRequest, type PreparedTransaction } from './sub/orders.js';
 import { TxApi, type SubmittedTx } from './sub/tx.js';
+import { WsClient, type WsClientOptions } from './sub/ws.js';
 
 export interface NoetherClientOptions {
   /** Base URL of the Noether API gateway (e.g. https://api.noether.exchange). */
@@ -88,5 +89,15 @@ export class NoetherClient {
    */
   async issueKey(input: { address: string; signer: ChallengeSigner; label?: string }) {
     return this.keys.create(input);
+  }
+
+  /**
+   * Construct a WebSocket sub-client bound to the same gateway. The URL
+   * is derived from baseUrl by replacing http(s) with ws(s) and
+   * appending `/v1/ws`. The current credentials (if any) are forwarded.
+   */
+  ws(opts: Omit<WsClientOptions, 'url' | 'credentials'> = {}): WsClient {
+    const url = this.baseUrl.replace(/^http/, 'ws') + '/v1/ws';
+    return new WsClient({ url, credentials: this.credentials ?? undefined, ...opts });
   }
 }

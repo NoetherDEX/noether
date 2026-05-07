@@ -19,9 +19,14 @@ import { EventsService } from './services/events.js';
 import { ApiKeyStore } from './services/apiKeys.js';
 import { WalletAuth } from './services/walletAuth.js';
 import { RateLimiter } from './services/rateLimit.js';
+import { WsBus } from './services/wsBus.js';
+import { WsManager } from './services/wsManager.js';
+import { OracleTicker } from './services/oracleTicker.js';
+import { LiveTailer } from './services/liveTailer.js';
 import { createIndexerDb } from './services/indexerDb.js';
 import { authPlugin } from './plugins/auth.js';
 import { rateLimitPlugin } from './plugins/rateLimit.js';
+import { wsPlugin } from './plugins/ws.js';
 
 export interface ServerDeps {
   oracle: OracleService;
@@ -33,6 +38,10 @@ export interface ServerDeps {
   db: Client;
   orders: OrdersRouteDeps;
   tx: TxRoutesDeps;
+  wsBus: WsBus;
+  wsManager: WsManager;
+  oracleTicker: OracleTicker;
+  liveTailer: LiveTailer;
 }
 
 export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps): Promise<FastifyInstance> {
@@ -56,10 +65,11 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
 
   await app.register(swaggerUi, { routePrefix: '/docs' });
 
-  const deps = depsOverride ?? buildDefaultDeps(config);
+  const deps = depsOverride ?? buildDefaultDeps(config, app.log as unknown as import('pino').Logger);
 
   await app.register(authPlugin, { apiKeys: deps.apiKeys });
   await app.register(rateLimitPlugin, { limiter: deps.rateLimiter });
+  await app.register(wsPlugin, { manager: deps.wsManager, apiKeys: deps.apiKeys });
 
   await app.register(registerHealthRoutes);
   await app.register((instance) => registerMarketsRoutes(instance, deps.markets));
@@ -70,10 +80,21 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerOrderRoutes(instance, deps.orders));
   await app.register((instance) => registerTxRoutes(instance, deps.tx));
 
+  deps.wsManager.attachBus();
+  app.addHook('onReady', async () => {
+    deps.oracleTicker.start();
+    deps.liveTailer.start();
+  });
+  app.addHook('onClose', async () => {
+    deps.oracleTicker.stop();
+    deps.liveTailer.stop();
+    deps.wsManager.detachBus();
+  });
+
   return app;
 }
 
-function buildDefaultDeps(config: ApiConfig): ServerDeps {
+function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): ServerDeps {
   const reader = new ContractReader({
     rpcUrl: config.rpcUrl,
     network: config.network,
@@ -90,5 +111,10 @@ function buildDefaultDeps(config: ApiConfig): ServerDeps {
   const txCtx = { rpcUrl: config.rpcUrl, network: config.network };
   const orders: OrdersRouteDeps = { txCtx, marketContractId: config.contracts.contracts.market };
   const tx: TxRoutesDeps = { txCtx };
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx };
+  const wsBus = new WsBus();
+  wsBus.setMaxListeners(64);
+  const wsManager = new WsManager(wsBus, log);
+  const oracleTicker = new OracleTicker({ oracle, bus: wsBus, log });
+  const liveTailer = new LiveTailer({ db, bus: wsBus, log });
+  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer };
 }

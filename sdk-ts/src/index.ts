@@ -30,6 +30,7 @@ export {
   type PreparedTransaction,
 } from './sub/orders.js';
 export { type SubmitRequest, type SubmittedTx } from './sub/tx.js';
+export { WsClient, type WsClientOptions, type ChannelHandler } from './sub/ws.js';
 
 export {
   NoetherError,

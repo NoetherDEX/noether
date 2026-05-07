@@ -123,6 +123,15 @@ export async function setupTestServer(opts?: {
   const apiKeys = new ApiKeyStore(db, 'test-pepper');
   const walletAuth = new WalletAuth();
   const rateLimiter = new RateLimiter(db);
+  const wsBus = new (await import('../src/services/wsBus.js')).WsBus();
+  const noopLogger = makeNoopLogger();
+  const wsManager = new (await import('../src/services/wsManager.js')).WsManager(wsBus, noopLogger);
+  const oracleTicker = new (await import('../src/services/oracleTicker.js')).OracleTicker({
+    oracle, bus: wsBus, log: noopLogger, intervalMs: 1_000_000,
+  });
+  const liveTailer = new (await import('../src/services/liveTailer.js')).LiveTailer({
+    db, bus: wsBus, log: noopLogger, intervalMs: 1_000_000,
+  });
 
   const stubBuilder = async () => ({
     xdr: 'AAAAAg==',
@@ -145,9 +154,22 @@ export async function setupTestServer(opts?: {
     submit: stubSubmit as never,
   };
 
-  const deps: ServerDeps = { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx };
+  const deps: ServerDeps = {
+    oracle, markets, events, apiKeys, walletAuth, rateLimiter, db,
+    orders, tx, wsBus, wsManager, oracleTicker, liveTailer,
+  };
   const app = await buildServer(TEST_CONFIG, deps);
   return { app, db, deps };
+}
+
+function makeNoopLogger() {
+  const noop = () => undefined;
+  const logger: import('pino').Logger = {
+    level: 'silent',
+    fatal: noop, error: noop, warn: noop, info: noop, debug: noop, trace: noop,
+    silent: noop, child: () => logger,
+  } as unknown as import('pino').Logger;
+  return logger;
 }
 
 function extractSymbol(scVal: unknown): string {
