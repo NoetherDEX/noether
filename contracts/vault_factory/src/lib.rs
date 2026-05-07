@@ -14,7 +14,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, token, vec as svec, Address, Env, IntoVal, String, Symbol, Vec,
+};
 
 mod math;
 mod storage;
@@ -229,6 +231,143 @@ impl VaultFactoryContract {
         storage::shares_of(&env, vault_id, &depositor)
     }
 
+    // ───────────────────────────────────────────────────────────────────
+    // Leader trading proxies — call market contract on behalf of the
+    // vault. The vault's USDC backs the trade; the leader signs.
+    // ───────────────────────────────────────────────────────────────────
+
+    /// Leader opens an isolated position using vault funds.
+    /// Returns the market's position id. After the call total_usdc is
+    /// resynced from the on-chain USDC balance, so the vault's
+    /// accounting always matches truth.
+    pub fn leader_open_position(
+        env: Env,
+        leader: Address,
+        vault_id: u32,
+        asset: Symbol,
+        collateral: i128,
+        leverage: u32,
+        direction: u32,
+    ) -> Result<u64, FactoryError> {
+        let mut info = require_leader_call(&env, &leader, vault_id)?;
+        if collateral <= 0 {
+            return Err(FactoryError::AmountMustBePositive);
+        }
+        if collateral > info.total_usdc {
+            return Err(FactoryError::InsufficientBalance);
+        }
+        let market = storage::get_market(&env);
+        let factory = env.current_contract_address();
+        let args = svec![
+            &env,
+            factory.into_val(&env),
+            asset.into_val(&env),
+            collateral.into_val(&env),
+            leverage.into_val(&env),
+            direction.into_val(&env),
+        ];
+        let position_id: u64 = env.invoke_contract(&market, &Symbol::new(&env, "open_position"), args);
+        sync_total_usdc(&env, &mut info)?;
+        check_invariant(&info)?;
+        storage::save_vault(&env, &info);
+        env.events().publish(
+            (Symbol::new(&env, "leader_open"), vault_id),
+            (leader, position_id, collateral),
+        );
+        Ok(position_id)
+    }
+
+    /// Leader closes an existing isolated position. The market
+    /// settles PnL into the vault's USDC balance; we resync.
+    pub fn leader_close_position(
+        env: Env,
+        leader: Address,
+        vault_id: u32,
+        position_id: u64,
+    ) -> Result<(), FactoryError> {
+        let mut info = require_leader_call(&env, &leader, vault_id)?;
+        let market = storage::get_market(&env);
+        let factory = env.current_contract_address();
+        let args = svec![&env, factory.into_val(&env), position_id.into_val(&env)];
+        env.invoke_contract::<()>(&market, &Symbol::new(&env, "close_position"), args);
+        sync_total_usdc(&env, &mut info)?;
+        // Bumping HWM is not appropriate here; HWM moves only on claim.
+        // Realised PnL relative to the prior total_usdc is captured
+        // implicitly via the on-chain balance read.
+        storage::save_vault(&env, &info);
+        env.events().publish(
+            (Symbol::new(&env, "leader_close"), vault_id),
+            (leader, position_id),
+        );
+        Ok(())
+    }
+
+    /// Leader places a limit order using vault funds.
+    pub fn leader_place_limit_order(
+        env: Env,
+        leader: Address,
+        vault_id: u32,
+        asset: Symbol,
+        collateral: i128,
+        leverage: u32,
+        direction: u32,
+        trigger_price: i128,
+        trigger_above: bool,
+        slippage_tolerance_bps: u32,
+    ) -> Result<u64, FactoryError> {
+        let mut info = require_leader_call(&env, &leader, vault_id)?;
+        if collateral <= 0 {
+            return Err(FactoryError::AmountMustBePositive);
+        }
+        if collateral > info.total_usdc {
+            return Err(FactoryError::InsufficientBalance);
+        }
+        let market = storage::get_market(&env);
+        let factory = env.current_contract_address();
+        let args = svec![
+            &env,
+            factory.into_val(&env),
+            asset.into_val(&env),
+            direction.into_val(&env),
+            collateral.into_val(&env),
+            leverage.into_val(&env),
+            trigger_price.into_val(&env),
+            trigger_above.into_val(&env),
+            slippage_tolerance_bps.into_val(&env),
+        ];
+        let order_id: u64 = env.invoke_contract(&market, &Symbol::new(&env, "place_limit_order"), args);
+        // place_limit_order may or may not pull collateral immediately
+        // depending on market rules; resync defensively.
+        sync_total_usdc(&env, &mut info)?;
+        storage::save_vault(&env, &info);
+        env.events().publish(
+            (Symbol::new(&env, "leader_limit"), vault_id),
+            (leader, order_id),
+        );
+        Ok(order_id)
+    }
+
+    /// Leader cancels a previously placed order.
+    pub fn leader_cancel_order(
+        env: Env,
+        leader: Address,
+        vault_id: u32,
+        order_id: u64,
+    ) -> Result<(), FactoryError> {
+        let mut info = require_leader_call(&env, &leader, vault_id)?;
+        let market = storage::get_market(&env);
+        let factory = env.current_contract_address();
+        let args = svec![&env, factory.into_val(&env), order_id.into_val(&env)];
+        env.invoke_contract::<()>(&market, &Symbol::new(&env, "cancel_order"), args);
+        sync_total_usdc(&env, &mut info)?;
+        storage::save_vault(&env, &info);
+        env.events().publish(
+            (Symbol::new(&env, "leader_cancel"), vault_id),
+            (leader, order_id),
+        );
+        Ok(())
+    }
+
     /// Leader pulls accumulated profit share above HWM. Returns the
     /// USDC paid out (zero if NAV ≤ HWM).
     ///
@@ -332,6 +471,44 @@ impl VaultFactoryContract {
         storage::require_initialized(&env)?;
         Ok(storage::get_usdc(&env))
     }
+}
+
+// Free-standing helpers used by the leader_* trading proxies. Kept
+// outside the #[contractimpl] block so they remain private and don't
+// pollute the contract's public surface.
+fn require_leader_call(
+    env: &Env,
+    leader: &Address,
+    vault_id: u32,
+) -> Result<VaultInfo, FactoryError> {
+    storage::require_initialized(env)?;
+    leader.require_auth();
+    let info = storage::load_vault(env, vault_id)?;
+    if info.leader != *leader {
+        return Err(FactoryError::NotLeader);
+    }
+    if info.paused {
+        return Err(FactoryError::Paused);
+    }
+    Ok(info)
+}
+
+fn sync_total_usdc(env: &Env, info: &mut VaultInfo) -> Result<(), FactoryError> {
+    let usdc_addr = storage::get_usdc(env);
+    let token_client = token::Client::new(env, &usdc_addr);
+    info.total_usdc = token_client.balance(&env.current_contract_address());
+    Ok(())
+}
+
+fn check_invariant(info: &VaultInfo) -> Result<(), FactoryError> {
+    if !math::leader_min_holding_ok(
+        info.leader_shares,
+        info.circulating_shares,
+        LEADER_MIN_HOLDING_BPS,
+    ) {
+        return Err(FactoryError::LeaderMinimumViolated);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -621,6 +798,209 @@ mod tests {
         client.set_paused(&vault_id, &false);
         let again = client.deposit(&leader, &vault_id, &100_0000000);
         assert!(again > 0);
+    }
+
+    /// Stub market contract used by leader_* tests. Records the calls it
+    /// receives so the test can assert the proxy passed the right args.
+    /// open_position pulls collateral via USDC SAC — the same way the
+    /// real market does — to exercise the auth chain end-to-end.
+    mod fake_market {
+        use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+
+        #[contract]
+        pub struct FakeMarket;
+
+        #[contractimpl]
+        impl FakeMarket {
+            pub fn init(env: Env, usdc: Address) {
+                env.storage().instance().set(&Symbol::new(&env, "usdc"), &usdc);
+                env.storage()
+                    .instance()
+                    .set(&Symbol::new(&env, "next_id"), &0u64);
+            }
+            pub fn open_position(
+                env: Env,
+                trader: Address,
+                _asset: Symbol,
+                collateral: i128,
+                _leverage: u32,
+                _direction: u32,
+            ) -> u64 {
+                trader.require_auth();
+                let usdc: Address = env
+                    .storage()
+                    .instance()
+                    .get(&Symbol::new(&env, "usdc"))
+                    .unwrap();
+                token::Client::new(&env, &usdc).transfer(
+                    &trader,
+                    &env.current_contract_address(),
+                    &collateral,
+                );
+                let mut id: u64 = env
+                    .storage()
+                    .instance()
+                    .get(&Symbol::new(&env, "next_id"))
+                    .unwrap_or(0);
+                id += 1;
+                env.storage()
+                    .instance()
+                    .set(&Symbol::new(&env, "next_id"), &id);
+                id
+            }
+            pub fn close_position(env: Env, trader: Address, _position_id: u64) {
+                // Refund a fixed amount so the vault receives "settled" USDC.
+                trader.require_auth();
+                let usdc: Address = env
+                    .storage()
+                    .instance()
+                    .get(&Symbol::new(&env, "usdc"))
+                    .unwrap();
+                let market_addr = env.current_contract_address();
+                let bal = token::Client::new(&env, &usdc).balance(&market_addr);
+                if bal > 0 {
+                    token::Client::new(&env, &usdc).transfer(&market_addr, &trader, &bal);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn leader_open_position_proxies_to_market_and_decrements_balance() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        env.ledger().with_mut(|l| l.timestamp = 1_700_000_000);
+        let factory_id = env.register_contract(None, VaultFactoryContract);
+        let admin = Address::generate(&env);
+        let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let usdc_id = usdc_sac.address();
+        let market_id = env.register_contract(None, fake_market::FakeMarket);
+        let leader = Address::generate(&env);
+        let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
+        usdc_admin.mint(&leader, &10_000_0000000);
+
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        factory.initialize(&admin, &market_id, &usdc_id);
+        let market = fake_market::FakeMarketClient::new(&env, &market_id);
+        market.init(&usdc_id);
+
+        let vault_id = factory.create_vault(&leader, &String::from_str(&env, "alpha"));
+        factory.deposit(&leader, &vault_id, &1_000_0000000);
+
+        let position_id = factory.leader_open_position(
+            &leader,
+            &vault_id,
+            &Symbol::new(&env, "BTC"),
+            &200_0000000,
+            &5,
+            &0u32,
+        );
+        assert_eq!(position_id, 1);
+
+        // Vault state synced: total_usdc went from 1000 to 800.
+        let info = factory.get_vault(&vault_id);
+        assert_eq!(info.total_usdc, 800_0000000);
+
+        // Fake market now holds the collateral.
+        let usdc_token = soroban_sdk::token::Client::new(&env, &usdc_id);
+        assert_eq!(usdc_token.balance(&market_id), 200_0000000);
+    }
+
+    #[test]
+    fn leader_open_position_rejects_non_leader() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let factory_id = env.register_contract(None, VaultFactoryContract);
+        let admin = Address::generate(&env);
+        let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let usdc_id = usdc_sac.address();
+        let market_id = env.register_contract(None, fake_market::FakeMarket);
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        factory.initialize(&admin, &market_id, &usdc_id);
+        let market = fake_market::FakeMarketClient::new(&env, &market_id);
+        market.init(&usdc_id);
+        let leader = Address::generate(&env);
+        let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
+        usdc_admin.mint(&leader, &1_000_0000000);
+        let vault_id = factory.create_vault(&leader, &String::from_str(&env, "alpha"));
+        factory.deposit(&leader, &vault_id, &500_0000000);
+
+        let stranger = Address::generate(&env);
+        let res = factory.try_leader_open_position(
+            &stranger,
+            &vault_id,
+            &Symbol::new(&env, "BTC"),
+            &100_0000000,
+            &5,
+            &0u32,
+        );
+        assert_eq!(res, Err(Ok(FactoryError::NotLeader)));
+    }
+
+    #[test]
+    fn leader_open_position_rejects_collateral_above_balance() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let factory_id = env.register_contract(None, VaultFactoryContract);
+        let admin = Address::generate(&env);
+        let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let usdc_id = usdc_sac.address();
+        let market_id = env.register_contract(None, fake_market::FakeMarket);
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        factory.initialize(&admin, &market_id, &usdc_id);
+        let market = fake_market::FakeMarketClient::new(&env, &market_id);
+        market.init(&usdc_id);
+        let leader = Address::generate(&env);
+        let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
+        usdc_admin.mint(&leader, &1_000_0000000);
+        let vault_id = factory.create_vault(&leader, &String::from_str(&env, "alpha"));
+        factory.deposit(&leader, &vault_id, &100_0000000);
+
+        let res = factory.try_leader_open_position(
+            &leader,
+            &vault_id,
+            &Symbol::new(&env, "BTC"),
+            &500_0000000,
+            &5,
+            &0u32,
+        );
+        assert_eq!(res, Err(Ok(FactoryError::InsufficientBalance)));
+    }
+
+    #[test]
+    fn leader_close_position_resyncs_balance_after_settlement() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let factory_id = env.register_contract(None, VaultFactoryContract);
+        let admin = Address::generate(&env);
+        let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let usdc_id = usdc_sac.address();
+        let market_id = env.register_contract(None, fake_market::FakeMarket);
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        factory.initialize(&admin, &market_id, &usdc_id);
+        let market = fake_market::FakeMarketClient::new(&env, &market_id);
+        market.init(&usdc_id);
+        let leader = Address::generate(&env);
+        let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
+        usdc_admin.mint(&leader, &10_000_0000000);
+        let vault_id = factory.create_vault(&leader, &String::from_str(&env, "alpha"));
+        factory.deposit(&leader, &vault_id, &1_000_0000000);
+        let position_id = factory.leader_open_position(
+            &leader,
+            &vault_id,
+            &Symbol::new(&env, "BTC"),
+            &200_0000000,
+            &5,
+            &0u32,
+        );
+        // Mint a "PnL" of 50 USDC into the market so close_position
+        // refunds 250 USDC back to the factory.
+        usdc_admin.mint(&market_id, &50_0000000);
+
+        factory.leader_close_position(&leader, &vault_id, &position_id);
+        let info = factory.get_vault(&vault_id);
+        // Initial 1000 - 200 (open) + 250 (close incl. PnL) = 1050
+        assert_eq!(info.total_usdc, 1_050_0000000);
     }
 
     #[test]
