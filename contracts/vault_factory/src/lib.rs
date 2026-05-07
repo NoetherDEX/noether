@@ -16,6 +16,11 @@
 
 use soroban_sdk::{contract, contractimpl, Env, Symbol};
 
+mod storage;
+mod types;
+
+pub use types::{FactoryError, VaultInfo};
+
 #[contract]
 pub struct VaultFactoryContract;
 
