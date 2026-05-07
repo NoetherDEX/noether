@@ -8,17 +8,18 @@ operator.
 
 ## Deliverable Status
 
-### D1 — REST API for Programmatic Trading & SDK · ~98%
+### D1 — REST API for Programmatic Trading & SDK · ✅ 100%
 
 | Component | Status |
 |-----------|--------|
 | Indexer (event capture + libsql projections) | ✅ Phase 2, 10.10, 10.12, 11.6 |
 | Public reads — markets, oracle, events | ✅ Phase 3 |
 | Authentication — wallet challenge, Bearer keys, tiered rate limit | ✅ Phase 4 |
-| Trading endpoints — 10 ops (open / close / limit / cancel / cross / stop-limit / trailing / SL / TP) | ✅ Phase 5 + 5.1 |
+| Trading endpoints — 10 ops | ✅ Phase 5 + 5.1 |
 | TypeScript SDK — every endpoint + WsClient + executeTrade | ✅ Phase 6, 8, 11.8, 5.1.3 |
-| Python SDK | ⏳ pending (P7) |
+| Python SDK — full sub-client surface + WS + 11 tests + examples | ✅ Phase 7.1–7.3 |
 | OpenAPI spec auto-generated | ✅ via `/docs` (Fastify swagger) |
+| In-browser API key issuance UI | ✅ Phase 12.5 |
 
 ### D2 — WebSocket API for Real-Time Data · ✅ 100%
 
@@ -26,25 +27,27 @@ operator.
 |-----------|--------|
 | /v1/ws gateway — 4 channel families | ✅ Phase 8 |
 | Live tailer + oracle ticker | ✅ Phase 8 |
-| SDK WsClient (auto-reconnect, replay subscriptions) | ✅ Phase 8 |
+| TS WsClient (auto-reconnect, replay subscriptions) | ✅ Phase 8 |
+| Python WsClient (auto-reconnect, replay subscriptions) | ✅ Phase 7.3 |
 | TypeScript example | ✅ `sdk-ts/examples/ws-ticker.ts` |
-| Python example | ⏳ pending (with P7) |
+| Python example | ✅ `sdk-py/examples/ws_ticker.py` |
 
-### D3 — User-Created Vaults · ~95%
+### D3 — User-Created Vaults · ✅ 100% (code) — pending testnet deploy
 
 | Component | Status |
 |-----------|--------|
 | `vault_factory` Soroban contract | ✅ Phases 10.1–10.7 |
-| Math layer (NAV, shares, profit-share, 5% invariant) | ✅ 15 unit tests |
-| Initialize + create_vault + deposit + withdraw + claim + pause | ✅ 22 contract tests |
-| `leader_*` trading proxy (vault-as-trader → market) | ✅ Phase 10.21 — 4 fns + FakeMarket integration tests |
-| WASM size verification | ✅ 22 383 bytes (35% of 64 KB cap) |
+| Math + 5% invariant + leader_trade proxies | ✅ 37 contract tests |
+| WASM size | ✅ 22 383 bytes (35% of cap) |
 | Indexer migration + decoder + handler | ✅ Phases 10.10–10.12 |
+| Indexer entry registers handlers when contracts.json has the address | ✅ Phase 12.1 |
 | API marketplace + per-vault history endpoints | ✅ Phase 10.13 |
-| SDK `client.vaults` sub-client | ✅ Phase 10.14 |
+| SDK `client.vaults` sub-client (TS + Python) | ✅ Phase 10.14 + 7.2 |
 | Frontend `/vaults` marketplace + `/vaults/[id]` detail | ✅ Phases 10.16–10.17 |
+| Frontend deposit / withdraw modal with wallet signing | ✅ Phase 12.2–12.3 |
+| Frontend create-vault modal | ✅ Phase 12.3 |
+| Frontend `/vaults/[id]/manage` leader trade panel + claim button | ✅ Phase 12.4 |
 | Testnet deploy script + addresses written to contracts.json | ⏳ pending operator step |
-| Frontend deposit / withdraw / leader-manage panels | ⏳ pending (wallet adapter glue) |
 
 ### D4 — Multi-Wallet & On-Chain Referral · ~95%
 
@@ -76,14 +79,17 @@ P8   ✅ WebSocket gateway + SDK WsClient
 P9   ✅ already shipped in T1 (multi-wallet)
 P10  ✅ Vault Factory + leader_trade + indexer/api/sdk/web (sub 15)
 P11  ✅ Referral contract + indexer/api/sdk/web + ?ref capture (sub 10)
-P12  ⏳ Hardening + push + testnet deploy
+P7   ✅ Python SDK (sub 3)
+P12  ✅ Indexer wiring + UI completeness (sub 5)
+P12+ ⏳ Push + testnet deploy + npm/PyPI publish
 ```
 
 ## Testing Surface
 
 - Rust: 37 (vault_factory) + 13 (referral) = **50 contract tests**
-- TypeScript: 10 (indexer) + 37 (api) + 25 (sdk) = **72 off-chain tests**
-- **122 total green tests** at session close.
+- TypeScript: 10 (indexer) + 37 (api) + 25 (sdk-ts) = **72 tests**
+- Python: 11 (sdk-py — models, orders serialiser, error classifier) = **11 tests**
+- **133 total green tests** at session close.
 
 ## Operator Punch List (cannot be automated from this codebase)
 
