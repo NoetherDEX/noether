@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { Badge, Card, CardContent } from '@/components/ui';
 import { VaultMetrics } from '@/components/vault/VaultMetrics';
 import { VaultActivity } from '@/components/vault/VaultActivity';
+import { VaultActions } from '@/components/vault/VaultActions';
 import {
   getVault,
   getVaultDeposits,
@@ -38,7 +39,7 @@ export default async function VaultDetailPage({
         </Link>
       </div>
 
-      <header className="flex items-start justify-between gap-4">
+      <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold">{vault.name}</h1>
           <p className="text-sm text-zinc-500 mt-1 font-mono break-all">
@@ -48,7 +49,10 @@ export default async function VaultDetailPage({
             Created {new Date(vault.createdAt * 1000).toLocaleString()} · ID #{vault.id}
           </p>
         </div>
-        {vault.paused && <Badge variant="warning">Paused</Badge>}
+        <div className="flex items-center gap-3">
+          {vault.paused && <Badge variant="warning">Paused</Badge>}
+          <VaultActions vaultId={vault.id} vaultName={vault.name} paused={vault.paused} />
+        </div>
       </header>
 
       <VaultMetrics vault={vault} />

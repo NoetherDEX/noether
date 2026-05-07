@@ -1,5 +1,6 @@
 import { Card, CardContent } from '@/components/ui';
 import { VaultCard } from '@/components/vault/VaultCard';
+import { CreateVaultButton } from '@/components/vault/CreateVaultButton';
 import { listVaults } from '@/lib/api/vaults';
 import type { VaultRow } from '@/types/vault';
 
@@ -17,12 +18,15 @@ export default async function VaultsPage() {
 
   return (
     <main className="container mx-auto px-4 py-8 max-w-6xl">
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold">Vault Marketplace</h1>
-        <p className="text-zinc-400 mt-2">
-          User-created trading vaults. Deposit USDC, share in the leader's PnL,
-          withdraw any time.
-        </p>
+      <header className="mb-8 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-3xl font-bold">Vault Marketplace</h1>
+          <p className="text-zinc-400 mt-2">
+            User-created trading vaults. Deposit USDC, share in the leader's PnL,
+            withdraw any time.
+          </p>
+        </div>
+        <CreateVaultButton />
       </header>
 
       {error && (
