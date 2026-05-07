@@ -154,9 +154,10 @@ export async function setupTestServer(opts?: {
     submit: stubSubmit as never,
   };
 
+  const vaults = new (await import('../src/services/vaults.js')).VaultsService(db);
   const deps: ServerDeps = {
     oracle, markets, events, apiKeys, walletAuth, rateLimiter, db,
-    orders, tx, wsBus, wsManager, oracleTicker, liveTailer,
+    orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults,
   };
   const app = await buildServer(TEST_CONFIG, deps);
   return { app, db, deps };
