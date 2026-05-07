@@ -155,9 +155,10 @@ export async function setupTestServer(opts?: {
   };
 
   const vaults = new (await import('../src/services/vaults.js')).VaultsService(db);
+  const referral = new (await import('../src/services/referral.js')).ReferralReadService(db);
   const deps: ServerDeps = {
     oracle, markets, events, apiKeys, walletAuth, rateLimiter, db,
-    orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults,
+    orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral,
   };
   const app = await buildServer(TEST_CONFIG, deps);
   return { app, db, deps };

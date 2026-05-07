@@ -13,7 +13,9 @@ import { registerAccountRoutes } from './routes/account.js';
 import { registerOrderRoutes, type OrdersRouteDeps } from './routes/orders.js';
 import { registerTxRoutes, type TxRoutesDeps } from './routes/tx.js';
 import { registerVaultRoutes } from './routes/vaults.js';
+import { registerReferralRoutes } from './routes/referral.js';
 import { VaultsService } from './services/vaults.js';
+import { ReferralReadService } from './services/referral.js';
 import { ContractReader } from './services/contractReader.js';
 import { OracleService } from './services/oracle.js';
 import { MarketsService } from './services/markets.js';
@@ -45,6 +47,7 @@ export interface ServerDeps {
   oracleTicker: OracleTicker;
   liveTailer: LiveTailer;
   vaults: VaultsService;
+  referral: ReferralReadService;
 }
 
 export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps): Promise<FastifyInstance> {
@@ -83,6 +86,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerOrderRoutes(instance, deps.orders));
   await app.register((instance) => registerTxRoutes(instance, deps.tx));
   await app.register((instance) => registerVaultRoutes(instance, deps.vaults));
+  await app.register((instance) => registerReferralRoutes(instance, deps.referral));
 
   deps.wsManager.attachBus();
   app.addHook('onReady', async () => {
@@ -121,5 +125,6 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const oracleTicker = new OracleTicker({ oracle, bus: wsBus, log });
   const liveTailer = new LiveTailer({ db, bus: wsBus, log });
   const vaults = new VaultsService(db);
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults };
+  const referral = new ReferralReadService(db);
+  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral };
 }
