@@ -16,6 +16,7 @@
 
 use soroban_sdk::{contract, contractimpl, Env, Symbol};
 
+mod math;
 mod storage;
 mod types;
 
