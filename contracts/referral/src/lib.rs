@@ -19,6 +19,14 @@
 
 use soroban_sdk::{contract, contractimpl, Env, Symbol};
 
+mod storage;
+mod types;
+
+pub use types::{
+    ReferralError, ReferralInfo, CODE_MAX_LEN, CODE_MIN_LEN, DEFAULT_DISCOUNT_BPS,
+    DEFAULT_MIN_CODE_VOLUME, DEFAULT_REFERRER_SHARE_BPS, MAX_BPS,
+};
+
 #[contract]
 pub struct ReferralContract;
 
