@@ -66,6 +66,25 @@ pub fn usdc_for_withdraw(
     Ok(scaled / circulating_shares)
 }
 
+/// True when the leader holds at least LEADER_MIN_HOLDING_BPS bps of
+/// circulating shares (default 5%). Empty vaults trivially pass.
+pub fn leader_min_holding_ok(
+    leader_shares: i128,
+    circulating_shares: i128,
+    min_holding_bps: u32,
+) -> bool {
+    if circulating_shares <= 0 {
+        return true;
+    }
+    if leader_shares < 0 {
+        return false;
+    }
+    // leader_shares * BPS_DENOM >= circulating_shares * min_holding_bps
+    let lhs = leader_shares.saturating_mul(crate::types::BPS_DENOM as i128);
+    let rhs = circulating_shares.saturating_mul(min_holding_bps as i128);
+    lhs >= rhs
+}
+
 /// Profit-share owed to the leader on the gain above HWM.
 /// Returns 0 when current NAV is at or below HWM.
 pub fn leader_profit_owed(
@@ -167,6 +186,28 @@ mod tests {
             usdc_for_withdraw(2000, 1500, 1000).unwrap_err(),
             FactoryError::InsufficientShares,
         );
+    }
+
+    #[test]
+    fn leader_min_holding_empty_vault_ok() {
+        assert!(leader_min_holding_ok(0, 0, 500));
+    }
+
+    #[test]
+    fn leader_min_holding_at_threshold_passes() {
+        // 5% min: leader has exactly 50 of 1000 shares.
+        assert!(leader_min_holding_ok(50, 1000, 500));
+    }
+
+    #[test]
+    fn leader_min_holding_below_threshold_fails() {
+        // 5% min: leader has 49 of 1000 shares (4.9%).
+        assert!(!leader_min_holding_ok(49, 1000, 500));
+    }
+
+    #[test]
+    fn leader_min_holding_well_above_threshold_passes() {
+        assert!(leader_min_holding_ok(100, 1000, 500));
     }
 
     #[test]

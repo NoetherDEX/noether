@@ -20,7 +20,10 @@ mod math;
 mod storage;
 mod types;
 
-pub use types::{FactoryError, VaultInfo, DEFAULT_PROFIT_SHARE_BPS, MAX_PROFIT_SHARE_BPS, PRECISION};
+pub use types::{
+    FactoryError, VaultInfo, DEFAULT_PROFIT_SHARE_BPS, LEADER_MIN_HOLDING_BPS,
+    MAX_PROFIT_SHARE_BPS, PRECISION,
+};
 
 #[contract]
 pub struct VaultFactoryContract;
@@ -135,6 +138,17 @@ impl VaultFactoryContract {
                 .checked_add(shares)
                 .ok_or(FactoryError::Overflow)?;
         }
+        // 5% leader-skin invariant. Outside depositors can only flow in
+        // up to (1 / LEADER_MIN_HOLDING_BPS) × leader_shares total
+        // circulating shares; further dilution requires the leader to
+        // top up first.
+        if !math::leader_min_holding_ok(
+            info.leader_shares,
+            info.circulating_shares,
+            LEADER_MIN_HOLDING_BPS,
+        ) {
+            return Err(FactoryError::LeaderMinimumViolated);
+        }
         storage::save_vault(&env, &info);
 
         let prior = storage::shares_of(&env, vault_id, &depositor);
@@ -186,6 +200,16 @@ impl VaultFactoryContract {
         info.circulating_shares -= shares;
         if depositor == info.leader {
             info.leader_shares -= shares;
+        }
+        // Same 5% invariant on the way out — leader can't drain their
+        // skin below 5% of remaining outside capital. Skipped when the
+        // vault is fully empty after withdrawal (circulating == 0).
+        if !math::leader_min_holding_ok(
+            info.leader_shares,
+            info.circulating_shares,
+            LEADER_MIN_HOLDING_BPS,
+        ) {
+            return Err(FactoryError::LeaderMinimumViolated);
         }
         storage::save_vault(&env, &info);
 
@@ -330,7 +354,9 @@ mod tests {
     }
 
     /// Variant of `setup` that wires a real Stellar Asset Contract for USDC,
-    /// so tests can exercise deposit/withdraw end-to-end.
+    /// so tests can exercise deposit/withdraw end-to-end. The returned
+    /// `wallet` doubles as leader+depositor — single-actor tests pass
+    /// the 5% invariant trivially since leader_shares == circulating.
     fn setup_with_usdc(
         initial_balance: i128,
     ) -> (
@@ -339,7 +365,7 @@ mod tests {
         Address,         // market
         Address,         // usdc contract id
         soroban_sdk::Address, // factory contract id
-        Address,         // depositor
+        Address,         // wallet (leader + depositor in single-actor tests)
     ) {
         let env = Env::default();
         env.mock_all_auths();
@@ -349,12 +375,12 @@ mod tests {
         let market = Address::generate(&env);
         let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
         let usdc_id = usdc_sac.address();
-        let depositor = Address::generate(&env);
+        let wallet = Address::generate(&env);
         let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
-        usdc_admin.mint(&depositor, &initial_balance);
+        usdc_admin.mint(&wallet, &initial_balance);
         let client = VaultFactoryContractClient::new(&env, &factory_id);
         client.initialize(&admin, &market, &usdc_id);
-        (env, admin, market, usdc_id, factory_id, depositor)
+        (env, admin, market, usdc_id, factory_id, wallet)
     }
 
     #[test]
@@ -425,138 +451,184 @@ mod tests {
 
     #[test]
     fn deposit_mints_shares_and_moves_usdc() {
-        let (env, _admin, _market, usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let (env, _admin, _market, usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let leader = Address::generate(&env);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
 
         let usdc_token = soroban_sdk::token::Client::new(&env, &usdc);
-        let shares = client.deposit(&depositor, &vault_id, &500_0000000);
+        let shares = client.deposit(&leader, &vault_id, &500_0000000);
         assert_eq!(shares, 500_0000000); // first deposit = 1:1
 
-        // Depositor balance went down by 500, factory holds 500.
-        assert_eq!(usdc_token.balance(&depositor), 500_0000000);
+        assert_eq!(usdc_token.balance(&leader), 500_0000000);
         assert_eq!(usdc_token.balance(&factory), 500_0000000);
 
-        // Vault state mirrors the deposit.
         let info = client.get_vault(&vault_id);
         assert_eq!(info.total_usdc, 500_0000000);
         assert_eq!(info.circulating_shares, 500_0000000);
-        assert_eq!(client.shares_of(&vault_id, &depositor), 500_0000000);
+        assert_eq!(info.leader_shares, 500_0000000);
+        assert_eq!(client.shares_of(&vault_id, &leader), 500_0000000);
     }
 
     #[test]
-    fn second_deposit_after_realised_pnl_dilutes_correctly() {
-        // Simulate a 50% gain by depositing twice and asserting share math on
-        // a vault that has had its total_usdc increased "by realised PnL"
-        // (we mint extra USDC to the factory directly via the SAC admin).
-        let (env, admin, _market, usdc, factory, depositor) = setup_with_usdc(2_000_0000000);
+    fn second_deposit_at_par_nav_mints_one_to_one() {
+        let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(2_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let leader = Address::generate(&env);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-
-        client.deposit(&depositor, &vault_id, &1_000_0000000); // 1000 USDC -> 1000 shares
-
-        // Inject 500 USDC of "realised PnL" through SAC + bump info.
-        let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc);
-        usdc_admin.mint(&factory, &500_0000000);
-        // The contract has no admin-only setter for total_usdc yet; for this
-        // unit test we simulate by depositing again — the math should still
-        // dilute correctly given the contract sees only its own state.
-        // Verify simple second deposit works at NAV = 1.0:
-        let shares2 = client.deposit(&depositor, &vault_id, &500_0000000);
+        client.deposit(&leader, &vault_id, &1_000_0000000);
+        // NAV is still 1.0; second deposit mints 1:1.
+        let shares2 = client.deposit(&leader, &vault_id, &500_0000000);
         assert_eq!(shares2, 500_0000000);
-        let _ = admin;
     }
 
     #[test]
     fn deposit_rejects_zero_amount() {
-        let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let leader = Address::generate(&env);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        let res = client.try_deposit(&depositor, &vault_id, &0);
+        let res = client.try_deposit(&leader, &vault_id, &0);
         assert_eq!(res, Err(Ok(FactoryError::AmountMustBePositive)));
     }
 
     #[test]
     fn deposit_rejects_unknown_vault() {
-        let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let (env, _admin, _market, _usdc, factory, wallet) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let res = client.try_deposit(&depositor, &999, &100_0000000);
+        let res = client.try_deposit(&wallet, &999, &100_0000000);
         assert_eq!(res, Err(Ok(FactoryError::VaultNotFound)));
     }
 
     #[test]
     fn withdraw_returns_proportional_usdc() {
-        let (env, _admin, _market, usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let (env, _admin, _market, usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let leader = Address::generate(&env);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&depositor, &vault_id, &1_000_0000000);
+        client.deposit(&leader, &vault_id, &1_000_0000000);
         let usdc_token = soroban_sdk::token::Client::new(&env, &usdc);
-        assert_eq!(usdc_token.balance(&depositor), 0);
+        assert_eq!(usdc_token.balance(&leader), 0);
 
-        let usdc_back = client.withdraw(&depositor, &vault_id, &400_0000000);
+        let usdc_back = client.withdraw(&leader, &vault_id, &400_0000000);
         assert_eq!(usdc_back, 400_0000000);
-        assert_eq!(usdc_token.balance(&depositor), 400_0000000);
+        assert_eq!(usdc_token.balance(&leader), 400_0000000);
         assert_eq!(usdc_token.balance(&factory), 600_0000000);
 
         let info = client.get_vault(&vault_id);
         assert_eq!(info.total_usdc, 600_0000000);
         assert_eq!(info.circulating_shares, 600_0000000);
-        assert_eq!(client.shares_of(&vault_id, &depositor), 600_0000000);
+        assert_eq!(client.shares_of(&vault_id, &leader), 600_0000000);
     }
 
     #[test]
     fn withdraw_rejects_more_than_owned() {
-        let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let leader = Address::generate(&env);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&depositor, &vault_id, &100_0000000);
-        let res = client.try_withdraw(&depositor, &vault_id, &500_0000000);
+        client.deposit(&leader, &vault_id, &100_0000000);
+        let res = client.try_withdraw(&leader, &vault_id, &500_0000000);
         assert_eq!(res, Err(Ok(FactoryError::InsufficientShares)));
     }
 
     #[test]
     fn claim_with_no_gain_returns_no_fees() {
-        let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let (env, _admin, _market, usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let leader = Address::generate(&env);
+        // Setup: leader doubles as depositor (skin in the game).
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&depositor, &vault_id, &500_0000000);
+        client.deposit(&leader, &vault_id, &500_0000000);
+        let _ = usdc;
         // NAV is exactly HWM (1.0); leader has no profit to claim.
         let res = client.try_claim_leader_fees(&vault_id);
         assert_eq!(res, Err(Ok(FactoryError::NoFeesToClaim)));
     }
 
     #[test]
-    fn paused_vault_blocks_deposit_and_withdraw() {
+    fn outsider_first_deposit_violates_leader_minimum() {
+        // No leader stake yet → any outside deposit fails the 5% invariant.
         let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
         let leader = Address::generate(&env);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&depositor, &vault_id, &200_0000000);
+        let res = client.try_deposit(&depositor, &vault_id, &100_0000000);
+        assert_eq!(res, Err(Ok(FactoryError::LeaderMinimumViolated)));
+    }
+
+    #[test]
+    fn leader_seeds_then_outsider_can_deposit_up_to_19x() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_700_000_000);
+        let factory_id = env.register_contract(None, VaultFactoryContract);
+        let admin = Address::generate(&env);
+        let market = Address::generate(&env);
+        let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let usdc_id = usdc_sac.address();
+        let leader = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
+        usdc_admin.mint(&leader, &100_0000000);
+        usdc_admin.mint(&outsider, &10_000_0000000);
+        let client = VaultFactoryContractClient::new(&env, &factory_id);
+        client.initialize(&admin, &market, &usdc_id);
+        let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
+
+        // Leader seeds 100 USDC.
+        client.deposit(&leader, &vault_id, &100_0000000);
+        // Outsider can deposit up to 19× = 1900 USDC.
+        let ok = client.deposit(&outsider, &vault_id, &1_900_0000000);
+        assert!(ok > 0);
+        // One more USDC violates 5%.
+        let too_much = client.try_deposit(&outsider, &vault_id, &1_0000000);
+        assert_eq!(too_much, Err(Ok(FactoryError::LeaderMinimumViolated)));
+    }
+
+    #[test]
+    fn leader_withdraw_blocked_if_invariant_breaks() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().with_mut(|l| l.timestamp = 1_700_000_000);
+        let factory_id = env.register_contract(None, VaultFactoryContract);
+        let admin = Address::generate(&env);
+        let market = Address::generate(&env);
+        let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let usdc_id = usdc_sac.address();
+        let leader = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
+        usdc_admin.mint(&leader, &100_0000000);
+        usdc_admin.mint(&outsider, &1_000_0000000);
+        let client = VaultFactoryContractClient::new(&env, &factory_id);
+        client.initialize(&admin, &market, &usdc_id);
+        let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
+        client.deposit(&leader, &vault_id, &100_0000000);
+        client.deposit(&outsider, &vault_id, &1_000_0000000);
+        // Leader has 100/1100 = 9.09%. Withdrawing 60 leaves 40/1040 = 3.85% — fails.
+        let res = client.try_withdraw(&leader, &vault_id, &60_0000000);
+        assert_eq!(res, Err(Ok(FactoryError::LeaderMinimumViolated)));
+    }
+
+    #[test]
+    fn paused_vault_blocks_deposit_and_withdraw() {
+        let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
+        let client = VaultFactoryContractClient::new(&env, &factory);
+        let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
+        client.deposit(&leader, &vault_id, &200_0000000);
         client.set_paused(&vault_id, &true);
 
-        let dep_res = client.try_deposit(&depositor, &vault_id, &100_0000000);
+        let dep_res = client.try_deposit(&leader, &vault_id, &100_0000000);
         assert_eq!(dep_res, Err(Ok(FactoryError::Paused)));
-        let wd_res = client.try_withdraw(&depositor, &vault_id, &50_0000000);
+        let wd_res = client.try_withdraw(&leader, &vault_id, &50_0000000);
         assert_eq!(wd_res, Err(Ok(FactoryError::Paused)));
 
         client.set_paused(&vault_id, &false);
-        let again = client.deposit(&depositor, &vault_id, &100_0000000);
+        let again = client.deposit(&leader, &vault_id, &100_0000000);
         assert!(again > 0);
     }
 
     #[test]
     fn admin_pause_works_independently_of_leader() {
-        let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let leader = Address::generate(&env);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&depositor, &vault_id, &200_0000000);
+        client.deposit(&leader, &vault_id, &200_0000000);
         client.admin_pause(&vault_id, &true);
         let info = client.get_vault(&vault_id);
         assert_eq!(info.paused, true);
