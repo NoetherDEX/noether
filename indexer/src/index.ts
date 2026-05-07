@@ -1,10 +1,10 @@
 /**
- * Indexer entry point — Phase 2 v0.
+ * Indexer entry point.
  *
- * Boots: config → libsql → migrations → RPC → router → market handlers
- * → poll loop. Captures market events into events_raw and forwards them
- * to the in-process bus. Trades, candles, and per-trader projections
- * land in Phase 3 once the API needs them.
+ * Boots: config → libsql → migrations → RPC → router → handlers (market
+ * + vault + referral, conditional on contracts.json having addresses) →
+ * poll loop. Captures every event the protocol emits into events_raw
+ * and forwards them to the in-process bus.
  */
 
 import pino from 'pino';
@@ -15,6 +15,8 @@ import { createRpc } from './rpc.js';
 import { IndexerBus } from './bus.js';
 import { EventRouter } from './router.js';
 import { buildMarketRegistrations } from './handlers/market.js';
+import { buildVaultRegistrations } from './handlers/vault.js';
+import { buildReferralRegistrations } from './handlers/referral.js';
 import { IndexerPoller } from './poll.js';
 
 async function main(): Promise<void> {
@@ -22,12 +24,25 @@ async function main(): Promise<void> {
   const log = pino({ level: config.logLevel });
 
   const market = config.contracts.contracts.market;
+  // vault_factory and referral are optional in contracts.json — they
+  // appear once their respective testnet deploys land. The router
+  // registers handlers conditionally so the indexer is useful before
+  // Phase 10/11 contracts are live.
+  const vaultFactory = config.contracts.contracts.vaultFactory;
+  const referral = config.contracts.contracts.referral;
+
+  const contractIds: string[] = [market];
+  if (vaultFactory) contractIds.push(vaultFactory);
+  if (referral) contractIds.push(referral);
+
   log.info(
     {
       network: config.network,
       rpcUrl: config.rpcUrl,
       pollIntervalMs: config.pollIntervalMs,
       market,
+      vaultFactory: vaultFactory ?? '(not deployed)',
+      referral: referral ?? '(not deployed)',
     },
     'Indexer starting',
   );
@@ -47,6 +62,18 @@ async function main(): Promise<void> {
   for (const reg of buildMarketRegistrations(market)) {
     router.register(reg.contractId, reg.topic, reg.handler);
   }
+  if (vaultFactory) {
+    for (const reg of buildVaultRegistrations(vaultFactory)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    log.info({ contract: vaultFactory }, 'Vault factory handlers registered');
+  }
+  if (referral) {
+    for (const reg of buildReferralRegistrations(referral)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    log.info({ contract: referral }, 'Referral handlers registered');
+  }
 
   const poller = new IndexerPoller({
     db,
@@ -54,7 +81,7 @@ async function main(): Promise<void> {
     bus,
     router,
     log,
-    contractIds: [market],
+    contractIds,
     pollIntervalMs: config.pollIntervalMs,
     coldStartLedgers: config.coldStartLedgers,
   });
@@ -69,8 +96,6 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
   await poller.start();
-
-  // Block forever — the poll loop runs until SIGINT/SIGTERM.
   await new Promise(() => {});
 }
 
