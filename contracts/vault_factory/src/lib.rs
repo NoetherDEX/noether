@@ -205,6 +205,83 @@ impl VaultFactoryContract {
         storage::shares_of(&env, vault_id, &depositor)
     }
 
+    /// Leader pulls accumulated profit share above HWM. Returns the
+    /// USDC paid out (zero if NAV ≤ HWM).
+    ///
+    /// Formula: ((NAV - HWM) × circulating_shares ÷ PRECISION) × bps ÷ 10_000.
+    /// On success, total_usdc decreases by the payout and the new HWM
+    /// is set to the post-payout NAV — the leader can't double-claim
+    /// the same gain.
+    pub fn claim_leader_fees(env: Env, vault_id: u32) -> Result<i128, FactoryError> {
+        storage::require_initialized(&env)?;
+        let mut info = storage::load_vault(&env, vault_id)?;
+        info.leader.require_auth();
+
+        let owed = math::leader_profit_owed(
+            info.total_usdc,
+            info.circulating_shares,
+            info.hwm_nav,
+            info.profit_share_bps,
+        )?;
+        if owed <= 0 {
+            return Err(FactoryError::NoFeesToClaim);
+        }
+        if owed > info.total_usdc {
+            return Err(FactoryError::InsufficientBalance);
+        }
+
+        let usdc_addr = storage::get_usdc(&env);
+        token::Client::new(&env, &usdc_addr).transfer(
+            &env.current_contract_address(),
+            &info.leader,
+            &owed,
+        );
+
+        info.total_usdc -= owed;
+        info.realized_pnl = info
+            .realized_pnl
+            .checked_add(owed)
+            .ok_or(FactoryError::Overflow)?;
+        let new_nav = math::nav_per_share(info.total_usdc, info.circulating_shares)?;
+        info.hwm_nav = new_nav;
+        storage::save_vault(&env, &info);
+        storage::extend_instance_ttl(&env);
+
+        env.events().publish(
+            (Symbol::new(&env, "fees_claimed"), vault_id),
+            (info.leader.clone(), owed, new_nav),
+        );
+        Ok(owed)
+    }
+
+    /// Leader-only pause / unpause for their own vault.
+    /// While paused, deposit() and withdraw() return FactoryError::Paused.
+    pub fn set_paused(env: Env, vault_id: u32, paused: bool) -> Result<(), FactoryError> {
+        storage::require_initialized(&env)?;
+        let mut info = storage::load_vault(&env, vault_id)?;
+        info.leader.require_auth();
+        info.paused = paused;
+        storage::save_vault(&env, &info);
+        env.events().publish(
+            (Symbol::new(&env, if paused { "paused" } else { "unpaused" }), vault_id),
+            (),
+        );
+        Ok(())
+    }
+
+    /// Admin-only emergency pause. Doesn't require leader signature.
+    pub fn admin_pause(env: Env, vault_id: u32, paused: bool) -> Result<(), FactoryError> {
+        storage::require_admin(&env)?;
+        let mut info = storage::load_vault(&env, vault_id)?;
+        info.paused = paused;
+        storage::save_vault(&env, &info);
+        env.events().publish(
+            (Symbol::new(&env, if paused { "admin_paused" } else { "admin_unpaused" }), vault_id),
+            (),
+        );
+        Ok(())
+    }
+
     // ───────────────────────────────────────────────────────────────────
     // Read-only views
     // ───────────────────────────────────────────────────────────────────
@@ -440,6 +517,49 @@ mod tests {
         client.deposit(&depositor, &vault_id, &100_0000000);
         let res = client.try_withdraw(&depositor, &vault_id, &500_0000000);
         assert_eq!(res, Err(Ok(FactoryError::InsufficientShares)));
+    }
+
+    #[test]
+    fn claim_with_no_gain_returns_no_fees() {
+        let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let client = VaultFactoryContractClient::new(&env, &factory);
+        let leader = Address::generate(&env);
+        let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
+        client.deposit(&depositor, &vault_id, &500_0000000);
+        // NAV is exactly HWM (1.0); leader has no profit to claim.
+        let res = client.try_claim_leader_fees(&vault_id);
+        assert_eq!(res, Err(Ok(FactoryError::NoFeesToClaim)));
+    }
+
+    #[test]
+    fn paused_vault_blocks_deposit_and_withdraw() {
+        let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let client = VaultFactoryContractClient::new(&env, &factory);
+        let leader = Address::generate(&env);
+        let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
+        client.deposit(&depositor, &vault_id, &200_0000000);
+        client.set_paused(&vault_id, &true);
+
+        let dep_res = client.try_deposit(&depositor, &vault_id, &100_0000000);
+        assert_eq!(dep_res, Err(Ok(FactoryError::Paused)));
+        let wd_res = client.try_withdraw(&depositor, &vault_id, &50_0000000);
+        assert_eq!(wd_res, Err(Ok(FactoryError::Paused)));
+
+        client.set_paused(&vault_id, &false);
+        let again = client.deposit(&depositor, &vault_id, &100_0000000);
+        assert!(again > 0);
+    }
+
+    #[test]
+    fn admin_pause_works_independently_of_leader() {
+        let (env, _admin, _market, _usdc, factory, depositor) = setup_with_usdc(1_000_0000000);
+        let client = VaultFactoryContractClient::new(&env, &factory);
+        let leader = Address::generate(&env);
+        let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
+        client.deposit(&depositor, &vault_id, &200_0000000);
+        client.admin_pause(&vault_id, &true);
+        let info = client.get_vault(&vault_id);
+        assert_eq!(info.paused, true);
     }
 
     #[test]
