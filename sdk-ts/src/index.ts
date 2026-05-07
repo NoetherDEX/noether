@@ -26,6 +26,9 @@ export {
   type OpenPositionRequest,
   type ClosePositionRequest,
   type PlaceLimitOrderRequest,
+  type PlaceStopLimitOrderRequest,
+  type PlaceTrailingStopRequest,
+  type SetStopOrTakeProfitRequest,
   type CancelOrderRequest,
   type PreparedTransaction,
 } from './sub/orders.js';
