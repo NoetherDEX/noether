@@ -111,6 +111,113 @@ impl ReferralContract {
         Ok(())
     }
 
+    /// Bind a referee to a referrer's code. Single-shot per referee:
+    /// once bound, the relationship is permanent. Self-referral is
+    /// rejected. Increments the referrer's referred_count.
+    pub fn set_referrer(
+        env: Env,
+        referee: Address,
+        code: String,
+    ) -> Result<(), ReferralError> {
+        storage::require_initialized(&env)?;
+        referee.require_auth();
+        if storage::referrer_of(&env, &referee).is_some() {
+            return Err(ReferralError::AlreadyHasReferrer);
+        }
+        let referrer = storage::lookup_code(&env, &code).ok_or(ReferralError::UnknownCode)?;
+        if referrer == referee {
+            return Err(ReferralError::SelfReferral);
+        }
+        storage::set_referrer_of(&env, &referee, &referrer);
+        let mut info = storage::load_info(&env, &referrer).ok_or(ReferralError::UnknownCode)?;
+        info.referred_count = info.referred_count.checked_add(1).ok_or(ReferralError::Overflow)?;
+        storage::save_info(&env, &info);
+        env.events().publish(
+            (Symbol::new(&env, "referrer_set"),),
+            (referee, referrer, code),
+        );
+        Ok(())
+    }
+
+    /// Market-only hook called whenever a fee-bearing event happens.
+    /// Returns (referee_discount, referrer_payout) — the market
+    /// applies the discount to the referee's fee and transfers the
+    /// payout to this contract, which then accrues against the
+    /// referrer's claimable balance.
+    ///
+    /// For referees with no referrer this is a no-op returning (0, 0)
+    /// so the market doesn't have to branch.
+    pub fn record_trade(
+        env: Env,
+        referee: Address,
+        original_fee: i128,
+    ) -> Result<(i128, i128), ReferralError> {
+        storage::require_market(&env)?;
+        if original_fee <= 0 {
+            return Ok((0, 0));
+        }
+        let referrer = match storage::referrer_of(&env, &referee) {
+            Some(addr) => addr,
+            None => return Ok((0, 0)),
+        };
+
+        let discount_bps = storage::get_discount_bps(&env);
+        let share_bps = storage::get_referrer_share_bps(&env);
+        let discount = original_fee
+            .checked_mul(discount_bps as i128)
+            .ok_or(ReferralError::Overflow)?
+            / 10_000;
+        let payout = original_fee
+            .checked_mul(share_bps as i128)
+            .ok_or(ReferralError::Overflow)?
+            / 10_000;
+
+        let mut info = storage::load_info(&env, &referrer).ok_or(ReferralError::UnknownCode)?;
+        info.total_volume_generated = info
+            .total_volume_generated
+            .checked_add(original_fee)
+            .ok_or(ReferralError::Overflow)?;
+        info.total_earned = info
+            .total_earned
+            .checked_add(payout)
+            .ok_or(ReferralError::Overflow)?;
+        info.claimable = info
+            .claimable
+            .checked_add(payout)
+            .ok_or(ReferralError::Overflow)?;
+        storage::save_info(&env, &info);
+
+        env.events().publish(
+            (Symbol::new(&env, "trade_recorded"),),
+            (referee, referrer, original_fee, discount, payout),
+        );
+        Ok((discount, payout))
+    }
+
+    /// Referrer drains their claimable balance. Returns the amount
+    /// claimed; emits a "claimed" event. The actual USDC transfer is
+    /// done by the market contract (which holds the funds) on receipt
+    /// of the event — phase 11.x adds a direct cross-contract pay.
+    pub fn claim(env: Env, referrer: Address) -> Result<i128, ReferralError> {
+        storage::require_initialized(&env)?;
+        referrer.require_auth();
+        let mut info = storage::load_info(&env, &referrer).ok_or(ReferralError::UnknownCode)?;
+        let amount = info.claimable;
+        if amount <= 0 {
+            return Err(ReferralError::NothingToClaim);
+        }
+        info.claimable = 0;
+        storage::save_info(&env, &info);
+        env.events()
+            .publish((Symbol::new(&env, "claimed"),), (referrer, amount));
+        Ok(amount)
+    }
+
+    /// Public view: returns the referrer bound to `referee`, or None.
+    pub fn get_referrer(env: Env, referee: Address) -> Option<Address> {
+        storage::referrer_of(&env, &referee)
+    }
+
     // ───────────────────────────────────────────────────────────────────
     // View functions
     // ───────────────────────────────────────────────────────────────────
@@ -278,5 +385,89 @@ mod tests {
         let client = ReferralContractClient::new(&env, &id);
         let res = client.try_set_discount_bps(&(MAX_BPS + 1));
         assert_eq!(res, Err(Ok(ReferralError::InvalidParameter)));
+    }
+
+    #[test]
+    fn set_referrer_binds_and_blocks_double_bind() {
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let referrer = Address::generate(&env);
+        let referee = Address::generate(&env);
+        client.create_code(&referrer, &String::from_str(&env, "alice42"));
+
+        client.set_referrer(&referee, &String::from_str(&env, "alice42"));
+        assert_eq!(client.get_referrer(&referee), Some(referrer.clone()));
+        let info = client.get_info(&referrer);
+        assert_eq!(info.referred_count, 1);
+
+        // Cannot rebind.
+        let again = client.try_set_referrer(&referee, &String::from_str(&env, "alice42"));
+        assert_eq!(again, Err(Ok(ReferralError::AlreadyHasReferrer)));
+    }
+
+    #[test]
+    fn set_referrer_rejects_self_referral_and_unknown_code() {
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let me = Address::generate(&env);
+        client.create_code(&me, &String::from_str(&env, "selfsame"));
+        let self_res = client.try_set_referrer(&me, &String::from_str(&env, "selfsame"));
+        assert_eq!(self_res, Err(Ok(ReferralError::SelfReferral)));
+
+        let stranger = Address::generate(&env);
+        let unknown = client.try_set_referrer(&stranger, &String::from_str(&env, "doesnotexist"));
+        assert_eq!(unknown, Err(Ok(ReferralError::UnknownCode)));
+    }
+
+    #[test]
+    fn record_trade_credits_referrer_and_returns_discount_payout() {
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let referrer = Address::generate(&env);
+        let referee = Address::generate(&env);
+        client.create_code(&referrer, &String::from_str(&env, "alice42"));
+        client.set_referrer(&referee, &String::from_str(&env, "alice42"));
+
+        // Original fee = 1000 USDC * 10^7 = 10_000_000_000
+        let (discount, payout) = client.record_trade(&referee, &10_000_000_000);
+        // discount = 10_000_000_000 * 400 / 10_000 = 400_000_000
+        assert_eq!(discount, 400_000_000);
+        // payout = 10_000_000_000 * 1000 / 10_000 = 1_000_000_000
+        assert_eq!(payout, 1_000_000_000);
+
+        let info = client.get_info(&referrer);
+        assert_eq!(info.total_earned, 1_000_000_000);
+        assert_eq!(info.claimable, 1_000_000_000);
+        assert_eq!(info.total_volume_generated, 10_000_000_000);
+    }
+
+    #[test]
+    fn record_trade_no_op_for_unbound_referee() {
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let stranger = Address::generate(&env);
+        let (d, p) = client.record_trade(&stranger, &10_000_000_000);
+        assert_eq!(d, 0);
+        assert_eq!(p, 0);
+    }
+
+    #[test]
+    fn claim_drains_claimable_and_blocks_re_claim() {
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let referrer = Address::generate(&env);
+        let referee = Address::generate(&env);
+        client.create_code(&referrer, &String::from_str(&env, "alice42"));
+        client.set_referrer(&referee, &String::from_str(&env, "alice42"));
+        client.record_trade(&referee, &10_000_000_000);
+
+        let claimed = client.claim(&referrer);
+        assert_eq!(claimed, 1_000_000_000);
+        let info = client.get_info(&referrer);
+        assert_eq!(info.claimable, 0);
+        assert_eq!(info.total_earned, 1_000_000_000); // lifetime preserved
+
+        let again = client.try_claim(&referrer);
+        assert_eq!(again, Err(Ok(ReferralError::NothingToClaim)));
     }
 }
