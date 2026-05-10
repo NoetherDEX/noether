@@ -88,8 +88,10 @@ P12+ ⏳ Push + testnet deploy + npm/PyPI publish
 
 - Rust: 37 (vault_factory) + 13 (referral) = **50 contract tests**
 - TypeScript: 10 (indexer) + 37 (api) + 25 (sdk-ts) = **72 tests**
-- Python: 11 (sdk-py — models, orders serialiser, error classifier) = **11 tests**
-- **133 total green tests** at session close.
+- Python: 12 (sdk-py — models, orders serialiser, error classifier) = **12 tests**
+- **134 total green tests** at session close.
+- Fresh-DB API sanity verified end-to-end (health / markets / vaults /
+  oracle / referral / rate-limited account read).
 
 ## Operator Punch List (cannot be automated from this codebase)
 
