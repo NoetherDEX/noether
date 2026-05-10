@@ -35,6 +35,11 @@ export class RateLimiter {
     const nowSec = Math.floor(Date.now() / 1000);
     const windowStart = nowSec - (nowSec % WINDOW_SEC);
 
+    // Lazily ensure the table exists. The indexer normally creates it
+    // via migration 001, but if the API is started against a fresh
+    // empty DB (no indexer run yet) we shouldn't 500 the entire surface.
+    await this.ensureTable();
+
     await this.db.execute({
       sql: `
         INSERT INTO rate_limit_buckets (key_id, window_start, count)
@@ -64,5 +69,33 @@ export class RateLimiter {
       retryAfterSec: 0,
       windowStart,
     };
+  }
+
+  private tableEnsured = false;
+
+  private async ensureTable(): Promise<void> {
+    if (this.tableEnsured) return;
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+        key_id        TEXT NOT NULL,
+        window_start  INTEGER NOT NULL,
+        count         INTEGER NOT NULL,
+        PRIMARY KEY (key_id, window_start)
+      );
+    `);
+    // Same for api_keys — auth middleware needs it on the same fresh DB.
+    await this.db.execute(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        key_id        TEXT PRIMARY KEY,
+        secret_hash   TEXT NOT NULL,
+        owner         TEXT NOT NULL,
+        tier          TEXT NOT NULL DEFAULT 'standard',
+        label         TEXT,
+        created_at    INTEGER NOT NULL,
+        last_used_at  INTEGER,
+        revoked_at    INTEGER
+      );
+    `);
+    this.tableEnsured = true;
   }
 }
