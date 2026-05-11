@@ -19,7 +19,7 @@ operator.
 | TypeScript SDK — every endpoint + WsClient + executeTrade | ✅ Phase 6, 8, 11.8, 5.1.3 |
 | Python SDK — full sub-client surface + WS + 11 tests + examples | ✅ Phase 7.1–7.3 |
 | OpenAPI spec auto-generated | ✅ via `/docs` (Fastify swagger) |
-| In-browser API key issuance UI | ✅ Phase 12.5 |
+| In-browser API key issuance UI (issue + list + revoke) | ✅ Phase 12.5 + 12.6 |
 
 ### D2 — WebSocket API for Real-Time Data · ✅ 100%
 
@@ -58,7 +58,7 @@ operator.
 | Indexer migration + decoder + handler | ✅ Phase 11.6 |
 | API endpoints (`lookup`, `me`, `me/trades`, `me/claims`) | ✅ Phase 11.7 |
 | SDK `client.referral` sub-client | ✅ Phase 11.8 |
-| Frontend dashboard scaffold | ✅ Phase 11.9 |
+| Frontend dashboard (wired live to API + session-only auth + share-link + activity tables) | ✅ Phase 12.6 |
 | `?ref=CODE` URL capture + sticky banner | ✅ Phase 11.10 |
 | Market WASM optimisation + redeploy with referral hook | ⏳ pending operator step |
 
@@ -80,7 +80,9 @@ P9   ✅ already shipped in T1 (multi-wallet)
 P10  ✅ Vault Factory + leader_trade + indexer/api/sdk/web (sub 15)
 P11  ✅ Referral contract + indexer/api/sdk/web + ?ref capture (sub 10)
 P7   ✅ Python SDK (sub 3)
-P12  ✅ Indexer wiring + UI completeness (sub 5)
+P12  ✅ Indexer wiring + UI completeness (sub 6 — adds referral
+        dashboard wire-up, key listing, header nav, tx-hash links,
+        modal/button bugfixes)
 P12+ ⏳ Push + testnet deploy + npm/PyPI publish
 ```
 
@@ -92,6 +94,8 @@ P12+ ⏳ Push + testnet deploy + npm/PyPI publish
 - **134 total green tests** at session close.
 - Fresh-DB API sanity verified end-to-end (health / markets / vaults /
   oracle / referral / rate-limited account read).
+- `next build` green — 14/14 routes compile, all new T2 pages live:
+  `/vaults`, `/vaults/[id]`, `/vaults/[id]/manage`, `/referrals`, `/api-keys`.
 
 ## Operator Punch List (cannot be automated from this codebase)
 
