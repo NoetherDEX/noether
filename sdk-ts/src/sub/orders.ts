@@ -1,5 +1,5 @@
 import type { Credentials, Transport } from '../transport.js';
-import type { Direction, TriggerCondition } from '@noether/types';
+import type { Direction, TriggerCondition } from '../types/index.js';
 
 export interface OpenPositionRequest {
   op: 'open_position' | 'open_position_cross';

@@ -1,4 +1,4 @@
-import type { Asset } from '@noether/types';
+import type { Asset } from '../types/index.js';
 import type { Transport } from '../transport.js';
 
 export interface OracleSnapshot {
