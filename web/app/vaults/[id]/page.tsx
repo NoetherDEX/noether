@@ -4,6 +4,7 @@ import { Badge, Card, CardContent } from '@/components/ui';
 import { VaultMetrics } from '@/components/vault/VaultMetrics';
 import { VaultActivity } from '@/components/vault/VaultActivity';
 import { VaultActions } from '@/components/vault/VaultActions';
+import { MyVaultPosition } from '@/components/vault/MyVaultPosition';
 import {
   getVault,
   getVaultDeposits,
@@ -26,9 +27,9 @@ export default async function VaultDetailPage({
   if (!vault) notFound();
 
   const [deposits, withdraws, feeClaims] = await Promise.all([
-    getVaultDeposits(id, 25).catch(() => []),
-    getVaultWithdraws(id, 25).catch(() => []),
-    getVaultFeeClaims(id, 25).catch(() => []),
+    getVaultDeposits(id, 200).catch(() => []),
+    getVaultWithdraws(id, 200).catch(() => []),
+    getVaultFeeClaims(id, 50).catch(() => []),
   ]);
 
   return (
@@ -43,7 +44,16 @@ export default async function VaultDetailPage({
         <div>
           <h1 className="text-3xl font-bold">{vault.name}</h1>
           <p className="text-sm text-zinc-500 mt-1 font-mono break-all">
-            Leader: {vault.leader}
+            Leader:{' '}
+            <a
+              href={`https://stellar.expert/explorer/testnet/account/${vault.leader}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-amber-400 transition-colors"
+              title="View leader on stellar.expert"
+            >
+              {vault.leader}
+            </a>
           </p>
           <p className="text-xs text-zinc-500 mt-1">
             Created {new Date(vault.createdAt * 1000).toLocaleString()} · ID #{vault.id}
@@ -56,6 +66,8 @@ export default async function VaultDetailPage({
       </header>
 
       <VaultMetrics vault={vault} />
+
+      <MyVaultPosition vault={vault} deposits={deposits} withdraws={withdraws} />
 
       <Card>
         <CardContent className="p-5 text-sm space-y-2">
