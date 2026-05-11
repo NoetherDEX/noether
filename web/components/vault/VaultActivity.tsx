@@ -72,8 +72,16 @@ export function VaultActivity({
                         {r.shares ? fmtUsdc(r.shares) : '—'}
                       </td>
                     )}
-                    <td className="px-5 py-3 text-right font-mono text-xs text-zinc-500">
-                      {shortHash(r.txHash)}
+                    <td className="px-5 py-3 text-right font-mono text-xs">
+                      <a
+                        href={`https://stellar.expert/explorer/testnet/tx/${r.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-zinc-500 hover:text-amber-400 transition-colors"
+                        title={r.txHash}
+                      >
+                        {shortHash(r.txHash)}
+                      </a>
                     </td>
                   </tr>
                 ))}

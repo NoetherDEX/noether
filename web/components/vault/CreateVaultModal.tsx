@@ -44,7 +44,7 @@ export function CreateVaultModal({ open, onClose }: Props) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Create vault">
+    <Modal isOpen={open} onClose={onClose} title="Create vault">
       <div className="space-y-4 p-4">
         <Card>
           <CardContent className="p-4 space-y-3">

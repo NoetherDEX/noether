@@ -1,9 +1,23 @@
+'use client';
+
+import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui';
 import { ApiKeyIssueCard } from '@/components/keys/ApiKeyIssueCard';
-
-export const dynamic = 'force-dynamic';
+import { ApiKeysList } from '@/components/keys/ApiKeysList';
+import { useSessionAuthStore } from '@/lib/store';
+import type { IssuedApiKey } from '@/lib/api/keys';
 
 export default function ApiKeysPage() {
+  const setAuth = useSessionAuthStore((s) => s.setAuth);
+  const [lastIssued, setLastIssued] = useState<IssuedApiKey | null>(null);
+
+  function onIssued(key: IssuedApiKey) {
+    setLastIssued(key);
+    // Auto-sign-in: the freshly minted key is the cheapest way to authorise
+    // the listing call below, so seed the session store with it.
+    setAuth({ keyId: key.keyId, secret: key.secret, owner: key.owner });
+  }
+
   return (
     <main className="container mx-auto px-4 py-8 max-w-3xl space-y-6">
       <header>
@@ -16,7 +30,9 @@ export default function ApiKeysPage() {
         </p>
       </header>
 
-      <ApiKeyIssueCard />
+      <ApiKeyIssueCard onIssued={onIssued} />
+
+      <ApiKeysList refreshKey={lastIssued} />
 
       <Card>
         <CardContent className="p-5 text-sm space-y-2">

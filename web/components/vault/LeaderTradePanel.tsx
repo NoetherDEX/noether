@@ -110,7 +110,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
               <Button
                 key={a}
                 size="sm"
-                variant={asset === a ? 'default' : 'ghost'}
+                variant={asset === a ? 'primary' : 'ghost'}
                 onClick={() => setAsset(a)}
               >
                 {a}
@@ -120,14 +120,14 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
           <div className="grid grid-cols-2 gap-2">
             <Button
               size="sm"
-              variant={direction === 'Long' ? 'default' : 'ghost'}
+              variant={direction === 'Long' ? 'primary' : 'ghost'}
               onClick={() => setDirection('Long')}
             >
               Long
             </Button>
             <Button
               size="sm"
-              variant={direction === 'Short' ? 'default' : 'ghost'}
+              variant={direction === 'Short' ? 'primary' : 'ghost'}
               onClick={() => setDirection('Short')}
             >
               Short

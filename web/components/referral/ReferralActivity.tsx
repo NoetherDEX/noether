@@ -49,7 +49,17 @@ export function ReferralTradesTable({ rows }: { rows: ReferralTradeRow[] }) {
                     <td className="px-5 py-3 text-right tabular-nums">${fmtReferralUsdc(r.originalFee)}</td>
                     <td className="px-5 py-3 text-right tabular-nums text-zinc-400">${fmtReferralUsdc(r.discount)}</td>
                     <td className="px-5 py-3 text-right tabular-nums text-emerald-400">${fmtReferralUsdc(r.payout)}</td>
-                    <td className="px-5 py-3 text-right font-mono text-xs text-zinc-500">{shortHash(r.txHash)}</td>
+                    <td className="px-5 py-3 text-right font-mono text-xs">
+                      <a
+                        href={`https://stellar.expert/explorer/testnet/tx/${r.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-zinc-500 hover:text-amber-400 transition-colors"
+                        title={r.txHash}
+                      >
+                        {shortHash(r.txHash)}
+                      </a>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -88,7 +98,17 @@ export function ReferralClaimsTable({ rows }: { rows: ReferralClaimRow[] }) {
                   <tr key={r.id} className="border-b border-zinc-800/30 last:border-0">
                     <td className="px-5 py-3 text-zinc-400">{fmtTs(r.ts)}</td>
                     <td className="px-5 py-3 text-right tabular-nums">${fmtReferralUsdc(r.amount)}</td>
-                    <td className="px-5 py-3 text-right font-mono text-xs text-zinc-500">{shortHash(r.txHash)}</td>
+                    <td className="px-5 py-3 text-right font-mono text-xs">
+                      <a
+                        href={`https://stellar.expert/explorer/testnet/tx/${r.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-zinc-500 hover:text-amber-400 transition-colors"
+                        title={r.txHash}
+                      >
+                        {shortHash(r.txHash)}
+                      </a>
+                    </td>
                   </tr>
                 ))}
               </tbody>

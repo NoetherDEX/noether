@@ -1,4 +1,6 @@
 import { Card, CardContent } from '@/components/ui';
+import { ReferralSignIn } from '@/components/referral/ReferralSignIn';
+import { ReferralDashboardOrSignIn } from '@/components/referral/ReferralDashboard';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -13,27 +15,7 @@ export default function ReferralsPage() {
         </p>
       </header>
 
-      <Card>
-        <CardContent className="p-6 space-y-3">
-          <h2 className="font-medium">Sign in to view your referral dashboard</h2>
-          <p className="text-sm text-zinc-400">
-            The referral dashboard is gated behind an API key issued from your
-            connected Stellar wallet. Once you sign in, this page shows:
-          </p>
-          <ul className="text-sm text-zinc-400 list-disc pl-5 space-y-1">
-            <li>Your share-link with a one-click copy.</li>
-            <li>Live earnings: total volume generated, lifetime earned, and
-                currently claimable balance.</li>
-            <li>A trade-by-trade log of fees you've earned on.</li>
-            <li>Claim history for every withdrawal of your earnings.</li>
-          </ul>
-          <p className="text-sm text-zinc-500">
-            Connect your wallet from the navbar to issue a key — the wallet
-            challenge / signature flow is the same one used elsewhere on the
-            app.
-          </p>
-        </CardContent>
-      </Card>
+      <ReferralDashboardOrSignIn signInSlot={<ReferralSignIn />} />
 
       <Card>
         <CardContent className="p-6 space-y-2">

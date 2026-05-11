@@ -64,19 +64,19 @@ export function DepositWithdrawModal({ open, onClose, vaultId, vaultName, onSucc
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={`${mode === 'deposit' ? 'Deposit to' : 'Withdraw from'} ${vaultName}`}>
+    <Modal isOpen={open} onClose={onClose} title={`${mode === 'deposit' ? 'Deposit to' : 'Withdraw from'} ${vaultName}`}>
       <div className="space-y-4 p-4">
         <div className="flex gap-2">
           <Button
             size="sm"
-            variant={mode === 'deposit' ? 'default' : 'ghost'}
+            variant={mode === 'deposit' ? 'primary' : 'ghost'}
             onClick={() => setMode('deposit')}
           >
             Deposit
           </Button>
           <Button
             size="sm"
-            variant={mode === 'withdraw' ? 'default' : 'ghost'}
+            variant={mode === 'withdraw' ? 'primary' : 'ghost'}
             onClick={() => setMode('withdraw')}
           >
             Withdraw
