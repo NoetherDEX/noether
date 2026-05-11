@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "AlreadyInitialized")]
+    #[should_panic(expected = "Error(Contract, #2)")]
     fn test_double_initialize() {
         let (env, admin, client) = setup_env();
 
@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InvalidPrice")]
+    #[should_panic(expected = "Error(Contract, #31)")]
     fn test_get_nonexistent_price() {
         let (env, admin, client) = setup_env();
         client.initialize(&admin);
@@ -370,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "InvalidPrice")]
+    #[should_panic(expected = "Error(Contract, #31)")]
     fn test_invalid_price() {
         let (env, admin, client) = setup_env();
         client.initialize(&admin);
