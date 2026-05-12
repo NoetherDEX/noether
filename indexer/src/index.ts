@@ -82,6 +82,9 @@ async function main(): Promise<void> {
     router,
     log,
     contractIds,
+    marketContract: market,
+    vaultFactoryContract: vaultFactory,
+    referralContract: referral,
     pollIntervalMs: config.pollIntervalMs,
     coldStartLedgers: config.coldStartLedgers,
   });

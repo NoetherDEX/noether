@@ -12,6 +12,8 @@ import type { rpc as RpcNs } from '@stellar/stellar-sdk';
 import type { IndexerBus } from './bus.js';
 import type { EventRouter, HandlerContext } from './router.js';
 import { decodeMarketEvent, type RawEvent } from './decoders/market.js';
+import { decodeVaultEvent } from './decoders/vault.js';
+import { decodeReferralEvent } from './decoders/referral.js';
 import { fetchEvents, getLatestLedger } from './rpc.js';
 import { readCursor, writeCursor } from './cursor.js';
 
@@ -22,6 +24,10 @@ export interface PollDeps {
   router: EventRouter;
   log: Logger;
   contractIds: string[];
+  /** Per-contract decoder dispatch. Falls back to the market decoder. */
+  marketContract: string;
+  vaultFactoryContract?: string;
+  referralContract?: string;
   pollIntervalMs: number;
   coldStartLedgers: number;
 }
@@ -81,12 +87,20 @@ export class IndexerPoller {
     let highestLedger = cursor?.lastLedger ?? 0;
 
     for (const raw of response.events) {
-      const decoded = decodeMarketEvent(raw as unknown as RawEvent);
+      const contractId = raw.contractId?.toString() ?? '';
+      let decoded: ReturnType<typeof decodeMarketEvent> | null = null;
+      if (contractId === this.deps.vaultFactoryContract) {
+        decoded = decodeVaultEvent(raw as unknown as RawEvent) as any;
+      } else if (contractId === this.deps.referralContract) {
+        decoded = decodeReferralEvent(raw as unknown as RawEvent) as any;
+      } else {
+        decoded = decodeMarketEvent(raw as unknown as RawEvent);
+      }
       if (!decoded) {
         this.deps.log.debug({ id: raw.id, topics: raw.topic.length }, 'Unrecognised event topic — skipped');
         continue;
       }
-      await this.deps.router.dispatch(decoded, ctx);
+      await this.deps.router.dispatch(decoded as any, ctx);
       processed++;
       highestLedger = Math.max(highestLedger, decoded.ledger);
     }

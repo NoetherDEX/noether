@@ -71,14 +71,21 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
   }
 }
 
+// Market contract emits these tuples (see contracts/market/src/lib.rs):
+//   position_opened     : (id, trader, asset, direction, size, entry_price)
+//   position_closed     : (id, trader, asset, direction, size, entry_price, current_price, pnl)
+//   position_liquidated : (id, trader, asset, direction, size, keeper_reward, current_price)
+// The asset/direction fields are intentionally skipped here — they're
+// useful for analytics but not load-bearing for the event projection.
+
 function decodePositionOpened(raw: RawEvent, v: unknown[]): PositionOpenedEvent {
   return {
     ...envelope(raw, 'position_opened'),
     topic: 'position_opened',
     positionId: asNumber(v[0], 'position_opened.position_id'),
     trader: asString(v[1], 'position_opened.trader'),
-    size: asBigInt(v[2], 'position_opened.size'),
-    entryPrice: asBigInt(v[3], 'position_opened.entry_price'),
+    size: asBigInt(v[4], 'position_opened.size'),
+    entryPrice: asBigInt(v[5], 'position_opened.entry_price'),
   };
 }
 
@@ -88,8 +95,8 @@ function decodePositionClosed(raw: RawEvent, v: unknown[]): PositionClosedEvent 
     topic: 'position_closed',
     positionId: asNumber(v[0], 'position_closed.position_id'),
     trader: asString(v[1], 'position_closed.trader'),
-    pnl: asBigInt(v[2], 'position_closed.pnl'),
-    closePrice: asBigInt(v[3], 'position_closed.close_price'),
+    pnl: asBigInt(v[7], 'position_closed.pnl'),
+    closePrice: asBigInt(v[6], 'position_closed.close_price'),
   };
 }
 
@@ -99,8 +106,8 @@ function decodePositionLiquidated(raw: RawEvent, v: unknown[]): PositionLiquidat
     topic: 'position_liquidated',
     positionId: asNumber(v[0], 'position_liquidated.position_id'),
     trader: asString(v[1], 'position_liquidated.trader'),
-    keeperReward: asBigInt(v[2], 'position_liquidated.keeper_reward'),
-    closePrice: asBigInt(v[3], 'position_liquidated.close_price'),
+    keeperReward: asBigInt(v[5], 'position_liquidated.keeper_reward'),
+    closePrice: asBigInt(v[6], 'position_liquidated.close_price'),
   };
 }
 
