@@ -177,6 +177,21 @@ export async function signWithWallet(
     try { (mod as any).modal.close(); } catch {}
   }
 
+  // Freighter (and any extension wallet that gates signing on a per-site
+  // allowlist) needs an explicit `requestAccess` before the first sign,
+  // otherwise the Confirm button stays greyed out with a "not connected"
+  // banner. `restoreWalletSession` deliberately skips this on page load
+  // to avoid an unsolicited popup, so we do it lazily right before signing.
+  if (mod && typeof (mod as any).getAddress === 'function') {
+    try {
+      await (mod as any).getAddress({ skipRequestAccess: false });
+    } catch (err) {
+      // The user may have denied access — fall through and let signTransaction
+      // produce the canonical error, but log so the cause is obvious.
+      console.warn('[WalletKit] requestAccess failed before signing:', err);
+    }
+  }
+
   console.log('[WalletKit] Signing transaction...');
   try {
     const { signedTxXdr } = await kit.signTransaction(xdr, opts);
