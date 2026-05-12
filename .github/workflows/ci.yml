@@ -87,7 +87,7 @@ jobs:
         run: npm ci
 
       - name: Build internal packages (for downstream tests)
-        run: npm run build:types && npm run build:shared
+        run: npm run build:packages
 
       - name: Run tests across all workspaces
         run: npm run test
