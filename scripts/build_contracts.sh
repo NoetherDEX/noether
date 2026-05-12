@@ -77,6 +77,8 @@ CONTRACTS=(
     "oracle_adapter"
     "vault"
     "market"
+    "vault_factory"
+    "referral"
 )
 
 # Optimize each contract
