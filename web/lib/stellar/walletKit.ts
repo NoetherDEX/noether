@@ -182,20 +182,39 @@ export async function signWithWallet(
   // otherwise the Confirm button stays greyed out with a "not connected"
   // banner. `restoreWalletSession` deliberately skips this on page load
   // to avoid an unsolicited popup, so we do it lazily right before signing.
+  // We ALSO use the returned address as the source of truth: if the
+  // active wallet account differs from what the dApp thinks, surface a
+  // clear error instead of producing a txBadAuth on submission.
   if (mod && typeof (mod as any).getAddress === 'function') {
     try {
-      await (mod as any).getAddress({ skipRequestAccess: false });
+      const { address: activeAddr } = await (mod as any).getAddress({ skipRequestAccess: false });
+      console.log('[WalletKit] active wallet address:', activeAddr, '| expected:', opts.address);
+      if (activeAddr && activeAddr !== opts.address) {
+        throw new Error(
+          `Wallet account changed. The app expected ${opts.address.slice(0, 8)}…${opts.address.slice(-4)} ` +
+          `but the wallet is now signing with ${activeAddr.slice(0, 8)}…${activeAddr.slice(-4)}. ` +
+          `Reconnect the wallet from the navbar to refresh the session.`,
+        );
+      }
     } catch (err) {
-      // The user may have denied access — fall through and let signTransaction
-      // produce the canonical error, but log so the cause is obvious.
+      // Re-throw the address-mismatch error explicitly; swallow the
+      // canonical requestAccess refusal (user can retry).
+      if (err instanceof Error && err.message.startsWith('Wallet account changed')) throw err;
       console.warn('[WalletKit] requestAccess failed before signing:', err);
     }
   }
 
-  console.log('[WalletKit] Signing transaction...');
+  console.log('[WalletKit] Signing transaction... source =', opts.address);
   try {
-    const { signedTxXdr } = await kit.signTransaction(xdr, opts);
-    console.log('[WalletKit] Transaction signed successfully');
+    const { signedTxXdr, signerAddress } = await kit.signTransaction(xdr, opts);
+    console.log('[WalletKit] Transaction signed. signerAddress =', signerAddress);
+    if (signerAddress && signerAddress !== opts.address) {
+      throw new Error(
+        `Wallet signed with a different account than the transaction source. ` +
+        `Source: ${opts.address.slice(0, 8)}…, signer: ${signerAddress.slice(0, 8)}…. ` +
+        `This would fail on-chain with txBadAuth — reconnect the wallet to align accounts.`,
+      );
+    }
     return signedTxXdr;
   } catch (err) {
     console.error('[WalletKit] Signing failed:', err);
