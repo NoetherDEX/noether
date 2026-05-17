@@ -1,34 +1,88 @@
 'use client';
 
-import { Card, CardContent } from '@/components/ui';
 import type { ReferrerRow } from '@/types/referral';
 import { fmtReferralUsdc } from '@/types/referral';
 
+interface Stat {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: 'success' | 'muted' | 'neutral';
+}
+
 export function ReferralStats({ row }: { row: ReferrerRow }) {
-  const stats: Array<{ label: string; value: string; tone?: 'success' | 'muted' }> = [
-    { label: 'Code', value: row.code },
-    { label: 'Referees', value: String(row.referredCount) },
-    { label: 'Volume Generated', value: `$${fmtReferralUsdc(row.totalVolumeGenerated)}` },
-    { label: 'Total Earned', value: `$${fmtReferralUsdc(row.totalEarned)}`, tone: 'muted' },
-    { label: 'Claimable Now', value: `$${fmtReferralUsdc(row.claimable)}`, tone: 'success' },
+  const primary: Stat[] = [
+    {
+      label: 'Total Earned',
+      value: `$${fmtReferralUsdc(row.totalEarned)}`,
+      hint: 'Lifetime payouts credited to your code',
+    },
+    {
+      label: 'Claimable Now',
+      value: `$${fmtReferralUsdc(row.claimable)}`,
+      hint: 'Pending USDC, ready to claim',
+      tone: BigInt(row.claimable || '0') > 0n ? 'success' : 'neutral',
+    },
+    {
+      label: 'Volume Generated',
+      value: `$${fmtReferralUsdc(row.totalVolumeGenerated)}`,
+      hint: 'Cumulative referee trading volume',
+    },
+  ];
+
+  const secondary: Stat[] = [
+    {
+      label: 'Your Code',
+      value: row.code,
+    },
+    {
+      label: 'Referees',
+      value: String(row.referredCount),
+      hint: 'Wallets bound to your code',
+    },
+    {
+      label: 'Registered',
+      value: new Date(row.createdAt * 1000).toLocaleDateString(),
+    },
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-      {stats.map((s) => (
-        <Card key={s.label}>
-          <CardContent className="p-4">
-            <p className="text-[10px] uppercase tracking-wider text-zinc-500">{s.label}</p>
-            <p
-              className={`text-lg font-semibold tabular-nums mt-1 ${
-                s.tone === 'success' ? 'text-emerald-400' : ''
-              } ${s.tone === 'muted' ? 'text-zinc-400' : ''}`}
-            >
-              {s.value}
-            </p>
-          </CardContent>
-        </Card>
-      ))}
+    <div className="space-y-4 md:space-y-6">
+      <StatRow stats={primary} mono />
+      <StatRow stats={secondary} />
+    </div>
+  );
+}
+
+function StatRow({ stats, mono = false }: { stats: Stat[]; mono?: boolean }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 items-stretch gap-4 md:gap-6">
+      {stats.map((s) => {
+        const valueColor =
+          s.tone === 'success'
+            ? 'text-[#22c55e]'
+            : s.tone === 'muted'
+            ? 'text-muted-foreground'
+            : 'text-foreground';
+        return (
+          <div
+            key={s.label}
+            className="rounded-2xl border border-white/10 bg-card p-4 md:p-6"
+          >
+            <span className="text-xs md:text-sm text-muted-foreground">{s.label}</span>
+            <div className="mt-2">
+              <span
+                className={`text-xl md:text-3xl font-bold ${mono ? 'font-mono' : ''} ${valueColor}`}
+              >
+                {s.value}
+              </span>
+            </div>
+            {s.hint && (
+              <p className="mt-2 text-xs text-muted-foreground hidden md:block">{s.hint}</p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

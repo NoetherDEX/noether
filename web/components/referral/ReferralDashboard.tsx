@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Card, CardContent } from '@/components/ui';
+import { useCallback, useEffect, useState } from 'react';
 import { ReferralStats } from './ReferralStats';
 import { ShareLinkCard } from './ShareLinkCard';
 import { ReferralTradesTable, ReferralClaimsTable } from './ReferralActivity';
+import { CreateCodeCard } from './CreateCodeCard';
+import { ClaimFeesCard } from './ClaimFeesCard';
 import { useSessionAuthStore } from '@/lib/store';
 import {
   getReferralMe,
@@ -40,13 +41,16 @@ export function ReferralDashboard() {
   const auth = useSessionAuthStore();
   const clearAuth = useSessionAuthStore((s) => s.clearAuth);
   const [state, setState] = useState<DashboardState>(INITIAL);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   useEffect(() => {
     if (!auth.keyId || !auth.secret) return;
     const creds = { keyId: auth.keyId, secret: auth.secret };
 
     let cancelled = false;
-    setState(INITIAL);
+    setState((prev) => ({ ...prev, loading: true, error: null }));
 
     (async () => {
       try {
@@ -82,74 +86,71 @@ export function ReferralDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [auth.keyId, auth.secret]);
+  }, [auth.keyId, auth.secret, refreshKey]);
 
-  if (state.loading) {
+  if (state.loading && !state.self) {
     return (
-      <Card>
-        <CardContent className="p-6 text-sm text-zinc-400">Loading dashboard…</CardContent>
-      </Card>
+      <div className="rounded-2xl border border-white/10 bg-card p-8 text-center text-sm text-muted-foreground">
+        Loading dashboard…
+      </div>
     );
   }
 
   if (state.error) {
     return (
-      <Card className="border-red-500/30">
-        <CardContent className="p-6 text-sm space-y-3">
-          <p className="text-red-400">Could not load dashboard: {state.error}</p>
-          <button
-            type="button"
-            onClick={clearAuth}
-            className="text-xs underline text-zinc-400 hover:text-zinc-200"
-          >
-            Sign out and retry
-          </button>
-        </CardContent>
-      </Card>
+      <div className="rounded-2xl border border-red-500/30 bg-card p-6 space-y-3">
+        <p className="text-sm text-red-400">Could not load dashboard: {state.error}</p>
+        <button
+          type="button"
+          onClick={clearAuth}
+          className="text-xs underline text-muted-foreground hover:text-foreground"
+        >
+          Sign out and retry
+        </button>
+      </div>
     );
   }
 
   if (!state.self) {
     return (
-      <Card>
-        <CardContent className="p-6 text-sm space-y-3">
-          <h3 className="font-medium">No code registered yet</h3>
-          <p className="text-zinc-400">
-            You're signed in but haven't registered a referral code. Once your
-            14-day trading volume crosses the threshold, you can call
-            {' '}
-            <code className="text-xs">register_code</code> on the referral
-            contract through the SDK or your wallet. Your dashboard appears here
-            as soon as the code lands on-chain.
-          </p>
-          {state.binding && (
-            <p className="text-xs text-zinc-500">
-              You were referred by code <code className="text-zinc-300">{state.binding.code}</code>.
-            </p>
-          )}
+      <div className="space-y-6">
+        <CreateCodeCard onCreated={refresh} />
+
+        {state.binding && (
+          <div className="rounded-2xl border border-white/10 bg-card p-5 text-xs text-muted-foreground">
+            You were referred by code{' '}
+            <code className="text-foreground font-mono">{state.binding.code}</code>{' '}
+            on {new Date(state.binding.boundAt * 1000).toLocaleDateString()}.
+          </div>
+        )}
+
+        <div className="text-right">
           <button
             type="button"
             onClick={clearAuth}
-            className="text-xs underline text-zinc-400 hover:text-zinc-200"
+            className="text-xs underline text-muted-foreground hover:text-foreground"
           >
             Sign out
           </button>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6 md:space-y-8">
       <ReferralStats row={state.self} />
+      <ClaimFeesCard claimable={state.self.claimable} onClaimed={refresh} />
       <ShareLinkCard code={state.self.code} />
-      <ReferralTradesTable rows={state.trades} />
-      <ReferralClaimsTable rows={state.claims} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+        <ReferralTradesTable rows={state.trades} />
+        <ReferralClaimsTable rows={state.claims} />
+      </div>
       <div className="text-right">
         <button
           type="button"
           onClick={clearAuth}
-          className="text-xs underline text-zinc-500 hover:text-zinc-300"
+          className="text-xs underline text-muted-foreground hover:text-foreground"
         >
           Sign out
         </button>
