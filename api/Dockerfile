@@ -5,6 +5,11 @@
 FROM node:20-alpine AS builder
 WORKDIR /repo
 
+# Skip husky in CI/container builds — .git is excluded by .dockerignore
+# so the `prepare: husky` script blows up otherwise.
+ENV HUSKY=0
+ENV CI=true
+
 # Copy lockfiles + workspace manifests first for better cache reuse.
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY api/package.json ./api/
@@ -32,6 +37,8 @@ RUN npm run build -w @noether/api
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+ENV HUSKY=0
+ENV CI=true
 
 # Re-install with production-only deps for the api workspace.
 COPY package.json package-lock.json ./
