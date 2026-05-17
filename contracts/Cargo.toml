@@ -5,6 +5,8 @@ members = [
     "mock_oracle",
     "oracle_adapter",
     "vault",
+    "vault_factory",
+    "referral",
     "market",
 ]
 

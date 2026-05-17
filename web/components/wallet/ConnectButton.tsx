@@ -8,6 +8,7 @@ import { useWalletContext } from './WalletProvider';
 import { WalletModal } from './WalletModal';
 import { truncateAddress, formatNumber } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
+import { useSessionAuthStore } from '@/lib/store';
 
 export function ConnectButton() {
   const { isReady, refreshBalance } = useWalletContext();
@@ -34,13 +35,17 @@ export function ConnectButton() {
     }
   };
 
+  const clearSessionAuth = useSessionAuthStore((s) => s.clearAuth);
+
   const handleDisconnect = () => {
     disconnect();
+    clearSessionAuth();
     setIsDropdownOpen(false);
   };
 
   const handleRefreshWallet = async () => {
     await disconnect();
+    clearSessionAuth();
     setIsDropdownOpen(false);
     setIsModalOpen(true);
   };

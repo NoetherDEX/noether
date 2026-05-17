@@ -1,0 +1,34 @@
+{
+  "name": "noether-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Noether monorepo root. Tranche 2 packages live under api/, indexer/, sdk-ts/, sdk-py/, packages/*. Existing web/ and scripts/keeper/ remain standalone.",
+  "workspaces": [
+    "api",
+    "indexer",
+    "sdk-ts",
+    "packages/*"
+  ],
+  "scripts": {
+    "prepare": "husky",
+    "build:types": "npm run build -w @noether/types",
+    "build:shared": "npm run build -w @noether/shared",
+    "build:tx-builders": "npm run build -w @noether/tx-builders",
+    "build:packages": "npm run build:types && npm run build:shared && npm run build:tx-builders",
+    "build": "npm run build:packages && npm run build --workspaces --if-present",
+    "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present",
+    "commitlint": "commitlint --edit"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "husky": "^9.1.6",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

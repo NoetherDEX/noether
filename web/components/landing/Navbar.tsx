@@ -6,10 +6,10 @@ import { NoetherLogo } from './NoetherLogo';
 
 const NAV_LINKS = [
   { href: '/trade', label: 'Trade' },
-  { href: '/vault', label: 'Vault' },
-  { href: '/portfolio', label: 'Portfolio' },
+  { href: '/vaults', label: 'Vaults' },
+  { href: '/referrals', label: 'Referrals' },
   { href: '/leaderboard', label: 'Leaderboard' },
-  { href: '/faucet', label: 'Faucet' },
+  { href: '/api-keys', label: 'API' },
 ];
 
 export function Navbar() {

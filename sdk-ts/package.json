@@ -1,0 +1,61 @@
+{
+  "name": "noether-sdk",
+  "version": "0.1.0",
+  "description": "Official TypeScript SDK for the Noether decentralized perpetual exchange on Stellar / Soroban.",
+  "license": "MIT",
+  "author": "Noether Team",
+  "homepage": "https://noether.exchange",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NoetherDEX/noether.git",
+    "directory": "sdk-ts"
+  },
+  "bugs": {
+    "url": "https://github.com/NoetherDEX/noether/issues"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "noether",
+    "perp-dex",
+    "trading",
+    "sdk"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@stellar/stellar-sdk": "^14.4.3",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

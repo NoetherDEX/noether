@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "noether-sdk"
+version = "0.1.0"
+description = "Official Python SDK for the Noether decentralized perpetual exchange on Stellar / Soroban."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Noether Team" }]
+keywords = ["stellar", "soroban", "noether", "perp-dex", "trading"]
+dependencies = [
+    "httpx>=0.27.0",
+    "pydantic>=2.5.0",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+stellar = ["stellar-sdk>=12.0.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.5",
+]
+
+[project.urls]
+Homepage = "https://noether.exchange"
+Repository = "https://github.com/NoetherDEX/noether"
+
+[tool.hatch.build.targets.wheel]
+packages = ["noether_sdk"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

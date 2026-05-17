@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+#
+# Block direct commits to protected branches.
+# Override: ALLOW_PROTECTED_COMMIT=1 git commit ...
+# See docs/GIT_WORKFLOW.md.
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+case "$branch" in
+  main|develop)
+    if [ -z "$ALLOW_PROTECTED_COMMIT" ]; then
+      echo ""
+      echo "✗ Direct commits to '$branch' are blocked."
+      echo ""
+      echo "  Create a feature branch instead:"
+      echo "    git checkout -b feature/t2-pN-<slug>"
+      echo ""
+      echo "  See docs/GIT_WORKFLOW.md for branch naming."
+      echo ""
+      echo "  To override (discouraged):"
+      echo "    ALLOW_PROTECTED_COMMIT=1 git commit ..."
+      echo ""
+      exit 1
+    fi
+    echo "⚠  Override active — committing directly to '$branch'."
+    ;;
+esac

@@ -1,0 +1,32 @@
+{
+  "name": "@noether/indexer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Soroban event indexer. Polls getEvents, decodes contract events, persists to libsql, emits to in-process bus for the API/WS gateway.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "migrate": "tsx src/migrations.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.0",
+    "@noether/shared": "*",
+    "@noether/types": "*",
+    "@stellar/stellar-sdk": "^14.4.3",
+    "dotenv": "^16.4.5",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.0"
+  }
+}

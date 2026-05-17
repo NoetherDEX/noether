@@ -1,0 +1,31 @@
+{
+  "name": "@noether/tx-builders",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Soroban transaction builders for the Noether market contract. Used by api/, sdk-ts/, and (eventually) the web app to compose contract calls without duplicating logic.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./market": {
+      "types": "./dist/market/index.d.ts",
+      "import": "./dist/market/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@noether/types": "*",
+    "@stellar/stellar-sdk": "^14.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

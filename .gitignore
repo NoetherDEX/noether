@@ -28,6 +28,13 @@ Thumbs.db
 *.wasm.hash
 *.tsbuildinfo
 
+# Indexer local data
+indexer/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Environment
 .env
 # Keep .env.example as a template
@@ -63,8 +70,12 @@ frontend/public/contracts.json
 # Temporary files
 *.tmp
 *.temp
+*.bak
 .cache/
 **/.leaderboard-cache.json
+# Local scratch exports (chat transcripts, debug dumps)
+/noetheryx.txt
+*chat-export*.txt
 
 # Whitepaper / docs (LaTeX sources)
 whitepaper/

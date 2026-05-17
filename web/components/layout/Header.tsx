@@ -10,8 +10,10 @@ import { cn } from '@/lib/utils/cn';
 const navItems = [
   { href: '/trade', label: 'Trade' },
   { href: '/portfolio', label: 'Portfolio' },
-  { href: '/vault', label: 'Vault' },
+  { href: '/vaults', label: 'Vaults' },
+  { href: '/referrals', label: 'Referrals' },
   { href: '/leaderboard', label: 'Leaderboard' },
+  { href: '/api-keys', label: 'API Keys' },
   { href: '/faucet', label: 'Faucet' },
 ];
 
