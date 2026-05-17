@@ -1,0 +1,31 @@
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/target
+**/test_snapshots
+**/.venv
+
+# Local data + secrets
+.env
+.env.local
+**/.env.local
+**/data
+*.db
+*.db-journal
+
+# IDE / OS
+.DS_Store
+.git
+.vscode
+.idea
+
+# Heavy dirs we don't need in the build context
+web/
+sdk-py/
+scripts/
+docs/
+whitepaper/
+test_snapshots
+contracts/target
