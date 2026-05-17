@@ -1,27 +1,14 @@
-# Build stage — same monorepo install pattern as api/Dockerfile, but
-# compiles the indexer worker.
+# Build stage — same pattern as api/Dockerfile, but for the indexer.
 FROM node:20-alpine AS builder
 WORKDIR /repo
 
-# Skip husky — .git is excluded by .dockerignore.
 ENV HUSKY=0
 ENV CI=true
 
-COPY package.json package-lock.json tsconfig.base.json ./
-COPY api/package.json ./api/
-COPY indexer/package.json ./indexer/
-COPY sdk-ts/package.json ./sdk-ts/
-COPY packages/types/package.json ./packages/types/
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/tx-builders/package.json ./packages/tx-builders/
+# Copy the whole monorepo (kept small via .dockerignore).
+COPY . .
 
-RUN npm ci --workspaces --include-workspace-root
-
-COPY packages ./packages
-COPY api ./api
-COPY indexer ./indexer
-COPY sdk-ts ./sdk-ts
-
+RUN npm ci --ignore-scripts
 RUN npm run build:packages
 RUN npm run build -w @noether/indexer
 
@@ -33,10 +20,13 @@ ENV HUSKY=0
 ENV CI=true
 
 COPY package.json package-lock.json ./
+COPY api/package.json ./api/
 COPY indexer/package.json ./indexer/
+COPY sdk-ts/package.json ./sdk-ts/
 COPY packages/types/package.json ./packages/types/
 COPY packages/shared/package.json ./packages/shared/
-RUN npm ci --omit=dev --workspaces --include-workspace-root --workspace=@noether/indexer
+COPY packages/tx-builders/package.json ./packages/tx-builders/
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=builder /repo/packages/types/dist  ./packages/types/dist
 COPY --from=builder /repo/packages/shared/dist ./packages/shared/dist
