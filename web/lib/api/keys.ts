@@ -71,6 +71,18 @@ export async function requestChallenge(address: string): Promise<IssuedChallenge
   return postJson<IssuedChallenge>('/v1/keys/challenge', { address });
 }
 
+export interface BetaStatus {
+  /** Whether key issuance is currently locked to an allowlist. */
+  gated: boolean;
+  /** Whether the queried address (if any) is on the allowlist. */
+  allowed: boolean;
+}
+
+export async function getBetaStatus(address?: string): Promise<BetaStatus> {
+  const qs = address ? `?address=${encodeURIComponent(address)}` : '';
+  return getJson<BetaStatus>(`/v1/keys/beta-status${qs}`);
+}
+
 export async function exchangeChallenge(input: {
   address: string;
   challenge: string;
