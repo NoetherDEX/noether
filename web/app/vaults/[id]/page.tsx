@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Badge, Card, CardContent } from '@/components/ui';
+import { Badge } from '@/components/ui';
+import { Header } from '@/components/layout';
 import { VaultMetrics } from '@/components/vault/VaultMetrics';
 import { VaultActivity } from '@/components/vault/VaultActivity';
 import { VaultActions } from '@/components/vault/VaultActions';
@@ -33,77 +34,107 @@ export default async function VaultDetailPage({
   ]);
 
   return (
-    <main className="container mx-auto px-4 py-8 max-w-6xl space-y-6">
-      <div>
-        <Link href="/vaults" className="text-sm text-zinc-400 hover:text-zinc-200">
-          ← All vaults
-        </Link>
-      </div>
+    <div className="min-h-screen bg-[#0a0a0a]">
+      <Header />
 
-      <header className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-3xl font-bold">{vault.name}</h1>
-          <p className="text-sm text-zinc-500 mt-1 font-mono break-all">
-            Leader:{' '}
-            <a
-              href={`https://stellar.expert/explorer/testnet/account/${vault.leader}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-amber-400 transition-colors"
-              title="View leader on stellar.expert"
+      <main className="pt-16 pb-20">
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
+          {/* Breadcrumb */}
+          <div>
+            <Link
+              href="/vaults"
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
-              {vault.leader}
-            </a>
-          </p>
-          <p className="text-xs text-zinc-500 mt-1">
-            Created {new Date(vault.createdAt * 1000).toLocaleString()} · ID #{vault.id}
-          </p>
+              ← All vaults
+            </Link>
+          </div>
+
+          {/* Header card */}
+          <div className="rounded-2xl border border-white/10 bg-card p-6 md:p-8">
+            <div className="flex items-start justify-between gap-6 flex-wrap">
+              <div className="flex-1 min-w-[260px]">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-[10px] md:text-xs uppercase tracking-[0.18em] text-amber-400 font-medium">
+                    Leader Vault · #{vault.id}
+                  </span>
+                  {vault.paused && <Badge variant="warning">Paused</Badge>}
+                </div>
+                <h1 className="mt-3 text-3xl md:text-4xl font-bold">{vault.name}</h1>
+
+                <a
+                  href={`https://stellar.expert/explorer/testnet/account/${vault.leader}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-flex items-center gap-2 text-xs md:text-sm text-muted-foreground hover:text-amber-400 transition-colors group"
+                  title="View leader on stellar.expert"
+                >
+                  <span>Leader</span>
+                  <span className="font-mono">
+                    {vault.leader.slice(0, 6)}…{vault.leader.slice(-6)}
+                  </span>
+                  <span aria-hidden className="opacity-0 group-hover:opacity-100 transition-opacity">
+                    ↗
+                  </span>
+                </a>
+                <p className="mt-1 text-xs text-muted-foreground/70">
+                  Created {new Date(vault.createdAt * 1000).toLocaleDateString()}
+                </p>
+              </div>
+
+              <VaultActions vault={vault} />
+            </div>
+          </div>
+
+          {/* Stat rows */}
+          <VaultMetrics vault={vault} />
+
+          {/* User position */}
+          <MyVaultPosition vault={vault} deposits={deposits} withdraws={withdraws} />
+
+          {/* Activity */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+            <VaultActivity
+              title="Deposits"
+              rows={deposits}
+              amountLabel="USDC In"
+              showShares
+            />
+            <VaultActivity
+              title="Withdraws"
+              rows={withdraws}
+              amountLabel="USDC Out"
+              showShares
+            />
+          </div>
+
+          <VaultActivity
+            title="Leader Fee Claims"
+            rows={feeClaims}
+            amountLabel="USDC Paid"
+            empty="The leader has not claimed any profit share yet."
+          />
+
+          {/* How it works (compact) */}
+          <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
+            <div className="px-6 py-4 border-b border-white/10">
+              <h3 className="text-base font-semibold text-foreground">How this vault works</h3>
+            </div>
+            <div className="p-6 text-sm text-muted-foreground space-y-3 leading-relaxed">
+              <p>
+                Depositors send USDC and receive shares proportional to current
+                NAV. The leader trades the pooled capital through the Noether
+                market and takes <span className="text-foreground font-medium">{(vault.profitShareBps / 100).toFixed(1)}%</span> of
+                any gain above the high-water mark.
+              </p>
+              <p>
+                The leader is required to hold <span className="text-foreground font-medium">≥ 5% of the vault</span> at
+                all times — withdrawals or inflows that would break this
+                invariant are rejected on-chain.
+              </p>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {vault.paused && <Badge variant="warning">Paused</Badge>}
-          <VaultActions vaultId={vault.id} vaultName={vault.name} paused={vault.paused} />
-        </div>
-      </header>
-
-      <VaultMetrics vault={vault} />
-
-      <MyVaultPosition vault={vault} deposits={deposits} withdraws={withdraws} />
-
-      <Card>
-        <CardContent className="p-5 text-sm space-y-2">
-          <h3 className="font-medium">How this vault works</h3>
-          <p className="text-zinc-400">
-            Depositors send USDC and receive shares proportional to current NAV.
-            The leader trades the pooled capital through the Noether market and
-            takes a {(vault.profitShareBps / 100).toFixed(1)}% share of any
-            gain above the high-water mark. Leaders are required to hold at
-            least 5% of the vault themselves at all times — withdrawals or
-            inflows that would break this invariant are rejected on-chain.
-          </p>
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <VaultActivity
-          title="Deposits"
-          rows={deposits}
-          amountLabel="USDC In"
-          showShares
-        />
-        <VaultActivity
-          title="Withdraws"
-          rows={withdraws}
-          amountLabel="USDC Out"
-          showShares
-        />
-      </div>
-
-      <VaultActivity
-        title="Leader Fee Claims"
-        rows={feeClaims}
-        amountLabel="USDC Paid"
-        empty="The leader has not claimed any profit share yet."
-      />
-    </main>
+      </main>
+    </div>
   );
 }

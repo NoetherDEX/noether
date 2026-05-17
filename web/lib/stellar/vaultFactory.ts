@@ -6,10 +6,10 @@
  * state instead of misrouting transactions.
  */
 
-import { Contract } from '@stellar/stellar-sdk';
-import { buildTransaction, submitTransaction, toScVal } from './client';
+import { Address, Contract, TransactionBuilder, BASE_FEE, rpc, scValToNative } from '@stellar/stellar-sdk';
+import { buildTransaction, submitTransaction, sorobanRpc, toScVal } from './client';
 import { signWithWallet, WALLETCONNECT_ID } from './walletKit';
-import { NETWORK } from '@/lib/utils/constants';
+import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
 function getVaultFactoryAddress(): string {
   const addr = process.env.NEXT_PUBLIC_VAULT_FACTORY_ID;
@@ -138,3 +138,40 @@ export const VAULT_FACTORY_CONFIGURED = (): boolean =>
   Boolean(process.env.NEXT_PUBLIC_VAULT_FACTORY_ID);
 
 void WALLETCONNECT_ID;
+
+// ─── Read-only simulations ──────────────────────────────────────────────
+
+async function simulateView(contract: Contract, source: string, method: string, args: any[]): Promise<unknown> {
+  const account = await sorobanRpc.getAccount(source);
+  const op = contract.call(method, ...args);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK.PASSPHRASE,
+  })
+    .addOperation(op)
+    .setTimeout(60)
+    .build();
+  const sim = await sorobanRpc.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
+  if (!sim.result?.retval) return null;
+  return scValToNative(sim.result.retval);
+}
+
+/** Read the depositor's share balance for a vault (returns precision-scaled bigint as string). */
+export async function getUserVaultShares(source: string, vaultId: number, depositor: string): Promise<bigint> {
+  const factory = vaultFactoryContract();
+  const result = await simulateView(factory, source, 'shares_of', [
+    toScVal(vaultId, 'u32'),
+    toScVal(depositor, 'address'),
+  ]);
+  return typeof result === 'bigint' ? result : BigInt(result as number | string | 0);
+}
+
+/** Read the depositor's USDC balance via the SAC. */
+export async function getWalletUsdcBalance(source: string): Promise<bigint> {
+  const usdc = new Contract(CONTRACTS.USDC_TOKEN);
+  const result = await simulateView(usdc, source, 'balance', [
+    new Address(source).toScVal(),
+  ]);
+  return typeof result === 'bigint' ? result : BigInt(result as number | string | 0);
+}
