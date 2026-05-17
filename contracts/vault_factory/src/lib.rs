@@ -232,6 +232,28 @@ impl VaultFactoryContract {
     }
 
     // ───────────────────────────────────────────────────────────────────
+    // Public view fns — let the web frontend read marketplace state
+    // straight from the chain so the API gateway becomes optional for
+    // the listing flow. The indexer + REST API still serve activity
+    // history, but the vault grid never depends on them.
+    // ───────────────────────────────────────────────────────────────────
+
+    /// Total number of vaults ever created. Vault ids are dense from 0
+    /// to `vault_count() - 1`.
+    pub fn vault_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get::<types::StorageKey, u32>(&types::StorageKey::NextVaultId)
+            .unwrap_or(0)
+    }
+
+    /// Fetch the full VaultInfo struct for a given id. Errors with
+    /// `VaultNotFound` if the id has never been minted.
+    pub fn view_vault(env: Env, vault_id: u32) -> Result<VaultInfo, FactoryError> {
+        storage::load_vault(&env, vault_id)
+    }
+
+    // ───────────────────────────────────────────────────────────────────
     // Leader trading proxies — call market contract on behalf of the
     // vault. The vault's USDC backs the trade; the leader signs.
     // ───────────────────────────────────────────────────────────────────

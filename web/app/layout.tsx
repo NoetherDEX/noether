@@ -38,6 +38,7 @@ export const metadata: Metadata = {
 
 import { Providers } from './providers'
 import { FeedbackButton } from '@/components/feedback/FeedbackButton'
+import { ReferralBanner } from '@/components/referral/ReferralBanner'
 
 export default function RootLayout({
   children,
@@ -48,6 +49,7 @@ export default function RootLayout({
     <html lang="en" className="dark scroll-smooth">
       <body className={`${inter.variable} ${sora.variable} ${jetbrainsMono.variable} font-sans antialiased bg-background text-foreground`}>
         <Providers>
+          <ReferralBanner />
           {children}
         </Providers>
         <FeedbackButton />

@@ -2,6 +2,25 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ApiKeyStore } from '../services/apiKeys.js';
 import type { WalletAuth } from '../services/walletAuth.js';
 
+/**
+ * Closed-beta allowlist. Returns the set of approved Stellar addresses
+ * derived from the `API_KEY_ALLOWLIST` env var (comma-separated).
+ * If the env var is empty or unset, key issuance is open to anyone —
+ * useful for local dev + testnet. Production should always set this.
+ */
+function loadAllowlist(): Set<string> | null {
+  const raw = process.env.API_KEY_ALLOWLIST?.trim();
+  if (!raw) return null;
+  return new Set(
+    raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length === 56 && s.startsWith('G')),
+  );
+}
+
+const ALLOWLIST = loadAllowlist();
+
 interface ChallengeBody {
   address: string;
 }
@@ -22,6 +41,27 @@ export async function registerKeyRoutes(
   apiKeys: ApiKeyStore,
   wallet: WalletAuth,
 ): Promise<void> {
+  app.get(
+    '/v1/keys/beta-status',
+    {
+      schema: {
+        description:
+          'Public — reports whether key issuance is currently gated to a closed-beta allowlist, and optionally whether the supplied address is on it.',
+        tags: ['keys'],
+        querystring: {
+          type: 'object',
+          properties: { address: { type: 'string', minLength: 56, maxLength: 56 } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const address = (req.query as { address?: string }).address;
+      const gated = ALLOWLIST !== null;
+      const allowed = !gated || (address ? ALLOWLIST!.has(address) : false);
+      return reply.send({ gated, allowed });
+    },
+  );
+
   app.post<{ Body: ChallengeBody }>(
     '/v1/keys/challenge',
     {
@@ -61,6 +101,18 @@ export async function registerKeyRoutes(
     },
     async (req, reply) => {
       const { address, challenge, signature, label } = req.body;
+      // Closed-beta gating — if an allowlist is configured, reject any
+      // address that isn't on it before doing the (cheaper) signature
+      // verification. Returns 403 so the UI can show a "not in beta"
+      // message distinct from a bad signature.
+      if (ALLOWLIST && !ALLOWLIST.has(address)) {
+        return reply.code(403).send({
+          error: 'not_in_beta',
+          message:
+            'API key issuance is currently restricted to early-access wallets. ' +
+            'Contact the team to request access.',
+        });
+      }
       const ok = wallet.verify(address, challenge, signature);
       if (!ok) return reply.code(401).send({ error: 'invalid_signature' });
       const issued = await apiKeys.issue(address, label);

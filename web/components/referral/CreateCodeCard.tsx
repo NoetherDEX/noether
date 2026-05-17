@@ -24,6 +24,21 @@ function humanize(raw: string): string {
 
 const VALID_RE = /^[A-Za-z0-9_-]+$/;
 
+/**
+ * Closed-beta allowlist for code creation. Reads
+ * `NEXT_PUBLIC_REFERRAL_CREATOR_ALLOWLIST` (comma-separated Stellar
+ * addresses) at build time. Empty/unset → anyone may try (contract
+ * still enforces InsufficientVolume on-chain). Set → only wallets in
+ * the list see the create form active.
+ */
+const ALLOWLIST = (() => {
+  const raw = (process.env.NEXT_PUBLIC_REFERRAL_CREATOR_ALLOWLIST ?? '').trim();
+  if (!raw) return null;
+  return new Set(
+    raw.split(',').map((s) => s.trim()).filter((s) => s.length === 56 && s.startsWith('G')),
+  );
+})();
+
 interface Props {
   onCreated: () => void;
 }
@@ -34,6 +49,9 @@ export function CreateCodeCard({ onCreated }: Props) {
   const [busy, setBusy] = useState(false);
   const [available, setAvailable] = useState<null | boolean>(null);
   const [checking, setChecking] = useState(false);
+
+  const gated = ALLOWLIST !== null;
+  const allowed = !gated || (wallet.address ? ALLOWLIST!.has(wallet.address) : false);
 
   async function check() {
     if (!wallet.address) return;
@@ -79,10 +97,62 @@ export function CreateCodeCard({ onCreated }: Props) {
   const lengthOk = trimmed.length >= MIN && trimmed.length <= MAX;
   const charsOk = !trimmed || VALID_RE.test(trimmed);
 
+  // Gated state: allowlist configured + wallet connected + not on list.
+  if (gated && wallet.address && !allowed) {
+    return (
+      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+        <div className="px-6 py-4 border-b border-amber-500/20">
+          <span className="text-[10px] uppercase tracking-[0.18em] text-amber-400 font-medium">
+            Closed Beta · Early Access Only
+          </span>
+        </div>
+        <div className="p-6 space-y-4">
+          <h3 className="text-base font-semibold">Referral codes are invite-only right now</h3>
+          <p className="text-sm text-muted-foreground">
+            During the test phase we&apos;re hand-picking the first creators.
+            You can still earn discounts as a referee — clicking somebody
+            else&apos;s referral link binds you to them on-chain on your
+            first authed call.
+          </p>
+          <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4 text-xs space-y-1">
+            <p className="text-muted-foreground">Your wallet</p>
+            <code className="font-mono text-foreground break-all">{wallet.address}</code>
+          </div>
+          <p className="text-sm">
+            Want a code?{' '}
+            <a
+              href="https://twitter.com/Noetherdex"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-amber-400 hover:text-amber-300"
+            >
+              DM us on X
+            </a>{' '}
+            or{' '}
+            <a
+              href="https://discord.gg/2BxYv6Uc"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-amber-400 hover:text-amber-300"
+            >
+              join our Discord
+            </a>{' '}
+            with your address.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b border-white/10">
+      <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-2">
         <h3 className="text-base font-semibold text-foreground">Register your referral code</h3>
+        {gated && (
+          <span className="text-[10px] uppercase tracking-[0.18em] text-amber-400 font-medium">
+            Closed Beta
+          </span>
+        )}
       </div>
 
       <div className="p-6 space-y-4">

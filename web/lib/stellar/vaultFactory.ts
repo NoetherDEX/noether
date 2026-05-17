@@ -175,3 +175,70 @@ export async function getWalletUsdcBalance(source: string): Promise<bigint> {
   ]);
   return typeof result === 'bigint' ? result : BigInt(result as number | string | 0);
 }
+
+/**
+ * On-chain shape of VaultInfo, exactly as the contract emits it from
+ * the `view_vault` view fn (mirrors the Rust struct field order).
+ */
+export interface OnChainVaultInfo {
+  id: number;
+  leader: string;
+  name: string;
+  createdAt: number;
+  totalUsdc: bigint;
+  circulatingShares: bigint;
+  hwmNav: bigint;
+  realizedPnl: bigint;
+  leaderShares: bigint;
+  profitShareBps: number;
+  paused: boolean;
+}
+
+function decodeVaultInfo(raw: unknown): OnChainVaultInfo {
+  // scValToNative turns the struct into a plain object keyed by the
+  // contract's snake_case field names.
+  const r = raw as Record<string, unknown>;
+  return {
+    id: Number(r.id ?? 0),
+    leader: String(r.leader),
+    name: String(r.name),
+    createdAt: Number(r.created_at ?? 0),
+    totalUsdc: BigInt((r.total_usdc as number | bigint | string | undefined) ?? 0),
+    circulatingShares: BigInt((r.circulating_shares as number | bigint | string | undefined) ?? 0),
+    hwmNav: BigInt((r.hwm_nav as number | bigint | string | undefined) ?? 0),
+    realizedPnl: BigInt((r.realized_pnl as number | bigint | string | undefined) ?? 0),
+    leaderShares: BigInt((r.leader_shares as number | bigint | string | undefined) ?? 0),
+    profitShareBps: Number(r.profit_share_bps ?? 1000),
+    paused: Boolean(r.paused),
+  };
+}
+
+/** How many vaults exist (vault ids are dense 0..N-1). */
+export async function getVaultCount(source: string): Promise<number> {
+  const factory = vaultFactoryContract();
+  const v = await simulateView(factory, source, 'vault_count', []);
+  return Number(v ?? 0);
+}
+
+/** Fetch a single VaultInfo by id. */
+export async function getVaultInfo(source: string, vaultId: number): Promise<OnChainVaultInfo | null> {
+  const factory = vaultFactoryContract();
+  try {
+    const raw = await simulateView(factory, source, 'view_vault', [toScVal(vaultId, 'u32')]);
+    return decodeVaultInfo(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read every vault from the chain in parallel. Used by the marketplace
+ * page so it doesn't depend on the indexer/API being up.
+ */
+export async function listAllVaultsOnChain(source: string): Promise<OnChainVaultInfo[]> {
+  const count = await getVaultCount(source);
+  if (count === 0) return [];
+  const ids = Array.from({ length: count }, (_, i) => i);
+  const results = await Promise.all(ids.map((id) => getVaultInfo(source, id)));
+  return results.filter((v): v is OnChainVaultInfo => v !== null);
+}
