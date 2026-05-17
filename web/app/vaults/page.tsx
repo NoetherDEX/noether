@@ -1,22 +1,50 @@
+'use client';
+
 import Link from 'next/link';
-import { Card, CardContent } from '@/components/ui';
+import { useEffect, useState } from 'react';
 import { Header } from '@/components/layout';
 import { VaultCard } from '@/components/vault/VaultCard';
 import { CreateVaultButton } from '@/components/vault/CreateVaultButton';
-import { listVaults } from '@/lib/api/vaults';
-import type { VaultRow } from '@/types/vault';
+import { listAllVaultsOnChain } from '@/lib/stellar/vaultFactory';
+import { vaultRowFromOnChain, type VaultRow } from '@/types/vault';
+import { CONTRACTS } from '@/lib/utils/constants';
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+/**
+ * Marketplace page reads vault state directly from the vault_factory
+ * contract via Soroban RPC. No API gateway dependency — the only
+ * upstream is the public testnet RPC. Listing is cheap for small N
+ * (each vault is one parallel simulateTransaction call).
+ */
+export default function VaultsPage() {
+  const [vaults, setVaults] = useState<VaultRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
-export default async function VaultsPage() {
-  let vaults: VaultRow[] = [];
-  let apiError: string | null = null;
-  try {
-    vaults = await listVaults({ limit: 100 });
-  } catch (err) {
-    apiError = err instanceof Error ? err.message : String(err);
-  }
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // Use the admin address as the simulate source — it always
+        // exists and isn't credited for anything; sim calls are free.
+        const source =
+          process.env.NEXT_PUBLIC_ADMIN_PUBLIC_KEY ??
+          'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
+        void CONTRACTS; // keep tree-shake from dropping the constants module
+        const onchain = await listAllVaultsOnChain(source);
+        if (cancelled) return;
+        setVaults(onchain.map(vaultRowFromOnChain));
+        setErr(null);
+      } catch (e) {
+        if (cancelled) return;
+        setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#0a0a0a]">
@@ -82,17 +110,22 @@ export default async function VaultsPage() {
               <CreateVaultButton />
             </div>
 
-            {apiError && (
-              <Card className="border-red-500/30 mb-4">
-                <CardContent className="p-4 text-red-400 text-sm">
-                  Could not reach the API gateway. Check{' '}
-                  <code className="text-xs">NEXT_PUBLIC_NOETHER_API_URL</code>.{' '}
-                  ({apiError})
-                </CardContent>
-              </Card>
+            {loading && (
+              <div className="rounded-2xl border border-white/10 bg-card/40 p-10 text-center">
+                <p className="text-sm text-muted-foreground">Loading vaults from chain…</p>
+              </div>
             )}
 
-            {!apiError && vaults.length === 0 && (
+            {!loading && err && (
+              <div className="rounded-2xl border border-dashed border-white/10 bg-card/40 p-10 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Could not load vaults from chain right now. Refresh in a moment.
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground/60">{err}</p>
+              </div>
+            )}
+
+            {!loading && !err && vaults.length === 0 && (
               <div className="rounded-2xl border border-dashed border-white/10 bg-card/40 p-10 text-center">
                 <p className="text-sm md:text-base text-muted-foreground">
                   No leader vaults yet.

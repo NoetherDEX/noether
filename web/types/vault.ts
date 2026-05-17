@@ -45,3 +45,27 @@ export function vaultLeaderHoldingPct(row: Pick<VaultRow, 'leaderShares' | 'circ
   if (circ === 0n) return 0;
   return Number((lead * 10_000n) / circ) / 100;
 }
+
+import type { OnChainVaultInfo } from '@/lib/stellar/vaultFactory';
+
+/**
+ * Adapter — turns the contract's `view_vault` output into the same
+ * shape the (legacy) API gateway returns. Lets the UI components be
+ * indifferent to where the data came from.
+ */
+export function vaultRowFromOnChain(info: OnChainVaultInfo): VaultRow {
+  return {
+    id: info.id,
+    leader: info.leader,
+    name: info.name,
+    createdAt: info.createdAt,
+    totalUsdc: info.totalUsdc.toString(),
+    circulatingShares: info.circulatingShares.toString(),
+    hwmNav: info.hwmNav.toString(),
+    realizedPnl: info.realizedPnl.toString(),
+    leaderShares: info.leaderShares.toString(),
+    profitShareBps: info.profitShareBps,
+    paused: info.paused,
+    updatedAt: Date.now(),
+  };
+}
