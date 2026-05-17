@@ -28,9 +28,12 @@ function vec(...vals: xdr.ScVal[]): xdr.ScVal {
 
 describe('decodeMarketEvent', () => {
   it('decodes position_opened', () => {
+    // Contract emits 6-tuple: (id, trader, asset, direction, size, entry_price)
     const value = vec(
       nativeToScVal(42n, { type: 'u64' }),
       Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal('BTC', { type: 'symbol' }),
+      nativeToScVal(0n, { type: 'u32' }), // direction (Long=0)
       nativeToScVal(1_500_0000000n, { type: 'i128' }),
       nativeToScVal(60_000_0000000n, { type: 'i128' }),
     );
@@ -46,11 +49,17 @@ describe('decodeMarketEvent', () => {
   });
 
   it('decodes position_closed', () => {
+    // Contract emits 8-tuple:
+    //   (id, trader, asset, direction, size, entry_price, current_price, pnl)
     const value = vec(
       nativeToScVal(7n, { type: 'u64' }),
       Address.fromString(FAKE_TRADER).toScVal(),
-      nativeToScVal(-100_0000000n, { type: 'i128' }),
-      nativeToScVal(58_500_0000000n, { type: 'i128' }),
+      nativeToScVal('BTC', { type: 'symbol' }),
+      nativeToScVal(0n, { type: 'u32' }),
+      nativeToScVal(500_0000000n, { type: 'i128' }),  // size
+      nativeToScVal(60_000_0000000n, { type: 'i128' }), // entry_price
+      nativeToScVal(58_500_0000000n, { type: 'i128' }), // close_price
+      nativeToScVal(-100_0000000n, { type: 'i128' }),   // pnl
     );
     const decoded = decodeMarketEvent(makeRawEvent('position_closed', value));
     expect(decoded?.topic).toBe('position_closed');
