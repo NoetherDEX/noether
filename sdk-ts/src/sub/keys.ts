@@ -1,3 +1,10 @@
+import {
+  Account,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk';
 import type { Credentials, Transport } from '../transport.js';
 
 export interface IssuedChallenge {
@@ -24,14 +31,27 @@ export interface ApiKeyRecord {
 }
 
 /**
- * Function the caller provides to sign a raw challenge buffer with the
- * Stellar private key. The SDK never sees the secret. Examples:
+ * Function the caller provides to sign 32 bytes (a transaction hash) with
+ * the Stellar private key. The SDK never sees the secret. Examples:
  *
  *   import { Keypair } from '@stellar/stellar-sdk';
  *   const kp = Keypair.fromSecret('S...');
- *   const sign: Signer = (data) => kp.sign(data);
+ *   const sign: ChallengeSigner = (data) => kp.sign(data);
  */
 export type ChallengeSigner = (data: Buffer) => Buffer | Promise<Buffer>;
+
+export interface KeysCreateOptions {
+  address: string;
+  signer: ChallengeSigner;
+  label?: string;
+  /**
+   * Network passphrase used to construct the wrapping manageData tx.
+   * Defaults to the public testnet (`Networks.TESTNET`). The value must
+   * match the API gateway's network — pass `Networks.PUBLIC` for
+   * mainnet deployments.
+   */
+  networkPassphrase?: string;
+}
 
 export class KeysApi {
   constructor(private readonly transport: Transport, private readonly credentials: Credentials | null) {}
@@ -44,32 +64,75 @@ export class KeysApi {
     });
   }
 
-  async exchange(input: { address: string; challenge: string; signatureHex: string; label?: string }): Promise<IssuedApiKey> {
+  /**
+   * Exchange a SEP-10-style signed XDR for an API key. The `signature`
+   * field on the server endpoint carries the full base64-encoded signed
+   * transaction (legacy field name; kept for wire compatibility).
+   */
+  async exchange(input: {
+    address: string;
+    challenge: string;
+    signedXdr: string;
+    label?: string;
+  }): Promise<IssuedApiKey> {
     return this.transport.request<IssuedApiKey>({
       method: 'POST',
       path: '/v1/keys',
       body: {
         address: input.address,
         challenge: input.challenge,
-        signature: input.signatureHex,
+        signature: input.signedXdr,
         label: input.label,
       },
     });
   }
 
   /**
-   * Convenience: request a challenge, ask the caller to sign it, exchange
-   * for a key. Returns both the key id and secret — store the secret
-   * immediately, it cannot be retrieved later.
+   * Convenience: request a challenge, wrap it as a manageData op on a
+   * placeholder transaction, ask the caller's signer to sign the tx
+   * hash, assemble a signed XDR, exchange it for an API key.
+   *
+   * This matches the gateway's verification path:
+   *   1. Server parses the XDR.
+   *   2. Asserts op[0] is manageData carrying the issued challenge.
+   *   3. Verifies any tx signature against `tx.hash()` with the
+   *      address's pubkey.
    */
-  async create(input: { address: string; signer: ChallengeSigner; label?: string }): Promise<IssuedApiKey> {
+  async create(input: KeysCreateOptions): Promise<IssuedApiKey> {
+    const networkPassphrase = input.networkPassphrase ?? Networks.TESTNET;
     const challenge = await this.requestChallenge(input.address);
-    const signature = await input.signer(Buffer.from(challenge.challengeHex, 'hex'));
-    const signatureHex = Buffer.from(signature).toString('hex');
+
+    // Build a sequence-0 placeholder tx whose only op is a manageData
+    // carrying the challenge bytes. We use a random source account so
+    // we don't need the user's actual account state.
+    const placeholderSource = Keypair.random().publicKey();
+    const account = new Account(placeholderSource, '0');
+    const tx = new TransactionBuilder(account, {
+      fee: '0',
+      networkPassphrase,
+    })
+      .addOperation(
+        Operation.manageData({
+          name: 'noether-api auth',
+          value: Buffer.from(challenge.challengeHex, 'hex'),
+          source: input.address,
+        }),
+      )
+      .setTimeout(0)
+      .build();
+
+    // Get the caller to sign the tx hash, then attach as a decorated
+    // signature using the address's keypair hint.
+    const txHash = tx.hash();
+    const rawSig = await input.signer(txHash);
+    const kp = Keypair.fromPublicKey(input.address);
+    tx.addSignature(input.address, Buffer.from(rawSig).toString('base64'));
+    void kp; // keep the import warning-free; hint is derived inside addSignature
+
     return this.exchange({
       address: input.address,
       challenge: challenge.challengeHex,
-      signatureHex,
+      signedXdr: tx.toXDR(),
       label: input.label,
     });
   }

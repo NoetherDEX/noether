@@ -28,6 +28,7 @@ import { WsManager } from './services/wsManager.js';
 import { OracleTicker } from './services/oracleTicker.js';
 import { LiveTailer } from './services/liveTailer.js';
 import { createIndexerDb } from './services/indexerDb.js';
+import { getNetworkPassphrase } from '@noether/shared';
 import { authPlugin } from './plugins/auth.js';
 import { rateLimitPlugin } from './plugins/rateLimit.js';
 import { wsPlugin } from './plugins/ws.js';
@@ -114,7 +115,7 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const events = new EventsService(db);
   const pepper = process.env.API_HMAC_PEPPER ?? 'change-me-in-production';
   const apiKeys = new ApiKeyStore(db, pepper);
-  const walletAuth = new WalletAuth();
+  const walletAuth = new WalletAuth(getNetworkPassphrase(config.network));
   const rateLimiter = new RateLimiter(db);
   const txCtx = { rpcUrl: config.rpcUrl, network: config.network };
   const orders: OrdersRouteDeps = { txCtx, marketContractId: config.contracts.contracts.market };
