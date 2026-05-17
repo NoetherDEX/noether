@@ -46,7 +46,7 @@ COPY api/package.json ./api/
 COPY packages/types/package.json ./packages/types/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/tx-builders/package.json ./packages/tx-builders/
-RUN npm ci --omit=dev --workspaces --include-workspace-root --workspace=@noether/api
+RUN npm ci --omit=dev --ignore-scripts --workspaces --include-workspace-root --workspace=@noether/api
 
 # Bring in built artifacts.
 COPY --from=builder /repo/packages/types/dist     ./packages/types/dist
