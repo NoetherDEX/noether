@@ -35,8 +35,13 @@ const VAULT_TOPICS = new Set([
   'admin_unpaused',
 ]);
 
-function envelope(raw: RawEvent, topic: string, vaultId: number): VaultEventEnvelope {
+function envelope(raw: RawEvent, topic: string, vaultId: number): VaultEventEnvelope & {
+  id: string;
+  contractId: string;
+} {
   return {
+    id: raw.id,
+    contractId: raw.contractId?.toString() ?? '',
     topic,
     vaultId,
     ledger: raw.ledger,

@@ -18,12 +18,16 @@ const REFERRAL_TOPICS = new Set([
 ]);
 
 function envelope(raw: RawEvent, topic: string): {
+  id: string;
+  contractId: string;
   topic: string;
   ledger: number;
   ledgerCloseTs: number;
   txHash: string;
 } {
   return {
+    id: raw.id,
+    contractId: raw.contractId?.toString() ?? '',
     topic,
     ledger: raw.ledger,
     ledgerCloseTs: Math.floor(new Date(raw.ledgerClosedAt).getTime() / 1000),
