@@ -3,6 +3,10 @@
 FROM node:20-alpine AS builder
 WORKDIR /repo
 
+# Skip husky — .git is excluded by .dockerignore.
+ENV HUSKY=0
+ENV CI=true
+
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY api/package.json ./api/
 COPY indexer/package.json ./indexer/
@@ -25,6 +29,8 @@ RUN npm run build -w @noether/indexer
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+ENV HUSKY=0
+ENV CI=true
 
 COPY package.json package-lock.json ./
 COPY indexer/package.json ./indexer/
