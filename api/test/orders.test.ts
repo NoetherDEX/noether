@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach, vi } from 'vitest';
 import { Keypair } from '@stellar/stellar-sdk';
-import { setupTestServer } from './helpers.js';
+import { setupTestServer, signChallengeXdr } from './helpers.js';
 
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;
 
@@ -25,7 +25,7 @@ async function authedKey(): Promise<{
     payload: { address },
   });
   const { challengeHex } = ch.json() as { challengeHex: string };
-  const sig = kp.sign(Buffer.from(challengeHex, 'hex')).toString('hex');
+  const sig = signChallengeXdr(kp, challengeHex);
   const issued = await app.inject({
     method: 'POST',
     url: '/v1/keys',
@@ -71,7 +71,7 @@ describe('POST /v1/orders/prepare', () => {
     const kp = Keypair.random();
     const address = kp.publicKey();
     const ch = await app.inject({ method: 'POST', url: '/v1/keys/challenge', payload: { address } });
-    const sig = kp.sign(Buffer.from((ch.json() as { challengeHex: string }).challengeHex, 'hex')).toString('hex');
+    const sig = signChallengeXdr(kp, (ch.json() as { challengeHex: string }).challengeHex);
     const issued = await app.inject({
       method: 'POST',
       url: '/v1/keys',
@@ -155,7 +155,7 @@ describe('POST /v1/orders/prepare', () => {
     const kp = Keypair.random();
     const address = kp.publicKey();
     const ch = await app.inject({ method: 'POST', url: '/v1/keys/challenge', payload: { address } });
-    const sig = kp.sign(Buffer.from((ch.json() as { challengeHex: string }).challengeHex, 'hex')).toString('hex');
+    const sig = signChallengeXdr(kp, (ch.json() as { challengeHex: string }).challengeHex);
     const issued = await app.inject({
       method: 'POST',
       url: '/v1/keys',
@@ -207,7 +207,7 @@ describe('POST /v1/orders/prepare', () => {
     const kp = Keypair.random();
     const address = kp.publicKey();
     const ch = await app.inject({ method: 'POST', url: '/v1/keys/challenge', payload: { address } });
-    const sig = kp.sign(Buffer.from((ch.json() as { challengeHex: string }).challengeHex, 'hex')).toString('hex');
+    const sig = signChallengeXdr(kp, (ch.json() as { challengeHex: string }).challengeHex);
     const issued = await app.inject({
       method: 'POST',
       url: '/v1/keys',
@@ -242,7 +242,7 @@ describe('POST /v1/tx/submit', () => {
     const kp = Keypair.random();
     const address = kp.publicKey();
     const ch = await app.inject({ method: 'POST', url: '/v1/keys/challenge', payload: { address } });
-    const sig = kp.sign(Buffer.from((ch.json() as { challengeHex: string }).challengeHex, 'hex')).toString('hex');
+    const sig = signChallengeXdr(kp, (ch.json() as { challengeHex: string }).challengeHex);
     const issued = await app.inject({
       method: 'POST',
       url: '/v1/keys',

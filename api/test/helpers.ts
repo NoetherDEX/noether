@@ -1,5 +1,39 @@
 import { createClient, type Client } from '@libsql/client';
+import {
+  Account,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk';
 import { buildServer, type ServerDeps } from '../src/server.js';
+
+export const TEST_CONFIG_PASSPHRASE = Networks.TESTNET;
+
+/**
+ * Build a SEP-10-style signed XDR for the wallet challenge — same flow
+ * the SDK + web client use. Tests call this instead of `kp.sign(bytes)`
+ * because the API verifies the signature against the transaction hash.
+ */
+export function signChallengeXdr(kp: Keypair, challengeHex: string): string {
+  const placeholderSource = Keypair.random().publicKey();
+  const account = new Account(placeholderSource, '0');
+  const tx = new TransactionBuilder(account, {
+    fee: '0',
+    networkPassphrase: TEST_CONFIG_PASSPHRASE,
+  })
+    .addOperation(
+      Operation.manageData({
+        name: 'noether-api auth',
+        value: Buffer.from(challengeHex, 'hex'),
+        source: kp.publicKey(),
+      }),
+    )
+    .setTimeout(0)
+    .build();
+  tx.sign(kp);
+  return tx.toXDR();
+}
 import type { ApiConfig } from '../src/config.js';
 import { MarketsService } from '../src/services/markets.js';
 import { OracleService } from '../src/services/oracle.js';
@@ -121,7 +155,7 @@ export async function setupTestServer(opts?: {
   }
   const events = new EventsService(db);
   const apiKeys = new ApiKeyStore(db, 'test-pepper');
-  const walletAuth = new WalletAuth();
+  const walletAuth = new WalletAuth(TEST_CONFIG_PASSPHRASE);
   const rateLimiter = new RateLimiter(db);
   const wsBus = new (await import('../src/services/wsBus.js')).WsBus();
   const noopLogger = makeNoopLogger();

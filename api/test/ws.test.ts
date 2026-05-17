@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
 import { Keypair } from '@stellar/stellar-sdk';
-import { setupTestServer } from './helpers.js';
+import { setupTestServer, signChallengeXdr } from './helpers.js';
 
 let cleanup: Array<() => Promise<void>> = [];
 
@@ -104,7 +104,7 @@ describe('/v1/ws', () => {
     const owner = kp.publicKey();
     const ch = await app.inject({ method: 'POST', url: '/v1/keys/challenge', payload: { address: owner } });
     const challenge = (ch.json() as { challengeHex: string }).challengeHex;
-    const sig = kp.sign(Buffer.from(challenge, 'hex')).toString('hex');
+    const sig = signChallengeXdr(kp, challenge);
     const issued = await app.inject({
       method: 'POST', url: '/v1/keys',
       payload: { address: owner, challenge, signature: sig },
@@ -133,7 +133,7 @@ describe('/v1/ws', () => {
     const owner = kp.publicKey();
     const ch = await app.inject({ method: 'POST', url: '/v1/keys/challenge', payload: { address: owner } });
     const challenge = (ch.json() as { challengeHex: string }).challengeHex;
-    const sig = kp.sign(Buffer.from(challenge, 'hex')).toString('hex');
+    const sig = signChallengeXdr(kp, challenge);
     const issued = await app.inject({
       method: 'POST', url: '/v1/keys',
       payload: { address: owner, challenge, signature: sig },
