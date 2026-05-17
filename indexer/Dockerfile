@@ -36,7 +36,7 @@ COPY package.json package-lock.json ./
 COPY indexer/package.json ./indexer/
 COPY packages/types/package.json ./packages/types/
 COPY packages/shared/package.json ./packages/shared/
-RUN npm ci --omit=dev --workspaces --include-workspace-root --workspace=@noether/indexer
+RUN npm ci --omit=dev --ignore-scripts --workspaces --include-workspace-root --workspace=@noether/indexer
 
 COPY --from=builder /repo/packages/types/dist  ./packages/types/dist
 COPY --from=builder /repo/packages/shared/dist ./packages/shared/dist
