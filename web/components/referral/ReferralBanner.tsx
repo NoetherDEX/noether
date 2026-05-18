@@ -14,43 +14,50 @@ import type { ReferrerRow } from '@/types/referral';
 import toast from 'react-hot-toast';
 
 /**
- * Sticky banner shown across the app whenever a `?ref=CODE` is pending.
+ * Floating notification card shown in the bottom-right corner whenever
+ * a `?ref=CODE` is pending in localStorage.
  *
- *  - On mount: captures `?ref=` from URL (one-shot) and parks it in
- *    localStorage; strips the query param so refreshes don't re-trigger.
- *  - Resolves the code to a referrer via the public lookup endpoint
- *    (best-effort; the on-chain bind doesn't need this to succeed).
- *  - Once the user has a wallet connected, exposes a "Bind referrer"
- *    button that calls `referral.set_referrer(referee, code)` on-chain.
- *    On success the localStorage entry is cleared and the banner
- *    disappears.
- *  - Survives every page refresh until either dismissed or successfully
- *    bound — so the user can navigate to /faucet, /trade, etc. and
- *    still see it.
+ *  - On mount: captures `?ref=` from URL (one-shot), parks it in
+ *    localStorage, strips the query param so refreshes don't re-trigger.
+ *  - Resolves the code to a referrer via the public API (best-effort —
+ *    the on-chain bind doesn't need this to succeed).
+ *  - When a wallet is connected, exposes a 'Claim 4% discount' CTA
+ *    that calls `referral.set_referrer(referee, code)` on-chain.
+ *  - Animates in from the bottom, persists across page navigations,
+ *    survives refresh — only goes away when the user dismisses it or
+ *    a bind tx succeeds.
  */
 export function ReferralBanner() {
   const wallet = useWalletStore();
   const [code, setCode] = useState<string | null>(null);
   const [referrer, setReferrer_] = useState<ReferrerRow | null>(null);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  // Cheap fade-in: render after mount.
+  const [shown, setShown] = useState(false);
 
   useEffect(() => {
     captureReferralFromLocation();
     const pending = getPendingReferral();
     if (!pending) return;
     setCode(pending);
+    // Tiny delay so the slide-in is visible.
+    requestAnimationFrame(() => setShown(true));
     void lookupReferralCode(pending)
       .then((row) => setReferrer_(row))
       .catch(() => {
-        // lookup is best-effort — banner stays even if API is down.
+        // Best-effort — banner stays even if the lookup endpoint is down.
       });
   }, []);
 
   if (!code) return null;
 
   function dismiss() {
-    clearPendingReferral();
-    setCode(null);
+    setShown(false);
+    setTimeout(() => {
+      clearPendingReferral();
+      setCode(null);
+    }, 200);
   }
 
   async function bind() {
@@ -61,58 +68,128 @@ export function ReferralBanner() {
     setBusy(true);
     try {
       await setReferrer(wallet.address, code);
-      toast.success(`Bound to referral code ${code}`);
-      clearPendingReferral();
-      setCode(null);
+      toast.success(`4% discount locked in via ${code}`);
+      setDone(true);
+      // Slide out after a brief celebratory pause.
+      setTimeout(() => {
+        clearPendingReferral();
+        setCode(null);
+      }, 1800);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Friendly mapping for the most common reverts.
       let friendly = msg;
       if (/Error\(Contract, #10\)/.test(msg)) friendly = 'That referral code does not exist.';
       else if (/Error\(Contract, #11\)/.test(msg)) friendly = 'You already have a referrer bound to your wallet.';
-      else if (/Error\(Contract, #12\)/.test(msg)) friendly = 'You can\'t refer yourself.';
-      toast.error(`Failed: ${friendly.slice(0, 200)}`);
+      else if (/Error\(Contract, #12\)/.test(msg)) friendly = "You can't refer yourself.";
+      toast.error(friendly.slice(0, 200));
     } finally {
       setBusy(false);
     }
   }
 
+  const referrerAddr = referrer?.referrer
+    ? `${referrer.referrer.slice(0, 4)}…${referrer.referrer.slice(-4)}`
+    : null;
+
   return (
-    <div className="fixed top-16 left-0 right-0 z-40 px-4">
-      <div className="max-w-7xl mx-auto mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 backdrop-blur-sm">
-        <div className="px-4 md:px-5 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <div className="text-sm flex-1 min-w-[260px]">
-            <p>
-              <span className="text-amber-400 font-medium">Referral link active · </span>
-              You were referred by{' '}
-              <code className="px-1.5 py-0.5 rounded bg-zinc-900 font-mono text-xs">
-                {code}
-              </code>
-              {referrer && (
-                <span className="text-muted-foreground">
-                  {' '}· {referrer.referredCount} other referees
-                </span>
-              )}
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {wallet.address
-                ? 'Bind your wallet to lock in a 4% fee discount on every trade.'
-                : 'Connect your wallet, then bind the referral to lock in a 4% fee discount.'}
+    <div
+      className={[
+        'fixed bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm',
+        'transition-all duration-300 ease-out',
+        shown ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none',
+      ].join(' ')}
+      role="dialog"
+      aria-label="Referral invitation"
+    >
+      <div className="rounded-2xl border border-white/10 bg-[#0a0a0a]/95 backdrop-blur-md shadow-2xl shadow-black/40 overflow-hidden">
+        {/* Top accent bar */}
+        <div className="h-1 bg-gradient-to-r from-amber-500/40 via-amber-400 to-amber-500/40" />
+
+        {done ? (
+          <div className="p-5 text-center space-y-3">
+            <div className="mx-auto w-12 h-12 rounded-full bg-emerald-500/15 flex items-center justify-center">
+              <svg className="w-6 h-6 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium">4% discount locked in</p>
+            <p className="text-xs text-muted-foreground">
+              You'll save 4% on every trade going forward.
             </p>
           </div>
-          <div className="flex gap-2">
+        ) : (
+          <div className="p-5 space-y-4">
+            {/* Header row: dismiss button */}
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <span className="text-[10px] uppercase tracking-[0.18em] text-amber-400 font-medium">
+                  Referral · Invitation
+                </span>
+                <h3 className="mt-1 text-base font-semibold leading-tight">
+                  You were invited to Noether
+                </h3>
+              </div>
+              <button
+                onClick={dismiss}
+                disabled={busy}
+                aria-label="Dismiss"
+                className="flex-none -mt-1 -mr-1 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors disabled:opacity-40"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Referrer details */}
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Code</span>
+                <code className="px-2 py-0.5 rounded bg-zinc-900 font-mono text-foreground">
+                  {code}
+                </code>
+              </div>
+              {referrerAddr && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Referrer</span>
+                  <span className="font-mono text-foreground">{referrerAddr}</span>
+                </div>
+              )}
+              {referrer && referrer.referredCount > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Other referees</span>
+                  <span className="text-foreground">{referrer.referredCount}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Benefit + CTA */}
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold font-mono text-amber-400">4%</span>
+                <span className="text-sm text-muted-foreground">off every trade, forever</span>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {wallet.address
+                  ? 'Sign one transaction to bind this code to your wallet on-chain.'
+                  : 'Connect your wallet to claim the discount.'}
+              </p>
+            </div>
+
             <Button
               onClick={bind}
               disabled={busy || !wallet.address}
-              size="sm"
+              className="w-full"
             >
-              {busy ? 'Binding…' : 'Bind referrer'}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={dismiss} disabled={busy}>
-              Dismiss
+              {busy
+                ? 'Signing…'
+                : wallet.address
+                ? 'Claim 4% discount'
+                : 'Connect wallet to claim'}
             </Button>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
