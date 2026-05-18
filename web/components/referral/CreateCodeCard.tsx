@@ -79,6 +79,7 @@ export function CreateCodeCard({ onCreated }: Props) {
     if (!VALID_RE.test(trimmed)) return toast.error('Only letters, digits, _ and - allowed');
 
     setBusy(true);
+    console.log('[referral] register start', { trimmed, wallet: wallet.address });
     try {
       await createReferralCode(wallet.address, trimmed);
       toast.success(`Code "${trimmed}" registered on-chain`);
@@ -87,6 +88,7 @@ export function CreateCodeCard({ onCreated }: Props) {
       onCreated();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.error('[referral] register failed', err);
       toast.error(`Failed: ${humanize(msg)}`);
     } finally {
       setBusy(false);
@@ -212,9 +214,9 @@ export function CreateCodeCard({ onCreated }: Props) {
         </div>
 
         <div className="text-xs text-muted-foreground/80 border-t border-white/5 pt-3 leading-relaxed">
-          <span className="text-foreground/70">Note:</span> the contract enforces a 14-day
-          trading volume threshold before letting you register. If you haven&apos;t
-          traded enough yet, the call will revert with <code className="text-[10px]">InsufficientVolume</code>.
+          <span className="text-foreground/70">On-chain:</span> the code lives in the referral
+          contract — anyone with your wallet&apos;s Stellar address can verify
+          ownership at any time. One wallet can register one code.
         </div>
       </div>
     </div>
