@@ -36,6 +36,21 @@ export async function lookupReferralCode(code: string): Promise<ReferrerRow | nu
   }
 }
 
+/**
+ * Public — look up a referrer profile by Stellar address. Returns null
+ * if the address has never registered a code. No API key required.
+ */
+export async function getReferralInfo(address: string): Promise<ReferralMeResponse | null> {
+  try {
+    return await fetchJson<ReferralMeResponse>(
+      `/v1/referral/info?address=${encodeURIComponent(address)}`,
+    );
+  } catch (err) {
+    if (err instanceof Error && err.message === 'not_found') return null;
+    throw err;
+  }
+}
+
 export async function getReferralMe(auth: AuthHeaders): Promise<ReferralMeResponse> {
   return fetchJson<ReferralMeResponse>('/v1/referral/me', auth);
 }
