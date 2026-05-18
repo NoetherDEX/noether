@@ -5,6 +5,10 @@ interface LookupQuery {
   code: string;
 }
 
+interface InfoQuery {
+  address: string;
+}
+
 interface ActivityQuery {
   limit?: number;
 }
@@ -30,6 +34,28 @@ export async function registerReferralRoutes(
       const row = await service.lookupCode(req.query.code);
       if (!row) return reply.code(404).send({ error: 'unknown_code', code: req.query.code });
       return reply.send(row);
+    },
+  );
+
+  app.get<{ Querystring: InfoQuery }>(
+    '/v1/referral/info',
+    {
+      schema: {
+        description:
+          'Look up a referrer profile by Stellar address (public). Returns the row from the referrers projection table, or 404 if the address has never registered a code. Same shape as /v1/referral/me, just queried by address instead of by authed owner.',
+        tags: ['referral'],
+        querystring: {
+          type: 'object',
+          properties: { address: { type: 'string', minLength: 56, maxLength: 56 } },
+          required: ['address'],
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await service.getReferrerByAddress(req.query.address);
+      if (!row) return reply.code(404).send({ error: 'no_code', address: req.query.address });
+      const binding = await service.getBindingForReferee(req.query.address);
+      return reply.send({ self: row, binding });
     },
   );
 
