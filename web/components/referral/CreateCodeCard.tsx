@@ -171,7 +171,7 @@ export function CreateCodeCard({ onCreated }: Props) {
                 setAvailable(null);
               }}
               onBlur={check}
-              placeholder="e.g. mertcicek"
+              placeholder="e.g. noemerth"
               maxLength={MAX}
               spellCheck={false}
               autoComplete="off"
