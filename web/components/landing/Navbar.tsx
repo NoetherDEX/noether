@@ -9,7 +9,7 @@ const NAV_LINKS = [
   { href: '/vaults', label: 'Vaults' },
   { href: '/referrals', label: 'Referrals' },
   { href: '/leaderboard', label: 'Leaderboard' },
-  { href: '/api-keys', label: 'API' },
+  { href: '/api-keys', label: 'API Keys' },
 ];
 
 export function Navbar() {
