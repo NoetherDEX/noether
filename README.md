@@ -80,7 +80,7 @@
 
 **Noether** is a decentralized perpetual futures exchange (PerpDEX) built on the [Stellar](https://stellar.org) blockchain using [Soroban](https://soroban.stellar.org) smart contracts. Every order, match, and settlement lives on-chain — verifiable by anyone, custodied by nobody.
 
-The protocol is funded by [Stellar Community Fund #41](https://communityfund.stellar.org/) with a grant of **$86,200** delivered across three tranches. Tranche 1 (trading engine) is complete and live on testnet today.
+The protocol is funded by [Stellar Community Fund #41](https://communityfund.stellar.org/) with a grant of **$86,200** delivered across three tranches. Tranche 1 (trading engine) is complete and live on testnet; **Tranche 2** (developer tooling, user-created vaults, on-chain referral) is **code-complete with operator steps pending**; Tranche 3 (mainnet launch) is ahead.
 
 ### Why Stellar?
 
@@ -106,17 +106,33 @@ The protocol is funded by [Stellar Community Fund #41](https://communityfund.ste
 - **Volume-based fee tiers** — 4 tiers over a 14-day rolling window, sub-basis-point precision
 - **Funding rates** that auto-balance long/short open interest, applied lazily on close/liquidate
 - **Keeper-executed orders** — limit, stop, and trailing orders execute on-chain without requiring you to be online
+- **Multi-wallet support** — Freighter, LOBSTR, xBull, Albedo, and Ledger via [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit)
+- **On-chain referrals** — register a code, share it, your referees pay 4% less in fees while you earn 10% of theirs
 
 ### For Liquidity Providers
 
-- **Deposit USDC, receive NOE** — the vault's LP token (a SAC-wrapped classic Stellar asset)
+- **Deposit USDC, receive NOE** — the protocol vault's LP token (a SAC-wrapped classic Stellar asset)
 - **Transparent AUM accounting**: `AUM = total_usdc + accumulated_fees − unrealized_trader_pnl`
 - **Fee share** on every trade routed through the vault
 - **Withdraw anytime** — burn NOE, receive pro-rata USDC at current NOE price
+- **User-created trading vaults** (Tranche 2) — opt-in marketplace of leader-managed vaults as an alternative to the protocol vault
+
+### For Vault Leaders
+
+- **Create a vault** with one call to the on-chain `vault_factory`
+- **Earn a 10% profit share** above the high-water mark on depositor PnL
+- **Trade on shared collateral** via proxied `leader_trade` calls — depositors keep custody of their share token, you keep the upside
+- **5% min-holding invariant** — leaders are required to keep their own skin in the game, enforced on-chain
+- **Browse the marketplace** at [`/vaults`](https://testnet.noether.exchange/vaults); manage your vault at `/vaults/[id]/manage`
 
 ### For Developers
 
-- **Fully open source** (MIT)
+- **Public REST + WebSocket API** — [Fastify](https://fastify.dev/) gateway, OpenAPI auto-served at `/docs`. Wallet-challenge authentication issues bearer keys (currently closed-beta — see [Security](#security))
+- **TypeScript SDK** — `@noether/sdk` ships every endpoint plus `WsClient` with auto-reconnect and subscription replay
+- **Python SDK** — `noether-sdk` mirrors the TS surface (httpx + websockets), publishable on PyPI
+- **Soroban event indexer** — captures every contract event into a [libSQL/Turso](https://turso.tech/) projection table, ready for analytics
+- **Shared `@noether/tx-builders`** — single source of truth for Soroban transaction assembly across api + sdk-ts
+- **Fully open source** (MIT) — npm-workspace monorepo (`api/`, `indexer/`, `sdk-ts/`, `packages/*`) with vitest, CI, and Docker images for Railway
 - **Single-command deploy** to Stellar testnet via `setup_and_deploy.sh`
 - **On-chain events** — documented schemas matched exactly by the frontend parser
 - **Optimized WASM** — `opt-level = "z"`, LTO, panic = abort, stripped symbols
@@ -142,48 +158,65 @@ No signup. No KYC. No custody. Just a browser and a wallet.
 
 ## Architecture
 
-Noether consists of four Soroban smart contracts on Stellar, a Next.js trading frontend, and an autonomous keeper bot.
+Noether consists of six Soroban smart contracts on Stellar, a Next.js trading frontend, an autonomous keeper bot, and a Tranche 2 off-chain stack (REST + WS API gateway, Soroban event indexer, TypeScript + Python SDKs).
 
 ```
-                    ┌──────────────────────────────────────────────┐
-                    │              Stellar Network                 │
-                    │                (Soroban)                     │
-                    │                                              │
-                    │  ┌──────────┐  ┌───────┐  ┌──────────────┐  │
-                    │  │  Market  │◄►│ Vault │  │Oracle Adapter│  │
-                    │  │ Contract │  │  (LP) │  │ (Band + DIA) │  │
-                    │  └────┬─────┘  └───┬───┘  └──────┬───────┘  │
-                    │       │            │             │           │
-                    └───────┼────────────┼─────────────┼───────────┘
-                            │            │             │
-               ┌────────────┼────────────┼─────────────┼──────────┐
-               │            ▼            ▼             ▼          │
-               │  ┌──────────────────────────────────────────┐    │
-               │  │           Stellar SDK / RPC              │    │
-               │  └──────────────────────────────────────────┘    │
-               │            │                        │            │
-               │   ┌────────┴────────┐    ┌──────────┴─────────┐  │
-               │   │  Next.js        │    │  Keeper Bot        │  │
-               │   │  Frontend       │    │  (Oracle, Liq,     │  │
-               │   │  (Trade UI)     │    │   Orders, Funding) │  │
-               │   └────────┬────────┘    └────────────────────┘  │
-               │            │                                     │
-               │   ┌────────┴────────┐                            │
-               │   │ Stellar         │                            │
-               │   │ Wallets Kit     │                            │
-               │   └─────────────────┘                            │
-               └──────────────────────────────────────────────────┘
+                ┌────────────────────────────────────────────────────────────┐
+                │                  Stellar Network (Soroban)                 │
+                │                                                            │
+                │  ┌──────────┐  ┌───────┐  ┌──────────────┐  ┌───────────┐  │
+                │  │  Market  │◄►│ Vault │  │Oracle Adapter│  │Mock Oracle│  │
+                │  │ Contract │  │  (LP) │  │ (Band + DIA) │  │  (test)   │  │
+                │  └────┬─────┘  └───┬───┘  └──────┬───────┘  └─────┬─────┘  │
+                │       │            │             │                │        │
+                │  ┌────┴─────────┐  ┌─┴────────┐                            │
+                │  │ Vault Factory│  │ Referral │   ◄── Tranche 2            │
+                │  └──────────────┘  └──────────┘                            │
+                └─────────┬────────────────────────────────────┬─────────────┘
+                          │ writes prices,                     │ Soroban events
+                          │ liquidates                         │ (getEvents poll)
+                          ▼                                    ▼
+                ┌──────────────────┐                ┌──────────────────────┐
+                │   Keeper Bot     │                │      Indexer         │
+                │    (Railway)     │                │     (Railway)        │
+                │ Oracle / Liq /   │                │  decode → libSQL     │
+                │ Orders / Funding │                │       / Turso        │
+                └──────────────────┘                └──────────┬───────────┘
+                                                               │
+                                                               ▼
+                                                    ┌──────────────────────┐
+                                                    │     API Gateway      │
+                                                    │  Fastify REST + WS   │
+                                                    │    (closed beta)     │
+                                                    │      (Railway)       │
+                                                    └──────────┬───────────┘
+                                                               │
+                              ┌────────────────────────────────┼────────────────────┐
+                              ▼                                ▼                    ▼
+                    ┌─────────────────────┐           ┌────────────────┐  ┌────────────────┐
+                    │  Next.js Frontend   │           │  @noether/sdk  │  │  noether-sdk   │
+                    │      (Vercel)       │           │  (TypeScript)  │  │    (Python)    │
+                    │  Trade · Vaults ·   │           └────────────────┘  └────────────────┘
+                    │  Referrals · Faucet │
+                    │ Stellar Wallets Kit │
+                    └─────────────────────┘
+
+       The frontend reads chain directly (Stellar SDK) for trading + oracle prices,
+       and uses sdk-web wrappers over the API gateway for indexed data
+       (vault marketplace, referral stats, leaderboard).
 ```
 
 ### Smart Contracts
 
-| Contract | LOC | Purpose |
-|----------|-----|---------|
-| **Market** | ~2,800 | Core trading engine — isolated + cross-margin positions, advanced orders, liquidation, funding |
-| **Vault** | ~990 | LP pool — USDC deposits, NOE LP token, PnL settlement with Market |
-| **Oracle Adapter** | ~685 | Dual-source aggregation — Band + DIA, staleness + deviation validation, cached fallback |
-| **Noether Common** | — | Shared types, error codes, fixed-point math |
-| **Mock Oracle** | ~405 | SEP-0040 compatible test feed for testnet |
+| Contract | LOC / Tests | Purpose |
+|----------|-------------|---------|
+| **Market** | ~2,800 LOC | Core trading engine — isolated + cross-margin positions, advanced orders, liquidation, funding |
+| **Vault** | ~990 LOC | LP pool — USDC deposits, NOE LP token, PnL settlement with Market |
+| **Oracle Adapter** | ~685 LOC | Dual-source aggregation — Band + DIA, staleness + deviation validation, cached fallback |
+| **Mock Oracle** | ~405 LOC | SEP-0040 compatible test feed for testnet |
+| **Vault Factory** | T2 · 37 tests | User-created trading vaults — share math, 5% min-holding invariant, leader_trade proxies |
+| **Referral** | T2 · 13 tests | On-chain referral system — code registration, `record_trade` accrual, claim payout |
+| **Noether Common** | — | Shared types, error codes, fixed-point math (utility crate) |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -316,6 +349,82 @@ Funding is **lazy**: the keeper calls `apply_funding()` hourly, which stores the
 
 NOE is a SAC-wrapped classic Stellar asset, pre-minted to the vault. Deposits move NOE via `transfer` (not `mint`); withdrawals require the user to first `approve()` the vault.
 
+### User-Created Vaults (Tranche 2)
+
+Anyone can deploy a new trading vault via `vault_factory.create_vault(leader, name, profit_share_bps)`. The leader trades on behalf of all depositors using shared collateral and earns a profit share above the high-water mark; depositors hold share tokens denominated in vault NAV.
+
+```
+  Depositor                  Vault Factory                Market
+    │                              │                        │
+    │  create_vault(leader, name)  │                        │
+    │ ──── (called by leader) ───► │                        │
+    │                              │                        │
+    │  deposit(vault_id, usdc)     │                        │
+    │ ────────────────────────────►│                        │
+    │                              │  USDC → vault reserve  │
+    │  shares ◄────────────────────│  (proportional mint)   │
+    │                              │                        │
+    │       ... leader trades ...                           │
+    │                              │  leader_trade(…)       │
+    │                              │ ──── (proxied auth) ──►│
+    │                              │                        │
+    │  withdraw(vault_id, shares)  │                        │
+    │ ────────────────────────────►│                        │
+    │  USDC ◄──────────────────────│  pro-rata NAV − fees   │
+
+  NAV          = vault_usdc + open_position_equity
+  Share Price  = NAV × PRECISION / total_shares
+  Profit Share = leader_share_bps × (NAV − HWM) / 10000      (default: 10%)
+  Invariant    : leader's own deposit ≥ 5% of total shares   (checked every withdraw)
+```
+
+The 5% min-holding invariant is enforced on every withdraw — leaders cannot drain below it while depositors remain. Browse the marketplace at [`/vaults`](https://testnet.noether.exchange/vaults).
+
+### Referral System (Tranche 2)
+
+The `referral` contract lets traders mint a short code, share it via `?ref=CODE` links, and accrue revenue from referred trades. Referees pay 4% less in fees; referrers earn a 10% share of the fee paid by their referees.
+
+```
+  Referrer                  Referral Contract              Market
+    │                              │                        │
+    │  register_code("ALICE")      │                        │
+    │ ────────────────────────────►│                        │
+    │  (code stored on-chain)      │                        │
+    │                              │                        │
+  Referee                          │                        │
+    │  set_referrer("ALICE")       │                        │
+    │ ────────────────────────────►│                        │
+    │  (binding stored)            │                        │
+    │                              │                        │
+    │       ... referee trades ...                          │
+    │                              │  record_trade(         │
+    │                              │    referee, fee)       │
+    │                              │◄───────────────────────│
+    │                              │  • 4% discount returned│
+    │                              │    to referee          │
+    │                              │  • 10% of fee added    │
+    │                              │    to referrer claim   │
+    │                              │                        │
+  Referrer                         │                        │
+    │  claim()                     │                        │
+    │ ────────────────────────────►│                        │
+    │  USDC ◄──────────────────────│                        │
+
+  discount_bps         = 400    (4%, referee's per-trade fee discount)
+  referrer_share_bps   = 1_000  (10% of full fee accrues to referrer)
+  min_code_volume      = 0      (lowered on testnet — anyone can register)
+```
+
+> **Note (testnet, pre-redeploy).** The currently deployed market contract
+> does not yet call `record_trade` on every fee. Until the market is
+> WASM-optimised and redeployed with the hook (operator step — see
+> [Roadmap](#roadmap)), the API gateway applies the 4% discount off-chain
+> in its fee response and referrer accrual is simulated for display. The
+> contract-level path is fully implemented and tested (13 tests) — it's a
+> deploy-time step, not new code.
+
+Browse and claim at [`/referrals`](https://testnet.noether.exchange/referrals).
+
 ### Oracle Aggregation
 
 ```
@@ -372,6 +481,28 @@ Keeper Bot (5-second cycle)
     apply_funding() — stores new global rate for lazy per-position application
 ```
 
+### Off-Chain Pipeline (Tranche 2)
+
+Tranche 2 introduced a Soroban event indexer feeding a Fastify REST + WebSocket gateway, with TypeScript and Python SDKs on top.
+
+```
+  Stellar Soroban ───► Indexer ───► libSQL ───► API Gateway ───► SDKs / Web
+   (getEvents)        (decode &     (Turso)      (Fastify,         (TS, Py,
+                       project)                   REST + WS,        frontend)
+                                                  closed beta)
+```
+
+- **Indexer** (`indexer/`) polls `getEvents` from a persistent ledger cursor, dispatches by contract address (`router.ts`), runs per-contract decoders, and writes structured projections to libSQL.
+- **API Gateway** (`api/`) reads projections, serves REST routes (`/v1/markets, /v1/oracle, /v1/account, /v1/orders, /v1/vaults, /v1/referral, /v1/events, …`), and broadcasts 4 WebSocket channel families. OpenAPI auto-served at `/docs`. Wallet-challenge auth issues bearer keys hashed at rest with an HMAC pepper.
+- **SDKs** ship sub-clients matching the API surface 1:1 plus an auto-reconnecting `WsClient` (TS: `@noether/sdk`, Py: `noether-sdk`).
+- **Frontend** uses the SDKs for indexed data (vault marketplace, referral stats, leaderboard) and reads the chain directly via `@stellar/stellar-sdk` for trading + oracle prices.
+
+> **Closed beta.** API-key issuance is gated by an `API_KEY_ALLOWLIST` while
+> the protocol matures. Wallet-only Soroban operations (registering a
+> referral code, opening positions, depositing to vaults) do **not** require
+> the gateway — they go straight to chain and work for any wallet. Email or
+> join Discord to request beta access.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
@@ -425,9 +556,24 @@ Next.js 14 (App Router) · TypeScript 5.2 · Tailwind CSS · Zustand · Framer M
 
 Node.js · TypeScript · `@stellar/stellar-sdk` · Reflector on-chain oracle (primary) · Binance REST (fallback).
 
+### API Gateway (Tranche 2)
+[![Node.js][node-shield]][node-url] [![TypeScript][typescript-shield]][typescript-url]
+
+[Fastify](https://fastify.dev/) · `@fastify/swagger` (OpenAPI at `/docs`) · `@fastify/websocket` · libSQL/Turso · HMAC-peppered bearer keys · tiered rate limiting · vitest · Dockerised for Railway.
+
+### Indexer (Tranche 2)
+[![Node.js][node-shield]][node-url] [![TypeScript][typescript-shield]][typescript-url]
+
+Soroban `getEvents` polling · per-contract decoders → libSQL/Turso projections · persistent ledger cursor · vitest · Dockerised for Railway.
+
+### SDKs (Tranche 2)
+
+- **`@noether/sdk` (TypeScript)** — tsup-bundled, full REST + WsClient surface, `executeTrade` helper, 25 vitest tests.
+- **`noether-sdk` (Python)** — httpx + websockets, mirrors the TS sub-clients, 12 pytest tests.
+
 ### Infrastructure
 
-Vercel (frontend) · Railway (keeper bot) · Stellar Testnet (RPC + Horizon).
+Vercel (frontend) · Railway (keeper + api + indexer) · Stellar Testnet (RPC + Horizon) · Turso (managed libSQL).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -443,6 +589,8 @@ Current testnet deployment — canonical source is [`contracts.json`](./contract
 | **Vault** | `CD5WYLEHTFHOKPPH2GMNUFW2MK7XIQFKI365G6CBAATYWVNPE3RFYMY3` |
 | **Oracle Adapter** | `CBDH7R4PBFHMN4AER74O4RG7VHUWUMFI67UKDIY6ISNQP4H5KFKMSBS4` |
 | **Mock Oracle** | `CAUGTIO44JFE3KV74OLJJHYLEGPFIZTZAXVF5BBY6WNUAUHHEO4JCGIH` |
+| **Vault Factory** (T2) | `CCFICYG73QHGWOVMMF7SJHMNBPRQVOWBZZE7MONWPVVTWW2UKXS4IRKX` |
+| **Referral** (T2) | `CAGZXABWTJN6FU7TMCIWL3RH7EC6K4CQLLZJWUFN3CD7YHVDYWJCIG3O` |
 | **USDC Token** | `CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4` |
 | **NOE Token** | `CD7VRBXIDYP2C2F2AZZL242GY4PRDVDH2BG3LAN2ASXYUXCPHWQJTDP5` |
 | **Admin** | `GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN` |
@@ -525,7 +673,12 @@ noether/
 | Landing | `/` | Protocol overview with live trading preview |
 | Trade | `/trade` | Full trading interface — chart, order panel, positions, trade history |
 | Portfolio | `/portfolio` | Open positions, trade history, PnL tracking |
-| Vault | `/vault` | LP interface — deposit USDC, withdraw NOE, pool stats |
+| Protocol Vault | `/vault` | LP interface — deposit USDC, withdraw NOE, pool stats |
+| Vaults Marketplace | `/vaults` | T2 — browse user-created trading vaults |
+| Vault Detail | `/vaults/[id]` | T2 — deposit / withdraw a single vault |
+| Vault Manage | `/vaults/[id]/manage` | T2 — leader panel (trade + claim fees) |
+| Referrals | `/referrals` | T2 — register a code, share, claim accrued rewards |
+| API Keys | `/api-keys` | T2 — in-browser issuance of gateway bearer keys (closed beta) |
 | Leaderboard | `/leaderboard` | Top traders by volume and PnL (backed by Turso DB + cron) |
 | Faucet | `/faucet` | Testnet USDC (up to 1,000/day) |
 
@@ -562,21 +715,51 @@ cp ../../.env.example .env    # Configure your keeper keypair
 npm start                     # or: npm run dev (auto-restart)
 ```
 
+### Run the API + Indexer (Tranche 2 — monorepo)
+
+```bash
+# From repo root — npm workspaces (api, indexer, sdk-ts, packages/*)
+npm install
+npm run build:packages         # types → shared → tx-builders (order matters)
+
+# Indexer — polls Soroban events into libSQL
+npm -w @noether/indexer run migrate
+npm -w @noether/indexer run dev
+
+# API gateway — Fastify REST + WS, port 4000
+npm -w @noether/api run dev
+# OpenAPI / Swagger UI: http://localhost:4000/docs
+
+# All tests across workspaces
+npm test
+```
+
+> **Closed beta.** Bearer-key issuance via the gateway honours
+> `API_KEY_ALLOWLIST`. Wallet-only Soroban calls (registering a referral
+> code, opening positions, depositing to vaults) work without an API key.
+> See [Security](#security).
+
 ### Build & Deploy Contracts
 
 ```bash
 # Build all contracts (optimized WASM)
 ./scripts/build_contracts.sh
 
-# Full deploy pipeline — deploys all 4 contracts, initializes, saves addresses
+# Full deploy pipeline — deploys all 6 contracts, initializes, saves addresses
 ./scripts/setup_and_deploy.sh
 
 # Or per-contract (build + deploy + init)
 ./scripts/market.sh
 ./scripts/vault.sh
+
+# Tranche 2 contracts
+npx tsx web/scripts/deploy-tranche2.ts              # vault_factory + referral
+npx tsx web/scripts/deploy-vault-factory-only.ts    # vault_factory alone
+npx tsx web/scripts/referral-set-min-volume.ts      # set on-chain min_code_volume
 ```
 
-Addresses are written to both `.env` (as `NEXT_PUBLIC_*` vars) and `contracts.json` automatically.
+Addresses are written to `contracts.json` automatically. Update `.env`, Vercel,
+and Railway env vars (keeper + api + indexer) manually so they match.
 
 ### Environment Variables
 
@@ -585,22 +768,38 @@ Copy `.env.example` to `.env` and populate:
 ```env
 # Network
 NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+SOROBAN_RPC_URL="https://soroban-testnet.stellar.org"
+# SOROBAN_RPC_URLS="https://primary,https://fallback"   # comma-separated failover
 
 # Keys
 ADMIN_SECRET_KEY=S...           # Deployment + admin operations
 KEEPER_SECRET_KEY=S...          # (Optional) dedicated keeper key
 ORACLE_SECRET_KEY=S...          # (Optional) dedicated oracle-updater key
 
-# Contract addresses (auto-populated by deploy scripts)
+# Contract addresses (canonical source: contracts.json)
 NEXT_PUBLIC_MARKET_ID=C...
 NEXT_PUBLIC_VAULT_ID=C...
 NEXT_PUBLIC_ORACLE_ADAPTER_ID=C...
 NEXT_PUBLIC_MOCK_ORACLE_ID=C...
+NEXT_PUBLIC_VAULT_FACTORY_ID=C...    # Tranche 2
+NEXT_PUBLIC_REFERRAL_ID=C...         # Tranche 2
 NEXT_PUBLIC_USDC_TOKEN_ID=C...
 NEXT_PUBLIC_NOE_TOKEN_ID=C...
 
-# Frontend-only
-FAUCET_ADMIN_SECRET_KEY=S...    # Required for /faucet payments
+# Frontend
+NEXT_PUBLIC_NOETHER_API_URL=http://localhost:4000   # api gateway base URL
+FAUCET_ADMIN_SECRET_KEY=S...                        # /faucet payments
+
+# Indexer (Tranche 2)
+LIBSQL_URL="file:./data/indexer.db"   # or libsql://… for Turso
+LIBSQL_AUTH_TOKEN=                    # required for Turso, blank for local
+INDEXER_POLL_INTERVAL_MS=2000
+
+# API Gateway (Tranche 2)
+API_PORT=4000
+API_HMAC_PEPPER=                      # openssl rand -hex 32 — must be stable across restarts
+API_CORS_ORIGIN=*
+API_KEY_ALLOWLIST=                    # comma-separated G… addresses for closed beta
 ```
 
 > The keeper's secret-key resolution order is `KEEPER_SECRET_KEY` → `ORACLE_SECRET_KEY` → `ADMIN_SECRET_KEY`. Using a dedicated oracle wallet avoids sequence-number conflicts with the admin wallet during deploys.
@@ -620,13 +819,22 @@ Noether is being delivered in three tranches under [Stellar Community Fund #41](
 - [x] Time-in-force: GTC, IOC, Post-Only
 - [x] Maker/taker fee system with 4 volume-based tiers
 
-### Tranche 2 — Developer Tooling & Vault Ecosystem · $25,800 · **Upcoming**
+### Tranche 2 — Developer Tooling & Vault Ecosystem · $25,800 · **Code Complete · Operator steps pending**
 
-- [ ] Public REST + WebSocket APIs
-- [ ] Python and TypeScript SDKs for programmatic trading
-- [ ] User-created trading vaults (vault leaders earn 10% profit share)
-- [ ] Multi-wallet support (Freighter, LOBSTR, xBull, Albedo, Ledger)
-- [ ] On-chain referral system (10% referrer / 4% referee discount)
+- [x] Public REST + WebSocket APIs (`api/` — Fastify, OpenAPI at `/docs`, 4 WS channel families, 37 vitest tests)
+- [x] TypeScript SDK — `@noether/sdk` with `WsClient` (25 tests)
+- [x] Python SDK — `noether-sdk` mirroring the TS surface (12 tests)
+- [x] User-created trading vaults — `vault_factory` contract (37 tests) + `/vaults` marketplace + leader manage panel
+- [x] Multi-wallet support — Freighter, LOBSTR, xBull, Albedo, Ledger via Stellar Wallets Kit
+- [x] On-chain referral system — `referral` contract (13 tests) + sticky `?ref=CODE` banner + `/referrals` dashboard
+- [x] Soroban event indexer — libSQL/Turso projections feeding the API gateway
+
+Pending operator steps:
+
+- [ ] Market WASM-optimise + redeploy with the on-chain referral discount hook (currently applied off-chain at the gateway — see [Referral System](#referral-system-tranche-2))
+- [ ] `npm publish @noether/sdk` (currently `private: true`)
+- [ ] PyPI publish `noether-sdk`
+- [ ] Paid Soroban RPC endpoint (`SOROBAN_RPC_URLS`) for keeper + indexer — see [`docs/RPC.md`](./docs/RPC.md)
 
 ### Tranche 3 — Mainnet Launch · $34,480 · **Future**
 
@@ -650,6 +858,8 @@ Noether is being delivered in three tranches under [Stellar Community Fund #41](
 - **Integer math only** — No floating point anywhere; all values are 7-decimal fixed-point `i128`
 - **Overflow protection** — `overflow-checks = true` in the release profile
 - **Emergency withdraw** — Admin-only withdrawal gated on paused state (vault)
+- **API gateway in closed beta** — Bearer-key issuance is restricted to `API_KEY_ALLOWLIST` while the protocol matures. Wallet-only Soroban calls always work without a key
+- **Referral discount currently applied off-chain** — Until the market contract is redeployed with the `referral.record_trade` hook, the 4% referee discount is applied by the API gateway in its fee response (not yet enforced on-chain). Tracked as a Tranche 2 operator step
 
 > **Testnet only. Unaudited. Use at your own risk.**
 > Contracts are deployed on Stellar Testnet and have not undergone a formal audit. Do not use with mainnet funds.
@@ -671,7 +881,7 @@ Distributed under the MIT License. See [`LICENSE`](./LICENSE) for the full text.
 | | Role | |
 |---|---|---|
 | **Yahya Emir Soyer** | Co-founder & CEO — Smart Contracts (Soroban/Rust) | https://github.com/y4hyya |
-| **Mert Cicekci** | Co-founder & CTO — Full-stack Web3, DevRel | https://github.com/mertcicekci0 |
+| **Mert Cicekci** | Co-founder & CTO — Full-stack Web3, DevRel | https://github.com/merth |
 
 ### Contact & Community
 
