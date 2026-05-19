@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from ..errors import NotFoundError
 from ..models import VaultActivityRow, VaultRow
 from ..transport import Transport

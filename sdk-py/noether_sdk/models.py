@@ -4,10 +4,11 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
 
 
 class _Base(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True, extra="ignore", alias_generator=to_camel)
 
 
 # ─── system ────────────────────────────────────────────────────────────────
@@ -33,8 +34,6 @@ class OracleSnapshot(_Base):
     price: str
     price_float: float
     timestamp: int
-
-    model_config = ConfigDict(populate_by_name=True, extra="ignore", alias_generator=None)
 
 
 class MarketSummary(_Base):
