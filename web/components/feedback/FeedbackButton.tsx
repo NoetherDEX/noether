@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MessageSquare, Send, X, Bug, Lightbulb, MessageCircle } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
@@ -17,10 +18,13 @@ type Category = (typeof categories)[number]['id'];
 const SUPPORT_EMAIL = 'support@noether.exchange';
 
 export function FeedbackButton() {
+  const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const [category, setCategory] = useState<Category>('general');
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
+
+  if (pathname === '/') return null;
 
   const handleSubmit = () => {
     if (!message.trim()) {
