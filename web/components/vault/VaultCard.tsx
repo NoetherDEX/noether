@@ -3,52 +3,82 @@
 import Link from 'next/link';
 import { Card, CardContent, Badge } from '@/components/ui';
 import type { VaultRow } from '@/types/vault';
-import { vaultNav, vaultLeaderHoldingPct, VAULT_PRECISION } from '@/types/vault';
+import { vaultNav, VAULT_PRECISION } from '@/types/vault';
 
 function shortenAddress(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 4)}…${addr.slice(-4)}`;
 }
 
-function fmtUsdc(raw: string): string {
+function fmtUsdc(raw: string, dp = 2): string {
   const value = BigInt(raw);
   const whole = value / VAULT_PRECISION;
   const frac = value % VAULT_PRECISION;
-  return `${whole}.${frac.toString().padStart(7, '0').slice(0, 2)}`;
+  return `${whole}.${frac.toString().padStart(7, '0').slice(0, dp)}`;
 }
 
-function fmtNav(nav: bigint): string {
-  // PRECISION-scaled bigint → decimal string with 4 dp
-  const whole = nav / VAULT_PRECISION;
-  const frac = nav % VAULT_PRECISION;
-  return `${whole}.${frac.toString().padStart(7, '0').slice(0, 4)}`;
+function fmtBps(bps: number | undefined, signed = false): string {
+  if (bps == null) return '—';
+  const pct = bps / 100;
+  const sign = signed && pct > 0 ? '+' : '';
+  return `${sign}${pct.toFixed(pct < 10 ? 2 : 1)}%`;
 }
 
+/**
+ * Marketplace card — surfaces the five SCF Tranche 2 metrics
+ * (name · APY · TVL · drawdown · depositor count) plus open-trades
+ * and NAV as secondary context. Falls back to em-dash when the
+ * indexer hasn't produced an aggregate yet (brand-new vault).
+ */
 export function VaultCard({ vault }: { vault: VaultRow }) {
   const nav = vaultNav(vault);
-  const leaderPct = vaultLeaderHoldingPct(vault);
+  const navFloat = Number(nav) / 1e7;
+
+  const apyValue = vault.apyBps;
+  const apyClass =
+    apyValue == null
+      ? 'text-foreground'
+      : apyValue > 0
+      ? 'text-[#22c55e]'
+      : apyValue < 0
+      ? 'text-red-400'
+      : 'text-foreground';
 
   return (
-    <Link href={`/vaults/${vault.id}`} className="block">
-      <Card className="hover:border-blue-500/40 transition-colors">
-        <CardContent className="p-5 space-y-3">
-          <div className="flex items-start justify-between">
-            <div>
-              <h3 className="font-semibold text-lg">{vault.name}</h3>
-              <p className="text-xs text-zinc-500">
-                Leader · {shortenAddress(vault.leader)}
+    <Link href={`/vaults/${vault.id}`} className="block group">
+      <Card className="hover:border-amber-500/30 transition-colors">
+        <CardContent className="p-5 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="font-semibold text-lg truncate group-hover:text-amber-300 transition-colors">
+                {vault.name}
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Leader · <span className="font-mono">{shortenAddress(vault.leader)}</span>
+                {' · '}#{vault.id}
               </p>
             </div>
-            <div className="flex flex-col items-end gap-1">
-              {vault.paused && <Badge variant="warning">Paused</Badge>}
-              <span className="text-xs text-zinc-500">#{vault.id}</span>
-            </div>
+            {vault.paused && <Badge variant="warning">Paused</Badge>}
           </div>
 
-          <div className="grid grid-cols-3 gap-3 pt-2 border-t border-zinc-800">
+          {/* Primary stats — 5 SCF-required metrics on two rows */}
+          <div className="grid grid-cols-3 gap-3 pt-3 border-t border-white/5">
             <Metric label="TVL" value={`$${fmtUsdc(vault.totalUsdc)}`} />
-            <Metric label="NAV" value={fmtNav(nav)} />
-            <Metric label="Leader" value={`${leaderPct.toFixed(1)}%`} />
+            <Metric label="APY" value={fmtBps(apyValue, true)} valueClass={apyClass} />
+            <Metric label="Drawdown" value={fmtBps(vault.drawdownBps)} />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <Metric
+              label="Depositors"
+              value={String(vault.depositorCount ?? '—')}
+              compact
+            />
+            <Metric
+              label="Open trades"
+              value={String(vault.openPositions ?? '—')}
+              compact
+            />
+            <Metric label="NAV" value={navFloat.toFixed(4)} compact />
           </div>
         </CardContent>
       </Card>
@@ -56,11 +86,27 @@ export function VaultCard({ vault }: { vault: VaultRow }) {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  value,
+  valueClass,
+  compact,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+  compact?: boolean;
+}) {
   return (
     <div className="space-y-0.5">
-      <p className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</p>
-      <p className="text-sm font-medium tabular-nums">{value}</p>
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p
+        className={`tabular-nums font-mono ${
+          compact ? 'text-xs' : 'text-base font-semibold'
+        } ${valueClass ?? 'text-foreground'}`}
+      >
+        {value}
+      </p>
     </div>
   );
 }

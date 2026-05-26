@@ -35,7 +35,16 @@ export async function registerVaultRoutes(
     },
     async (req, reply) => {
       const rows = await vaults.list({ leader: req.query.leader, limit: req.query.limit });
-      return reply.send({ vaults: rows });
+      // Enrich every card with depositor / trade aggregates so the
+      // marketplace UI can render APY / drawdown / depositor count
+      // without N+1 fetches.
+      const enriched = await Promise.all(
+        rows.map(async (r) => {
+          const agg = await vaults.aggregates(r.id, r);
+          return { ...r, ...agg };
+        }),
+      );
+      return reply.send({ vaults: enriched });
     },
   );
 
@@ -55,7 +64,32 @@ export async function registerVaultRoutes(
     async (req, reply) => {
       const row = await vaults.get(req.params.id);
       if (!row) return reply.code(404).send({ error: 'vault_not_found', id: req.params.id });
-      return reply.send(row);
+      const agg = await vaults.aggregates(req.params.id, row);
+      return reply.send({ ...row, ...agg });
+    },
+  );
+
+  app.get<{ Params: IdParam; Querystring: ActivityQuery }>(
+    '/v1/vaults/:id/trades',
+    {
+      schema: {
+        description:
+          'Leader open/close trade history for a vault, newest first. Each row records a leader_open or leader_close event emitted by the vault_factory contract.',
+        tags: ['vaults'],
+        params: {
+          type: 'object',
+          properties: { id: { type: 'integer', minimum: 0 } },
+          required: ['id'],
+        },
+        querystring: {
+          type: 'object',
+          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const rows = await vaults.trades(req.params.id, req.query.limit);
+      return reply.send({ trades: rows });
     },
   );
 

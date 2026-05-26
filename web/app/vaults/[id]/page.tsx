@@ -6,11 +6,14 @@ import { VaultMetrics } from '@/components/vault/VaultMetrics';
 import { VaultActivity } from '@/components/vault/VaultActivity';
 import { VaultActions } from '@/components/vault/VaultActions';
 import { MyVaultPosition } from '@/components/vault/MyVaultPosition';
+import { VaultTradeHistory } from '@/components/vault/VaultTradeHistory';
+import { VaultPnlSummary } from '@/components/vault/VaultPnlSummary';
 import {
   getVault,
   getVaultDeposits,
   getVaultFeeClaims,
   getVaultWithdraws,
+  getVaultTrades,
 } from '@/lib/api/vaults';
 
 export const dynamic = 'force-dynamic';
@@ -27,10 +30,11 @@ export default async function VaultDetailPage({
   const vault = await getVault(id);
   if (!vault) notFound();
 
-  const [deposits, withdraws, feeClaims] = await Promise.all([
+  const [deposits, withdraws, feeClaims, trades] = await Promise.all([
     getVaultDeposits(id, 200).catch(() => []),
     getVaultWithdraws(id, 200).catch(() => []),
     getVaultFeeClaims(id, 50).catch(() => []),
+    getVaultTrades(id, 200).catch(() => []),
   ]);
 
   return (
@@ -88,8 +92,20 @@ export default async function VaultDetailPage({
           {/* Stat rows */}
           <VaultMetrics vault={vault} />
 
+          {/* PnL history chart + summary tiles (SCF Tranche 2 deliverable #4) */}
+          <VaultPnlSummary
+            vault={vault}
+            deposits={deposits}
+            withdraws={withdraws}
+            feeClaims={feeClaims}
+            trades={trades}
+          />
+
           {/* User position */}
           <MyVaultPosition vault={vault} deposits={deposits} withdraws={withdraws} />
+
+          {/* Leader trade history (SCF deliverable #4) */}
+          <VaultTradeHistory trades={trades} />
 
           {/* Activity */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">

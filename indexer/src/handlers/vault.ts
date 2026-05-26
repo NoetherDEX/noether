@@ -185,6 +185,41 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
         ],
       });
       return;
+    case 'leader_open':
+      await db.execute({
+        sql: `
+          INSERT OR IGNORE INTO vault_trades
+            (vault_id, position_id, action, leader, collateral, ledger, ts, tx_hash)
+          VALUES (?, ?, 'open', ?, ?, ?, ?, ?)
+        `,
+        args: [
+          event.vaultId,
+          event.positionId.toString(),
+          event.leader,
+          event.collateral.toString(),
+          event.ledger,
+          event.ledgerCloseTs,
+          event.txHash,
+        ],
+      });
+      return;
+    case 'leader_close':
+      await db.execute({
+        sql: `
+          INSERT OR IGNORE INTO vault_trades
+            (vault_id, position_id, action, leader, collateral, ledger, ts, tx_hash)
+          VALUES (?, ?, 'close', ?, 0, ?, ?, ?)
+        `,
+        args: [
+          event.vaultId,
+          event.positionId.toString(),
+          event.leader,
+          event.ledger,
+          event.ledgerCloseTs,
+          event.txHash,
+        ],
+      });
+      return;
     default:
       return;
   }
@@ -205,6 +240,8 @@ const VAULT_TOPICS: VaultEvent['topic'][] = [
   'unpaused',
   'admin_paused',
   'admin_unpaused',
+  'leader_open',
+  'leader_close',
 ];
 
 export function buildVaultRegistrations(
