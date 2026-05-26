@@ -137,6 +137,15 @@ pip install -e ".[dev,stellar]"
 pytest
 ```
 
+## Publish (maintainers)
+
+```bash
+# From sdk-py/ — do not put npm pack tarballs in dist/ (breaks twine).
+export TWINE_USERNAME=__token__
+export TWINE_PASSWORD=pypi-...   # scope: entire account or project noether-sdk
+./scripts/publish_pypi.sh
+```
+
 ## Status
 
 Phase 7 v0 — REST surface complete + WS sub-client + 11 unit tests. Mirror of the TypeScript SDK shape so cross-language services can be written in either language without translation cost.
