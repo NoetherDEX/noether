@@ -33,20 +33,66 @@ interface Stat {
   tone?: 'success' | 'danger' | 'neutral';
 }
 
+function fmtBps(bps: number | undefined, signed = false): string {
+  if (bps == null) return '—';
+  const pct = bps / 100;
+  const sign = signed && pct > 0 ? '+' : '';
+  return `${sign}${pct.toFixed(pct < 10 ? 2 : 1)}%`;
+}
+
 export function VaultMetrics({ vault }: { vault: VaultRow }) {
   const nav = vaultNav(vault);
   const leaderPct = vaultLeaderHoldingPct(vault);
   const profitSharePct = (vault.profitShareBps / 100).toFixed(1);
   const realizedPnlNum = Number(vault.realizedPnl);
   const pnlTone: Stat['tone'] = realizedPnlNum > 0 ? 'success' : realizedPnlNum < 0 ? 'danger' : 'neutral';
+  const apyTone: Stat['tone'] =
+    vault.apyBps == null ? 'neutral' : vault.apyBps > 0 ? 'success' : vault.apyBps < 0 ? 'danger' : 'neutral';
+  const drawdownTone: Stat['tone'] =
+    (vault.drawdownBps ?? 0) > 1500 ? 'danger' : 'neutral';
 
-  // Primary row — financial headline
+  // Primary row — financial headline (SCF deliverable surface)
   const primary: Stat[] = [
     {
       label: 'Total Value Locked',
       value: `$${fmtUsdc(vault.totalUsdc)}`,
       hint: 'USDC pooled by all depositors',
     },
+    {
+      label: 'APY',
+      value: fmtBps(vault.apyBps, true),
+      hint: 'Annualised realized PnL / TVL',
+      tone: apyTone,
+    },
+    {
+      label: 'Max Drawdown',
+      value: fmtBps(vault.drawdownBps),
+      hint: '(HWM − current NAV) / HWM',
+      tone: drawdownTone,
+    },
+  ];
+
+  // Secondary row — operational
+  const secondary: Stat[] = [
+    {
+      label: 'Open Positions',
+      value: String(vault.openPositions ?? 0),
+      hint: 'leader_open − leader_close events',
+    },
+    {
+      label: 'Total Trades',
+      value: String(vault.tradeCount ?? 0),
+      hint: 'Lifetime trade count',
+    },
+    {
+      label: 'Depositors',
+      value: String(vault.depositorCount ?? 0),
+      hint: 'Distinct wallet count from vault_deposits',
+    },
+  ];
+
+  // Tertiary row — structural / governance
+  const tertiary: Stat[] = [
     {
       label: 'NAV per Share',
       value: fmtNav(nav),
@@ -58,25 +104,11 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
       hint: 'Closed trade profits returned to the pool',
       tone: pnlTone,
     },
-  ];
-
-  // Secondary row — structural
-  const secondary: Stat[] = [
-    {
-      label: 'Circulating Shares',
-      value: fmtShares(vault.circulatingShares),
-      hint: 'Total shares minted to depositors',
-    },
     {
       label: 'Leader Holding',
       value: `${leaderPct.toFixed(2)}%`,
-      hint: 'Must stay ≥ 5% at all times',
+      hint: 'Must stay ≥ 5% — leader-skin invariant',
       tone: leaderPct >= 5 ? 'neutral' : 'danger',
-    },
-    {
-      label: 'Leader Profit Share',
-      value: `${profitSharePct}%`,
-      hint: 'Cut leader takes above HWM',
     },
   ];
 
@@ -84,6 +116,7 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
     <div className="space-y-4 md:space-y-6">
       <StatRow stats={primary} />
       <StatRow stats={secondary} />
+      <StatRow stats={tertiary} />
     </div>
   );
 }

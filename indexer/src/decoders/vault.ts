@@ -19,6 +19,8 @@ import type {
   VaultFeesClaimedEvent,
   VaultPausedEvent,
   VaultWithdrawEvent,
+  VaultLeaderOpenEvent,
+  VaultLeaderCloseEvent,
 } from '@noether/types';
 import { decodeEventValue, decodeTopics, asBigInt, asNumber, asString } from './scval.js';
 
@@ -33,6 +35,8 @@ const VAULT_TOPICS = new Set([
   'unpaused',
   'admin_paused',
   'admin_unpaused',
+  'leader_open',
+  'leader_close',
 ]);
 
 function envelope(raw: RawEvent, topic: string, vaultId: number): VaultEventEnvelope & {
@@ -97,6 +101,21 @@ export function decodeVaultEvent(raw: RawEvent): VaultEvent | null {
         ...envelope(raw, topic, vaultId),
         topic,
       } satisfies VaultPausedEvent;
+    case 'leader_open':
+      return {
+        ...envelope(raw, 'leader_open', vaultId),
+        topic: 'leader_open',
+        leader: asString(value[0], 'vault.leader_open.leader'),
+        positionId: asBigInt(value[1], 'vault.leader_open.position_id'),
+        collateral: asBigInt(value[2], 'vault.leader_open.collateral'),
+      } satisfies VaultLeaderOpenEvent;
+    case 'leader_close':
+      return {
+        ...envelope(raw, 'leader_close', vaultId),
+        topic: 'leader_close',
+        leader: asString(value[0], 'vault.leader_close.leader'),
+        positionId: asBigInt(value[1], 'vault.leader_close.position_id'),
+      } satisfies VaultLeaderCloseEvent;
     default:
       return null;
   }

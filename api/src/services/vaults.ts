@@ -13,6 +13,28 @@ export interface VaultRow {
   profitShareBps: number;
   paused: boolean;
   updatedAt: number;
+  /** Distinct depositor count from vault_deposits. */
+  depositorCount?: number;
+  /** Open positions = leader_open − leader_close in vault_trades. */
+  openPositions?: number;
+  /** Total trade count = leader_open count. */
+  tradeCount?: number;
+  /** Drawdown in basis points = (hwm - nav) / hwm × 10000, floor 0. */
+  drawdownBps?: number;
+  /** Annualised yield in basis points (very simple: realizedPnl / TVL × 365 / days). */
+  apyBps?: number;
+}
+
+export interface VaultTradeRow {
+  id: number;
+  vaultId: number;
+  positionId: string;
+  action: 'open' | 'close';
+  leader: string;
+  collateral: string;
+  ledger: number;
+  ts: number;
+  txHash: string;
 }
 
 export interface VaultActivityRow {
@@ -100,6 +122,100 @@ export class VaultsService {
 
   async feeClaims(vaultId: number, limit?: number): Promise<VaultActivityRow[]> {
     return this.activity('vault_fee_claims', 'leader', vaultId, limit, false);
+  }
+
+  async trades(vaultId: number, limit?: number): Promise<VaultTradeRow[]> {
+    const cap = clampLimit(limit);
+    try {
+      const result = await this.db.execute({
+        sql: 'SELECT * FROM vault_trades WHERE vault_id = ? ORDER BY ts DESC LIMIT ?',
+        args: [vaultId, cap],
+      });
+      return result.rows.map((r) => {
+        const row = r as unknown as Record<string, unknown>;
+        return {
+          id: Number(row.id),
+          vaultId: Number(row.vault_id),
+          positionId: String(row.position_id),
+          action: String(row.action) as 'open' | 'close',
+          leader: String(row.leader),
+          collateral: String(row.collateral),
+          ledger: Number(row.ledger),
+          ts: Number(row.ts),
+          txHash: String(row.tx_hash),
+        };
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('no such table')) return [];
+      throw err;
+    }
+  }
+
+  /**
+   * Aggregate stats for a single vault — used to enrich both the
+   * marketplace card and the detail page without N+1 round-trips.
+   * Returns undefined fields if the underlying table doesn't exist yet
+   * (e.g. older indexer that hasn't run migration 005).
+   */
+  async aggregates(vaultId: number, vault?: VaultRow): Promise<{
+    depositorCount: number;
+    openPositions: number;
+    tradeCount: number;
+    drawdownBps: number;
+    apyBps: number;
+  }> {
+    let depositorCount = 0;
+    let openPositions = 0;
+    let tradeCount = 0;
+    try {
+      const dep = await this.db.execute({
+        sql: 'SELECT COUNT(DISTINCT depositor) AS n FROM vault_deposits WHERE vault_id = ?',
+        args: [vaultId],
+      });
+      depositorCount = Number((dep.rows[0] as { n?: number | bigint } | undefined)?.n ?? 0);
+    } catch { /* table missing — leave 0 */ }
+    try {
+      const tr = await this.db.execute({
+        sql: `
+          SELECT
+            COALESCE(SUM(CASE WHEN action='open' THEN 1 ELSE 0 END), 0) AS opens,
+            COALESCE(SUM(CASE WHEN action='close' THEN 1 ELSE 0 END), 0) AS closes
+          FROM vault_trades WHERE vault_id = ?
+        `,
+        args: [vaultId],
+      });
+      const r = (tr.rows[0] ?? {}) as { opens?: number | bigint; closes?: number | bigint };
+      const opens = Number(r.opens ?? 0);
+      const closes = Number(r.closes ?? 0);
+      tradeCount = opens;
+      openPositions = Math.max(0, opens - closes);
+    } catch { /* table missing */ }
+
+    const v = vault ?? (await this.get(vaultId));
+    let drawdownBps = 0;
+    let apyBps = 0;
+    if (v) {
+      const total = BigInt(v.totalUsdc);
+      const shares = BigInt(v.circulatingShares);
+      const hwm = BigInt(v.hwmNav);
+      // current NAV (PRECISION-scaled, denom 10^7)
+      const PRECISION = 10_000_000n;
+      const nav = shares === 0n ? PRECISION : (total * PRECISION) / shares;
+      if (hwm > nav && hwm > 0n) {
+        drawdownBps = Number(((hwm - nav) * 10_000n) / hwm);
+      }
+      // simple APY = realizedPnl / totalUsdc * 365 / days_active
+      const realized = BigInt(v.realizedPnl);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const days = Math.max(1, (nowSec - v.createdAt) / 86_400);
+      if (total > 0n && realized > 0n) {
+        // realizedPnl / total * 10000 → bps for the lifetime, scale to year
+        const lifeBps = Number((realized * 10_000n) / total);
+        apyBps = Math.round((lifeBps * 365) / days);
+      }
+    }
+    return { depositorCount, openPositions, tradeCount, drawdownBps, apyBps };
   }
 
   private async activity(

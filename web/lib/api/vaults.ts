@@ -3,7 +3,7 @@
  * Targets the @noether/api gateway via NEXT_PUBLIC_NOETHER_API_URL.
  */
 
-import type { VaultActivityRow, VaultRow } from '@/types/vault';
+import type { VaultActivityRow, VaultRow, VaultTradeRow } from '@/types/vault';
 
 const API_BASE = process.env.NEXT_PUBLIC_NOETHER_API_URL ?? 'http://localhost:4000';
 
@@ -57,4 +57,11 @@ export async function getVaultFeeClaims(id: number, limit = 50): Promise<VaultAc
     `/v1/vaults/${id}/fee-claims?limit=${limit}`,
   );
   return feeClaims;
+}
+
+export async function getVaultTrades(id: number, limit = 50): Promise<VaultTradeRow[]> {
+  const { trades } = await fetchJson<{ trades: VaultTradeRow[] }>(
+    `/v1/vaults/${id}/trades?limit=${limit}`,
+  );
+  return trades;
 }

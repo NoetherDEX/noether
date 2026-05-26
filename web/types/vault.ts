@@ -15,6 +15,28 @@ export interface VaultRow {
   profitShareBps: number;
   paused: boolean;
   updatedAt: number;
+  /** Distinct depositor count — set by API when reachable. */
+  depositorCount?: number;
+  /** Open leader trades = leader_open − leader_close. */
+  openPositions?: number;
+  /** All-time leader_open count. */
+  tradeCount?: number;
+  /** Drawdown in basis points. */
+  drawdownBps?: number;
+  /** Annualised yield in basis points. */
+  apyBps?: number;
+}
+
+export interface VaultTradeRow {
+  id: number;
+  vaultId: number;
+  positionId: string;
+  action: 'open' | 'close';
+  leader: string;
+  collateral: string;
+  ledger: number;
+  ts: number;
+  txHash: string;
 }
 
 export interface VaultActivityRow {
