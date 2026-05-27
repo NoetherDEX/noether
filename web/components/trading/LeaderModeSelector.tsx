@@ -24,23 +24,34 @@ export function LeaderModeSelector() {
   const [vaults, setVaults] = useState<VaultRow[]>([]);
   const [open, setOpen] = useState(false);
 
+  // Refresh the led-vault list on mount and every 10s so the
+  // dropdown + selected balance line stay in sync after deposits,
+  // withdrawals, and the leader's own trades. We intentionally do
+  // *not* depend on the full `vault` object — setVault writes a new
+  // reference every poll, which would otherwise self-trigger.
   useEffect(() => {
     if (!isConnected || !publicKey) {
       setVaults([]);
-      if (vault) setVault(null);
+      if (useLeaderModeStore.getState().vault) setVault(null);
       return;
     }
-    listVaults({ leader: publicKey, limit: 50 })
-      .then((rows) => {
-        setVaults(rows);
-        if (vault) {
-          const fresh = rows.find((v) => v.id === vault.id);
-          if (fresh) setVault(fresh);
-          else setVault(null);
-        }
-      })
-      .catch(() => setVaults([]));
-  }, [publicKey, isConnected, vault?.id, setVault, vault]);
+    const tick = () => {
+      listVaults({ leader: publicKey, limit: 50 })
+        .then((rows) => {
+          setVaults(rows);
+          const current = useLeaderModeStore.getState().vault;
+          if (current) {
+            const fresh = rows.find((v) => v.id === current.id);
+            if (fresh) setVault(fresh);
+            else setVault(null);
+          }
+        })
+        .catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 10_000);
+    return () => clearInterval(id);
+  }, [publicKey, isConnected, setVault]);
 
   if (!isConnected) return null;
   if (vaults.length === 0 && !vault) return null;

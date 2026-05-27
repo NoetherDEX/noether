@@ -63,19 +63,23 @@ function TradePage() {
   const factoryAddress = process.env.NEXT_PUBLIC_VAULT_FACTORY_ID || '';
 
   // ?vault={id} query — preselect leader mode for that vault if the
-  // connected wallet is its leader.
+  // connected wallet is its leader. We always pull fresh data from
+  // the API (not just on the first nav) because the store snapshot
+  // saved by VaultActions is whatever the server rendered at the
+  // time of the vault page load — by the time you reach /trade it
+  // can be minutes stale, which made the "Vault balance" line lie
+  // to the leader.
   useEffect(() => {
     const vaultId = searchParams?.get('vault');
-    if (!vaultId || !publicKey) return;
-    const id = Number(vaultId);
+    const id = vaultId != null ? Number(vaultId) : NaN;
+    if (!publicKey) return;
     if (!Number.isInteger(id) || id < 0) return;
-    if (leaderVault?.id === id) return;
     getVault(id)
       .then((v) => {
         if (v && v.leader === publicKey) setLeaderVault(v);
       })
       .catch(() => {});
-  }, [searchParams, publicKey, leaderVault?.id, setLeaderVault]);
+  }, [searchParams, publicKey, setLeaderVault]);
 
   // Fetch positions function - extracted for manual refresh
   const fetchPositions = useCallback(async (showLoading = true) => {
