@@ -72,30 +72,63 @@ async function upsertVault(db: Client, event: VaultEvent): Promise<void> {
         args: [event.vaultId, event.leader, event.name, event.ledgerCloseTs, Date.now()],
       });
       return;
-    case 'deposit':
+    case 'deposit': {
+      // Mirror the contract — only bump leader_shares when the
+      // depositor *is* the leader. Without this branch every vault's
+      // leader_shares projection stays at 0 even though the on-chain
+      // 5% invariant has clearly been met, which made the marketplace
+      // surface a misleading "Leader Holding 0% (violation)" banner.
+      const leaderRow = await db.execute({
+        sql: 'SELECT leader FROM vaults WHERE id = ?',
+        args: [event.vaultId],
+      });
+      const leaderAddr = (leaderRow.rows[0] as { leader?: string } | undefined)?.leader;
+      const isLeader = leaderAddr === event.depositor;
       await db.execute({
         sql: `
           UPDATE vaults
-          SET total_usdc = total_usdc + ?,
-              circulating_shares = circulating_shares + ?,
-              updated_at = ?
+          SET total_usdc          = total_usdc + ?,
+              circulating_shares  = circulating_shares + ?,
+              leader_shares       = leader_shares + ?,
+              updated_at          = ?
           WHERE id = ?
         `,
-        args: [event.amount.toString(), event.shares.toString(), Date.now(), event.vaultId],
+        args: [
+          event.amount.toString(),
+          event.shares.toString(),
+          isLeader ? event.shares.toString() : '0',
+          Date.now(),
+          event.vaultId,
+        ],
       });
       return;
-    case 'withdraw':
+    }
+    case 'withdraw': {
+      const leaderRow = await db.execute({
+        sql: 'SELECT leader FROM vaults WHERE id = ?',
+        args: [event.vaultId],
+      });
+      const leaderAddr = (leaderRow.rows[0] as { leader?: string } | undefined)?.leader;
+      const isLeader = leaderAddr === event.depositor;
       await db.execute({
         sql: `
           UPDATE vaults
-          SET total_usdc = total_usdc - ?,
-              circulating_shares = circulating_shares - ?,
-              updated_at = ?
+          SET total_usdc          = total_usdc - ?,
+              circulating_shares  = circulating_shares - ?,
+              leader_shares       = leader_shares - ?,
+              updated_at          = ?
           WHERE id = ?
         `,
-        args: [event.usdcOut.toString(), event.shares.toString(), Date.now(), event.vaultId],
+        args: [
+          event.usdcOut.toString(),
+          event.shares.toString(),
+          isLeader ? event.shares.toString() : '0',
+          Date.now(),
+          event.vaultId,
+        ],
       });
       return;
+    }
     case 'fees_claimed':
       await db.execute({
         sql: `
