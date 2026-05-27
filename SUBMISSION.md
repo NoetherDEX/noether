@@ -8,7 +8,7 @@ one entry, click two links, and verify everything end-to-end.
 > - Frontend: <https://noether.exchange>
 > - API gateway: <https://noetherapi-production.up.railway.app>
 > - Repository: <https://github.com/NoetherDEX/noether>
-> - Stellar Expert (vault_factory): <https://stellar.expert/explorer/testnet/contract/CCFICYG73QHGWOVMMF7SJHMNBPRQVOWBZZE7MONWPVVTWW2UKXS4IRKX>
+> - Stellar Expert (vault_factory): <https://stellar.expert/explorer/testnet/contract/CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA>
 
 ---
 
@@ -140,9 +140,9 @@ Connecting subscribes you to live BTC oracle ticks within the same
 
 | Field | Value |
 |---|---|
-| Contract ID | `CCFICYG73QHGWOVMMF7SJHMNBPRQVOWBZZE7MONWPVVTWW2UKXS4IRKX` |
+| Contract ID | `CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA` |
 | Network | Stellar Testnet |
-| Stellar Expert | <https://stellar.expert/explorer/testnet/contract/CCFICYG73QHGWOVMMF7SJHMNBPRQVOWBZZE7MONWPVVTWW2UKXS4IRKX> |
+| Stellar Expert | <https://stellar.expert/explorer/testnet/contract/CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA> |
 | Source | [`contracts/vault_factory`](https://github.com/NoetherDEX/noether/tree/main/contracts/vault_factory) |
 | Init signature | `initialize(admin, market, usdc)` |
 | Public view fns | `vault_count() -> u32`, `view_vault(id) -> VaultInfo`, `shares_of(id, addr)` |
@@ -152,7 +152,7 @@ Reproduce the read functions directly via Soroban RPC:
 ```bash
 stellar contract invoke \
   --network testnet \
-  --id CCFICYG73QHGWOVMMF7SJHMNBPRQVOWBZZE7MONWPVVTWW2UKXS4IRKX \
+  --id CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA \
   -- vault_count
 ```
 
@@ -265,7 +265,7 @@ open https://noether.exchange/vaults/0   # any deployed vault id
 curl -s https://noetherapi-production.up.railway.app/v1/vaults | jq
 
 # 5. Vault factory on-chain
-open https://stellar.expert/explorer/testnet/contract/CCFICYG73QHGWOVMMF7SJHMNBPRQVOWBZZE7MONWPVVTWW2UKXS4IRKX
+open https://stellar.expert/explorer/testnet/contract/CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA
 ```
 
 All four feedback items are now reproducible, linkable, and visible
