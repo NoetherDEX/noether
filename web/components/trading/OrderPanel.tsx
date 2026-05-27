@@ -51,6 +51,15 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
 
   // Margin mode
   const [marginMode, setMarginMode] = useState<'Isolated' | 'Cross'>('Isolated');
+
+  // Leader mode lacks vault_factory proxies for Cross / Limit / StopLimit /
+  // TrailingStop, so silently snap back to the supported flavour whenever
+  // the leader switches in (the UI itself hides those controls below).
+  useEffect(() => {
+    if (!isLeader) return;
+    if (marginMode !== 'Isolated') setMarginMode('Isolated');
+    if (orderType !== 'Market') setOrderType('Market');
+  }, [isLeader, marginMode, orderType]);
   const [crossBalance, setCrossBalance] = useState<number>(0);
   const [crossDepositAmount, setCrossDepositAmount] = useState<string>('');
   const [crossWithdrawAmount, setCrossWithdrawAmount] = useState<string>('');
@@ -496,34 +505,37 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
       )}
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
-        {/* Margin Mode Toggle */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setMarginMode('Isolated')}
-            className={cn(
-              'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
-              marginMode === 'Isolated'
-                ? 'bg-primary/20 border-primary/50 text-primary'
-                : 'border-white/10 text-muted-foreground hover:text-foreground'
-            )}
-          >
-            Isolated
-          </button>
-          <button
-            onClick={() => setMarginMode('Cross')}
-            className={cn(
-              'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
-              marginMode === 'Cross'
-                ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
-                : 'border-white/10 text-muted-foreground hover:text-foreground'
-            )}
-          >
-            Cross
-          </button>
-        </div>
+        {/* Margin Mode Toggle — Cross has no vault_factory proxy yet,
+            so the whole toggle is hidden in leader mode. */}
+        {!isLeader && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMarginMode('Isolated')}
+              className={cn(
+                'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
+                marginMode === 'Isolated'
+                  ? 'bg-primary/20 border-primary/50 text-primary'
+                  : 'border-white/10 text-muted-foreground hover:text-foreground'
+              )}
+            >
+              Isolated
+            </button>
+            <button
+              onClick={() => setMarginMode('Cross')}
+              className={cn(
+                'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
+                marginMode === 'Cross'
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
+                  : 'border-white/10 text-muted-foreground hover:text-foreground'
+              )}
+            >
+              Cross
+            </button>
+          </div>
+        )}
 
         {/* Cross-Margin Info + Deposit/Withdraw */}
-        {marginMode === 'Cross' && (
+        {!isLeader && marginMode === 'Cross' && (
           <div className="space-y-2">
             <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20">
               <div className="flex justify-between text-xs">
@@ -586,9 +598,20 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
           </div>
         )}
 
-        {/* Order Type Tabs */}
-        <div className="grid grid-cols-4 gap-0 rounded-lg overflow-hidden border border-white/10">
-          {(['Market', 'Limit', 'StopLimit', 'TrailingStop'] as const).map((type) => (
+        {/* Order Type Tabs — leader mode only has the market proxy.
+            Limit / StopLimit / TrailingStop don't exist on vault_factory
+            so they're elided from the strip entirely instead of being
+            clickable-but-broken. */}
+        <div
+          className={cn(
+            'gap-0 rounded-lg overflow-hidden border border-white/10',
+            isLeader ? 'grid grid-cols-1' : 'grid grid-cols-4',
+          )}
+        >
+          {(isLeader
+            ? (['Market'] as const)
+            : (['Market', 'Limit', 'StopLimit', 'TrailingStop'] as const)
+          ).map((type) => (
             <button
               key={type}
               onClick={() => setOrderType(type)}

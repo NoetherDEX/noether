@@ -358,8 +358,11 @@ function TradePage() {
             isLoading={isLoadingPositions}
             isRefreshing={isRefreshing}
             onClosePosition={handleClosePosition}
-            onSetStopLoss={handleSetStopLoss}
-            onSetTakeProfit={handleSetTakeProfit}
+            // Stop-loss / take-profit are wallet-signed market calls
+            // that don't exist as vault_factory proxies. Hide them in
+            // leader mode rather than render buttons that always fail.
+            onSetStopLoss={leaderVault ? undefined : handleSetStopLoss}
+            onSetTakeProfit={leaderVault ? undefined : handleSetTakeProfit}
             onRefresh={handleRefreshPositions}
           />
         </>
