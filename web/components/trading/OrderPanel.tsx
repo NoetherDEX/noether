@@ -1,12 +1,14 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { AlertCircle, Info, Loader2, AlertTriangle } from 'lucide-react';
+import { AlertCircle, Info, Loader2, AlertTriangle, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
-import { useTradeStore } from '@/lib/store';
+import { useTradeStore, useLeaderModeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo } from '@/lib/stellar/market';
+import { leaderOpenPosition } from '@/lib/stellar/vaultFactory';
+import { VAULT_PRECISION } from '@/types/vault';
 import {
   formatUSD,
   formatNumber,
@@ -26,7 +28,14 @@ interface OrderPanelProps {
 }
 
 export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }: OrderPanelProps) {
-  const { isConnected, publicKey, xlmBalance, usdcBalance, sign, refreshBalances } = useWallet();
+  const { isConnected, publicKey, walletId, xlmBalance, usdcBalance, sign, refreshBalances } = useWallet();
+  const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
+  const isLeader = !!leaderVault;
+  // Leader mode trades from the vault's USDC pool, not the wallet's.
+  const vaultBalanceUsdc = leaderVault
+    ? Number(BigInt(leaderVault.totalUsdc)) / Number(VAULT_PRECISION)
+    : 0;
+  const effectiveUsdcBalance = isLeader ? vaultBalanceUsdc : usdcBalance;
   const {
     direction,
     collateral,
@@ -167,9 +176,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
     if (xlmBalance < 1) errors.push('Need XLM for gas fees');
   } else {
     if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
-    if (collateralNum > usdcBalance) errors.push('Insufficient USDC balance');
+    if (collateralNum > effectiveUsdcBalance)
+      errors.push(isLeader ? 'Vault balance too low' : 'Insufficient USDC balance');
     if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
     if (xlmBalance < 1) errors.push('Need XLM for gas fees');
+    if (isLeader && marginMode === 'Cross')
+      errors.push('Leader trades support isolated margin only');
+    if (isLeader && orderType !== 'Market')
+      errors.push('Leader trades support market orders only');
     if (orderType === 'Limit') {
       if (slippageTolerance <= 0 || slippageTolerance > 10000) errors.push('Slippage must be between 0.01% and 100%');
       const triggerPriceNum = parseFloat(triggerPrice) || 0;
@@ -241,6 +255,30 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
     }
 
     if (orderType === 'Market') {
+      // Leader mode: route the order through vault_factory so the
+      // vault's USDC backs the position, not the wallet's.
+      if (isLeader && leaderVault) {
+        const leaderPromise = leaderOpenPosition(publicKey, walletId ?? '', {
+          vaultId: leaderVault.id,
+          asset,
+          collateral: toPrecision(collateralNum),
+          leverage,
+          direction,
+        });
+        toast.promise(leaderPromise, {
+          loading: `Opening ${direction} ${asset} as leader of ${leaderVault.name}…`,
+          success: () => {
+            setCollateral('');
+            onSubmit?.();
+            onPositionOpened?.();
+            return `${direction} ${asset} opened from ${leaderVault.name}`;
+          },
+          error: (err) => err?.message || 'Leader trade failed',
+        });
+        try { await leaderPromise; } catch {}
+        setIsSubmitting(false);
+        return;
+      }
       // Market order - immediate execution
       if (marginMode === 'Cross') {
         // Cross-margin: single tx - contract auto-deposits from wallet if pool insufficient
@@ -362,9 +400,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
     setIsSubmitting(false);
   };
 
-  // Percentage buttons for collateral
+  // Percentage buttons for collateral — uses the active source (wallet or vault)
   const handlePercentage = (pct: number) => {
-    setCollateral(Math.floor(usdcBalance * (pct / 100)).toString());
+    setCollateral(Math.floor(effectiveUsdcBalance * (pct / 100)).toString());
   };
 
   // Cross-margin deposit handler
@@ -419,9 +457,33 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
   return (
     <div className="h-full rounded-lg border border-white/10 bg-[#0a0a0a] overflow-hidden flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-white/10">
+      <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
         <h3 className="text-sm font-medium text-foreground">Place Order</h3>
+        {isLeader && (
+          <button
+            type="button"
+            onClick={() => setLeaderVault(null)}
+            className="text-[10px] uppercase tracking-wider text-amber-400 hover:text-amber-300 transition-colors"
+          >
+            Exit leader mode
+          </button>
+        )}
       </div>
+
+      {isLeader && leaderVault && (
+        <div className="px-4 py-2.5 border-b border-amber-500/20 bg-amber-500/[0.06] flex items-center gap-2">
+          <Users className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] uppercase tracking-wider text-amber-400/80">
+              Leader mode
+            </div>
+            <div className="text-xs text-amber-200 truncate">
+              Trading <span className="font-medium">{leaderVault.name}</span> · vault balance{' '}
+              <span className="font-mono">{formatNumber(vaultBalanceUsdc)} USDC</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* Margin Mode Toggle */}
@@ -584,7 +646,11 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
-              Balance: <span className="font-mono text-foreground">{formatNumber(usdcBalance)}</span> USDC
+              {isLeader ? 'Vault balance' : 'Balance'}:{' '}
+              <span className="font-mono text-foreground">
+                {formatNumber(effectiveUsdcBalance)}
+              </span>{' '}
+              USDC
             </span>
           </div>
           {/* Percentage Buttons */}

@@ -18,6 +18,11 @@ import {
   OrderBook,
   CrossMarginBanner,
 } from '@/components/trading';
+import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
+import { useLeaderModeStore } from '@/lib/store';
+import { leaderClosePosition } from '@/lib/stellar/vaultFactory';
+import { getVault } from '@/lib/api/vaults';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { TIMEFRAMES } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
@@ -51,7 +56,26 @@ function TradePage() {
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const prevOrdersRef = useRef<Map<number, string>>(new Map());
 
-  const { isConnected, publicKey, sign, refreshBalances } = useWallet();
+  const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
+  const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const factoryAddress = process.env.NEXT_PUBLIC_VAULT_FACTORY_ID || '';
+
+  // ?vault={id} query — preselect leader mode for that vault if the
+  // connected wallet is its leader.
+  useEffect(() => {
+    const vaultId = searchParams?.get('vault');
+    if (!vaultId || !publicKey) return;
+    const id = Number(vaultId);
+    if (!Number.isInteger(id) || id < 0) return;
+    if (leaderVault?.id === id) return;
+    getVault(id)
+      .then((v) => {
+        if (v && v.leader === publicKey) setLeaderVault(v);
+      })
+      .catch(() => {});
+  }, [searchParams, publicKey, leaderVault?.id, setLeaderVault]);
 
   // Fetch positions function - extracted for manual refresh
   const fetchPositions = useCallback(async (showLoading = true) => {
@@ -61,8 +85,11 @@ function TradePage() {
     setIsRefreshing(true);
 
     try {
-      // Fetch positions from contract
-      const contractPositions = await getPositions(publicKey);
+      // In leader mode, positions belong to the vault_factory contract,
+      // not the connected wallet. Querying the factory address surfaces
+      // every vault-owned position on this market.
+      const traderForPositions = leaderVault && factoryAddress ? factoryAddress : publicKey;
+      const contractPositions = await getPositions(traderForPositions);
 
       if (contractPositions.length === 0) {
         setPositions([]);
@@ -95,7 +122,7 @@ function TradePage() {
       setIsLoadingPositions(false);
       setIsRefreshing(false);
     }
-  }, [publicKey]);
+  }, [publicKey, leaderVault, factoryAddress]);
 
   // Manual refresh handler
   const handleRefreshPositions = useCallback(() => {
@@ -192,14 +219,20 @@ function TradePage() {
     if (!publicKey) throw new Error('Wallet not connected');
 
     try {
-      // Check if this is a cross-margin position
-      const pos = positions.find(p => p.id === positionId);
-      if (pos?.marginMode === 'Cross') {
-        const result = await closePositionCross(publicKey, sign, positionId);
-        console.log('Cross position closed:', result);
+      // Leader mode: close through vault_factory so PnL settles back
+      // into the vault's USDC balance, not the wallet's.
+      if (leaderVault) {
+        await leaderClosePosition(publicKey, walletId ?? '', leaderVault.id, positionId);
       } else {
-        const result = await closePosition(publicKey, sign, positionId);
-        console.log('Position closed:', result);
+        // Check if this is a cross-margin position
+        const pos = positions.find(p => p.id === positionId);
+        if (pos?.marginMode === 'Cross') {
+          const result = await closePositionCross(publicKey, sign, positionId);
+          console.log('Cross position closed:', result);
+        } else {
+          const result = await closePosition(publicKey, sign, positionId);
+          console.log('Position closed:', result);
+        }
       }
 
       // Refresh positions and balances
@@ -415,6 +448,7 @@ function TradePage() {
             {/* Right Sidebar - Order Panel */}
             <div className="lg:col-span-4 xl:col-span-3">
               <div className="sticky top-20 space-y-4">
+                <LeaderModeSelector />
                 <OrderPanel
                   asset={selectedAsset}
                   positions={positions}

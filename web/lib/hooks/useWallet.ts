@@ -130,6 +130,7 @@ export function useWallet() {
     isConnecting,
     address,
     publicKey,
+    walletId,
     xlmBalance,
     usdcBalance,
     noeBalance,
