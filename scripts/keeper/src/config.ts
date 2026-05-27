@@ -14,9 +14,9 @@ dotenv.config({ path: path.join(projectRoot, '.env') }); // fallback for monorep
 
 // Default assets to monitor
 const DEFAULT_ASSETS: AssetConfig[] = [
-  { symbol: 'BTC', binanceSymbol: 'BTCUSDT', decimals: 8 },
-  { symbol: 'ETH', binanceSymbol: 'ETHUSDT', decimals: 8 },
-  { symbol: 'XLM', binanceSymbol: 'XLMUSDT', decimals: 7 },
+  { symbol: 'BTC', decimals: 8 },
+  { symbol: 'ETH', decimals: 8 },
+  { symbol: 'XLM', decimals: 7 },
 ];
 
 /**
@@ -67,11 +67,6 @@ export function loadConfig(): KeeperConfig {
     // Timing
     pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '5000', 10),
     oracleUpdateIntervalMs: parseInt(process.env.ORACLE_UPDATE_INTERVAL_MS || '30000', 10),
-
-    // Reflector oracle
-    reflectorContractId:
-      process.env.REFLECTOR_CONTRACT_ID ||
-      'CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63',
 
     // Assets
     assets: DEFAULT_ASSETS,

@@ -30,7 +30,6 @@ export class StellarClient {
   private networkPassphrase: string;
   private marketContract: Contract;
   private oracleContract: Contract;
-  private reflectorContract: Contract;
 
   constructor(private config: KeeperConfig) {
     this.server = new rpc.Server(config.rpcUrl);
@@ -38,7 +37,6 @@ export class StellarClient {
     this.networkPassphrase = config.networkPassphrase;
     this.marketContract = new Contract(config.marketContractId);
     this.oracleContract = new Contract(config.oracleContractId);
-    this.reflectorContract = new Contract(config.reflectorContractId);
   }
 
   get publicKey(): string {
@@ -232,40 +230,6 @@ export class StellarClient {
   // ═══════════════════════════════════════════════════════════════════════
   // Funding Rate Functions
   // ═══════════════════════════════════════════════════════════════════════
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // Reflector Oracle (On-Chain Price Feed)
-  // ═══════════════════════════════════════════════════════════════════════
-
-  /**
-   * Get price from Reflector on-chain oracle
-   * Reflector uses SEP-40 with Asset enum: {Other: Symbol} for non-XLM assets
-   */
-  async getReflectorPrice(asset: string): Promise<{ price: bigint; timestamp: bigint } | null> {
-    try {
-      // SEP-40 asset format: Vec<ScVal> with ["Other", "BTC"]
-      const assetScVal = xdr.ScVal.scvVec([
-        nativeToScVal('Other', { type: 'symbol' }),
-        nativeToScVal(asset, { type: 'symbol' }),
-      ]);
-
-      const result = await this.invokeContractRead<any>(
-        this.reflectorContract,
-        'lastprice',
-        [assetScVal]
-      );
-
-      if (result && result.price !== undefined) {
-        return {
-          price: BigInt(result.price),
-          timestamp: BigInt(result.timestamp),
-        };
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
 
   // ═══════════════════════════════════════════════════════════════════════
   // Cross-Margin Functions

@@ -84,7 +84,6 @@ export interface ExecutionResult {
 // Asset configuration
 export interface AssetConfig {
   symbol: string;
-  binanceSymbol: string;
   decimals: number;
 }
 
@@ -106,9 +105,6 @@ export interface KeeperConfig {
   // Timing
   pollIntervalMs: number;
   oracleUpdateIntervalMs: number;
-
-  // Reflector oracle contract ID
-  reflectorContractId: string;
 
   // Assets to monitor
   assets: AssetConfig[];

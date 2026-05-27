@@ -2,7 +2,7 @@
  * Noether Keeper Bot
  *
  * A unified keeper bot that handles:
- * 1. Oracle price updates (fetches from Binance, updates mock oracle)
+ * 1. Oracle price updates (fetches from Noeracle, updates mock oracle)
  * 2. Position liquidations (monitors positions, liquidates when underwater)
  * 3. Order executions (limit orders, stop-loss, take-profit)
  * 4. Funding rate application (hourly)
@@ -15,6 +15,10 @@
 import { loadConfig } from './config';
 import { StellarClient } from './stellar';
 import { KeeperConfig, KeeperStats, PriceData, AssetConfig } from './types';
+
+// Type-only import — the @noeracle/sdk package is ESM-only, so the runtime
+// load happens via dynamic import() inside getNoeracle().
+import type { Noeracle as NoeracleClient } from '@noeracle/sdk';
 
 // ASCII art banner
 const BANNER = `
@@ -45,6 +49,7 @@ class KeeperBot {
   private currentPrices: Map<string, PriceData> = new Map();
   private knownCrossTraders: Set<string> = new Set();
   private lastCrossTraderScan: number = 0;
+  private noeracleClient: NoeracleClient | null = null;
 
   constructor() {
     this.config = loadConfig();
@@ -192,144 +197,120 @@ class KeeperBot {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Fetch prices and update oracle.
-   * Primary: Reflector on-chain oracle (real decentralized prices)
-   * Fallback: Binance API (if Reflector unavailable)
+   * Fetch fresh signed prices from Noeracle and push them to the mock oracle.
+   *
+   * Single source — Noeracle attestation service (`api.noeracle.org`). Each
+   * attestation is Ed25519-signed by a registered publisher and is usually
+   * <500 ms old when returned. The SDK throws `StalePriceError` if the
+   * fetched snapshot is older than its freshness limit.
+   *
+   * Fail-loud: if Noeracle is unreachable or returns no prices we log the
+   * error and skip the cycle. There is no fallback by design — we want
+   * loud breakage so we notice when the oracle pipeline regresses.
    */
   private async updateOraclePrices(): Promise<void> {
+    let prices: Map<string, number>;
     try {
-      // Try Reflector first (on-chain oracle), fallback to Binance with retry
-      let prices = new Map<string, number>();
-      let source = 'Reflector';
-
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          prices = await this.fetchReflectorPrices();
-          if (prices.size > 0) {
-            source = 'Reflector';
-            break;
-          }
-          prices = await this.fetchBinancePrices();
-          if (prices.size > 0) {
-            source = 'Binance';
-            break;
-          }
-        } catch (e) {
-          if (attempt === 3) {
-            console.error(`\n⚠️  All price fetch attempts failed:`, e);
-            return;
-          }
-          await this.sleep(2000);
-        }
-      }
-
-      for (const asset of this.config.assets) {
-        const price = prices.get(asset.symbol);
-        if (price === undefined) continue;
-
-        // Validate price sanity
-        if (price <= 0 || !isFinite(price)) {
-          console.warn(`\n⚠️  Invalid price for ${asset.symbol}: ${price} — skipping`);
-          continue;
-        }
-
-        // Sanity bounds: reject obviously wrong prices
-        const lastPrice = this.currentPrices.get(asset.symbol);
-        if (lastPrice && lastPrice.price > 0) {
-          const changePercent = Math.abs(price - lastPrice.price) / lastPrice.price;
-          if (changePercent > 0.5) {
-            console.warn(`\n⚠️  ${asset.symbol} price changed ${(changePercent * 100).toFixed(1)}% ($${lastPrice.price} → $${price}) — skipping (>50% change)`);
-            continue;
-          }
-        }
-
-        const priceScaled = this.toPrecision(price);
-
-        try {
-          const result = await this.stellar.updateOraclePrice(asset.symbol, priceScaled);
-
-          if (result.success) {
-            this.currentPrices.set(asset.symbol, {
-              asset: asset.symbol,
-              price,
-              priceScaled,
-              timestamp: Date.now(),
-            });
-            this.stats.oracleUpdates++;
-            if (this.stats.oracleUpdates <= 3 || this.stats.oracleUpdates % 50 === 0) {
-              console.log(`\n✅ Oracle ${asset.symbol} = $${price.toLocaleString()} (tx: ${result.txHash?.slice(0,8)}...)`);
-            }
-          } else {
-            console.log(`\n⚠️  Oracle update FAILED for ${asset.symbol}: ${result.error}`);
-          }
-        } catch (error) {
-          console.error(`\n❌ Oracle update ERROR for ${asset.symbol}:`, error instanceof Error ? error.message : error);
-        }
-
-        // Delay between assets to avoid sequence conflicts
-        await this.sleep(4000);
-      }
-
-      if (prices.size > 0 && this.stats.oracleUpdates % 10 === 1) {
-        console.log(`\n📡 Prices from ${source}`);
-      }
+      prices = await this.fetchNoeraclePrices();
     } catch (error) {
-      console.error('\nError updating oracle prices:', error);
-    }
-  }
-
-  /**
-   * Fetch prices from Reflector on-chain oracle (testnet)
-   * Reflector is a decentralized oracle used by Blend, Slender, OrbitCDP etc.
-   * Uses SEP-40 interface with 14 decimal precision
-   */
-  private async fetchReflectorPrices(): Promise<Map<string, number>> {
-    const prices = new Map<string, number>();
-    const REFLECTOR_DECIMALS = 14;
-
-    try {
-      for (const asset of this.config.assets) {
-        try {
-          const result = await this.stellar.getReflectorPrice(asset.symbol);
-          if (result) {
-            const price = Number(result.price) / (10 ** REFLECTOR_DECIMALS);
-            if (price > 0) {
-              prices.set(asset.symbol, price);
-            }
-          }
-        } catch {
-          // Individual asset failure, continue with others
-        }
-      }
-    } catch {
-      // Reflector unavailable, will fallback to Binance
+      console.error(`\n❌ Noeracle fetch failed: ${error instanceof Error ? error.message : error}`);
+      console.error(`   Oracle update skipped this cycle — no fallback by design.`);
+      this.stats.errors++;
+      return;
     }
 
-    return prices;
-  }
-
-  /**
-   * Fetch current prices from Binance (fallback)
-   */
-  private async fetchBinancePrices(): Promise<Map<string, number>> {
-    const symbols = this.config.assets.map(a => a.binanceSymbol);
-    const url = `https://api.binance.com/api/v3/ticker/price?symbols=${JSON.stringify(symbols)}`;
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Binance API error: ${response.status}`);
+    if (prices.size === 0) {
+      console.error(`\n❌ Noeracle returned 0 prices — skipping oracle update.`);
+      this.stats.errors++;
+      return;
     }
-
-    const data = await response.json() as Array<{ symbol: string; price: string }>;
-    const prices = new Map<string, number>();
 
     for (const asset of this.config.assets) {
-      const priceData = data.find(p => p.symbol === asset.binanceSymbol);
-      if (priceData) {
-        prices.set(asset.symbol, parseFloat(priceData.price));
+      const price = prices.get(asset.symbol);
+      if (price === undefined) continue;
+
+      // Validate price sanity
+      if (price <= 0 || !isFinite(price)) {
+        console.warn(`\n⚠️  Invalid price for ${asset.symbol}: ${price} — skipping`);
+        continue;
       }
+
+      // Sanity bounds: reject obviously wrong prices
+      const lastPrice = this.currentPrices.get(asset.symbol);
+      if (lastPrice && lastPrice.price > 0) {
+        const changePercent = Math.abs(price - lastPrice.price) / lastPrice.price;
+        if (changePercent > 0.5) {
+          console.warn(`\n⚠️  ${asset.symbol} price changed ${(changePercent * 100).toFixed(1)}% ($${lastPrice.price} → $${price}) — skipping (>50% change)`);
+          continue;
+        }
+      }
+
+      const priceScaled = this.toPrecision(price);
+
+      try {
+        const result = await this.stellar.updateOraclePrice(asset.symbol, priceScaled);
+
+        if (result.success) {
+          this.currentPrices.set(asset.symbol, {
+            asset: asset.symbol,
+            price,
+            priceScaled,
+            timestamp: Date.now(),
+          });
+          this.stats.oracleUpdates++;
+          if (this.stats.oracleUpdates <= 3 || this.stats.oracleUpdates % 50 === 0) {
+            console.log(`\n✅ Oracle ${asset.symbol} = $${price.toLocaleString()} (tx: ${result.txHash?.slice(0,8)}...)`);
+          }
+        } else {
+          console.log(`\n⚠️  Oracle update FAILED for ${asset.symbol}: ${result.error}`);
+        }
+      } catch (error) {
+        console.error(`\n❌ Oracle update ERROR for ${asset.symbol}:`, error instanceof Error ? error.message : error);
+      }
+
+      // Delay between assets to avoid sequence conflicts
+      await this.sleep(4000);
     }
 
+    if (this.stats.oracleUpdates % 10 === 1) {
+      console.log(`\n📡 Prices from Noeracle`);
+    }
+  }
+
+  /**
+   * Lazy-init the Noeracle client.
+   *
+   * The SDK is ESM-only, so we load it via dynamic `import()` to stay
+   * compatible with the keeper's CommonJS compile target. One client is
+   * reused for the lifetime of the bot.
+   */
+  private async getNoeracle(): Promise<NoeracleClient> {
+    if (!this.noeracleClient) {
+      const { Noeracle } = await import('@noeracle/sdk');
+      this.noeracleClient = new Noeracle({ network: this.config.network });
+    }
+    return this.noeracleClient;
+  }
+
+  /**
+   * Fetch the latest signed Noeracle prices for every configured asset.
+   *
+   * All assets are requested in a single `fetchLatest` call so they share
+   * one round. Returns a map keyed by asset symbol (`BTC`, `ETH`, `XLM`)
+   * with the human-readable decimal price.
+   */
+  private async fetchNoeraclePrices(): Promise<Map<string, number>> {
+    const noeracle = await this.getNoeracle();
+    const pairs = this.config.assets.map(a => `${a.symbol}/USD`);
+    const fresh = await noeracle.fetchLatest(pairs);
+
+    const prices = new Map<string, number>();
+    for (const asset of this.config.assets) {
+      const entry = fresh.price(`${asset.symbol}/USD`);
+      if (entry.priceHuman > 0) {
+        prices.set(asset.symbol, entry.priceHuman);
+      }
+    }
     return prices;
   }
 
