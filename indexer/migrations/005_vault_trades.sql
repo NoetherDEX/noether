@@ -17,8 +17,12 @@ CREATE TABLE IF NOT EXISTS vault_trades (
   UNIQUE (vault_id, position_id, action, tx_hash)
 );
 
+--# split
+
 CREATE INDEX IF NOT EXISTS idx_vault_trades_vault_ts
   ON vault_trades (vault_id, ts DESC);
+
+--# split
 
 CREATE INDEX IF NOT EXISTS idx_vault_trades_action
   ON vault_trades (vault_id, action);
