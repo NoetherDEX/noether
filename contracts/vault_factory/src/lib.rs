@@ -15,6 +15,7 @@
 #![no_std]
 
 use soroban_sdk::{
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contractimpl, token, vec as svec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
@@ -279,15 +280,47 @@ impl VaultFactoryContract {
             return Err(FactoryError::InsufficientBalance);
         }
         let market = storage::get_market(&env);
+        let usdc = storage::get_usdc(&env);
         let factory = env.current_contract_address();
         let args = svec![
             &env,
-            factory.into_val(&env),
-            asset.into_val(&env),
+            factory.clone().into_val(&env),
+            asset.clone().into_val(&env),
             collateral.into_val(&env),
             leverage.into_val(&env),
             direction.into_val(&env),
         ];
+        // Pre-authorize the sub-invocation tree as the factory: market
+        // will check trader.require_auth() (trader = factory) and then
+        // pull `collateral` USDC via SAC transfer (from = factory). We
+        // grant both authorisations here so the call doesn't bounce
+        // with Auth(InvalidAction).
+        env.authorize_as_current_contract(svec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: market.clone(),
+                    fn_name: Symbol::new(&env, "open_position"),
+                    args: args.clone(),
+                },
+                sub_invocations: svec![
+                    &env,
+                    InvokerContractAuthEntry::Contract(SubContractInvocation {
+                        context: ContractContext {
+                            contract: usdc.clone(),
+                            fn_name: Symbol::new(&env, "transfer"),
+                            args: svec![
+                                &env,
+                                factory.clone().into_val(&env),
+                                market.clone().into_val(&env),
+                                collateral.into_val(&env),
+                            ],
+                        },
+                        sub_invocations: svec![&env],
+                    }),
+                ],
+            }),
+        ]);
         let position_id: u64 = env.invoke_contract(&market, &Symbol::new(&env, "open_position"), args);
         sync_total_usdc(&env, &mut info)?;
         check_invariant(&info)?;
@@ -310,7 +343,22 @@ impl VaultFactoryContract {
         let mut info = require_leader_call(&env, &leader, vault_id)?;
         let market = storage::get_market(&env);
         let factory = env.current_contract_address();
-        let args = svec![&env, factory.into_val(&env), position_id.into_val(&env)];
+        let args = svec![&env, factory.clone().into_val(&env), position_id.into_val(&env)];
+        // Auth tree: market.close_position(factory, position_id).
+        // close_position settles funds BACK to the factory, so no
+        // outbound transfer sub-call from the factory needs to be
+        // authorised; the empty sub_invocations list is enough.
+        env.authorize_as_current_contract(svec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: market.clone(),
+                    fn_name: Symbol::new(&env, "close_position"),
+                    args: args.clone(),
+                },
+                sub_invocations: svec![&env],
+            }),
+        ]);
         env.invoke_contract::<()>(&market, &Symbol::new(&env, "close_position"), args);
         sync_total_usdc(&env, &mut info)?;
         // Bumping HWM is not appropriate here; HWM moves only on claim.
@@ -345,11 +393,12 @@ impl VaultFactoryContract {
             return Err(FactoryError::InsufficientBalance);
         }
         let market = storage::get_market(&env);
+        let usdc = storage::get_usdc(&env);
         let factory = env.current_contract_address();
         let args = svec![
             &env,
-            factory.into_val(&env),
-            asset.into_val(&env),
+            factory.clone().into_val(&env),
+            asset.clone().into_val(&env),
             direction.into_val(&env),
             collateral.into_val(&env),
             leverage.into_val(&env),
@@ -357,6 +406,32 @@ impl VaultFactoryContract {
             trigger_above.into_val(&env),
             slippage_tolerance_bps.into_val(&env),
         ];
+        env.authorize_as_current_contract(svec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: market.clone(),
+                    fn_name: Symbol::new(&env, "place_limit_order"),
+                    args: args.clone(),
+                },
+                sub_invocations: svec![
+                    &env,
+                    InvokerContractAuthEntry::Contract(SubContractInvocation {
+                        context: ContractContext {
+                            contract: usdc.clone(),
+                            fn_name: Symbol::new(&env, "transfer"),
+                            args: svec![
+                                &env,
+                                factory.clone().into_val(&env),
+                                market.clone().into_val(&env),
+                                collateral.into_val(&env),
+                            ],
+                        },
+                        sub_invocations: svec![&env],
+                    }),
+                ],
+            }),
+        ]);
         let order_id: u64 = env.invoke_contract(&market, &Symbol::new(&env, "place_limit_order"), args);
         // place_limit_order may or may not pull collateral immediately
         // depending on market rules; resync defensively.
@@ -379,7 +454,18 @@ impl VaultFactoryContract {
         let mut info = require_leader_call(&env, &leader, vault_id)?;
         let market = storage::get_market(&env);
         let factory = env.current_contract_address();
-        let args = svec![&env, factory.into_val(&env), order_id.into_val(&env)];
+        let args = svec![&env, factory.clone().into_val(&env), order_id.into_val(&env)];
+        env.authorize_as_current_contract(svec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: market.clone(),
+                    fn_name: Symbol::new(&env, "cancel_order"),
+                    args: args.clone(),
+                },
+                sub_invocations: svec![&env],
+            }),
+        ]);
         env.invoke_contract::<()>(&market, &Symbol::new(&env, "cancel_order"), args);
         sync_total_usdc(&env, &mut info)?;
         storage::save_vault(&env, &info);
