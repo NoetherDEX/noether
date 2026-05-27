@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, Clock } from 'lucide-react';
 import { Card, Tabs } from '@/components/ui';
 import { Header } from '@/components/layout';
@@ -42,13 +42,16 @@ import {
 import { listOpenPositions } from '@/lib/api/positions';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { toPrecision } from '@/lib/utils';
-import type { DisplayPosition, DisplayOrder } from '@/types';
+import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
 
 function TradePage() {
   const [selectedAsset, setSelectedAsset] = useState('BTC');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
-  const [positions, setPositions] = useState<DisplayPosition[]>([]);
+  // Raw contract positions. Refreshed on connect / vault-swap / explicit
+  // trade actions / 60 s safety tick — NOT on every price update. The
+  // displayed PnL / Mark / Net Value comes from currentPrices below.
+  const [rawPositions, setRawPositions] = useState<Position[]>([]);
   const [orders, setOrders] = useState<DisplayOrder[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
@@ -57,6 +60,15 @@ function TradePage() {
   const [fundingRate, setFundingRate] = useState<number>(0);
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const prevOrdersRef = useRef<Map<number, string>>(new Map());
+
+  // Display positions are derived from raw positions + the latest prices,
+  // so a price tick re-renders just the PnL / Mark / Net Value cells
+  // (React reconciliation handles the in-place text update) without
+  // re-fetching the whole position list from the contract.
+  const positions = useMemo<DisplayPosition[]>(
+    () => rawPositions.map(p => toDisplayPosition(p, currentPrices[p.asset] || 0)),
+    [rawPositions, currentPrices],
+  );
 
   const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
   const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
@@ -91,6 +103,14 @@ function TradePage() {
     setIsRefreshing(true);
 
     try {
+      // Read leaderVault via store.getState() instead of subscribing,
+      // so this callback's identity stays stable across LeaderModeSelector's
+      // 10 s vault-list poll. Subscribing here would rebuild the callback
+      // on every poll (setVault always writes a new object reference) and
+      // re-trigger the auto-refresh effect below, which is what caused
+      // the positions tab to flash its skeleton every few seconds.
+      const currentLeaderVault = useLeaderModeStore.getState().vault;
+
       // Two flavours of position fetch:
       //  - Leader mode: the indexer projection knows exactly which
       //    positions the factory contract owns, so we ask the API for
@@ -99,7 +119,7 @@ function TradePage() {
       //  - Personal mode: the contract-side iterator stays, since
       //    we don't yet expose a "by trader" filter for normal users.
       let contractPositions;
-      if (leaderVault && factoryAddress) {
+      if (currentLeaderVault && factoryAddress) {
         const open = await listOpenPositions(factoryAddress).catch(() => []);
         contractPositions = await getPositionsByIds(
           publicKey,
@@ -110,11 +130,13 @@ function TradePage() {
       }
 
       if (contractPositions.length === 0) {
-        setPositions([]);
+        setRawPositions([]);
         return;
       }
 
-      // Fetch current prices for all unique assets
+      // Fetch current prices for all unique assets so PnL / Mark display
+      // is correct on the first paint after a refresh — the 5 s ticker
+      // below keeps them fresh afterwards.
       const uniqueAssets = Array.from(new Set(contractPositions.map(p => p.asset)));
       const priceMap: Record<string, number> = {};
 
@@ -127,12 +149,7 @@ function TradePage() {
         })
       );
 
-      // Convert to display positions
-      const displayPositions = contractPositions.map(p =>
-        toDisplayPosition(p, priceMap[p.asset] || 0)
-      );
-
-      setPositions(displayPositions);
+      setRawPositions(contractPositions);
       setCurrentPrices(prev => ({ ...prev, ...priceMap }));
     } catch (error) {
       console.error('Failed to fetch positions:', error);
@@ -140,7 +157,7 @@ function TradePage() {
       setIsLoadingPositions(false);
       setIsRefreshing(false);
     }
-  }, [publicKey, leaderVault, factoryAddress]);
+  }, [publicKey, factoryAddress]);
 
   // Manual refresh handler
   const handleRefreshPositions = useCallback(() => {
@@ -207,22 +224,27 @@ function TradePage() {
     fetchOrders(false);
   }, [fetchOrders]);
 
-  // Auto-refresh positions and orders every 60 seconds when connected
+  // Auto-refresh positions and orders every 60 s when connected, plus
+  // an explicit re-fetch (with skeleton) when the user actively swaps
+  // leader vault. We key on `leaderVault?.id` rather than `leaderVault`
+  // because LeaderModeSelector's 10 s poll writes a new VaultRow
+  // reference every tick even when the data is identical — keying on
+  // the id makes the effect only re-run on a real selection change.
   useEffect(() => {
     if (!isConnected || !publicKey) {
-      setPositions([]);
+      setRawPositions([]);
       setOrders([]);
       return;
     }
 
-    fetchPositions(true); // Initial fetch with loading state
+    fetchPositions(true); // Initial fetch (or on vault swap) with skeleton
     fetchOrders(true);
     const interval = setInterval(() => {
       fetchPositions(false);
       fetchOrders(false);
-    }, 60000); // 60 seconds
+    }, 60000); // 60 s safety tick — no skeleton
     return () => clearInterval(interval);
-  }, [isConnected, publicKey, fetchPositions, fetchOrders]);
+  }, [isConnected, publicKey, leaderVault?.id, fetchPositions, fetchOrders]);
 
   // Poll funding rate every 60s (updates hourly on-chain, no wallet needed)
   useEffect(() => {
@@ -232,6 +254,44 @@ function TradePage() {
     }, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // Stable join of the unique assets in the open positions list. Used
+  // as the effect dep below so the price poll only tears down + restarts
+  // when the SET of assets changes — not on every rawPositions reference
+  // change (a price tick that mutates currentPrices doesn't change this).
+  const positionAssetKey = useMemo(
+    () => Array.from(new Set(rawPositions.map(p => p.asset))).sort().join(','),
+    [rawPositions],
+  );
+
+  // Poll mark prices for assets in open positions every 5 s. This is
+  // decoupled from the position-list fetch so PnL / Mark / Net Value
+  // stay live without re-running the heavy N+1 contract iteration.
+  useEffect(() => {
+    if (!isConnected || !publicKey || !positionAssetKey) return;
+    const assets = positionAssetKey.split(',');
+
+    let cancelled = false;
+    const tick = async () => {
+      const updates: Record<string, number> = {};
+      await Promise.all(
+        assets.map(async (asset) => {
+          const priceData = await getPrice(publicKey, asset);
+          if (priceData) updates[asset] = priceToDisplay(priceData.price);
+        }),
+      );
+      if (!cancelled && Object.keys(updates).length > 0) {
+        setCurrentPrices(prev => ({ ...prev, ...updates }));
+      }
+    };
+
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [isConnected, publicKey, positionAssetKey]);
 
   const handleClosePosition = async (positionId: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');

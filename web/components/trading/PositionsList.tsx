@@ -1,12 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { TrendingUp, X, RefreshCw, Share2, AlertTriangle, Shield, Target } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPrice, formatPercent, formatDateTime } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayPosition, PnlShareData } from '@/types';
 import { PnlShareModal } from '@/components/share/PnlShareModal';
+
+// Field-value equality for DisplayPosition. The parent's useMemo always
+// produces fresh object references when prices tick, so default shallow
+// memo would re-render every row even when nothing visible changed.
+// Callback identity is intentionally ignored — handlers close over the
+// position via setSelectedPosition, so a new closure each render is
+// fine until the user actually clicks.
+function positionEquals(a: DisplayPosition, b: DisplayPosition): boolean {
+  return a.id === b.id
+    && a.currentPrice === b.currentPrice
+    && a.pnl === b.pnl
+    && a.pnlPercent === b.pnlPercent
+    && a.collateral === b.collateral
+    && a.size === b.size
+    && a.entryPrice === b.entryPrice
+    && a.liquidationPrice === b.liquidationPrice
+    && a.leverage === b.leverage
+    && a.direction === b.direction
+    && a.marginMode === b.marginMode;
+}
 
 interface PositionsListProps {
   positions: DisplayPosition[];
@@ -728,7 +748,7 @@ export function PositionsList({
 }
 
 // Table row component
-function PositionRow({
+const PositionRow = memo(function PositionRow({
   position,
   isLiquidationRisk,
   onClose,
@@ -865,10 +885,12 @@ function PositionRow({
       </td>
     </tr>
   );
-}
+}, (prev, next) => prev.isLiquidationRisk === next.isLiquidationRisk
+  && prev.hasSlTpCallbacks === next.hasSlTpCallbacks
+  && positionEquals(prev.position, next.position));
 
 // Mobile card component
-function PositionCard({
+const PositionCard = memo(function PositionCard({
   position,
   onClose,
   onSetStopLoss,
@@ -961,4 +983,5 @@ function PositionCard({
       </div>
     </Card>
   );
-}
+}, (prev, next) => prev.hasSlTpCallbacks === next.hasSlTpCallbacks
+  && positionEquals(prev.position, next.position));
