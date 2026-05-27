@@ -10,6 +10,7 @@ import type { Handler, HandlerContext } from '../router.js';
 function handle(topic: DecodedMarketEvent['topic']): Handler {
   return async (event, ctx) => {
     await insertEvent(ctx.db, event);
+    await maintainPositionsProjection(ctx.db, event);
     ctx.bus.emit('event', event);
 
     switch (event.topic) {
@@ -69,6 +70,39 @@ function handle(topic: DecodedMarketEvent['topic']): Handler {
 
     ctx.log.debug({ topic, eventId: event.id, ledger: event.ledger }, 'event processed');
   };
+}
+
+async function maintainPositionsProjection(db: Client, event: DecodedMarketEvent): Promise<void> {
+  switch (event.topic) {
+    case 'position_opened':
+      await db.execute({
+        sql: `
+          INSERT OR REPLACE INTO positions
+            (position_id, trader, asset, direction, size, entry_price, opened_at, opened_tx_hash)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: [
+          event.positionId,
+          event.trader,
+          event.asset,
+          Number(event.direction),
+          event.size.toString(),
+          event.entryPrice.toString(),
+          event.ledgerCloseTs,
+          event.txHash,
+        ],
+      });
+      return;
+    case 'position_closed':
+    case 'position_liquidated':
+      await db.execute({
+        sql: 'DELETE FROM positions WHERE position_id = ?',
+        args: [event.positionId],
+      });
+      return;
+    default:
+      return;
+  }
 }
 
 async function insertEvent(db: Client, event: DecodedMarketEvent): Promise<void> {

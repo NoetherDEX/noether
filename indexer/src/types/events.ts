@@ -27,6 +27,8 @@ export interface PositionOpenedEvent extends EventEnvelope {
   topic: 'position_opened';
   positionId: number;
   trader: StellarAddress;
+  asset: string;
+  direction: number;
   size: bigint;
   entryPrice: bigint;
 }

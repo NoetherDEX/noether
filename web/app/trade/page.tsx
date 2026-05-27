@@ -28,6 +28,7 @@ import { TIMEFRAMES } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
 import {
   getPositions,
+  getPositionsByIds,
   toDisplayPosition,
   closePosition,
   closePositionCross,
@@ -38,6 +39,7 @@ import {
   cancelOrder,
   getFundingRate,
 } from '@/lib/stellar/market';
+import { listOpenPositions } from '@/lib/api/positions';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { toPrecision } from '@/lib/utils';
 import type { DisplayPosition, DisplayOrder } from '@/types';
@@ -89,11 +91,23 @@ function TradePage() {
     setIsRefreshing(true);
 
     try {
-      // In leader mode, positions belong to the vault_factory contract,
-      // not the connected wallet. Querying the factory address surfaces
-      // every vault-owned position on this market.
-      const traderForPositions = leaderVault && factoryAddress ? factoryAddress : publicKey;
-      const contractPositions = await getPositions(traderForPositions);
+      // Two flavours of position fetch:
+      //  - Leader mode: the indexer projection knows exactly which
+      //    positions the factory contract owns, so we ask the API for
+      //    that short list and pull on-chain detail just for those
+      //    ids (much faster than scanning every market position).
+      //  - Personal mode: the contract-side iterator stays, since
+      //    we don't yet expose a "by trader" filter for normal users.
+      let contractPositions;
+      if (leaderVault && factoryAddress) {
+        const open = await listOpenPositions(factoryAddress).catch(() => []);
+        contractPositions = await getPositionsByIds(
+          publicKey,
+          open.map((p) => p.positionId),
+        );
+      } else {
+        contractPositions = await getPositions(publicKey);
+      }
 
       if (contractPositions.length === 0) {
         setPositions([]);

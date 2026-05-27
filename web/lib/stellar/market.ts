@@ -132,6 +132,38 @@ export async function addCollateral(
 }
 
 /**
+ * Hydrate a specific set of position IDs (read-only).
+ * Used by leader mode, which gets the open-position ids for the vault
+ * factory contract from the indexer-backed /v1/positions/open API and
+ * then only needs to pull on-chain detail for *that* short list — far
+ * cheaper than scanning every market position id with get_all_position_ids.
+ */
+export async function getPositionsByIds(
+  source: string,
+  positionIds: number[],
+): Promise<Position[]> {
+  if (positionIds.length === 0) return [];
+  const positions: Position[] = [];
+  await Promise.all(
+    positionIds.map(async (id) => {
+      try {
+        const args = [toScVal(id, 'u64')];
+        const posResult = await sorobanRpc.simulateTransaction(
+          await buildSimulateTransaction(source, 'get_position', args),
+        );
+        if (rpc.Api.isSimulationSuccess(posResult) && posResult.result?.retval) {
+          const raw = scValToNative(posResult.result.retval) as RawPosition | null;
+          if (raw) positions.push(parsePosition(raw));
+        }
+      } catch {
+        // Position closed between the indexer hint and now.
+      }
+    }),
+  );
+  return positions;
+}
+
+/**
  * Get all positions for a trader (read-only).
  * Uses get_all_position_ids + get_position (per-ID) since get_positions was
  * removed from the contract to stay under the 64KB WASM limit.

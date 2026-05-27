@@ -75,8 +75,9 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
 //   position_opened     : (id, trader, asset, direction, size, entry_price)
 //   position_closed     : (id, trader, asset, direction, size, entry_price, current_price, pnl)
 //   position_liquidated : (id, trader, asset, direction, size, keeper_reward, current_price)
-// The asset/direction fields are intentionally skipped here — they're
-// useful for analytics but not load-bearing for the event projection.
+// asset/direction were originally skipped as "analytics only"; they're
+// now needed by the positions projection so the leader-mode positions
+// tab can render without a second on-chain hop.
 
 function decodePositionOpened(raw: RawEvent, v: unknown[]): PositionOpenedEvent {
   return {
@@ -84,6 +85,8 @@ function decodePositionOpened(raw: RawEvent, v: unknown[]): PositionOpenedEvent 
     topic: 'position_opened',
     positionId: asNumber(v[0], 'position_opened.position_id'),
     trader: asString(v[1], 'position_opened.trader'),
+    asset: asString(v[2], 'position_opened.asset'),
+    direction: asNumber(v[3], 'position_opened.direction'),
     size: asBigInt(v[4], 'position_opened.size'),
     entryPrice: asBigInt(v[5], 'position_opened.entry_price'),
   };
