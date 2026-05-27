@@ -16,6 +16,7 @@ import type { Client } from '@libsql/client';
 import type { VaultEvent } from '@noether/types';
 import type { Handler, HandlerContext } from '../router.js';
 import type { DecodedMarketEvent } from '../types/events.js';
+import { syncVaultRow } from '../vaultSync.js';
 
 type AnyEvent = DecodedMarketEvent;
 
@@ -59,7 +60,11 @@ async function persistRaw(db: Client, raw: RawShape, payload: object): Promise<v
   });
 }
 
-async function upsertVault(db: Client, event: VaultEvent): Promise<void> {
+async function upsertVault(
+  db: Client,
+  event: VaultEvent,
+  ctx?: { rpc: HandlerContext['rpc']; log: HandlerContext['log']; contractId: string },
+): Promise<void> {
   switch (event.topic) {
     case 'vault_created':
       await db.execute({
@@ -163,30 +168,28 @@ async function upsertVault(db: Client, event: VaultEvent): Promise<void> {
       });
       return;
     case 'leader_open':
-      // The factory pulled `collateral` USDC out of the vault to fund
-      // the new position, so the vault's USDC pool drops by exactly
-      // that amount (the contract resyncs total_usdc from the
-      // on-chain balance immediately after the proxy call). Mirror it
-      // here so the marketplace + /trade leader balance line stay
-      // truthful between trades.
-      await db.execute({
-        sql: `
-          UPDATE vaults
-          SET total_usdc = total_usdc - ?,
-              updated_at = ?
-          WHERE id = ?
-        `,
-        args: [event.collateral.toString(), Date.now(), event.vaultId],
-      });
+    case 'leader_close': {
+      // Re-read the canonical VaultInfo struct from the factory.
+      // We can't rely on event payloads for leader trades:
+      //  - leader_open carries `collateral` but doesn't reflect the
+      //    fee deducted by the market.
+      //  - leader_close carries no settled amount at all (PnL depends
+      //    on live oracle price at settlement time).
+      // The contract calls sync_total_usdc(...) before publishing
+      // either event, so simulating view_vault gives us the truth.
+      if (ctx) {
+        const passphrase = process.env.NETWORK_PASSPHRASE
+          ?? 'Test SDF Network ; September 2015';
+        await syncVaultRow(db, ctx.rpc, ctx.contractId, event.vaultId, passphrase)
+          .catch((err) => {
+            ctx.log.warn(
+              { vaultId: event.vaultId, err: (err as Error).message },
+              'on-chain vault resync failed',
+            );
+          });
+      }
       return;
-    case 'leader_close':
-      // Close events don't carry the settled amount on-chain — PnL
-      // depends on live oracle price. Until we wire an on-chain
-      // `view_vault` resync the projection's total_usdc stays stale
-      // after a close; deposits / withdrawals will re-anchor it.
-      // For demo accuracy, prefer closing positions only when the UI
-      // can tolerate one stale poll cycle.
-      return;
+    }
   }
 }
 
@@ -322,7 +325,7 @@ function makeHandler(topic: VaultEvent['topic'], contractId: string): Handler {
     if (v.topic !== topic) return;
     const raw = envelopeFor(v, (event as unknown as { id: string }).id, contractId);
     await persistRaw(ctx.db, raw, v);
-    await upsertVault(ctx.db, v);
+    await upsertVault(ctx.db, v, { rpc: ctx.rpc, log: ctx.log, contractId });
     await logActivity(ctx.db, v);
     ctx.bus.emit('event', event);
     ctx.log.debug({ topic, vaultId: v.vaultId }, 'vault event processed');

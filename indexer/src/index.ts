@@ -18,6 +18,8 @@ import { buildMarketRegistrations } from './handlers/market.js';
 import { buildVaultRegistrations } from './handlers/vault.js';
 import { buildReferralRegistrations } from './handlers/referral.js';
 import { IndexerPoller } from './poll.js';
+import { reconcileAllVaults } from './vaultSync.js';
+import { getNetworkPassphrase } from '@noether/shared';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -67,6 +69,15 @@ async function main(): Promise<void> {
       router.register(reg.contractId, reg.topic, reg.handler);
     }
     log.info({ contract: vaultFactory }, 'Vault factory handlers registered');
+    // Boot-time reconcile: rewrite every vaults row from the canonical
+    // on-chain state so any projection drift from older codepaths (no
+    // leader_open decrement / migration 009's incomplete subtraction)
+    // is corrected before the live polling resumes.
+    try {
+      await reconcileAllVaults(db, rpc, vaultFactory, getNetworkPassphrase(config.network), log);
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'Boot-time vault reconcile failed');
+    }
   }
   if (referral) {
     for (const reg of buildReferralRegistrations(referral)) {
