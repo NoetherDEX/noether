@@ -223,16 +223,26 @@ function TradePage() {
       // into the vault's USDC balance, not the wallet's.
       if (leaderVault) {
         await leaderClosePosition(publicKey, walletId ?? '', leaderVault.id, positionId);
+        // Pull fresh vault data so the leader-mode balance line picks
+        // up the post-settlement total_usdc.
+        getVault(leaderVault.id).then((v) => {
+          if (v) setLeaderVault(v);
+        }).catch(() => {});
+        // Soroban RPC needs a moment for the close to be visible to
+        // simulateTransaction (otherwise the closed position lingers
+        // in the list until the next manual refresh).
+        setTimeout(() => fetchPositions(false), 2000);
+        refreshBalances();
+        return;
+      }
+      // Check if this is a cross-margin position
+      const pos = positions.find(p => p.id === positionId);
+      if (pos?.marginMode === 'Cross') {
+        const result = await closePositionCross(publicKey, sign, positionId);
+        console.log('Cross position closed:', result);
       } else {
-        // Check if this is a cross-margin position
-        const pos = positions.find(p => p.id === positionId);
-        if (pos?.marginMode === 'Cross') {
-          const result = await closePositionCross(publicKey, sign, positionId);
-          console.log('Cross position closed:', result);
-        } else {
-          const result = await closePosition(publicKey, sign, positionId);
-          console.log('Position closed:', result);
-        }
+        const result = await closePosition(publicKey, sign, positionId);
+        console.log('Position closed:', result);
       }
 
       // Refresh positions and balances

@@ -8,6 +8,7 @@ import { useTradeStore, useLeaderModeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo } from '@/lib/stellar/market';
 import { leaderOpenPosition } from '@/lib/stellar/vaultFactory';
+import { getVault } from '@/lib/api/vaults';
 import { VAULT_PRECISION } from '@/types/vault';
 import {
   formatUSD,
@@ -270,7 +271,16 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
           success: () => {
             setCollateral('');
             onSubmit?.();
-            onPositionOpened?.();
+            // Soroban RPC needs a moment for the new position to be
+            // queryable via simulateTransaction. Without this delay the
+            // positions list refresh fires before the state has
+            // propagated and the new row never shows up.
+            setTimeout(() => onPositionOpened?.(), 2000);
+            // Refresh vault data so the balance line and the
+            // selector reflect the post-trade pool size.
+            getVault(leaderVault.id).then((fresh) => {
+              if (fresh) setLeaderVault(fresh);
+            }).catch(() => {});
             return `${direction} ${asset} opened from ${leaderVault.name}`;
           },
           error: (err) => err?.message || 'Leader trade failed',
