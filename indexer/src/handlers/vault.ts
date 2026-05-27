@@ -162,6 +162,31 @@ async function upsertVault(db: Client, event: VaultEvent): Promise<void> {
         args: [Date.now(), event.vaultId],
       });
       return;
+    case 'leader_open':
+      // The factory pulled `collateral` USDC out of the vault to fund
+      // the new position, so the vault's USDC pool drops by exactly
+      // that amount (the contract resyncs total_usdc from the
+      // on-chain balance immediately after the proxy call). Mirror it
+      // here so the marketplace + /trade leader balance line stay
+      // truthful between trades.
+      await db.execute({
+        sql: `
+          UPDATE vaults
+          SET total_usdc = total_usdc - ?,
+              updated_at = ?
+          WHERE id = ?
+        `,
+        args: [event.collateral.toString(), Date.now(), event.vaultId],
+      });
+      return;
+    case 'leader_close':
+      // Close events don't carry the settled amount on-chain — PnL
+      // depends on live oracle price. Until we wire an on-chain
+      // `view_vault` resync the projection's total_usdc stays stale
+      // after a close; deposits / withdrawals will re-anchor it.
+      // For demo accuracy, prefer closing positions only when the UI
+      // can tolerate one stale poll cycle.
+      return;
   }
 }
 
