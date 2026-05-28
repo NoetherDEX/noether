@@ -21,8 +21,15 @@ export interface VaultRow {
   tradeCount?: number;
   /** Drawdown in basis points = (hwm - nav) / hwm × 10000, floor 0. */
   drawdownBps?: number;
-  /** Annualised yield in basis points (very simple: realizedPnl / TVL × 365 / days). */
+  /** Annualised yield in basis points (closedTradePnl / TVL × 365 / days). */
   apyBps?: number;
+  /**
+   * Sum of pnl from every leader_close in vault_trades (7-dec USDC,
+   * signed). This is the "lifetime PnL from closed trades returned
+   * to the pool" number — different from realizedPnl, which is the
+   * contract's counter for leader fee-share payouts.
+   */
+  closedTradePnl?: string;
 }
 
 export interface VaultTradeRow {
@@ -32,6 +39,13 @@ export interface VaultTradeRow {
   action: 'open' | 'close';
   leader: string;
   collateral: string;
+  /**
+   * Settled PnL on close rows (7-dec USDC, signed). Sourced from the
+   * matching position_closed event in the same tx. NULL for open rows
+   * and for close rows older than the indexer started populating it
+   * (those rows are backfilled by migration 011 where possible).
+   */
+  pnl?: string | null;
   ledger: number;
   ts: number;
   txHash: string;
@@ -140,6 +154,7 @@ export class VaultsService {
           action: String(row.action) as 'open' | 'close',
           leader: String(row.leader),
           collateral: String(row.collateral),
+          pnl: row.pnl == null ? null : String(row.pnl),
           ledger: Number(row.ledger),
           ts: Number(row.ts),
           txHash: String(row.tx_hash),
@@ -164,10 +179,12 @@ export class VaultsService {
     tradeCount: number;
     drawdownBps: number;
     apyBps: number;
+    closedTradePnl: string;
   }> {
     let depositorCount = 0;
     let openPositions = 0;
     let tradeCount = 0;
+    let closedTradePnl = '0';
     try {
       const dep = await this.db.execute({
         sql: 'SELECT COUNT(DISTINCT depositor) AS n FROM vault_deposits WHERE vault_id = ?',
@@ -180,17 +197,23 @@ export class VaultsService {
         sql: `
           SELECT
             COALESCE(SUM(CASE WHEN action='open' THEN 1 ELSE 0 END), 0) AS opens,
-            COALESCE(SUM(CASE WHEN action='close' THEN 1 ELSE 0 END), 0) AS closes
+            COALESCE(SUM(CASE WHEN action='close' THEN 1 ELSE 0 END), 0) AS closes,
+            COALESCE(SUM(CASE WHEN action='close' AND pnl IS NOT NULL THEN pnl ELSE 0 END), 0) AS pnl_sum
           FROM vault_trades WHERE vault_id = ?
         `,
         args: [vaultId],
       });
-      const r = (tr.rows[0] ?? {}) as { opens?: number | bigint; closes?: number | bigint };
+      const r = (tr.rows[0] ?? {}) as {
+        opens?: number | bigint;
+        closes?: number | bigint;
+        pnl_sum?: number | bigint | string;
+      };
       const opens = Number(r.opens ?? 0);
       const closes = Number(r.closes ?? 0);
       tradeCount = opens;
       openPositions = Math.max(0, opens - closes);
-    } catch { /* table missing */ }
+      closedTradePnl = String(r.pnl_sum ?? 0);
+    } catch { /* table missing or pnl column absent (pre-migration-011) */ }
 
     const v = vault ?? (await this.get(vaultId));
     let drawdownBps = 0;
@@ -205,17 +228,19 @@ export class VaultsService {
       if (hwm > nav && hwm > 0n) {
         drawdownBps = Number(((hwm - nav) * 10_000n) / hwm);
       }
-      // simple APY = realizedPnl / totalUsdc * 365 / days_active
-      const realized = BigInt(v.realizedPnl);
+      // APY uses closed-trade PnL (the actual yield the pool earned),
+      // not the contract's realized_pnl (which only counts leader
+      // fee-share payouts and would understate APY by a large margin).
+      const lifetime = BigInt(closedTradePnl);
       const nowSec = Math.floor(Date.now() / 1000);
       const days = Math.max(1, (nowSec - v.createdAt) / 86_400);
-      if (total > 0n && realized > 0n) {
-        // realizedPnl / total * 10000 → bps for the lifetime, scale to year
-        const lifeBps = Number((realized * 10_000n) / total);
+      if (total > 0n && lifetime > 0n) {
+        // closedTradePnl / total * 10000 → bps for the lifetime, scale to year
+        const lifeBps = Number((lifetime * 10_000n) / total);
         apyBps = Math.round((lifeBps * 365) / days);
       }
     }
-    return { depositorCount, openPositions, tradeCount, drawdownBps, apyBps };
+    return { depositorCount, openPositions, tradeCount, drawdownBps, apyBps, closedTradePnl };
   }
 
   private async activity(

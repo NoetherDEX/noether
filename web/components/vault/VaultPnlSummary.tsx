@@ -23,11 +23,12 @@ function fmtBps(bps: number | undefined, signed = false): string {
  * PnL summary + sparkline. Maps to the SCF Tranche 2 deliverable:
  * the per-vault detail page needs to surface "PnL history".
  *
- * Anchors the timeline at vault creation (PnL = 0), then steps the
- * curve up at every fee-claim event (realised profit-share payouts)
- * and holds flat at every leader_close (PnL crystallisation already
- * captured by the next fee-claim). The end point is the contract's
- * canonical realized_pnl value.
+ * Anchors at vault creation (PnL = 0), then steps the curve at
+ * every leader_close by the trade's settled pnl (read from the
+ * matching market position_closed event via vault_trades.pnl).
+ * The end-of-curve value equals vault.closedTradePnl (sum of all
+ * close pnls). Leader fee-share claims are not plotted here —
+ * they live in their own "Leader Fees Claimed" tile in VaultMetrics.
  */
 export function VaultPnlSummary({
   vault,
@@ -45,17 +46,20 @@ export function VaultPnlSummary({
   const totalDeposits = deposits.reduce((acc, r) => acc + BigInt(r.amount), 0n);
   const totalWithdraws = withdraws.reduce((acc, r) => acc + BigInt(r.amount), 0n);
   const totalFees = feeClaims.reduce((acc, r) => acc + BigInt(r.amount), 0n);
-  const realized = BigInt(vault.realizedPnl);
+
+  // Lifetime closed-trade PnL. Prefer the API-aggregated value when
+  // available; fall back to summing the trade pnls we have on hand
+  // (matches when the API and trade list are consistent).
+  const closes = trades.filter((x) => x.action === 'close' && x.pnl != null);
+  const sumClosesFromTrades = closes.reduce((acc, t) => acc + BigInt(t.pnl ?? '0'), 0n);
+  const realized = vault.closedTradePnl != null ? BigInt(vault.closedTradePnl) : sumClosesFromTrades;
 
   type Point = { ts: number; pnl: number };
   const points: Point[] = [{ ts: vault.createdAt, pnl: 0 }];
-  for (const f of [...feeClaims].sort((a, b) => a.ts - b.ts)) {
-    const last = points[points.length - 1]!.pnl;
-    points.push({ ts: f.ts, pnl: last + Number(f.amount) / 1e7 });
-  }
-  for (const t of trades.filter((x) => x.action === 'close').sort((a, b) => a.ts - b.ts)) {
-    const last = points[points.length - 1]!.pnl;
-    points.push({ ts: t.ts, pnl: last });
+  let running = 0;
+  for (const t of [...closes].sort((a, b) => a.ts - b.ts)) {
+    running += Number(t.pnl ?? '0') / 1e7;
+    points.push({ ts: t.ts, pnl: running });
   }
   points.push({ ts: Date.now() / 1000, pnl: Number(realized) / 1e7 });
 
@@ -82,12 +86,12 @@ export function VaultPnlSummary({
           <div>
             <h3 className="text-base font-semibold text-foreground">PnL History</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Realised profit-share over time
+              Closed-trade PnL over time
             </p>
           </div>
           <div className="text-right">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              All-time realised
+              Closed-trade PnL
             </p>
             <p
               className={`font-mono text-xl font-bold ${

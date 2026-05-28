@@ -43,9 +43,17 @@ function fmtBps(bps: number | undefined, signed = false): string {
 export function VaultMetrics({ vault }: { vault: VaultRow }) {
   const nav = vaultNav(vault);
   const leaderPct = vaultLeaderHoldingPct(vault);
-  const profitSharePct = (vault.profitShareBps / 100).toFixed(1);
-  const realizedPnlNum = Number(vault.realizedPnl);
-  const pnlTone: Stat['tone'] = realizedPnlNum > 0 ? 'success' : realizedPnlNum < 0 ? 'danger' : 'neutral';
+  // Closed-trade PnL is the lifetime gain from closed leader trades
+  // returned to the pool — what the LP cares about. The contract's
+  // realizedPnl tracks something different (leader profit-share
+  // payouts), surfaced in its own tile below.
+  const closedPnl = vault.closedTradePnl ?? '0';
+  const closedPnlNum = Number(closedPnl);
+  const closedPnlTone: Stat['tone'] =
+    closedPnlNum > 0 ? 'success' : closedPnlNum < 0 ? 'danger' : 'neutral';
+  const feesClaimedNum = Number(vault.realizedPnl);
+  const feesClaimedTone: Stat['tone'] =
+    feesClaimedNum > 0 ? 'success' : feesClaimedNum < 0 ? 'danger' : 'neutral';
   const apyTone: Stat['tone'] =
     vault.apyBps == null ? 'neutral' : vault.apyBps > 0 ? 'success' : vault.apyBps < 0 ? 'danger' : 'neutral';
   const drawdownTone: Stat['tone'] =
@@ -61,7 +69,7 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
     {
       label: 'APY',
       value: fmtBps(vault.apyBps, true),
-      hint: 'Annualised realized PnL / TVL',
+      hint: 'Annualised closed-trade PnL / TVL',
       tone: apyTone,
     },
     {
@@ -91,7 +99,7 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
     },
   ];
 
-  // Tertiary row — structural / governance
+  // Tertiary row — structural / governance / pnl breakdown
   const tertiary: Stat[] = [
     {
       label: 'NAV per Share',
@@ -100,9 +108,15 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
     },
     {
       label: 'Realized PnL',
-      value: `${realizedPnlNum >= 0 ? '+' : ''}$${fmtUsdc(vault.realizedPnl)}`,
+      value: `${closedPnlNum >= 0 ? '+' : ''}$${fmtUsdc(closedPnl)}`,
       hint: 'Closed trade profits returned to the pool',
-      tone: pnlTone,
+      tone: closedPnlTone,
+    },
+    {
+      label: 'Leader Fees Claimed',
+      value: `${feesClaimedNum >= 0 ? '+' : ''}$${fmtUsdc(vault.realizedPnl)}`,
+      hint: 'Lifetime profit-share paid out to the leader',
+      tone: feesClaimedTone,
     },
     {
       label: 'Leader Holding',
@@ -116,14 +130,15 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
     <div className="space-y-4 md:space-y-6">
       <StatRow stats={primary} />
       <StatRow stats={secondary} />
-      <StatRow stats={tertiary} />
+      <StatRow stats={tertiary} cols={4} />
     </div>
   );
 }
 
-function StatRow({ stats }: { stats: Stat[] }) {
+function StatRow({ stats, cols = 3 }: { stats: Stat[]; cols?: 3 | 4 }) {
+  const gridCols = cols === 4 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3';
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 items-stretch gap-4 md:gap-6">
+    <div className={`grid grid-cols-1 ${gridCols} items-stretch gap-4 md:gap-6`}>
       {stats.map((s) => {
         const valueColor =
           s.tone === 'success'

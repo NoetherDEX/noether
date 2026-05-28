@@ -25,6 +25,13 @@ export interface VaultRow {
   drawdownBps?: number;
   /** Annualised yield in basis points. */
   apyBps?: number;
+  /**
+   * Sum of pnl across every leader_close in vault_trades (7-dec USDC).
+   * The "lifetime PnL from closed trades returned to the pool" number —
+   * distinct from realizedPnl, which is the contract's counter for
+   * leader fee-share payouts.
+   */
+  closedTradePnl?: string;
 }
 
 export interface VaultTradeRow {
@@ -34,6 +41,8 @@ export interface VaultTradeRow {
   action: 'open' | 'close';
   leader: string;
   collateral: string;
+  /** Settled PnL on close rows. null on open rows and pre-migration-011 closes. */
+  pnl?: string | null;
   ledger: number;
   ts: number;
   txHash: string;

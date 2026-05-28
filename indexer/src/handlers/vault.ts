@@ -264,23 +264,44 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
         ],
       });
       return;
-    case 'leader_close':
+    case 'leader_close': {
+      // The leader_close event itself carries no PnL — but the
+      // market contract published a position_closed event in the
+      // same transaction with the settled amount. Within a single
+      // tx Soroban emits events in invocation order, so the
+      // market's position_closed lands in events_raw before our
+      // factory's leader_close handler runs.
+      const closeLookup = await db.execute({
+        sql: `
+          SELECT json_extract(payload_json, '$.pnl') AS pnl
+          FROM events_raw
+          WHERE topic = 'position_closed'
+            AND tx_hash = ?
+            AND CAST(json_extract(payload_json, '$.positionId') AS INTEGER) = ?
+          LIMIT 1
+        `,
+        args: [event.txHash, Number(event.positionId)],
+      });
+      const pnl = (closeLookup.rows[0]?.pnl as string | null | undefined) ?? null;
+
       await db.execute({
         sql: `
           INSERT OR IGNORE INTO vault_trades
-            (vault_id, position_id, action, leader, collateral, ledger, ts, tx_hash)
-          VALUES (?, ?, 'close', ?, 0, ?, ?, ?)
+            (vault_id, position_id, action, leader, collateral, pnl, ledger, ts, tx_hash)
+          VALUES (?, ?, 'close', ?, 0, ?, ?, ?, ?)
         `,
         args: [
           event.vaultId,
           event.positionId.toString(),
           event.leader,
+          pnl,
           event.ledger,
           event.ledgerCloseTs,
           event.txHash,
         ],
       });
       return;
+    }
     default:
       return;
   }

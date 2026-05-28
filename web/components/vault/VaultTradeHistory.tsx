@@ -50,42 +50,59 @@ export function VaultTradeHistory({ trades }: { trades: VaultTradeRow[] }) {
                 <th className="text-left px-6 py-2">Action</th>
                 <th className="text-right px-6 py-2">Position ID</th>
                 <th className="text-right px-6 py-2">Collateral</th>
+                <th className="text-right px-6 py-2">PnL</th>
                 <th className="text-right px-6 py-2">Tx</th>
               </tr>
             </thead>
             <tbody>
-              {trades.map((t) => (
-                <tr key={t.id} className="border-b border-white/5 last:border-0">
-                  <td className="px-6 py-3 text-muted-foreground">{fmtTs(t.ts)}</td>
-                  <td className="px-6 py-3">
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium ${
-                        t.action === 'open'
-                          ? 'text-[#22c55e] bg-[#22c55e]/10'
-                          : 'text-amber-400 bg-amber-500/10'
-                      }`}
-                    >
-                      {t.action === 'open' ? '↗ Open' : '↘ Close'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-3 text-right font-mono tabular-nums">
-                    #{t.positionId}
-                  </td>
-                  <td className="px-6 py-3 text-right font-mono tabular-nums">
-                    {t.action === 'open' ? `$${fmtUsdc(t.collateral)}` : '—'}
-                  </td>
-                  <td className="px-6 py-3 text-right text-xs">
-                    <a
-                      href={`https://stellar.expert/explorer/testnet/tx/${t.txHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-mono text-muted-foreground hover:text-amber-400"
-                    >
-                      {shortHash(t.txHash)} ↗
-                    </a>
-                  </td>
-                </tr>
-              ))}
+              {trades.map((t) => {
+                const pnlNum = t.pnl != null ? Number(t.pnl) : null;
+                const pnlClass =
+                  pnlNum == null
+                    ? 'text-muted-foreground'
+                    : pnlNum > 0
+                    ? 'text-[#22c55e]'
+                    : pnlNum < 0
+                    ? 'text-red-400'
+                    : 'text-muted-foreground';
+                return (
+                  <tr key={t.id} className="border-b border-white/5 last:border-0">
+                    <td className="px-6 py-3 text-muted-foreground">{fmtTs(t.ts)}</td>
+                    <td className="px-6 py-3">
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium ${
+                          t.action === 'open'
+                            ? 'text-[#22c55e] bg-[#22c55e]/10'
+                            : 'text-amber-400 bg-amber-500/10'
+                        }`}
+                      >
+                        {t.action === 'open' ? '↗ Open' : '↘ Close'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3 text-right font-mono tabular-nums">
+                      #{t.positionId}
+                    </td>
+                    <td className="px-6 py-3 text-right font-mono tabular-nums">
+                      {t.action === 'open' ? `$${fmtUsdc(t.collateral)}` : '—'}
+                    </td>
+                    <td className={`px-6 py-3 text-right font-mono tabular-nums ${pnlClass}`}>
+                      {t.action === 'close' && pnlNum != null
+                        ? `${pnlNum >= 0 ? '+' : ''}$${fmtUsdc(t.pnl ?? '0')}`
+                        : '—'}
+                    </td>
+                    <td className="px-6 py-3 text-right text-xs">
+                      <a
+                        href={`https://stellar.expert/explorer/testnet/tx/${t.txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-muted-foreground hover:text-amber-400"
+                      >
+                        {shortHash(t.txHash)} ↗
+                      </a>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
