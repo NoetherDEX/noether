@@ -6,14 +6,18 @@ import { Header } from '@/components/layout';
 import { VaultCard } from '@/components/vault/VaultCard';
 import { CreateVaultButton } from '@/components/vault/CreateVaultButton';
 import { listAllVaultsOnChain } from '@/lib/stellar/vaultFactory';
+import { listVaults } from '@/lib/api/vaults';
 import { vaultRowFromOnChain, type VaultRow } from '@/types/vault';
 import { CONTRACTS } from '@/lib/utils/constants';
 
 /**
- * Marketplace page reads vault state directly from the vault_factory
- * contract via Soroban RPC. No API gateway dependency — the only
- * upstream is the public testnet RPC. Listing is cheap for small N
- * (each vault is one parallel simulateTransaction call).
+ * Marketplace page. Base list (id / leader / name / TVL / NAV /
+ * paused) comes from the chain directly so the page works even if
+ * the API gateway is down. Aggregates (APY, drawdown, depositor
+ * count, open trades, closed-trade PnL) are overlaid from the API
+ * when reachable — they aren't tracked by the contract itself.
+ * If the API call fails we still render the cards, the aggregate
+ * tiles just show "—".
  */
 export default function VaultsPage() {
   const [vaults, setVaults] = useState<VaultRow[]>([]);
@@ -30,9 +34,31 @@ export default function VaultsPage() {
           process.env.NEXT_PUBLIC_ADMIN_PUBLIC_KEY ??
           'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
         void CONTRACTS; // keep tree-shake from dropping the constants module
-        const onchain = await listAllVaultsOnChain(source);
+        const [onchain, apiRows] = await Promise.all([
+          listAllVaultsOnChain(source),
+          // Aggregates are best-effort — never block the page on the
+          // gateway. If it's down, the cards still render with on-chain
+          // data and the aggregate tiles fall back to em-dash.
+          listVaults({ limit: 50 }).catch(() => [] as VaultRow[]),
+        ]);
         if (cancelled) return;
-        setVaults(onchain.map(vaultRowFromOnChain));
+        const apiById = new Map(apiRows.map((v) => [v.id, v]));
+        setVaults(
+          onchain.map((info) => {
+            const base = vaultRowFromOnChain(info);
+            const enrich = apiById.get(base.id);
+            if (!enrich) return base;
+            return {
+              ...base,
+              apyBps: enrich.apyBps,
+              drawdownBps: enrich.drawdownBps,
+              depositorCount: enrich.depositorCount,
+              openPositions: enrich.openPositions,
+              tradeCount: enrich.tradeCount,
+              closedTradePnl: enrich.closedTradePnl,
+            };
+          }),
+        );
         setErr(null);
       } catch (e) {
         if (cancelled) return;
