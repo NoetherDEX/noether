@@ -7,11 +7,22 @@ export const CONTRACTS = {
   // working pre-rollout. Set NEXT_PUBLIC_NOERACLE_SHIM_ID after running
   // scripts/deploy_noeracle_shim.sh.
   NOERACLE_SHIM: process.env.NEXT_PUBLIC_NOERACLE_SHIM_ID || '',
+  // Atomic verify-then-trade router (Pattern B). When set, the web routes
+  // open() through noether_router.open_with_price so each trade executes on a
+  // sub-second-fresh Noeracle price (no #30 staleness). Unset = direct market
+  // calls (unchanged). Set NEXT_PUBLIC_NOETHER_ROUTER_ID after running
+  // scripts/deploy_noether_router.sh.
+  NOETHER_ROUTER: process.env.NEXT_PUBLIC_NOETHER_ROUTER_ID || '',
   VAULT: process.env.NEXT_PUBLIC_VAULT_ID || 'CANZSXRBURPDI5546QTYJEIGUFPQ2T4N2BSXMVYYNT7YGPCCWAMJIOA5',
   MARKET: process.env.NEXT_PUBLIC_MARKET_ID || 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD',
   USDC_TOKEN: process.env.NEXT_PUBLIC_USDC_TOKEN_ID || 'CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4',
   NOE_TOKEN: process.env.NEXT_PUBLIC_NOE_TOKEN_ID || 'CD7VRBXIDYP2C2F2AZZL242GY4PRDVDH2BG3LAN2ASXYUXCPHWQJTDP5',
 } as const;
+
+// Noeracle attestation service — the web fetches a fresh signed price here at
+// trade time when the router is enabled (NEXT_PUBLIC_NOETHER_ROUTER_ID set).
+export const NOERACLE_API_URL =
+  process.env.NEXT_PUBLIC_NOERACLE_API_URL || 'https://api.noeracle.org';
 
 // NOE Asset (Classic Stellar Asset)
 export const NOE_ASSET = {
