@@ -321,14 +321,6 @@
               "map": [
                 {
                   "key": {
-                    "symbol": "asset"
-                  },
-                  "val": {
-                    "bytes": "4254435553440000"
-                  }
-                },
-                {
-                  "key": {
                     "symbol": "price"
                   },
                   "val": {
@@ -344,14 +336,6 @@
                   },
                   "val": {
                     "u64": 42
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "sources"
-                  },
-                  "val": {
-                    "u32": 5
                   }
                 },
                 {
