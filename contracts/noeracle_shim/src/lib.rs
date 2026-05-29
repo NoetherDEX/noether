@@ -49,20 +49,18 @@ pub enum DataKey {
 // Noeracle PriceEntry — mirrors the contract's view-fn return type.
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Best-effort reconstruction from the public attestation message format
-// (8-byte tag + i128 price + u64 timestamp + u32 round_id + checksum) and
-// the SDK's PriceEntry shape. If Noeracle's on-chain struct uses different
-// field names or ordering this will fail at deserialisation — we verify
-// against the live contract during the testnet deploy step.
+// Mirrors Noeracle's on-chain `PriceEntry` return type EXACTLY — confirmed
+// against oracle_v0/src/lib.rs (github.com/noeracle/noeracle): three fields
+// (`price`, `timestamp`, `round_id`), no `asset`, no `sources`. Soroban
+// serialises structs by field name, so these names + types must match the
+// contract's or the `get_price_pers` return value fails to deserialise.
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct NoeraclePriceEntry {
-    pub asset: BytesN<8>,
     pub price: i128,
     pub timestamp: u64,
     pub round_id: u64,
-    pub sources: u32,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -240,16 +238,14 @@ mod tests {
 
         #[contractimpl]
         impl MockNoeracleContract {
-            pub fn get_price_pers(env: Env, asset: BytesN<8>) -> Option<NoeraclePriceEntry> {
+            pub fn get_price_pers(_env: Env, asset: BytesN<8>) -> Option<NoeraclePriceEntry> {
                 let bytes = asset.to_array();
                 // BTC tag = b"BTCUSD\0\0"
                 if bytes[..6] == [b'B', b'T', b'C', b'U', b'S', b'D'] {
                     return Some(NoeraclePriceEntry {
-                        asset: BytesN::from_array(&env, &bytes),
                         price: 700_000_000_000_000, // $70,000,000.0000000 — large, distinctive
                         timestamp: 1_700_000_000,
                         round_id: 42,
-                        sources: 5,
                     });
                 }
                 None

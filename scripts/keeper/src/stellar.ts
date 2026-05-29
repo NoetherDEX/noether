@@ -61,7 +61,7 @@ export class StellarClient {
   /**
    * Publish a signed Noeracle attestation to the contract's persistent
    * storage. Args order matches the contract's `update_ed25519_persistent`
-   * signature: (round_id, pubkeys, asset, sigs, timestamp, price).
+   * signature: (asset, price, timestamp, round_id, pubkeys, sigs).
    *
    * The attestation message is laid out as [tag(8) || price(16) || ts(8) || …],
    * so the first 8 bytes give us the BytesN<8> asset tag the contract
@@ -78,12 +78,12 @@ export class StellarClient {
       this.noeracleContract,
       'update_ed25519_persistent',
       [
-        nativeToScVal(BigInt(attestation.round_id), { type: 'u64' }),
-        xdr.ScVal.scvVec([xdr.ScVal.scvBytes(pubkey)]),
-        xdr.ScVal.scvBytes(tag),
-        xdr.ScVal.scvVec([xdr.ScVal.scvBytes(sig)]),
-        nativeToScVal(BigInt(attestation.timestamp), { type: 'u64' }),
-        nativeToScVal(BigInt(attestation.price), { type: 'i128' }),
+        xdr.ScVal.scvBytes(tag),                                       // asset:     BytesN<8>
+        nativeToScVal(BigInt(attestation.price), { type: 'i128' }),    // price:     i128
+        nativeToScVal(BigInt(attestation.timestamp), { type: 'u64' }), // timestamp: u64
+        nativeToScVal(BigInt(attestation.round_id), { type: 'u64' }),  // round_id:  u64
+        xdr.ScVal.scvVec([xdr.ScVal.scvBytes(pubkey)]),                // pubkeys:   Vec<BytesN<32>>
+        xdr.ScVal.scvVec([xdr.ScVal.scvBytes(sig)]),                   // sigs:      Vec<BytesN<64>>
       ]
     );
   }
