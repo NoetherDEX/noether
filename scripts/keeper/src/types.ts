@@ -99,7 +99,8 @@ export interface KeeperConfig {
 
   // Contract addresses
   marketContractId: string;
-  oracleContractId: string;
+  /** Noeracle on-chain contract — destination for update_ed25519_persistent. */
+  noeracleContractId: string;
   vaultContractId: string;
 
   // Timing

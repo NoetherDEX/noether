@@ -75,6 +75,7 @@ mkdir -p "$OPTIMIZED_DIR"
 CONTRACTS=(
     "mock_oracle"
     "oracle_adapter"
+    "noeracle_shim"
     "vault"
     "market"
     "vault_factory"

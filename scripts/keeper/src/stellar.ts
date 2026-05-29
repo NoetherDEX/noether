@@ -19,6 +19,9 @@ import {
   Account,
 } from '@stellar/stellar-sdk';
 import { KeeperConfig, Position, Order, ExecutionResult } from './types';
+// Type-only — the @noeracle/sdk package is ESM-only; the index.ts loader
+// uses dynamic import, but we only need the Attestation shape here.
+import type { Attestation } from '@noeracle/sdk';
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
@@ -29,14 +32,14 @@ export class StellarClient {
   private keypair: Keypair;
   private networkPassphrase: string;
   private marketContract: Contract;
-  private oracleContract: Contract;
+  private noeracleContract: Contract;
 
   constructor(private config: KeeperConfig) {
     this.server = new rpc.Server(config.rpcUrl);
     this.keypair = Keypair.fromSecret(config.secretKey);
     this.networkPassphrase = config.networkPassphrase;
     this.marketContract = new Contract(config.marketContractId);
-    this.oracleContract = new Contract(config.oracleContractId);
+    this.noeracleContract = new Contract(config.noeracleContractId);
   }
 
   get publicKey(): string {
@@ -56,33 +59,33 @@ export class StellarClient {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Update oracle price for an asset
+   * Publish a signed Noeracle attestation to the contract's persistent
+   * storage. Args order matches the contract's `update_ed25519_persistent`
+   * signature: (round_id, pubkeys, asset, sigs, timestamp, price).
+   *
+   * The attestation message is laid out as [tag(8) || price(16) || ts(8) || …],
+   * so the first 8 bytes give us the BytesN<8> asset tag the contract
+   * expects. We don't need to map symbols ourselves — Noeracle's publisher
+   * already encoded the right tag into the signed message.
    */
-  async updateOraclePrice(asset: string, priceScaled: bigint): Promise<ExecutionResult> {
+  async updateNoeraclePersistent(attestation: Attestation): Promise<ExecutionResult> {
+    const messageBuf = Buffer.from(attestation.message, 'hex');
+    const tag = messageBuf.subarray(0, 8);
+    const pubkey = Buffer.from(attestation.publisher, 'hex');
+    const sig = Buffer.from(attestation.signature, 'hex');
+
     return this.invokeContractWriteWithRetry(
-      this.oracleContract,
-      'set_price',
+      this.noeracleContract,
+      'update_ed25519_persistent',
       [
-        nativeToScVal(asset, { type: 'symbol' }),
-        nativeToScVal(priceScaled, { type: 'i128' }),
+        nativeToScVal(BigInt(attestation.round_id), { type: 'u64' }),
+        xdr.ScVal.scvVec([xdr.ScVal.scvBytes(pubkey)]),
+        xdr.ScVal.scvBytes(tag),
+        xdr.ScVal.scvVec([xdr.ScVal.scvBytes(sig)]),
+        nativeToScVal(BigInt(attestation.timestamp), { type: 'u64' }),
+        nativeToScVal(BigInt(attestation.price), { type: 'i128' }),
       ]
     );
-  }
-
-  /**
-   * Get current price from oracle
-   */
-  async getOraclePrice(asset: string): Promise<{ price: bigint; timestamp: bigint }> {
-    try {
-      const result = await this.invokeContractRead<[bigint, bigint]>(
-        this.oracleContract,
-        'lastprice',
-        [nativeToScVal(asset, { type: 'symbol' })]
-      );
-      return { price: result[0], timestamp: result[1] };
-    } catch (error) {
-      throw new Error(`Failed to get oracle price for ${asset}: ${error}`);
-    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
