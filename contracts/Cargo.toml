@@ -5,6 +5,7 @@ members = [
     "mock_oracle",
     "oracle_adapter",
     "noeracle_shim",
+    "noether_router",
     "vault",
     "vault_factory",
     "referral",
