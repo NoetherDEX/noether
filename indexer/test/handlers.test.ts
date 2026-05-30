@@ -46,6 +46,8 @@ describe('market handler', () => {
       txHash: 'a'.repeat(64),
       positionId: 42,
       trader: FAKE_TRADER,
+      asset: 'BTC',
+      direction: 0,
       size: 1_500_0000000n,
       entryPrice: 60_000_0000000n,
     };
@@ -87,6 +89,8 @@ describe('market handler', () => {
       txHash: 'a'.repeat(64),
       positionId: 1,
       trader: FAKE_TRADER,
+      asset: 'BTC',
+      direction: 0,
       size: 100n,
       entryPrice: 60n,
     };
