@@ -93,6 +93,7 @@ export function ReferralBanner() {
 
   return (
     <div
+      data-noether-chrome
       className={[
         'fixed bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm',
         'transition-all duration-300 ease-out',

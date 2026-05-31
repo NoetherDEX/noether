@@ -2389,8 +2389,9 @@ mod tests {
         let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
         let usdc_token = usdc_sac.address();
 
-        // Deploy mock oracle
-        let oracle_id = env.register_contract_wasm(None, mock_oracle::WASM);
+        // Deploy inline test oracle (SEP-40 lastprice shape; replaces the
+        // retired mock_oracle crate — tests are self-contained now)
+        let oracle_id = env.register_contract(None, mock_oracle::MockOracle);
         let oracle_client = mock_oracle::Client::new(&env, &oracle_id);
         oracle_client.initialize(&admin);
 
@@ -2444,11 +2445,35 @@ mod tests {
         trader
     }
 
-    // Import contract WASMs for cross-contract testing
+    // Inline test oracle — a minimal SEP-40 price source the market reads via
+    // `lastprice(asset) -> (i128, u64)`. Replaces the deleted mock_oracle crate
+    // so `cargo test -p market` is self-contained.
     mod mock_oracle {
-        soroban_sdk::contractimport!(
-            file = "../target/wasm32-unknown-unknown/release/mock_oracle.wasm"
-        );
+        use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
+
+        #[contracttype]
+        pub enum DataKey {
+            Price(Symbol),
+        }
+
+        #[contract]
+        pub struct MockOracle;
+
+        #[contractimpl]
+        impl MockOracle {
+            pub fn initialize(_env: Env, _admin: Address) {}
+
+            pub fn set_price(env: Env, asset: Symbol, price: i128) {
+                let ts = env.ledger().timestamp();
+                env.storage().persistent().set(&DataKey::Price(asset), &(price, ts));
+            }
+
+            pub fn lastprice(env: Env, asset: Symbol) -> (i128, u64) {
+                env.storage().persistent().get(&DataKey::Price(asset)).unwrap()
+            }
+        }
+
+        pub use MockOracleClient as Client;
     }
 
     mod vault {

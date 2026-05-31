@@ -3,10 +3,13 @@ import type { PriceData } from '@/types';
 import { rpc, scValToNative, TransactionBuilder, BASE_FEE, Contract } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
-// Use mock oracle directly for price display (no staleness rejection)
-// Oracle adapter rejects stale prices (>120s) causing PnL to show $0
-// Market contract reads from mock oracle too, so prices are consistent
-const oracleContract = new Contract(CONTRACTS.MOCK_ORACLE);
+// Prefer the Noeracle shim (SEP-40-compatible, reads from Noeracle's
+// signed persistent storage) once it's deployed and the env var is set.
+// Fall back to the legacy Mock Oracle so the UI keeps working before
+// the rollout completes. The shim's `lastprice(asset: Symbol) -> (i128, u64)`
+// signature matches Mock Oracle's, so the call shape below is identical.
+const oracleAddress = CONTRACTS.NOERACLE_SHIM || CONTRACTS.MOCK_ORACLE;
+const oracleContract = new Contract(oracleAddress);
 
 /**
  * Get price from oracle adapter (read-only)

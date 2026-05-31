@@ -10,6 +10,15 @@
 export const CONTRACTS = {
   MOCK_ORACLE: process.env.NEXT_PUBLIC_MOCK_ORACLE_ID || '',
   ORACLE_ADAPTER: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_ID || '',
+  // SEP-40-compatible shim that proxies to Noeracle's get_price_pers.
+  // Set NEXT_PUBLIC_NOERACLE_SHIM_ID after running scripts/deploy_noeracle_shim.sh.
+  NOERACLE_SHIM: process.env.NEXT_PUBLIC_NOERACLE_SHIM_ID || '',
+  // Atomic verify-then-trade router (Pattern B). When set, the web routes open()
+  // through noether_router.open_with_price so each trade executes on a
+  // sub-second-fresh Noeracle price (no #30 staleness). Unset = direct market
+  // calls (unchanged). Set NEXT_PUBLIC_NOETHER_ROUTER_ID after running
+  // scripts/deploy_noether_router.sh.
+  NOETHER_ROUTER: process.env.NEXT_PUBLIC_NOETHER_ROUTER_ID || '',
   VAULT: process.env.NEXT_PUBLIC_VAULT_ID || '',
   MARKET: process.env.NEXT_PUBLIC_MARKET_ID || '',
   USDC_TOKEN: process.env.NEXT_PUBLIC_USDC_TOKEN_ID || '',
@@ -53,6 +62,11 @@ export function assertContractsConfigured(): void {
     throw new Error(message);
   }
 }
+
+// Noeracle attestation service — the web fetches a fresh signed price here at
+// trade time when the router is enabled (NEXT_PUBLIC_NOETHER_ROUTER_ID set).
+export const NOERACLE_API_URL =
+  process.env.NEXT_PUBLIC_NOERACLE_API_URL || 'https://api.noeracle.org';
 
 // NOE Asset (Classic Stellar Asset)
 export const NOE_ASSET = {

@@ -89,3 +89,6 @@ whitepaper/
 CLAUDE.md
 .claude/
 KNOWN_ISSUES.md
+# Blue-green staging secrets (keep the .example template tracked)
+.env.staging
+!.env.staging.example
