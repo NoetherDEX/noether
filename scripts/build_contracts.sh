@@ -73,8 +73,6 @@ mkdir -p "$OPTIMIZED_DIR"
 
 # List of contracts to optimize
 CONTRACTS=(
-    "mock_oracle"
-    "oracle_adapter"
     "noeracle_shim"
     "noether_router"
     "vault"
