@@ -34,7 +34,7 @@ cd noether/contracts
 
 # Build the contract WASMs that the test harness imports
 cargo +1.79.0 build --target wasm32-unknown-unknown --release \
-  -p mock_oracle -p vault -p oracle_adapter
+  -p vault
 
 # Run just the cross-margin tests
 cargo test -p market cross_margin
@@ -251,7 +251,7 @@ git clone https://github.com/NoetherDEX/noether
 cd noether
 cargo +1.79.0 build --manifest-path contracts/Cargo.toml \
   --target wasm32-unknown-unknown --release \
-  -p mock_oracle -p vault -p oracle_adapter
+  -p vault
 
 # 2. Cross-margin tests (the SCF-feedback POC)
 cargo test --manifest-path contracts/Cargo.toml -p market cross_margin

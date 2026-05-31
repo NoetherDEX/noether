@@ -14,15 +14,16 @@ export interface OraclePrice {
 const PRICE_TTL_MS = 3_000;
 
 /**
- * Reads `lastprice(asset)` on the mock_oracle contract and caches results.
- * The mock_oracle returns (price: i128, timestamp: u64).
+ * Reads `lastprice(asset)` on the Noeracle SEP-40 shim and caches results.
+ * The shim returns (price: i128, timestamp: u64), translating to Noeracle's
+ * signed `get_price_pers`.
  */
 export class OracleService {
   private readonly cache = new TtlCache<OraclePrice>(PRICE_TTL_MS);
 
   constructor(
     private readonly reader: ContractReader,
-    private readonly mockOracleId: StellarAddress,
+    private readonly oracleId: StellarAddress,
   ) {}
 
   async getPrice(asset: string): Promise<OraclePrice> {
@@ -35,7 +36,7 @@ export class OracleService {
 
   private async fetch(asset: string): Promise<OraclePrice> {
     const result = await this.reader.read<[bigint, bigint] | { 0: bigint; 1: bigint }>(
-      this.mockOracleId,
+      this.oracleId,
       'lastprice',
       [nativeToScVal(asset, { type: 'symbol' })],
     );

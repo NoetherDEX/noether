@@ -135,7 +135,7 @@ WASM_DIR="$PROJECT_ROOT/contracts/target/wasm32-unknown-unknown/release"
 OPTIMIZED_DIR="$PROJECT_ROOT/contracts/target/wasm"
 mkdir -p "$OPTIMIZED_DIR"
 
-for contract in mock_oracle oracle_adapter vault market; do
+for contract in noeracle_shim vault market; do
     if [ -f "$WASM_DIR/${contract}.wasm" ]; then
         echo -n "    $contract... "
         $CLI contract optimize --wasm "$WASM_DIR/${contract}.wasm" --wasm-out "$OPTIMIZED_DIR/${contract}.wasm" 2>/dev/null || \
@@ -166,12 +166,10 @@ curl -s "https://friendbot.stellar.org?addr=$ADMIN_PUBLIC_KEY" > /dev/null 2>&1 
 echo ""
 echo "  Deploying contracts..."
 
-echo -n "    Mock Oracle... "
-MOCK_ORACLE_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/mock_oracle.wasm" $SOURCE_ARG --network testnet 2>/dev/null)
-echo -e "${GREEN}✓${NC}"
+NOERACLE_ID="${NEXT_PUBLIC_NOERACLE_ID:-CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG}"
 
-echo -n "    Oracle Adapter... "
-ORACLE_ADAPTER_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/oracle_adapter.wasm" $SOURCE_ARG --network testnet 2>/dev/null)
+echo -n "    Noeracle Shim... "
+NOERACLE_SHIM_ID=$($CLI contract deploy --wasm "$OPTIMIZED_DIR/noeracle_shim.wasm" $SOURCE_ARG --network testnet 2>/dev/null)
 echo -e "${GREEN}✓${NC}"
 
 echo -n "    Vault... "
@@ -191,27 +189,10 @@ echo ""
 echo -e "${YELLOW}[4/4] Initializing Contracts${NC}"
 echo "───────────────────────────────────────────────────────────────────────────────"
 
-# Initialize Mock Oracle
-echo -n "  Initializing Mock Oracle... "
-$CLI contract invoke --id "$MOCK_ORACLE_ID" $SOURCE_ARG --network testnet \
-    -- initialize --admin "$ADMIN_PUBLIC_KEY" >/dev/null 2>&1
-echo -e "${GREEN}✓${NC}"
-
-# Set initial price
-echo -n "  Setting XLM price (\$0.15)... "
-$CLI contract invoke --id "$MOCK_ORACLE_ID" $SOURCE_ARG --network testnet \
-    -- set_price --asset XLM --price 1500000 >/dev/null 2>&1
-echo -e "${GREEN}✓${NC}"
-
-# Initialize Oracle Adapter
-echo -n "  Initializing Oracle Adapter... "
-$CLI contract invoke --id "$ORACLE_ADAPTER_ID" $SOURCE_ARG --network testnet \
-    -- initialize \
-    --admin "$ADMIN_PUBLIC_KEY" \
-    --primary_oracle "$MOCK_ORACLE_ID" \
-    --secondary_oracle "$MOCK_ORACLE_ID" \
-    --max_staleness 3600 \
-    --max_deviation_bps 500 >/dev/null 2>&1
+# Initialize Noeracle Shim (admin + the Noeracle attestation contract it reads)
+echo -n "  Initializing Noeracle Shim... "
+$CLI contract invoke --id "$NOERACLE_SHIM_ID" $SOURCE_ARG --network testnet \
+    -- initialize --admin "$ADMIN_PUBLIC_KEY" --noeracle_oracle "$NOERACLE_ID" >/dev/null 2>&1
 echo -e "${GREEN}✓${NC}"
 
 # For testnet, use native XLM as collateral (via Stellar Asset Contract)
@@ -237,7 +218,7 @@ CONFIG='{"min_collateral":100000000,"max_leverage":10,"maintenance_margin_bps":1
 $CLI contract invoke --id "$MARKET_ID" $SOURCE_ARG --network testnet \
     -- initialize \
     --admin "$ADMIN_PUBLIC_KEY" \
-    --oracle_adapter "$ORACLE_ADAPTER_ID" \
+    --oracle_adapter "$NOERACLE_SHIM_ID" \
     --vault "$VAULT_ID" \
     --usdc_token "$USDC_TOKEN_ID" \
     --config "$CONFIG" >/dev/null 2>&1
@@ -253,8 +234,8 @@ echo ""
 cat >> "$PROJECT_ROOT/.env" << EOF
 
 # Deployed Contracts ($(date '+%Y-%m-%d %H:%M:%S'))
-NEXT_PUBLIC_MOCK_ORACLE_ID=$MOCK_ORACLE_ID
-NEXT_PUBLIC_ORACLE_ADAPTER_ID=$ORACLE_ADAPTER_ID
+NEXT_PUBLIC_NOERACLE_SHIM_ID=$NOERACLE_SHIM_ID
+NEXT_PUBLIC_NOERACLE_ID=$NOERACLE_ID
 NEXT_PUBLIC_VAULT_ID=$VAULT_ID
 NEXT_PUBLIC_MARKET_ID=$MARKET_ID
 NEXT_PUBLIC_USDC_TOKEN_ID=$USDC_TOKEN_ID
@@ -266,8 +247,8 @@ cat > "$PROJECT_ROOT/contracts.json" << EOF
   "network": "testnet",
   "deployedAt": "$(date -Iseconds)",
   "contracts": {
-    "mockOracle": "$MOCK_ORACLE_ID",
-    "oracleAdapter": "$ORACLE_ADAPTER_ID",
+    "noeracleShim": "$NOERACLE_SHIM_ID",
+    "noeracle": "$NOERACLE_ID",
     "vault": "$VAULT_ID",
     "market": "$MARKET_ID",
     "usdcToken": "$USDC_TOKEN_ID"
@@ -288,8 +269,8 @@ echo -e "${NC}"
 echo ""
 echo -e "${CYAN}Contract Addresses:${NC}"
 echo "  ┌─────────────────┬──────────────────────────────────────────────────────────┐"
-echo "  │ Mock Oracle     │ $MOCK_ORACLE_ID"
-echo "  │ Oracle Adapter  │ $ORACLE_ADAPTER_ID"
+echo "  │ Noeracle Shim   │ $NOERACLE_SHIM_ID"
+echo "  │ Noeracle        │ $NOERACLE_ID"
 echo "  │ Vault           │ $VAULT_ID"
 echo "  │ Market          │ $MARKET_ID"
 echo "  │ USDC Token      │ $USDC_TOKEN_ID"

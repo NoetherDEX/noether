@@ -165,8 +165,8 @@ Noether consists of six Soroban smart contracts on Stellar, a Next.js trading fr
                 │                  Stellar Network (Soroban)                 │
                 │                                                            │
                 │  ┌──────────┐  ┌───────┐  ┌──────────────┐  ┌───────────┐  │
-                │  │  Market  │◄►│ Vault │  │Oracle Adapter│  │Mock Oracle│  │
-                │  │ Contract │  │  (LP) │  │ (Band + DIA) │  │  (test)   │  │
+                │  │  Market  │◄►│ Vault │  │Noeracle Shim │  │ Noeracle  │  │
+                │  │ Contract │  │  (LP) │  │  (SEP-40)    │  │ (signed)  │  │
                 │  └────┬─────┘  └───┬───┘  └──────┬───────┘  └─────┬─────┘  │
                 │       │            │             │                │        │
                 │  ┌────┴─────────┐  ┌─┴────────┐                            │
@@ -212,8 +212,8 @@ Noether consists of six Soroban smart contracts on Stellar, a Next.js trading fr
 |----------|-------------|---------|
 | **Market** | ~2,800 LOC | Core trading engine — isolated + cross-margin positions, advanced orders, liquidation, funding |
 | **Vault** | ~990 LOC | LP pool — USDC deposits, NOE LP token, PnL settlement with Market |
-| **Oracle Adapter** | ~685 LOC | Dual-source aggregation — Band + DIA, staleness + deviation validation, cached fallback |
-| **Mock Oracle** | ~405 LOC | SEP-0040 compatible test feed for testnet |
+| **Noeracle Shim** | ~200 LOC | SEP-40 reader — translates `lastprice(Symbol)` to `Noeracle.get_price_pers`, scales to 7 decimals |
+| **Noether Router** | ~230 LOC | Atomic verify-then-trade — stores a freshly-signed Noeracle price then opens/closes in one tx |
 | **Vault Factory** | T2 · 37 tests | User-created trading vaults — share math, 5% min-holding invariant, leader_trade proxies |
 | **Referral** | T2 · 13 tests | On-chain referral system — code registration, `record_trade` accrual, claim payout |
 | **Noether Common** | — | Shared types, error codes, fixed-point math (utility crate) |
@@ -232,8 +232,8 @@ Noether consists of six Soroban smart contracts on Stellar, a Next.js trading fr
     │  open_position(asset,       │                             │
     │  collateral, leverage, dir) │                             │
     │────────────────────────────►│                             │
-    │                             │  get_price(asset)           │
-    │                             │──────────► Oracle Adapter   │
+    │                             │  lastprice(asset)           │
+    │                             │──────────► Noeracle Shim    │
     │                             │◄──────────                  │
     │                             │                             │
     │                             │  transfer USDC (collateral) │
@@ -425,34 +425,32 @@ The `referral` contract lets traders mint a short code, share it via `?ref=CODE`
 
 Browse and claim at [`/referrals`](https://testnet.noether.exchange/referrals).
 
-### Oracle Aggregation
+### Oracle (Noeracle, pull-based + signed)
 
 ```
-  ┌──────────────┐     ┌──────────────┐
-  │ Band Protocol│     │   DIA Oracle │
-  │  (Primary)   │     │  (Secondary) │
-  └──────┬───────┘     └──────┬───────┘
-         │                    │
-         ▼                    ▼
-  ┌────────────────────────────────────┐
-  │         Oracle Adapter             │
-  │                                    │
-  │  1. Fetch from both sources        │
-  │  2. Check staleness (< 60s)        │
-  │  3. Check deviation (< 1%)         │
-  │                                    │
-  │  Both valid ──► Return average     │
-  │                 (confidence: 100%) │
-  │                                    │
-  │  One valid ───► Return that price  │
-  │                 (confidence: 80%)  │
-  │                                    │
-  │  None valid ──► Return cached      │
-  │                 or revert          │
-  └────────────────────────────────────┘
+  ┌─────────────────────────┐
+  │  Noeracle service       │   Ed25519-signed price rounds (~500ms)
+  │  api.noeracle.org       │   median of 5 CEX sources
+  └───────────┬─────────────┘
+              │ keeper publishes signed attestations on-chain
+              ▼
+  ┌─────────────────────────┐   verifies signature + staleness,
+  │  Noeracle  (Soroban)    │   stores PriceEntry{price,ts,round_id}
+  └───────────┬─────────────┘
+              │ get_price_pers(tag) -> PriceEntry
+              ▼
+  ┌─────────────────────────┐   lastprice(Symbol) -> (i128, u64)
+  │  noeracle_shim (SEP-40) │   8-byte tag map + 7-decimal scaling
+  └───────────┬─────────────┘
+              │
+              ▼
+        Market reads price
 ```
 
-Each price response includes `price` (i128, 7 decimals), `timestamp`, `source`, and `confidence`. Results are cached in persistent storage with TTL to survive transient oracle downtime.
+For user trades, the **noether_router** collapses verify + trade into one
+transaction (`open_with_price` / `close_with_price`): it stores a freshly-signed
+price, then calls the market — so the price is sub-second fresh at execution and
+never trips the staleness check. Prices are `i128` at 7 decimals.
 
 ### Keeper Loop
 
@@ -463,9 +461,8 @@ Keeper Bot (5-second cycle)
 ═══════════════════════════
 
   Phase 1 — Oracle Updates (every 30s)
-    Primary:  Reflector on-chain oracle (SEP-40, 14-decimal precision)
-    Fallback: Binance REST API
-    Writes to Mock Oracle contract
+    Fetches Ed25519-signed attestations from Noeracle (api.noeracle.org)
+    Publishes them on-chain via Noeracle.update_ed25519_persistent
     50% price-change circuit breaker
 
   Phase 2 — Liquidation Scan (every cycle)
@@ -587,8 +584,8 @@ Current testnet deployment — canonical source is [`contracts.json`](./contract
 |----------|---------|
 | **Market** | `CC2HH34Q7GOMNBNPSNSQIIUSYYXLYLOOLMUY3ZTFFBLJ2DENWHGS6GNB` |
 | **Vault** | `CD5WYLEHTFHOKPPH2GMNUFW2MK7XIQFKI365G6CBAATYWVNPE3RFYMY3` |
-| **Oracle Adapter** | `CBDH7R4PBFHMN4AER74O4RG7VHUWUMFI67UKDIY6ISNQP4H5KFKMSBS4` |
-| **Mock Oracle** | `CAUGTIO44JFE3KV74OLJJHYLEGPFIZTZAXVF5BBY6WNUAUHHEO4JCGIH` |
+| **Noeracle Shim** | `CDHIGZLUPKSY747I3TLSKB4F6AQXQV4T54AKSQNFAEILUB6ROVAVUJHN` |
+| **Noeracle** (signed price source) | `CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG` |
 | **Vault Factory** (T2) | `CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA` |
 | **Referral** (T2) | `CAGZXABWTJN6FU7TMCIWL3RH7EC6K4CQLLZJWUFN3CD7YHVDYWJCIG3O` |
 | **USDC Token** | `CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4` |
@@ -597,12 +594,9 @@ Current testnet deployment — canonical source is [`contracts.json`](./contract
 
 **NOE asset:** code `NOE`, issuer = Admin address.
 
-### External Oracle Contracts (Testnet)
-
-| Oracle | Address |
-|--------|---------|
-| Band Protocol | `CBRV5ZEQSSCQ4FFO64OF46I3UASBVEJNE5C2MCFWVIXL4Z7DMD7PJJMF` |
-| DIA | `CAEDPEZDRCEJCF73ASC5JGNKCIJDV2QJQSW6DJ6B74MYALBNKCJ5IFP4` |
+Prices come from **Noeracle**, a pull-based, Ed25519-signed price oracle (~500ms
+rounds). The keeper publishes signed attestations on-chain; the market reads them
+via the `noeracle_shim` (a SEP-40 reader translating to `Noeracle.get_price_pers`).
 
 ### Network Configuration
 
@@ -624,9 +618,9 @@ noether/
 ├── contracts/              # Soroban smart contracts (Rust)
 │   ├── market/             # Trading engine (positions, orders, liquidation)
 │   ├── vault/              # LP pool + NOE token
-│   ├── oracle_adapter/     # Dual-source price aggregation
-│   ├── noether_common/     # Shared types, errors, fixed-point math
-│   └── mock_oracle/        # Testnet price feed
+│   ├── noeracle_shim/      # SEP-40 reader → Noeracle.get_price_pers
+│   ├── noether_router/     # Atomic verify-then-trade (Noeracle)
+│   └── noether_common/     # Shared types, errors, fixed-point math
 ├── web/                    # Next.js 14 frontend
 │   ├── app/                # Pages: trade, portfolio, vault, leaderboard, faucet
 │   ├── components/         # React components (trading, vault, wallet, landing, ui)
@@ -779,8 +773,10 @@ ORACLE_SECRET_KEY=S...          # (Optional) dedicated oracle-updater key
 # Contract addresses (canonical source: contracts.json)
 NEXT_PUBLIC_MARKET_ID=C...
 NEXT_PUBLIC_VAULT_ID=C...
-NEXT_PUBLIC_ORACLE_ADAPTER_ID=C...
-NEXT_PUBLIC_MOCK_ORACLE_ID=C...
+NEXT_PUBLIC_NOERACLE_SHIM_ID=C...
+NEXT_PUBLIC_NOERACLE_ID=C...
+NEXT_PUBLIC_NOETHER_ROUTER_ID=C...
+NEXT_PUBLIC_NOERACLE_API_URL=https://api.noeracle.org
 NEXT_PUBLIC_VAULT_FACTORY_ID=C...    # Tranche 2
 NEXT_PUBLIC_REFERRAL_ID=C...         # Tranche 2
 NEXT_PUBLIC_USDC_TOKEN_ID=C...
@@ -838,7 +834,7 @@ Pending operator steps:
 
 ### Tranche 3 — Mainnet Launch · $34,480 · **Future**
 
-- [ ] Production oracle — 5 CEX sources + Reflector/DIA/Band aggregation
+- [ ] Production oracle hardening — Noeracle multi-publisher (M-of-N) signatures + TWAP for funding/liquidation
 - [ ] All contracts deployed to Stellar mainnet with 25x leverage
 - [ ] Partial liquidation (20% initial, 30s grace period) + insurance fund
 - [ ] 10+ trading pairs
@@ -854,7 +850,7 @@ Pending operator steps:
 - **Authorization** — Every state-changing function calls `require_auth()` on the relevant signer (trader for trading, admin for admin ops)
 - **Leverage cap** — Hard-coded 10x limit mitigates protocol risk during the testnet phase
 - **Collateral floor** — 10 USDC minimum prevents dust positions
-- **Oracle validation** — Dual-source (Band + DIA), 60s staleness check, 1% deviation check, cached fallback
+- **Oracle validation** — Noeracle Ed25519-signed prices verified on-chain; market enforces a 60s staleness check (the router makes execution-time prices sub-second fresh)
 - **Integer math only** — No floating point anywhere; all values are 7-decimal fixed-point `i128`
 - **Overflow protection** — `overflow-checks = true` in the release profile
 - **Emergency withdraw** — Admin-only withdrawal gated on paused state (vault)
@@ -899,8 +895,7 @@ Distributed under the MIT License. See [`LICENSE`](./LICENSE) for the full text.
 - [Stellar Development Foundation](https://stellar.org) — for the grant and the ecosystem
 - [Stellar Community Fund #41](https://communityfund.stellar.org/) — funding partner
 - [Soroban](https://soroban.stellar.org) — Rust smart-contract platform
-- [Band Protocol](https://bandprotocol.com/) + [DIA](https://www.diadata.org/) — oracle data sources
-- [Reflector Network](https://reflector.network/) — on-chain price feeds used by the keeper
+- [Noeracle](https://noeracle.org) — pull-based, Ed25519-signed price oracle for Stellar
 - [shadcn/ui](https://ui.shadcn.com/) — UI primitives
 - [TradingView lightweight-charts](https://github.com/tradingview/lightweight-charts) — charting library
 - [@creit-tech/stellar-wallets-kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit) — wallet integration

@@ -14,7 +14,7 @@ export async function registerOracleRoutes(
     '/v1/oracle/prices',
     {
       schema: {
-        description: 'All supported asset prices read live from the mock_oracle contract.',
+        description: 'All supported asset prices read live from the Noeracle shim contract.',
         tags: ['oracle'],
       },
     },

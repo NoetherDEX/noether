@@ -15,15 +15,24 @@ export interface ContractsManifest {
 }
 
 export type ContractKey =
-  | 'mockOracle'
-  | 'oracleAdapter'
+  // Noeracle-only oracle path. The shim is the SEP-40 reader the market/api
+  // call (lastprice → Noeracle.get_price_pers); noeracle is the signed source;
+  // noetherRouter does atomic verify-then-trade.
+  | 'noeracleShim'
+  | 'noeracle'
+  | 'noetherRouter'
   | 'vault'
   | 'market'
   | 'usdcToken'
   | 'noeToken'
   // Tranche 2 additions — populated when those contracts are deployed.
   | 'vaultFactory'
-  | 'referral';
+  | 'referral'
+  // Retired oracle contracts. Kept in the type only because the production
+  // contracts.json still carries them until production's Noeracle cutover;
+  // no code should read these.
+  | 'mockOracle'
+  | 'oracleAdapter';
 
 /**
  * Resolve the path to contracts.json by walking up from the current module.
