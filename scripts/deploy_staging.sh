@@ -142,22 +142,42 @@ echo ""
 # ═══════════════════════════════════════════════════════════════════════════════
 echo -e "${YELLOW}[3/5] Initializing vault → market(→shim) → router...${NC}"
 
-$CLI contract invoke --id "$GREEN_VAULT_ID" --source "$ADMIN" --network testnet -- initialize \
-  --admin "$ADMIN_PK" --usdc_token "$NEXT_PUBLIC_USDC_TOKEN_ID" --market_contract "$GREEN_MARKET_ID" \
-  --deposit_fee_bps 30 --withdraw_fee_bps 30 2>/dev/null && echo "  ✓ vault initialized" \
-  || echo "  • vault already initialized (skipped)"
+# Honest init: run the invoke, capture output. Success = OK. "AlreadyInitialized"
+# (#1) = OK (idempotent re-run). ANY OTHER error = fatal (no masking — the old
+# `2>/dev/null || echo skipped` hid genuine arg/type failures).
+init_contract() {  # init_contract LABEL CONTRACT_ID -- <invoke args...>
+  local label="$1"; shift
+  local out
+  if out="$("$CLI" contract invoke "$@" 2>&1)"; then
+    echo "  ✓ $label initialized"
+  elif echo "$out" | grep -q "Error(Contract, #1)"; then
+    echo "  • $label already initialized"
+  else
+    echo -e "${RED}  ✗ $label init FAILED:${NC}"; echo "$out" | tail -4; exit 1
+  fi
+}
+
+# Vault: initialize(admin, usdc_token, noe_token, market_contract, dep_fee, wd_fee)
+init_contract "vault" --id "$GREEN_VAULT_ID" --source "$ADMIN" --network testnet -- initialize \
+  --admin "$ADMIN_PK" --usdc_token "$NEXT_PUBLIC_USDC_TOKEN_ID" --noe_token "$GREEN_NOE_TOKEN_ID" \
+  --market_contract "$GREEN_MARKET_ID" --deposit_fee_bps 30 --withdraw_fee_bps 30
 
 # Market reads price via lastprice(Symbol)->(i128,u64); the shim exposes exactly
-# that, so oracle_adapter = SHIM_ID. max_price_staleness stays 60s.
-CONFIG='{"min_collateral":100000000,"max_leverage":10,"maintenance_margin_bps":100,"liquidation_fee_bps":500,"trading_fee_bps":10,"base_funding_rate_bps":1,"max_position_size":1000000000000,"max_price_staleness":60,"max_oracle_deviation_bps":100,"base_maker_fee_bps":2,"base_taker_fee_bps":5}'
-$CLI contract invoke --id "$GREEN_MARKET_ID" --source "$ADMIN" --network testnet -- initialize \
+# that, so oracle_adapter = SHIM_ID. max_price_staleness stays 60s. The CLI wants
+# the MarketConfig struct from a file with i128 fields as STRINGS (inline/number
+# i128 is rejected as a type mismatch).
+MKTCFG="$(mktemp)"
+cat > "$MKTCFG" <<'JSON'
+{"min_collateral":"100000000","max_leverage":10,"maintenance_margin_bps":100,"liquidation_fee_bps":500,"trading_fee_bps":10,"base_funding_rate_bps":1,"max_position_size":"1000000000000","max_price_staleness":60,"max_oracle_deviation_bps":100,"base_maker_fee_bps":2,"base_taker_fee_bps":5}
+JSON
+init_contract "market (oracle → shim)" --id "$GREEN_MARKET_ID" --source "$ADMIN" --network testnet -- initialize \
   --admin "$ADMIN_PK" --oracle_adapter "$NEXT_PUBLIC_NOERACLE_SHIM_ID" --vault "$GREEN_VAULT_ID" \
-  --usdc_token "$NEXT_PUBLIC_USDC_TOKEN_ID" --config "$CONFIG" 2>/dev/null && echo "  ✓ market initialized (oracle → shim)" \
-  || echo "  • market already initialized (skipped)"
+  --usdc_token "$NEXT_PUBLIC_USDC_TOKEN_ID" --config-file-path "$MKTCFG"
+rm -f "$MKTCFG"
 
-$CLI contract invoke --id "$GREEN_ROUTER_ID" --source "$ADMIN" --network testnet -- initialize \
-  --admin "$ADMIN_PK" --market "$GREEN_MARKET_ID" --noeracle "$NEXT_PUBLIC_NOERACLE_ID" 2>/dev/null \
-  && echo "  ✓ router initialized" || echo "  • router already initialized (skipped)"
+# Router: initialize(admin, market, noeracle)
+init_contract "router" --id "$GREEN_ROUTER_ID" --source "$ADMIN" --network testnet -- initialize \
+  --admin "$ADMIN_PK" --market "$GREEN_MARKET_ID" --noeracle "$NEXT_PUBLIC_NOERACLE_ID"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
