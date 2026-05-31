@@ -267,35 +267,3 @@ export async function getMarketContract(publicKey: string): Promise<string | nul
     return null;
   }
 }
-
-/**
- * Update Mock Oracle price (Admin function - temporary for testing)
- * Takes live prices from the UI and sends them to the oracle
- */
-export async function updateOraclePrice(
-  signerPublicKey: string,
-  signTransaction: (xdr: string) => Promise<string>,
-  asset: string,
-  priceUsd: number
-): Promise<void> {
-  const { Contract } = await import('@stellar/stellar-sdk');
-
-  const mockOracleContract = new Contract(CONTRACTS.MOCK_ORACLE);
-
-  // Convert USD price to 7 decimals (e.g., $0.45 -> 4500000, $97000 -> 970000000000)
-  const priceWithDecimals = BigInt(Math.floor(priceUsd * 10_000_000));
-
-  // Contract uses env.ledger().timestamp() internally, so only pass asset and price
-  const args = [
-    toScVal(asset, 'symbol'),           // asset: Symbol (e.g., "XLM", "BTC")
-    toScVal(priceWithDecimals, 'i128'), // price: i128 (7 decimals)
-  ];
-
-  const xdr = await buildTransaction(signerPublicKey, mockOracleContract, 'set_price', args);
-  const signedXdr = await signTransaction(xdr);
-  const result = await submitTransaction(signedXdr);
-
-  if (result.status !== 'SUCCESS') {
-    throw new Error(`Failed to update oracle price for ${asset}`);
-  }
-}

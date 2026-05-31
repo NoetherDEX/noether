@@ -8,10 +8,9 @@
 // resolves to '' and is caught loudly (see assertContractsConfigured below), so a
 // broken deploy fails visibly instead of pointing at the wrong chain state.
 export const CONTRACTS = {
-  MOCK_ORACLE: process.env.NEXT_PUBLIC_MOCK_ORACLE_ID || '',
-  ORACLE_ADAPTER: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_ID || '',
-  // SEP-40-compatible shim that proxies to Noeracle's get_price_pers.
-  // Set NEXT_PUBLIC_NOERACLE_SHIM_ID after running scripts/deploy_noeracle_shim.sh.
+  // SEP-40-compatible shim that proxies to Noeracle's get_price_pers. This is the
+  // only on-chain oracle in the Noeracle-only stack (mock_oracle / oracle_adapter
+  // are retired). Set NEXT_PUBLIC_NOERACLE_SHIM_ID after running scripts/deploy_noeracle_shim.sh.
   NOERACLE_SHIM: process.env.NEXT_PUBLIC_NOERACLE_SHIM_ID || '',
   // Atomic verify-then-trade router (Pattern B). When set, the web routes open()
   // through noether_router.open_with_price so each trade executes on a

@@ -69,3 +69,81 @@ export function priceTailArgs(att: Attestation): xdr.ScVal[] {
     xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(att.signatureHex, 'hex'))]),
   ];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live 500ms price stream (Pattern C — SSE)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A live, human-readable price for one asset, decoded from a stream round. */
+export interface LivePrice {
+  /** Asset symbol, e.g. "BTC". */
+  asset: string;
+  /** Human-readable price (USD). */
+  price: number;
+  /** Unix seconds the round was signed. */
+  timestamp: number;
+  roundId: number;
+}
+
+interface StreamEntry {
+  price_human?: number;
+  price: string;
+  timestamp: number;
+  round_id: number;
+}
+
+/**
+ * Subscribe to Noeracle's live ~500ms price stream for the given assets.
+ *
+ * Uses the browser-native `EventSource` against the public SSE endpoint
+ * (`/v1/stream`, CORS-open) — no `@noeracle/sdk` dependency. `onPrice` fires for
+ * each requested asset on every round (every ~500ms on testnet). Returns an
+ * unsubscribe function; call it on unmount. EventSource auto-reconnects on
+ * transient errors. No-op on the server (returns a noop) so it's safe to call
+ * from a client component's effect.
+ *
+ * This drives the real-time price DISPLAY. It does NOT replace the on-chain
+ * read (`getPrice` via the shim) used where a transaction needs a verified price.
+ */
+export function subscribeLivePrices(
+  assets: string[],
+  onPrice: (p: LivePrice) => void,
+): () => void {
+  if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
+    return () => {};
+  }
+
+  const wanted = new Set(assets.map((a) => `${a}/USD`));
+  const es = new EventSource(`${NOERACLE_API_URL}/v1/stream`);
+
+  const handlePrices = (ev: MessageEvent) => {
+    try {
+      const data = JSON.parse(ev.data) as { assets?: Record<string, StreamEntry> };
+      const map = data.assets ?? {};
+      for (const pair of wanted) {
+        const e = map[pair];
+        if (!e) continue;
+        const human = typeof e.price_human === 'number'
+          ? e.price_human
+          : Number(BigInt(e.price)) / 10_000_000;
+        onPrice({
+          asset: pair.replace('/USD', ''),
+          price: human,
+          timestamp: Number(e.timestamp),
+          roundId: Number(e.round_id),
+        });
+      }
+    } catch {
+      // ignore a malformed frame; the next round arrives in ~500ms
+    }
+  };
+
+  // The service tags its frames `event: prices`; also handle default messages.
+  es.addEventListener('prices', handlePrices as EventListener);
+  es.onmessage = handlePrices;
+
+  return () => {
+    es.removeEventListener('prices', handlePrices as EventListener);
+    es.close();
+  };
+}

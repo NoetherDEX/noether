@@ -3,17 +3,16 @@ import type { PriceData } from '@/types';
 import { rpc, scValToNative, TransactionBuilder, BASE_FEE, Contract } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
-// Prefer the Noeracle shim (SEP-40-compatible, reads from Noeracle's
-// signed persistent storage) once it's deployed and the env var is set.
-// Fall back to the legacy Mock Oracle so the UI keeps working before
-// the rollout completes. The shim's `lastprice(asset: Symbol) -> (i128, u64)`
-// signature matches Mock Oracle's, so the call shape below is identical.
-const oracleAddress = CONTRACTS.NOERACLE_SHIM || CONTRACTS.MOCK_ORACLE;
-const oracleContract = new Contract(oracleAddress);
+// On-chain price reads go through the Noeracle SEP-40 shim, which exposes
+// `lastprice(asset: Symbol) -> (i128, u64)` by translating to Noeracle's
+// `get_price_pers`. The shim is the only on-chain oracle in the Noeracle-only
+// stack (mock_oracle / oracle_adapter are retired). NEXT_PUBLIC_NOERACLE_SHIM_ID
+// must be set for the matching deploy environment.
+const oracleContract = new Contract(CONTRACTS.NOERACLE_SHIM);
 
 /**
- * Get price from oracle adapter (read-only)
- * Calls `lastprice` which fetches from configured sources, validates, and returns (price, timestamp)
+ * Get the latest on-chain price for an asset via the Noeracle shim (read-only).
+ * Calls `lastprice(asset)` → (price: i128 @ 7-decimals, timestamp: u64).
  */
 export async function getPrice(
   publicKey: string,
