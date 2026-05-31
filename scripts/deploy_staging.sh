@@ -65,8 +65,12 @@ fi
 
 CLI="$(command -v stellar || command -v soroban)"
 ADMIN="staging_admin"; KEEPER="staging_keeper"
-$CLI keys add "$ADMIN"  --secret-key "$STAGING_ADMIN_SECRET_KEY"  2>/dev/null || true
-$CLI keys add "$KEEPER" --secret-key "$STAGING_KEEPER_SECRET_KEY" 2>/dev/null || true
+# `--secret-key` is a BOOLEAN flag; the CLI reads the secret from the
+# SOROBAN_SECRET_KEY env var (not as a positional value). `|| true` makes
+# re-runs idempotent (identity already exists); the keys address calls below
+# fail loudly under set -e if an import didn't actually take.
+SOROBAN_SECRET_KEY="$STAGING_ADMIN_SECRET_KEY"  $CLI keys add "$ADMIN"  --secret-key >/dev/null 2>&1 || true
+SOROBAN_SECRET_KEY="$STAGING_KEEPER_SECRET_KEY" $CLI keys add "$KEEPER" --secret-key >/dev/null 2>&1 || true
 ADMIN_PK="$($CLI keys address "$ADMIN")"
 KEEPER_PK="$($CLI keys address "$KEEPER")"
 
