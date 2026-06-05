@@ -118,23 +118,52 @@ export async function openPosition(
 export async function closePosition(
   signerPublicKey: string,
   signTransaction: (xdr: string) => Promise<string>,
-  positionId: number
+  positionId: number,
+  asset: string,
 ): Promise<{ pnl: bigint; fee: bigint }> {
   console.log('[DEBUG] Closing position...');
 
-  // Contract signature: close_position(trader: Address, position_id: u64)
-  const args = [
-    toScVal(signerPublicKey, 'address'),  // trader: Address
-    toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
-  ];
+  let xdrStr: string;
+  if (routerContract) {
+    // Router path (Pattern B): mirror openPosition — fetch a fresh signed
+    // Noeracle price and close atomically via noether_router.close_with_price,
+    // so the market reads a sub-second-fresh price for `asset` and can't
+    // reject with #30 PriceStale (oracle_adapter no longer exists).
+    // close_with_price(trader, position_id, asset, price, timestamp, round_id, pubkeys, sigs) -> i128 pnl
+    const att = await fetchAttestation(asset);
+    if (!att) throw new Error('Noeracle price unavailable — cannot close position');
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      routerContract,
+      'close_with_price',
+      [
+        toScVal(signerPublicKey, 'address'), // trader: Address
+        toScVal(positionId, 'u64'),          // position_id: u64
+        toScVal(asset, 'symbol'),            // asset: Symbol
+        ...priceTailArgs(att),
+      ],
+    );
+  } else {
+    // Direct path (default): close_position(trader: Address, position_id: u64)
+    const args = [
+      toScVal(signerPublicKey, 'address'),  // trader: Address
+      toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
+    ];
+    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position', args);
+  }
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position', args);
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     console.log('[DEBUG] Position closed successfully!');
-    return scValToNative(result.returnValue) as { pnl: bigint; fee: bigint };
+    const native = scValToNative(result.returnValue);
+    // Direct close_position returns { pnl, fee }; router close_with_price
+    // returns a bare i128 pnl. Normalise to the same shape for callers.
+    if (typeof native === 'bigint') {
+      return { pnl: native, fee: BigInt(0) };
+    }
+    return native as { pnl: bigint; fee: bigint };
   }
 
   throw new Error('Failed to close position');

@@ -332,7 +332,7 @@ function TradePage() {
         const result = await closePositionCross(publicKey, sign, positionId);
         console.log('Cross position closed:', result);
       } else {
-        const result = await closePosition(publicKey, sign, positionId);
+        const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? selectedAsset);
         console.log('Position closed:', result);
       }
 
