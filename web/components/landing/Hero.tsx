@@ -1,5 +1,6 @@
 'use client';
 
+import { motion } from 'framer-motion';
 import Link from 'next/link';
 import Image from 'next/image';
 import { HeroBlobs } from './HeroBlobs';
@@ -13,21 +14,21 @@ export function Hero() {
 
       <div className="relative z-10 text-center max-w-[900px] mx-auto -mt-[12vh] sm:-mt-[22vh]">
         <h1 className="font-heading text-3xl md:text-4xl lg:text-5xl font-semibold tracking-[-0.02em] leading-[1.15] mb-5">
-          <TextReveal text="Decentralized" delay={0.2} />
+          <TextReveal text="Decentralized" delay={0.05} immediate />
           <br />
           <span className="text-[#eab308]">
-            <TextReveal text="Perpetual Trading" delay={0.4} />
+            <TextReveal text="Perpetual Trading" delay={0.15} immediate />
           </span>
         </h1>
 
-        <FadeIn delay={0.6}>
+        <FadeIn delay={0.2} immediate>
           <p className="text-sm md:text-base text-white/50 max-w-[440px] mx-auto leading-relaxed mb-8">
             Trade BTC, ETH & XLM perpetuals with up to 10x leverage.
             Powered by Soroban smart contracts on Stellar.
           </p>
         </FadeIn>
 
-        <FadeIn delay={0.8}>
+        <FadeIn delay={0.3} immediate>
           <Link
             href="/trade"
             className="inline-flex items-center gap-2.5 px-7 py-3 rounded-full border border-white/20 text-white text-sm font-medium tracking-wide hover:border-[#eab308]/60 hover:text-[#eab308] transition-all duration-300"
@@ -40,7 +41,12 @@ export function Hero() {
         </FadeIn>
       </div>
 
-      <FadeIn delay={1.0} className="absolute bottom-0 left-0 right-0 z-10 flex justify-center px-4">
+      <motion.div
+        initial={{ y: 16 }}
+        animate={{ y: 0 }}
+        transition={{ duration: 0.6, delay: 0.1, ease: [0.25, 0.1, 0.25, 1] }}
+        className="absolute bottom-0 left-0 right-0 z-10 flex justify-center px-4"
+      >
         <div
           className="max-w-[950px] w-full rounded-t-2xl overflow-hidden bg-[#0a0a0a]"
           style={{
@@ -74,7 +80,7 @@ export function Hero() {
             </BrowserFrame>
           </div>
         </div>
-      </FadeIn>
+      </motion.div>
     </section>
   );
 }

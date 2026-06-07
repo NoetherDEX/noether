@@ -28,7 +28,13 @@ export function HeroBlobs() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let raf: number;
+    // Respect reduced-motion — the CSS also hides the canvas, so just bail
+    // (no listeners, no rAF loop).
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+
+    let raf = 0;
+    let running = false;
+    let inView = true;
     let bars: Bar[] = [];
     let cw = 0;
     let ch = 0;
@@ -70,7 +76,9 @@ export function HeroBlobs() {
       }
     };
 
-    const draw = () => {
+    // Draw exactly one frame (the field glows near the cursor; with the cursor
+    // away every bar sits at the base alpha — i.e. the resting look).
+    const renderFrame = () => {
       ctx.clearRect(0, 0, cw, ch);
 
       const mx = mouse.current.x;
@@ -95,34 +103,76 @@ export function HeroBlobs() {
           ctx.fillRect(b.x - BAR_W / 2, b.y - b.h / 2, BAR_W, b.h);
         }
       }
+    };
 
-      raf = requestAnimationFrame(draw);
+    const loop = () => {
+      renderFrame();
+      raf = requestAnimationFrame(loop);
+    };
+
+    // Only animate while there is something to animate (cursor over the hero,
+    // hero on screen, tab visible). Otherwise the field is static, so we don't
+    // run a 60fps loop — this keeps the main thread free during hydration.
+    const start = () => {
+      if (running || !inView || document.hidden) return;
+      running = true;
+      raf = requestAnimationFrame(loop);
+    };
+
+    const stop = () => {
+      running = false;
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
     };
 
     const onMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      // Only glow when mouse is within the canvas area
       if (x >= 0 && x <= cw && y >= 0 && y <= ch) {
         mouse.current.x = x;
         mouse.current.y = y;
-      } else {
+        start();
+      } else if (mouse.current.x !== -9999) {
+        // Cursor left the hero: settle to the resting frame once, then idle.
         mouse.current.x = -9999;
         mouse.current.y = -9999;
+        stop();
+        renderFrame();
       }
     };
 
-    rebuild();
-    raf = requestAnimationFrame(draw);
+    const onResize = () => {
+      rebuild();
+      renderFrame();
+    };
 
-    window.addEventListener('resize', rebuild);
+    const onVisibility = () => {
+      if (document.hidden) stop();
+    };
+
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        inView = entry.isIntersecting;
+        if (!inView) stop();
+      },
+      { threshold: 0 }
+    );
+    io.observe(canvas);
+
+    rebuild();
+    renderFrame(); // paint the resting state once — no continuous loop on load
+
+    window.addEventListener('resize', onResize);
     window.addEventListener('mousemove', onMove);
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', rebuild);
+      stop();
+      io.disconnect();
+      window.removeEventListener('resize', onResize);
       window.removeEventListener('mousemove', onMove);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 
