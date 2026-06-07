@@ -8,7 +8,6 @@ import {
   getPendingReferral,
 } from '@/lib/referralCode';
 import { lookupReferralCode } from '@/lib/api/referral';
-import { setReferrer } from '@/lib/stellar/referral';
 import { useWalletStore } from '@/lib/store';
 import type { ReferrerRow } from '@/types/referral';
 import toast from 'react-hot-toast';
@@ -67,6 +66,10 @@ export function ReferralBanner() {
     if (!code) return;
     setBusy(true);
     try {
+      // Lazy-load the on-chain referral binding so @stellar/stellar-sdk
+      // (via lib/stellar/referral → client.ts) stays out of the initial
+      // bundle — it only loads when the user actually claims the discount.
+      const { setReferrer } = await import('@/lib/stellar/referral');
       await setReferrer(wallet.address, code);
       toast.success(`4% discount locked in via ${code}`);
       setDone(true);
