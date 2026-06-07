@@ -151,6 +151,7 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
                       >
                         <div className="w-10 h-10 rounded-full bg-[#eab308]/20 flex items-center justify-center flex-shrink-0">
                           {wcWallet.icon ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- dynamic wallet icon (data URI / remote) from stellar-wallets-kit; next/image is unsuitable
                             <img src={wcWallet.icon} alt={wcWallet.name} className="w-6 h-6 object-contain" />
                           ) : (
                             <Smartphone className="w-5 h-5 text-[#eab308]" />
@@ -195,6 +196,7 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
                         >
                           <div className="w-9 h-9 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center overflow-hidden flex-shrink-0">
                             {wallet.icon ? (
+                              // eslint-disable-next-line @next/next/no-img-element -- dynamic wallet icon (data URI / remote) from stellar-wallets-kit; next/image is unsuitable
                               <img src={wallet.icon} alt={wallet.name} className="w-5 h-5 object-contain" />
                             ) : (
                               <span className="text-xs font-bold text-neutral-500">{wallet.name.charAt(0)}</span>

@@ -60,7 +60,7 @@ export function ChartHeader({ asset, className, compact = false }: ChartHeaderPr
     });
 
     return unsubscribe;
-  }, [asset, ticker?.price]);
+  }, [asset, ticker]);
 
   const isPositive = ticker ? ticker.changePercent24h >= 0 : true;
 

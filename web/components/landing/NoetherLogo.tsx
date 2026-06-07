@@ -8,6 +8,7 @@ export function NoetherLogo({ className = '', maskColor }: NoetherLogoProps) {
   const isLight = maskColor === '#f8f6f0';
 
   return (
+    // eslint-disable-next-line @next/next/no-img-element -- static SVG logo sized by caller via className; next/image is unsuitable for arbitrary-sized inline SVG
     <img
       src="/noethersvg.svg"
       alt="Noether"
