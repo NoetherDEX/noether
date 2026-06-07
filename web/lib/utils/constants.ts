@@ -1,12 +1,71 @@
-// Contract addresses from deployment
+// Contract addresses, resolved from NEXT_PUBLIC_* env vars.
+//
+// SAFETY: there are deliberately NO hardcoded address fallbacks. Previously this
+// file fell back to (stale) production contract addresses when an env var was
+// missing — which meant a misconfigured deploy (e.g. staging.noether.exchange
+// with one var unset) would silently trade against PRODUCTION contracts. That is
+// the exact disaster a staging environment exists to prevent. Now a missing var
+// resolves to '' and is caught loudly (see assertContractsConfigured below), so a
+// broken deploy fails visibly instead of pointing at the wrong chain state.
 export const CONTRACTS = {
-  MOCK_ORACLE: process.env.NEXT_PUBLIC_MOCK_ORACLE_ID || 'CDPSYV6YWJ2NNJLTMDBZD66OFATSDFR36LXGLLDYH6HWWXC5PEEAFFE2',
-  ORACLE_ADAPTER: process.env.NEXT_PUBLIC_ORACLE_ADAPTER_ID || 'CC5GDLFJ66RPORK56ZHKOWJQVTNDHVLLQD5TZTKY3Y7CG75FLM5GOFTF',
-  VAULT: process.env.NEXT_PUBLIC_VAULT_ID || 'CANZSXRBURPDI5546QTYJEIGUFPQ2T4N2BSXMVYYNT7YGPCCWAMJIOA5',
-  MARKET: process.env.NEXT_PUBLIC_MARKET_ID || 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD',
-  USDC_TOKEN: process.env.NEXT_PUBLIC_USDC_TOKEN_ID || 'CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4',
-  NOE_TOKEN: process.env.NEXT_PUBLIC_NOE_TOKEN_ID || 'CD7VRBXIDYP2C2F2AZZL242GY4PRDVDH2BG3LAN2ASXYUXCPHWQJTDP5',
+  // SEP-40-compatible shim that proxies to Noeracle's get_price_pers. This is the
+  // only on-chain oracle in the Noeracle-only stack (mock_oracle / oracle_adapter
+  // are retired). Set NEXT_PUBLIC_NOERACLE_SHIM_ID after running scripts/deploy_noeracle_shim.sh.
+  NOERACLE_SHIM: process.env.NEXT_PUBLIC_NOERACLE_SHIM_ID || '',
+  // Atomic verify-then-trade router (Pattern B). When set, the web routes open()
+  // through noether_router.open_with_price so each trade executes on a
+  // sub-second-fresh Noeracle price (no #30 staleness). Unset = direct market
+  // calls (unchanged). Set NEXT_PUBLIC_NOETHER_ROUTER_ID after running
+  // scripts/deploy_noether_router.sh.
+  NOETHER_ROUTER: process.env.NEXT_PUBLIC_NOETHER_ROUTER_ID || '',
+  VAULT: process.env.NEXT_PUBLIC_VAULT_ID || '',
+  MARKET: process.env.NEXT_PUBLIC_MARKET_ID || '',
+  USDC_TOKEN: process.env.NEXT_PUBLIC_USDC_TOKEN_ID || '',
+  NOE_TOKEN: process.env.NEXT_PUBLIC_NOE_TOKEN_ID || '',
 } as const;
+
+// Deploy environment, as reported by Vercel ('production' | 'preview' |
+// 'development'); undefined for local/other. Used to scope the strictness of the
+// config check so a missing var never silently degrades into the wrong chain.
+export const DEPLOY_ENV = process.env.NEXT_PUBLIC_VERCEL_ENV || 'development';
+
+// Contract addresses that MUST be configured for the trading UI to function.
+const REQUIRED_CONTRACTS: ReadonlyArray<keyof typeof CONTRACTS> = [
+  'VAULT',
+  'MARKET',
+  'USDC_TOKEN',
+  'NOE_TOKEN',
+];
+
+/**
+ * Fail loud on a misconfigured deploy. Call once on the client at app start.
+ *
+ * Throws (in the browser) when a required contract address is missing, listing
+ * exactly which env vars to set. With no hardcoded fallbacks, a missing var can
+ * no longer silently resolve to a production address — the worst case is now a
+ * clear, immediate error instead of trading on the wrong contracts.
+ */
+export function assertContractsConfigured(): void {
+  const missing = REQUIRED_CONTRACTS.filter((k) => !CONTRACTS[k]);
+  if (missing.length === 0) return;
+
+  const envVars = missing.map((k) => `NEXT_PUBLIC_${k}_ID`).join(', ');
+  const message =
+    `Missing contract address env var(s) for the "${DEPLOY_ENV}" deploy: ${envVars}. ` +
+    `Set them in the matching Vercel Environment Variables scope ` +
+    `(Production = live addresses, Preview = staging/green addresses).`;
+
+  // Always surface it; throw on the client so the broken deploy is unmissable.
+  console.error(`[noether] ${message}`);
+  if (typeof window !== 'undefined') {
+    throw new Error(message);
+  }
+}
+
+// Noeracle attestation service — the web fetches a fresh signed price here at
+// trade time when the router is enabled (NEXT_PUBLIC_NOETHER_ROUTER_ID set).
+export const NOERACLE_API_URL =
+  process.env.NEXT_PUBLIC_NOERACLE_API_URL || 'https://api.noeracle.org';
 
 // NOE Asset (Classic Stellar Asset)
 export const NOE_ASSET = {

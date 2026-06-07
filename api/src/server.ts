@@ -111,7 +111,7 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
     network: config.network,
     sourceAccount: config.sourceAccount,
   });
-  const oracle = new OracleService(reader, config.contracts.contracts.mockOracle);
+  const oracle = new OracleService(reader, config.contracts.contracts.noeracleShim);
   const markets = new MarketsService(oracle);
   const db = createIndexerDb(config);
   const events = new EventsService(db);

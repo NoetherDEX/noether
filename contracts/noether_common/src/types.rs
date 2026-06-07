@@ -114,19 +114,6 @@ pub struct PriceData {
     pub timestamp: u64,
 }
 
-/// Extended price data with source information
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct OraclePriceData {
-    /// Asset price with 7 decimal places
-    pub price: i128,
-    /// Unix timestamp when price was fetched
-    pub timestamp: u64,
-    /// Oracle source identifier ("band", "dia", or "aggregated")
-    pub source: Symbol,
-    /// Confidence level (basis points, 10000 = 100% confident)
-    pub confidence: u32,
-}
 
 /// Vault/Pool information snapshot
 #[contracttype]
@@ -272,21 +259,6 @@ pub enum AssetType {
     Other(Symbol),
 }
 
-/// Oracle configuration
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct OracleConfig {
-    /// Primary oracle contract address (Band)
-    pub primary_oracle: Address,
-    /// Secondary oracle contract address (DIA)
-    pub secondary_oracle: Address,
-    /// Maximum staleness in seconds
-    pub max_staleness: u64,
-    /// Maximum deviation between oracles in basis points
-    pub max_deviation_bps: u32,
-    /// Whether to require both oracles (true) or allow single oracle fallback
-    pub require_both: bool,
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Order Types (Limit Orders, Stop-Loss, Take-Profit)

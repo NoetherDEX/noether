@@ -55,10 +55,13 @@ export function loadConfig(): KeeperConfig {
       process.env.NEXT_PUBLIC_MARKET_ID ||
       contracts.contracts?.market ||
       '',
-    oracleContractId:
-      process.env.NEXT_PUBLIC_MOCK_ORACLE_ID ||
-      contracts.contracts?.mockOracle ||
-      '',
+    // Noeracle on-chain contract — keeper publishes signed attestations
+    // here via update_ed25519_persistent. Defaults to the live testnet
+    // deployment so the bot works out-of-the-box.
+    noeracleContractId:
+      process.env.NEXT_PUBLIC_NOERACLE_ID ||
+      contracts.contracts?.noeracle ||
+      'CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG',
     vaultContractId:
       process.env.NEXT_PUBLIC_VAULT_ID ||
       contracts.contracts?.vault ||
@@ -76,8 +79,8 @@ export function loadConfig(): KeeperConfig {
   if (!config.marketContractId) {
     console.warn('⚠️  Warning: MARKET_CONTRACT_ID not set. Liquidations and orders will not work.');
   }
-  if (!config.oracleContractId) {
-    console.warn('⚠️  Warning: ORACLE_CONTRACT_ID not set. Price updates will not work.');
+  if (!config.noeracleContractId) {
+    console.warn('⚠️  Warning: NOERACLE_CONTRACT_ID not set. Price publishing will not work.');
   }
 
   return config;

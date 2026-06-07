@@ -12,6 +12,8 @@ interface FadeInProps {
   duration?: number;
   direction?: 'up' | 'down' | 'left' | 'right';
   className?: string;
+  /** Play on mount instead of on scroll — for above-the-fold hero content. */
+  immediate?: boolean;
 }
 
 const directionMap = {
@@ -21,8 +23,24 @@ const directionMap = {
   right: { hidden: { opacity: 0, x: 40 }, visible: { opacity: 1, x: 0 } },
 };
 
-export function FadeIn({ children, delay = 0, duration = 0.6, direction = 'up', className }: FadeInProps) {
+export function FadeIn({ children, delay = 0, duration = 0.6, direction = 'up', className, immediate = false }: FadeInProps) {
   const variants = directionMap[direction];
+  // `immediate` plays the reveal on mount instead of waiting for the
+  // IntersectionObserver, so above-the-fold hero content isn't gated behind
+  // hydration (which delays LCP).
+  if (immediate) {
+    return (
+      <motion.div
+        initial="hidden"
+        animate="visible"
+        variants={variants}
+        transition={{ duration, delay, ease: [0.25, 0.1, 0.25, 1] }}
+        className={className}
+      >
+        {children}
+      </motion.div>
+    );
+  }
   return (
     <motion.div
       initial="hidden"
@@ -98,36 +116,58 @@ interface TextRevealProps {
   text: string;
   className?: string;
   delay?: number;
+  /** Play on mount instead of on scroll — for above-the-fold hero content. */
+  immediate?: boolean;
 }
 
-export function TextReveal({ text, className, delay = 0 }: TextRevealProps) {
+export function TextReveal({ text, className, delay = 0, immediate = false }: TextRevealProps) {
   const words = text.split(' ');
+
+  const inner = words.map((word, i) => (
+    <motion.span
+      key={i}
+      variants={{
+        hidden: { opacity: 0, y: 20 },
+        visible: { opacity: 1, y: 0 },
+      }}
+      transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
+      style={{ display: 'inline-block', marginRight: '0.25em' }}
+    >
+      {word}
+    </motion.span>
+  ));
+
+  const containerVariants = {
+    hidden: {},
+    visible: { transition: { staggerChildren: 0.04, delayChildren: delay } },
+  };
+
+  // `immediate` plays on mount (above-the-fold hero) instead of on scroll, so
+  // the headline reveal isn't gated behind the IntersectionObserver.
+  if (immediate) {
+    return (
+      <motion.span
+        initial="hidden"
+        animate="visible"
+        variants={containerVariants}
+        className={className}
+        style={{ display: 'inline' }}
+      >
+        {inner}
+      </motion.span>
+    );
+  }
 
   return (
     <motion.span
       initial="hidden"
       whileInView="visible"
       viewport={{ once: true, margin: '-80px' }}
-      variants={{
-        hidden: {},
-        visible: { transition: { staggerChildren: 0.04, delayChildren: delay } },
-      }}
+      variants={containerVariants}
       className={className}
       style={{ display: 'inline' }}
     >
-      {words.map((word, i) => (
-        <motion.span
-          key={i}
-          variants={{
-            hidden: { opacity: 0, y: 20 },
-            visible: { opacity: 1, y: 0 },
-          }}
-          transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
-          style={{ display: 'inline-block', marginRight: '0.25em' }}
-        >
-          {word}
-        </motion.span>
-      ))}
+      {inner}
     </motion.span>
   );
 }

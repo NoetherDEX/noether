@@ -1,4 +1,5 @@
-import { marketContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
+import { marketContract, routerContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
+import { fetchAttestation, priceTailArgs } from './noeracle';
 import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, DisplayOrder, OrderType, TriggerCondition, OrderStatus } from '@/types';
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
 import { rpc, scValToNative, xdr, Horizon, Address } from '@stellar/stellar-sdk';
@@ -68,17 +69,38 @@ export async function openPosition(
 ): Promise<Position> {
   console.log('[DEBUG] Opening position...');
 
-  // Build arguments matching contract signature:
+  // Trade args, shared by the direct and router paths. Matches:
   // open_position(trader: Address, asset: Symbol, collateral: i128, leverage: u32, direction: Direction)
-  const args = [
-    toScVal(signerPublicKey, 'address'),  // trader: Address
-    toScVal(params.asset, 'symbol'),       // asset: Symbol (e.g., "XLM", "BTC")
-    toScVal(params.collateral, 'i128'),    // collateral: i128 (7 decimals)
-    toScVal(params.leverage, 'u32'),       // leverage: u32 (1-10)
+  const tradeArgs = [
+    toScVal(signerPublicKey, 'address'),    // trader: Address
+    toScVal(params.asset, 'symbol'),        // asset: Symbol (e.g., "XLM", "BTC")
+    toScVal(params.collateral, 'i128'),     // collateral: i128 (7 decimals)
+    toScVal(params.leverage, 'u32'),        // leverage: u32 (1-10)
     toScVal(params.direction, 'direction'), // direction: Direction enum (Long=0, Short=1)
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position', args);
+  let xdrStr: string;
+  if (routerContract) {
+    // Router path (Pattern B): fetch a fresh signed Noeracle price and open
+    // atomically via noether_router.open_with_price, so the market reads a
+    // sub-second-fresh price and can't reject with #30 PriceStale.
+    // NOTE: runtime-unverified until the router is deployed and
+    // NEXT_PUBLIC_NOETHER_ROUTER_ID is set — the wallet signs the full
+    // router -> market.open_position -> USDC transfer auth tree.
+    const att = await fetchAttestation(params.asset);
+    if (!att) throw new Error('Noeracle price unavailable — cannot open position');
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      routerContract,
+      'open_with_price',
+      [...tradeArgs, ...priceTailArgs(att)],
+    );
+  } else {
+    // Direct path (default): straight to the market, which reads the cached
+    // oracle through oracle_adapter.
+    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position', tradeArgs);
+  }
+
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
 
@@ -96,23 +118,52 @@ export async function openPosition(
 export async function closePosition(
   signerPublicKey: string,
   signTransaction: (xdr: string) => Promise<string>,
-  positionId: number
+  positionId: number,
+  asset: string,
 ): Promise<{ pnl: bigint; fee: bigint }> {
   console.log('[DEBUG] Closing position...');
 
-  // Contract signature: close_position(trader: Address, position_id: u64)
-  const args = [
-    toScVal(signerPublicKey, 'address'),  // trader: Address
-    toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
-  ];
+  let xdrStr: string;
+  if (routerContract) {
+    // Router path (Pattern B): mirror openPosition — fetch a fresh signed
+    // Noeracle price and close atomically via noether_router.close_with_price,
+    // so the market reads a sub-second-fresh price for `asset` and can't
+    // reject with #30 PriceStale (oracle_adapter no longer exists).
+    // close_with_price(trader, position_id, asset, price, timestamp, round_id, pubkeys, sigs) -> i128 pnl
+    const att = await fetchAttestation(asset);
+    if (!att) throw new Error('Noeracle price unavailable — cannot close position');
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      routerContract,
+      'close_with_price',
+      [
+        toScVal(signerPublicKey, 'address'), // trader: Address
+        toScVal(positionId, 'u64'),          // position_id: u64
+        toScVal(asset, 'symbol'),            // asset: Symbol
+        ...priceTailArgs(att),
+      ],
+    );
+  } else {
+    // Direct path (default): close_position(trader: Address, position_id: u64)
+    const args = [
+      toScVal(signerPublicKey, 'address'),  // trader: Address
+      toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
+    ];
+    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position', args);
+  }
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position', args);
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     console.log('[DEBUG] Position closed successfully!');
-    return scValToNative(result.returnValue) as { pnl: bigint; fee: bigint };
+    const native = scValToNative(result.returnValue);
+    // Direct close_position returns { pnl, fee }; router close_with_price
+    // returns a bare i128 pnl. Normalise to the same shape for callers.
+    if (typeof native === 'bigint') {
+      return { pnl: native, fee: BigInt(0) };
+    }
+    return native as { pnl: bigint; fee: bigint };
   }
 
   throw new Error('Failed to close position');

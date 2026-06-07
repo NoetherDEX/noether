@@ -2,7 +2,6 @@
 
 import { ReactNode, createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useWalletStore } from '@/lib/store';
-import { getUSDCBalance } from '@/lib/stellar/token';
 import { initWalletKit, getWalletAddress, restoreWalletSession, setupWalletModule, WALLETCONNECT_ID } from '@/lib/stellar/walletKit';
 
 // Horizon Testnet URL for balance fetching
@@ -59,6 +58,17 @@ async function fetchXLMBalance(publicKey: string): Promise<number> {
   }
 }
 
+/**
+ * Lazily loads the USDC balance reader. The dynamic import keeps
+ * @stellar/stellar-sdk (pulled in transitively by lib/stellar/token) out of
+ * the initial/first-load JS bundle — it only loads once a balance is actually
+ * fetched (i.e. after a wallet is connected), never on the marketing landing.
+ */
+async function fetchUSDCBalance(publicKey: string): Promise<number> {
+  const { getUSDCBalance } = await import('@/lib/stellar/token');
+  return getUSDCBalance(publicKey);
+}
+
 export function WalletProvider({ children }: WalletProviderProps) {
   const [isReady, setIsReady] = useState(false);
   const { setConnected, setDisconnected, setBalances } = useWalletStore();
@@ -70,7 +80,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
     const [xlmBalance, usdcBalance] = await Promise.all([
       fetchXLMBalance(currentPublicKey),
-      getUSDCBalance(currentPublicKey),
+      fetchUSDCBalance(currentPublicKey),
     ]);
     setBalances(xlmBalance, usdcBalance, 0);
   }, [setBalances]);
@@ -92,7 +102,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
         try {
           const [xlmBalance, usdcBalance] = await Promise.all([
             fetchXLMBalance(storedKey),
-            getUSDCBalance(storedKey),
+            fetchUSDCBalance(storedKey),
           ]);
           if (!cancelled) setBalances(xlmBalance, usdcBalance, 0);
         } catch {}
@@ -127,7 +137,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
             const [xlmBalance, usdcBalance] = await Promise.all([
               fetchXLMBalance(result.address),
-              getUSDCBalance(result.address),
+              fetchUSDCBalance(result.address),
             ]);
             if (!cancelled) setBalances(xlmBalance, usdcBalance, 0);
           } catch {

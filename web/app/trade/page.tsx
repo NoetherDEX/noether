@@ -41,6 +41,7 @@ import {
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
+import { subscribeLivePrices } from '@/lib/stellar/noeracle';
 import { toPrecision } from '@/lib/utils';
 import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
@@ -264,15 +265,22 @@ function TradePage() {
     [rawPositions],
   );
 
-  // Poll mark prices for assets in open positions every 5 s. This is
-  // decoupled from the position-list fetch so PnL / Mark / Net Value
-  // stay live without re-running the heavy N+1 contract iteration.
+  // Live mark prices for assets in open positions. Decoupled from the
+  // position-list fetch so PnL / Mark / Net Value stay live without re-running
+  // the heavy N+1 contract iteration.
+  //
+  // Two sources: (1) one initial on-chain read via the shim for an accurate
+  // starting mark, then (2) Noeracle's ~500ms SSE stream for real-time updates
+  // (display only — no RPC/auth needed). Replaces the prior 5s on-chain poll, so
+  // marks now refresh ~10x faster.
   useEffect(() => {
     if (!isConnected || !publicKey || !positionAssetKey) return;
     const assets = positionAssetKey.split(',');
 
     let cancelled = false;
-    const tick = async () => {
+
+    // (1) seed with an accurate on-chain mark
+    (async () => {
       const updates: Record<string, number> = {};
       await Promise.all(
         assets.map(async (asset) => {
@@ -283,13 +291,18 @@ function TradePage() {
       if (!cancelled && Object.keys(updates).length > 0) {
         setCurrentPrices(prev => ({ ...prev, ...updates }));
       }
-    };
+    })();
 
-    tick();
-    const id = setInterval(tick, 5000);
+    // (2) stream live updates (~500ms) for those assets
+    const unsubscribe = subscribeLivePrices(assets, ({ asset, price }) => {
+      if (!cancelled) {
+        setCurrentPrices(prev => ({ ...prev, [asset]: price }));
+      }
+    });
+
     return () => {
       cancelled = true;
-      clearInterval(id);
+      unsubscribe();
     };
   }, [isConnected, publicKey, positionAssetKey]);
 
@@ -319,7 +332,7 @@ function TradePage() {
         const result = await closePositionCross(publicKey, sign, positionId);
         console.log('Cross position closed:', result);
       } else {
-        const result = await closePosition(publicKey, sign, positionId);
+        const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? selectedAsset);
         console.log('Position closed:', result);
       }
 

@@ -97,57 +97,32 @@ echo -e "${CYAN}                         Deploying Contracts                    
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${NC}"
 echo ""
 
-# 1. Deploy Mock Oracle (for testing)
-echo -e "${YELLOW}[1/4] Deploying Mock Oracle...${NC}"
-MOCK_ORACLE_ID=$($CLI contract deploy \
-    --wasm "$WASM_DIR/mock_oracle.wasm" \
+# Noeracle attestation contract (signed price source). Override via env if needed.
+NOERACLE_ID="${NEXT_PUBLIC_NOERACLE_ID:-CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG}"
+
+# 1. Deploy Noeracle Shim (SEP-40 reader → Noeracle.get_price_pers)
+echo -e "${YELLOW}[1/4] Deploying Noeracle Shim...${NC}"
+NOERACLE_SHIM_ID=$($CLI contract deploy \
+    --wasm "$WASM_DIR/noeracle_shim.wasm" \
     --source "$IDENTITY" \
     --network testnet)
-echo -e "${GREEN}✓ Mock Oracle deployed: $MOCK_ORACLE_ID${NC}"
+echo -e "${GREEN}✓ Noeracle Shim deployed: $NOERACLE_SHIM_ID${NC}"
 
-# Initialize Mock Oracle
-echo "  Initializing Mock Oracle..."
+# Initialize the shim: admin + the Noeracle attestation contract it reads from.
+echo "  Initializing Noeracle Shim..."
 $CLI contract invoke \
-    --id "$MOCK_ORACLE_ID" \
-    --source "$IDENTITY" \
-    --network testnet \
-    -- initialize \
-    --admin "$ADMIN_PUBLIC_KEY"
-echo -e "${GREEN}✓ Mock Oracle initialized${NC}"
-
-# Set initial XLM price ($0.15)
-echo "  Setting initial XLM price..."
-$CLI contract invoke \
-    --id "$MOCK_ORACLE_ID" \
-    --source "$IDENTITY" \
-    --network testnet \
-    -- set_price \
-    --asset XLM \
-    --price 1500000
-echo -e "${GREEN}✓ XLM price set to \$0.15${NC}"
-echo ""
-
-# 2. Deploy Oracle Adapter
-echo -e "${YELLOW}[2/4] Deploying Oracle Adapter...${NC}"
-ORACLE_ADAPTER_ID=$($CLI contract deploy \
-    --wasm "$WASM_DIR/oracle_adapter.wasm" \
-    --source "$IDENTITY" \
-    --network testnet)
-echo -e "${GREEN}✓ Oracle Adapter deployed: $ORACLE_ADAPTER_ID${NC}"
-
-# Initialize Oracle Adapter (using mock oracle as both primary and secondary for testnet)
-echo "  Initializing Oracle Adapter..."
-$CLI contract invoke \
-    --id "$ORACLE_ADAPTER_ID" \
+    --id "$NOERACLE_SHIM_ID" \
     --source "$IDENTITY" \
     --network testnet \
     -- initialize \
     --admin "$ADMIN_PUBLIC_KEY" \
-    --primary_oracle "$MOCK_ORACLE_ID" \
-    --secondary_oracle "$MOCK_ORACLE_ID" \
-    --max_staleness 3600 \
-    --max_deviation_bps 500
-echo -e "${GREEN}✓ Oracle Adapter initialized${NC}"
+    --noeracle_oracle "$NOERACLE_ID"
+echo -e "${GREEN}✓ Noeracle Shim initialized (reads $NOERACLE_ID)${NC}"
+echo ""
+
+# 2. (Oracle prices come from the keeper publishing signed Noeracle attestations;
+#     no separate oracle contract is deployed in the Noeracle-only stack.)
+echo -e "${YELLOW}[2/4] Oracle = Noeracle (no adapter/mock to deploy)${NC}"
 echo ""
 
 # 3. Deploy Vault
@@ -224,7 +199,7 @@ $CLI contract invoke \
     --network testnet \
     -- initialize \
     --admin "$ADMIN_PUBLIC_KEY" \
-    --oracle_adapter "$ORACLE_ADAPTER_ID" \
+    --oracle_adapter "$NOERACLE_SHIM_ID" \
     --vault "$VAULT_ID" \
     --usdc_token "$USDC_TOKEN_ID" \
     --config "$CONFIG"
@@ -247,8 +222,8 @@ cat > "$PROJECT_ROOT/contracts.json" << EOF
   "network": "testnet",
   "deployedAt": "$TIMESTAMP",
   "contracts": {
-    "mockOracle": "$MOCK_ORACLE_ID",
-    "oracleAdapter": "$ORACLE_ADAPTER_ID",
+    "noeracleShim": "$NOERACLE_SHIM_ID",
+    "noeracle": "$NOERACLE_ID",
     "vault": "$VAULT_ID",
     "market": "$MARKET_ID",
     "usdcToken": "$USDC_TOKEN_ID"
@@ -268,8 +243,8 @@ echo -e "${GREEN}                      Deployment Complete!                     
 echo -e "${GREEN}═══════════════════════════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "${CYAN}Contract Addresses:${NC}"
-echo "  Mock Oracle:    $MOCK_ORACLE_ID"
-echo "  Oracle Adapter: $ORACLE_ADAPTER_ID"
+echo "  Noeracle Shim:  $NOERACLE_SHIM_ID"
+echo "  Noeracle:       $NOERACLE_ID"
 echo "  Vault:          $VAULT_ID"
 echo "  Market:         $MARKET_ID"
 echo "  USDC Token:     $USDC_TOKEN_ID"

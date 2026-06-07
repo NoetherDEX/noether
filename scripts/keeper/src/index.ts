@@ -2,7 +2,10 @@
  * Noether Keeper Bot
  *
  * A unified keeper bot that handles:
- * 1. Oracle price updates (fetches from Noeracle, updates mock oracle)
+ * 1. Oracle publishing — fetches signed attestations from Noeracle's
+ *    attestation service and publishes them to the on-chain Noeracle
+ *    contract's persistent storage so the noeracle_shim → oracle_adapter
+ *    → market read path stays fresh.
  * 2. Position liquidations (monitors positions, liquidates when underwater)
  * 3. Order executions (limit orders, stop-loss, take-profit)
  * 4. Funding rate application (hourly)
@@ -16,9 +19,9 @@ import { loadConfig } from './config';
 import { StellarClient } from './stellar';
 import { KeeperConfig, KeeperStats, PriceData, AssetConfig } from './types';
 
-// Type-only import — the @noeracle/sdk package is ESM-only, so the runtime
+// Type-only imports — the @noeracle/sdk package is ESM-only, so the runtime
 // load happens via dynamic import() inside getNoeracle().
-import type { Noeracle as NoeracleClient } from '@noeracle/sdk';
+import type { Noeracle as NoeracleClient, Attestation } from '@noeracle/sdk';
 
 // ASCII art banner
 const BANNER = `
@@ -35,8 +38,6 @@ const BANNER = `
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 `;
-
-const PRECISION = BigInt(10_000_000); // 7 decimals
 
 class KeeperBot {
   private config: KeeperConfig;
@@ -80,9 +81,9 @@ class KeeperBot {
       process.exit(1);
     }
 
-    if (!this.config.oracleContractId) {
-      console.error('❌ Oracle contract ID not configured.');
-      console.error('   Set NEXT_PUBLIC_MOCK_ORACLE_ID in .env or deploy contracts first.');
+    if (!this.config.noeracleContractId) {
+      console.error('❌ Noeracle contract ID not configured.');
+      console.error('   Set NEXT_PUBLIC_NOERACLE_ID in .env (default: testnet Noeracle).');
       process.exit(1);
     }
 
@@ -91,7 +92,7 @@ class KeeperBot {
     console.log(`  RPC URL:           ${this.config.rpcUrl}`);
     console.log(`  Keeper Address:    ${this.stellar.publicKey}`);
     console.log(`  Market Contract:   ${this.config.marketContractId.slice(0, 8)}...`);
-    console.log(`  Oracle Contract:   ${this.config.oracleContractId.slice(0, 8)}...`);
+    console.log(`  Noeracle Contract: ${this.config.noeracleContractId.slice(0, 8)}...`);
     console.log(`  Poll Interval:     ${this.config.pollIntervalMs}ms`);
     console.log(`  Oracle Interval:   ${this.config.oracleUpdateIntervalMs}ms`);
     console.log(`  Assets:            ${this.config.assets.map(a => a.symbol).join(', ')}`);
@@ -197,21 +198,24 @@ class KeeperBot {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Fetch fresh signed prices from Noeracle and push them to the mock oracle.
+   * Fetch fresh signed attestations from Noeracle and publish them to the
+   * Noeracle contract's persistent storage on-chain.
    *
-   * Single source — Noeracle attestation service (`api.noeracle.org`). Each
-   * attestation is Ed25519-signed by a registered publisher and is usually
-   * <500 ms old when returned. The SDK throws `StalePriceError` if the
-   * fetched snapshot is older than its freshness limit.
+   * The keeper acts as the on-chain publisher for the public attestation
+   * service — fetches the latest signed round from api.noeracle.org and
+   * relays it to `update_ed25519_persistent` so anyone (oracle_adapter,
+   * shim, off-chain readers) can call `get_price_pers(tag)` and see a
+   * fresh, cryptographically-verified price.
    *
-   * Fail-loud: if Noeracle is unreachable or returns no prices we log the
-   * error and skip the cycle. There is no fallback by design — we want
-   * loud breakage so we notice when the oracle pipeline regresses.
+   * Fail-loud: if Noeracle is unreachable or returns no attestations we
+   * log the error and skip the cycle. There is no fallback by design —
+   * we want loud breakage so we notice when the oracle pipeline regresses.
    */
   private async updateOraclePrices(): Promise<void> {
-    let prices: Map<string, number>;
+    let attestations: readonly Attestation[];
     try {
-      prices = await this.fetchNoeraclePrices();
+      const fresh = await this.fetchNoeracleFresh();
+      attestations = fresh.attestations;
     } catch (error) {
       console.error(`\n❌ Noeracle fetch failed: ${error instanceof Error ? error.message : error}`);
       console.error(`   Oracle update skipped this cycle — no fallback by design.`);
@@ -219,61 +223,63 @@ class KeeperBot {
       return;
     }
 
-    if (prices.size === 0) {
-      console.error(`\n❌ Noeracle returned 0 prices — skipping oracle update.`);
+    if (attestations.length === 0) {
+      console.error(`\n❌ Noeracle returned 0 attestations — skipping oracle update.`);
       this.stats.errors++;
       return;
     }
 
     for (const asset of this.config.assets) {
-      const price = prices.get(asset.symbol);
-      if (price === undefined) continue;
-
-      // Validate price sanity
-      if (price <= 0 || !isFinite(price)) {
-        console.warn(`\n⚠️  Invalid price for ${asset.symbol}: ${price} — skipping`);
+      const pair = `${asset.symbol}/USD`;
+      const attestation = attestations.find(a => a.asset === pair);
+      if (!attestation) {
+        console.warn(`\n⚠️  No attestation returned for ${pair} — skipping`);
         continue;
       }
 
-      // Sanity bounds: reject obviously wrong prices
+      const priceHuman = attestation.price_human;
+      if (!isFinite(priceHuman) || priceHuman <= 0) {
+        console.warn(`\n⚠️  Invalid price for ${asset.symbol}: ${priceHuman} — skipping`);
+        continue;
+      }
+
+      // 50% circuit breaker against bad publisher data
       const lastPrice = this.currentPrices.get(asset.symbol);
       if (lastPrice && lastPrice.price > 0) {
-        const changePercent = Math.abs(price - lastPrice.price) / lastPrice.price;
+        const changePercent = Math.abs(priceHuman - lastPrice.price) / lastPrice.price;
         if (changePercent > 0.5) {
-          console.warn(`\n⚠️  ${asset.symbol} price changed ${(changePercent * 100).toFixed(1)}% ($${lastPrice.price} → $${price}) — skipping (>50% change)`);
+          console.warn(`\n⚠️  ${asset.symbol} price changed ${(changePercent * 100).toFixed(1)}% ($${lastPrice.price} → $${priceHuman}) — skipping (>50% change)`);
           continue;
         }
       }
 
-      const priceScaled = this.toPrecision(price);
-
       try {
-        const result = await this.stellar.updateOraclePrice(asset.symbol, priceScaled);
+        const result = await this.stellar.updateNoeraclePersistent(attestation);
 
         if (result.success) {
           this.currentPrices.set(asset.symbol, {
             asset: asset.symbol,
-            price,
-            priceScaled,
+            price: priceHuman,
+            priceScaled: BigInt(attestation.price),
             timestamp: Date.now(),
           });
           this.stats.oracleUpdates++;
           if (this.stats.oracleUpdates <= 3 || this.stats.oracleUpdates % 50 === 0) {
-            console.log(`\n✅ Oracle ${asset.symbol} = $${price.toLocaleString()} (tx: ${result.txHash?.slice(0,8)}...)`);
+            console.log(`\n✅ Noeracle ${asset.symbol} = $${priceHuman.toLocaleString()} round=${attestation.round_id} (tx: ${result.txHash?.slice(0,8)}...)`);
           }
         } else {
-          console.log(`\n⚠️  Oracle update FAILED for ${asset.symbol}: ${result.error}`);
+          console.log(`\n⚠️  Noeracle persistent push FAILED for ${asset.symbol}: ${result.error}`);
         }
       } catch (error) {
-        console.error(`\n❌ Oracle update ERROR for ${asset.symbol}:`, error instanceof Error ? error.message : error);
+        console.error(`\n❌ Noeracle persistent push ERROR for ${asset.symbol}:`, error instanceof Error ? error.message : error);
       }
 
-      // Delay between assets to avoid sequence conflicts
+      // Delay between assets to avoid sequence conflicts on the keeper account
       await this.sleep(4000);
     }
 
     if (this.stats.oracleUpdates % 10 === 1) {
-      console.log(`\n📡 Prices from Noeracle`);
+      console.log(`\n📡 Signed attestations from Noeracle → on-chain persistent storage`);
     }
   }
 
@@ -293,25 +299,14 @@ class KeeperBot {
   }
 
   /**
-   * Fetch the latest signed Noeracle prices for every configured asset.
-   *
-   * All assets are requested in a single `fetchLatest` call so they share
-   * one round. Returns a map keyed by asset symbol (`BTC`, `ETH`, `XLM`)
-   * with the human-readable decimal price.
+   * Fetch the latest signed attestation set (one round, all assets) from
+   * the Noeracle attestation service. The returned Fresh exposes raw
+   * Attestation objects we hand straight to update_ed25519_persistent.
    */
-  private async fetchNoeraclePrices(): Promise<Map<string, number>> {
+  private async fetchNoeracleFresh(): ReturnType<NoeracleClient['fetchLatest']> {
     const noeracle = await this.getNoeracle();
     const pairs = this.config.assets.map(a => `${a.symbol}/USD`);
-    const fresh = await noeracle.fetchLatest(pairs);
-
-    const prices = new Map<string, number>();
-    for (const asset of this.config.assets) {
-      const entry = fresh.price(`${asset.symbol}/USD`);
-      if (entry.priceHuman > 0) {
-        prices.set(asset.symbol, entry.priceHuman);
-      }
-    }
-    return prices;
+    return noeracle.fetchLatest(pairs);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -532,10 +527,6 @@ class KeeperBot {
   // ═══════════════════════════════════════════════════════════════════════
   // Utilities
   // ═══════════════════════════════════════════════════════════════════════
-
-  private toPrecision(price: number): bigint {
-    return BigInt(Math.floor(price * Number(PRECISION)));
-  }
 
   private formatAmount(amount: bigint, decimals: number = 7): string {
     const divisor = BigInt(10 ** decimals);

@@ -22,8 +22,12 @@ export const sorobanRpc = new rpc.Server(NETWORK.RPC_URL);
 // Contract instances
 export const marketContract = new Contract(CONTRACTS.MARKET);
 export const vaultContract = new Contract(CONTRACTS.VAULT);
-export const oracleContract = new Contract(CONTRACTS.ORACLE_ADAPTER);
 export const usdcTokenContract = new Contract(CONTRACTS.USDC_TOKEN);
+// Optional verify-then-trade router. Null unless NEXT_PUBLIC_NOETHER_ROUTER_ID
+// is set — null means trades go straight to the market (default, unchanged).
+export const routerContract = CONTRACTS.NOETHER_ROUTER
+  ? new Contract(CONTRACTS.NOETHER_ROUTER)
+  : null;
 
 /**
  * Build a transaction for a contract call
