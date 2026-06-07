@@ -96,29 +96,29 @@ Staging secrets live ONLY in the git-ignored `.env.staging` (never committed).
 **no airdrop**. The old market/vault/positions are abandoned (testnet, valueless). Mirrors the
 proven staging deploy, with the real `…LOLN` admin.
 
-### Prerequisite (not yet built)
-**Write `scripts/deploy_production.sh`** — adapt the proven `scripts/deploy_staging.sh` to:
-- read `.env` / `ADMIN_SECRET_KEY` (= `…LOLN`) instead of `.env.staging`,
-- reuse the real USDC (`CA63EPM4…`) + existing shim (`CDHIGZ…`),
-- deploy a **fresh NOE** (a vault needs its own LP token — see open decision below) + vault + market(→shim) + router,
-- init order: **vault → market → router**; market config via `--config-file-path` with i128 fields as **strings** (stellar CLI v26 rejects inline i128),
-- write a **separate `contracts.production.json`** first (do NOT clobber `contracts.json` until the deliberate flip).
+### Prerequisite (DONE) — `scripts/deploy_production.sh`
+Written (adapted from the proven `scripts/deploy_staging.sh`):
+- reads `.env` / `ADMIN_SECRET_KEY` (= `…LOLN`),
+- **reuses** the live NOE (`CD7VRBXI…`, choice C below) + USDC (`CA63EPM4…`) + shim (`CDHIGZ…`) + Noeracle (`CAYIP67…`),
+- deploys the **full fresh stack**: vault + market(→shim) + router + **vault_factory** + **referral** — the latter two pin the market at `initialize()` with **no setter**, so a fresh market requires fresh copies bound to it (verified: `vault_factory` leader-trade proxies and `referral.record_trade` both read `get_market()`),
+- init order: **vault → market → router → vault_factory → referral**; market config via `--config-file-path` with i128 fields as **strings** (CLI v26 rejects inline i128),
+- mints 1e16 NOE to the new vault; writes a **separate `contracts.production.json`** (does NOT clobber `contracts.json` until the deliberate flip); resumable via git-ignored `.env.production`.
 
-> Note: the existing `.env`-based scripts (`deploy_testnet.sh`, `setup_and_deploy.sh`) deploy
-> shim+vault+market but **NOT the router** — incomplete for the prod cutover.
+> Note: the older `.env`-based scripts (`deploy_testnet.sh`, `setup_and_deploy.sh`) deploy
+> shim+vault+market but **NOT** router / vault_factory / referral — incomplete for the prod cutover.
 
-**Open decision (NOE issuer):** the new vault must use a **distinct** NOE asset (old live NOE
-has ~3M outstanding; same code+issuer = same asset = messy vault accounting, though no financial
-drain since testnet is valueless). Options: (A) new issuer keypair, keep code "NOE" [staging did
-this]; (B) issuer = `…LOLN`, different code; (C) reuse old NOE and accept inconsistent pool stats.
-Recommended: **(A)** for clean books + brand-consistent ticker.
+**NOE issuer — RESOLVED: (C) reuse the live NOE** (`CD7VRBXI…`, code `NOE:…LOLN`). The script mints
+1e16 more to the new vault on top of the ~3M already outstanding — accepted "inflated" pool/supply
+stats (testnet, valueless). (Considered: A = new issuer keep code "NOE" [staging did this];
+B = `…LOLN` issuer, different code; C = reuse — chosen. `referral` is deployed **fresh** bound to the
+new market; `vault_factory` likewise.)
 
 ### Steps (user runs deploys; Claude assists, pauses for deploy/fund)
 1. **PR `staging → main`** (code only; production unaffected — env-gated). Merge.
-2. **Deploy fresh prod stack** via `deploy_production.sh` (`…LOLN`): NOE + vault + market(→shim) + router. → `contracts.production.json`.
+2. **Deploy fresh prod stack** via `deploy_production.sh` (`…LOLN`): vault + market(→shim) + router + vault_factory + referral, reusing NOE (C) + shim + Noeracle + USDC. → `contracts.production.json`.
 3. **Fund** the new prod vault with USDC (user mints; e.g. seed liquidity like staging's 80k).
 4. **Prod keeper** (`noetherkeeperbotv2`, Railway): switch to Noeracle-push, target the new market; set Railway `NEXT_PUBLIC_NOERACLE_ID`. Verify shim `lastprice` returns fresh BTC/ETH/XLM.
-5. **Flip Vercel Production env** to the new addresses (market, vault, NOE, router, shim, noeracle, `NEXT_PUBLIC_NOERACLE_API_URL`). Promote `contracts.production.json` → `contracts.json`.
+5. **Flip Vercel Production env** to the new addresses (market, vault, router, **vaultFactory, referral**, NOE, shim, noeracle, `NEXT_PUBLIC_NOERACLE_API_URL`). Update **Railway** (keeper + api + indexer) too — the indexer needs vaultFactory + referral present to register their handlers. Promote `contracts.production.json` → `contracts.json`.
 6. **Verify**: a real Freighter trade on `noether.exchange` → fast, no #30, router atomic.
 7. **Rollback** if needed: flip Production env back to the old addresses (old contracts still live).
 

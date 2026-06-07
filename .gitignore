@@ -30,6 +30,7 @@ Thumbs.db
 *.wasm
 *.wasm.hash
 *.tsbuildinfo
+*.tgz
 
 # Indexer local data
 indexer/data/
@@ -92,3 +93,5 @@ KNOWN_ISSUES.md
 # Blue-green staging secrets (keep the .example template tracked)
 .env.staging
 !.env.staging.example
+# Production deploy state (resumable PROD_* contract ids; from deploy_production.sh)
+.env.production
