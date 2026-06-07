@@ -18,9 +18,11 @@
 - The codebase is **Noeracle-only**: `mock_oracle` and `oracle_adapter` crates and all
   Band/DIA references were deleted; the frontend, api, and deploy scripts read the shim.
 
-**⏳ NOT DONE — production cutover.** `noether.exchange` (the `main` branch / Production
-Vercel env) still runs the **old** contracts on the mock oracle. Nothing has flipped.
-The remaining work is §4 (the cutover runbook).
+**✅ DONE — production cutover complete (2026-06-08).** `noether.exchange` (`main` / Production
+Vercel env) now runs the fresh Noeracle-only stack: deployed via `scripts/deploy_production.sh`,
+seeded with USDC via `vault.deposit` (sets the vault's `total_usdc`), Vercel Production env
+flipped to the new addresses, and a real Freighter trade verified (no #30). Live addresses are
+in `contracts.json` (promoted from `contracts.production.json`).
 
 **Branches:** `staging` = main + Noeracle integration + cleanup. `main` = unchanged
 production baseline. Production env vars (Vercel **Production** scope) still point at the
