@@ -40,6 +40,7 @@ export function LandingFooter() {
     <section className="snap-section relative bg-[#050508] overflow-hidden flex flex-col justify-end">
       {/* Giant NOETHER logo — SVG image, perfectly centered */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
+        {/* eslint-disable-next-line @next/next/no-img-element -- decorative SVG watermark sized in viewport units; next/image is unsuitable */}
         <img
           src="/noethersvg.svg"
           alt=""

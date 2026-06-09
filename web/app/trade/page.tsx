@@ -555,6 +555,7 @@ function TradePage() {
                 <LeaderModeSelector />
                 <OrderPanel
                   asset={selectedAsset}
+                  markPrice={currentPrices[selectedAsset] || 0}
                   positions={positions}
                   onPositionOpened={() => {
                     fetchPositions(false);

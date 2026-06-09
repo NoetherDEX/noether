@@ -15,12 +15,27 @@ const CALLER = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
 const sorobanRpc = new rpc.Server(NETWORK.RPC_URL);
 const marketContract = new Contract(CONTRACTS.MARKET);
 
+// A tx whose events we still can't fetch after this long is treated as beyond
+// the Soroban RPC retention window (or otherwise unrecoverable) and marked
+// processed so the scan can converge. Recent txs (the common "my trade didn't
+// count" case) stay below this and keep getting retried every run until they
+// fetch successfully. ~6h ≫ any transient RPC hiccup, ≪ RPC retention.
+const RETRY_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 interface TradeEvent {
   type: string;
   trader: string;
   size: number;
   pnl: number;
+  positionId: string;
 }
+
+// Discriminates "definitively fetched (maybe zero relevant events)" from
+// "couldn't fetch — retry later". Marking a tx processed on the latter is the
+// data-loss bug this whole module exists to avoid.
+type FetchResult = { ok: true; events: TradeEvent[] } | { ok: false };
 
 function bigIntToNumber(value: bigint | number | undefined, decimals = 7): number {
   if (value === undefined || value === null) return 0;
@@ -49,8 +64,10 @@ async function getOpenPositionTraders(): Promise<{ traders: string[]; positions:
       const results = await Promise.all(
         batch.map(async (id) => {
           try {
-            const acc = await sorobanRpc.getAccount(CALLER);
-            const posTx = new TransactionBuilder(acc, { fee: BASE_FEE, networkPassphrase: NETWORK.PASSPHRASE })
+            // Reuse the single `account` fetched above — simulation ignores the
+            // sequence number, so there is no need for a getAccount per id (that
+            // doubled this loop's RPC load and starved the event fetches below).
+            const posTx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK.PASSPHRASE })
               .addOperation(marketContract.call('get_position', nativeToScVal(BigInt(id), { type: 'u64' })))
               .setTimeout(30)
               .build();
@@ -78,56 +95,110 @@ async function getOpenPositionTraders(): Promise<{ traders: string[]; positions:
   }
 }
 
-async function getTransactionEvents(txHash: string): Promise<TradeEvent[]> {
-  try {
-    const res = await fetch(NETWORK.RPC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTransaction', params: { hash: txHash } }),
-    });
-    const json = await res.json();
-    if (!json.result || json.result.status !== 'SUCCESS') return [];
-    if (!json.result.diagnosticEventsXdr?.length) return [];
+function parseMarketEvents(diagnosticEventsXdr: string[] | undefined): TradeEvent[] {
+  if (!diagnosticEventsXdr?.length) return [];
+  const events: TradeEvent[] = [];
+  for (const eventXdrStr of diagnosticEventsXdr) {
+    try {
+      const diagEvent = xdr.DiagnosticEvent.fromXDR(eventXdrStr, 'base64');
+      const contractEvent = diagEvent.event();
+      if (!contractEvent) continue;
+      const contractBuf = contractEvent.contractId();
+      if (!contractBuf) continue;
+      if (StrKey.encodeContract(contractBuf as unknown as Buffer) !== CONTRACTS.MARKET) continue;
 
-    const events: TradeEvent[] = [];
-    for (const eventXdrStr of json.result.diagnosticEventsXdr) {
-      try {
-        const diagEvent = xdr.DiagnosticEvent.fromXDR(eventXdrStr, 'base64');
-        const contractEvent = diagEvent.event();
-        if (!contractEvent) continue;
-        const contractBuf = contractEvent.contractId();
-        if (!contractBuf) continue;
-        if (StrKey.encodeContract(contractBuf as unknown as Buffer) !== CONTRACTS.MARKET) continue;
+      const body = contractEvent.body().v0();
+      const topics = body.topics();
+      if (!topics.length) continue;
+      const topicName = scValToNative(topics[0]) as string;
+      if (!['position_opened', 'position_closed', 'position_liquidated'].includes(topicName)) continue;
 
-        const body = contractEvent.body().v0();
-        const topics = body.topics();
-        if (!topics.length) continue;
-        const topicName = scValToNative(topics[0]) as string;
-        if (!['position_opened', 'position_closed', 'position_liquidated'].includes(topicName)) continue;
+      const data = scValToNative(body.data());
+      if (!Array.isArray(data) || !data[1]) continue;
 
-        const data = scValToNative(body.data());
-        if (!Array.isArray(data) || !data[1]) continue;
+      const positionId = String(data[0]);
+      const trader = String(data[1]);
+      let size = 0;
+      let pnl = 0;
+      if (topicName === 'position_opened') {
+        // Event: (id, trader, asset, direction, size, entry_price)
+        size = bigIntToNumber(data[4] as bigint);
+      } else if (topicName === 'position_closed') {
+        // Event: (id, trader, asset, direction, size, entry_price, current_price, pnl)
+        size = bigIntToNumber(data[4] as bigint);
+        pnl = bigIntToNumber(data[7] as bigint);
+      } else if (topicName === 'position_liquidated') {
+        // Event: (id, trader, asset, direction, size, keeper_reward, current_price)
+        size = bigIntToNumber(data[4] as bigint);
+      }
+      events.push({ type: topicName, trader, size, pnl, positionId });
+    } catch { /* skip a single malformed event, keep the rest */ }
+  }
+  return events;
+}
 
-        const trader = String(data[1]);
-        let size = 0;
-        let pnl = 0;
-        if (topicName === 'position_opened') {
-          // Event: (id, trader, asset, direction, size, entry_price)
-          size = bigIntToNumber(data[4] as bigint);
-        } else if (topicName === 'position_closed') {
-          // Event: (id, trader, asset, direction, size, entry_price, current_price, pnl)
-          size = bigIntToNumber(data[4] as bigint);
-          pnl = bigIntToNumber(data[7] as bigint);
-        } else if (topicName === 'position_liquidated') {
-          // Event: (id, trader, asset, direction, size, keeper_reward, current_price)
-          size = bigIntToNumber(data[4] as bigint);
+// Fetch a tx's market events. Returns { ok: true } only when the RPC gave a
+// DEFINITIVE answer (SUCCESS → parsed events; FAILED → the tx reverted, no
+// trade) — both safe to mark processed. Returns { ok: false } on a transient
+// failure (network error, or NOT_FOUND because the tx isn't ingested yet),
+// which the caller must NOT mark processed, so it is retried next run. Retries
+// a few times in-run to ride out the rate-limited public RPC.
+async function getTransactionEvents(txHash: string): Promise<FetchResult> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(NETWORK.RPC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTransaction', params: { hash: txHash } }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const status = json?.result?.status;
+        if (status === 'SUCCESS') {
+          return { ok: true, events: parseMarketEvents(json.result.diagnosticEventsXdr) };
         }
-        events.push({ type: topicName, trader, size, pnl });
-      } catch { /* skip */ }
-    }
-    return events;
-  } catch {
-    return [];
+        if (status === 'FAILED') {
+          // Reverted on-chain — no position change ever happened. Definitive.
+          return { ok: true, events: [] };
+        }
+        // NOT_FOUND / missing result: not yet ingested or beyond retention.
+        // Treat as transient here; the caller's age guard stops infinite retry.
+      }
+    } catch { /* network error — fall through to retry */ }
+    await sleep(250 * (attempt + 1));
+  }
+  return { ok: false };
+}
+
+// Optional comma-separated wallets to force into the scan, set via Vercel env.
+// Use it to recover a specific reported wallet (e.g. one that closed out before
+// it was ever recorded) without a redeploy: set it, let one cron run scan +
+// backfill them, then clear it. They become sticky via known_traders.
+function parseEnvSeeds(): string[] {
+  return (process.env.LEADERBOARD_SEED_ADDRESSES ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+async function loadKnownTraders(): Promise<string[]> {
+  const db = getDb();
+  const res = await db.execute('SELECT address FROM known_traders');
+  return res.rows.map((r) => r.address as string);
+}
+
+async function rememberTraders(addresses: Set<string>): Promise<void> {
+  if (addresses.size === 0) return;
+  const db = getDb();
+  const list = Array.from(addresses);
+  for (let i = 0; i < list.length; i += 100) {
+    const batch = list.slice(i, i + 100);
+    await db.batch(
+      batch.map((address) => ({
+        sql: 'INSERT OR IGNORE INTO known_traders (address) VALUES (?)',
+        args: [address],
+      }))
+    );
   }
 }
 
@@ -186,17 +257,28 @@ export async function GET(request: NextRequest) {
     // Get current open positions
     const { traders: openTraders, positions } = await getOpenPositionTraders();
 
+    // Every trader we have ever seen, so closed-out wallets stay scannable, plus
+    // any one-off recovery wallets injected via env.
+    const persistedKnown = await loadKnownTraders();
+    const envSeeds = parseEnvSeeds();
+
     // Collect all known trader addresses for BFS
     const allKnownTraders = new Set([
       ...KNOWN_SEEDS,
+      ...envSeeds,
       ...openTraders,
+      ...persistedKnown,
       ...Array.from(knownAddresses),
     ]);
 
     const horizon = new Horizon.Server(NETWORK.HORIZON_URL);
     const queue = Array.from(allKnownTraders);
     const scannedTraders = new Set<string>();
+    // Traders to persist into known_traders this run (anyone with a real
+    // position or event), so they are re-scanned even after closing out.
+    const tradersToRemember = new Set<string>(openTraders);
     let newEventsCount = 0;
+    let unrecoverableCount = 0;
 
     // Collect all new trade events for batch insert
     const newTradeRows: { txHash: string; trader: string; eventType: string; size: number; pnl: number }[] = [];
@@ -212,41 +294,66 @@ export async function GET(request: NextRequest) {
 
         while (page.records.length > 0 && pageNum < 50) {
           pageNum++;
-          const newTxHashes: string[] = [];
+          // Collect unprocessed invoke-host-function txs on this page, keeping
+          // each tx's age so we can bound retries for ones beyond RPC retention.
+          const newTxs: { hash: string; createdAt: number }[] = [];
+          const seenThisPage = new Set<string>();
           let foundInvokeOps = false;
           let hasNewTx = false;
 
           for (const op of page.records) {
-            const rec = op as unknown as { type: string; transaction_hash: string };
+            const rec = op as unknown as { type: string; transaction_hash: string; created_at?: string };
             if (rec.type !== 'invoke_host_function') continue;
             foundInvokeOps = true;
             if (!rec.transaction_hash) continue;
             if (alreadyProcessed.has(rec.transaction_hash)) continue;
             hasNewTx = true;
-            alreadyProcessed.add(rec.transaction_hash);
-            newTxHashes.push(rec.transaction_hash);
+            if (seenThisPage.has(rec.transaction_hash)) continue;
+            seenThisPage.add(rec.transaction_hash);
+            const createdAt = rec.created_at ? Date.parse(rec.created_at) : Date.now();
+            newTxs.push({ hash: rec.transaction_hash, createdAt });
           }
 
-          // Process new transactions in parallel batches
-          for (let i = 0; i < newTxHashes.length; i += 20) {
-            const batch = newTxHashes.slice(i, i + 20);
-            const results = await Promise.all(batch.map((h) => getTransactionEvents(h)));
+          // Fetch + record events. CRITICAL: only mark a tx processed once its
+          // events were DEFINITIVELY fetched. On a transient failure, leave it
+          // unprocessed so the next run retries — that no-retry-on-failure path
+          // is what silently dropped traders' closed PnL. Old, persistently
+          // unfetchable txs (beyond RPC retention) are given up on so the scan
+          // still converges and the early-break below keeps working.
+          for (let i = 0; i < newTxs.length; i += 20) {
+            const batch = newTxs.slice(i, i + 20);
+            const results = await Promise.all(batch.map((t) => getTransactionEvents(t.hash)));
             for (let j = 0; j < results.length; j++) {
-              for (const event of results[j]) {
-                newEventsCount++;
-                newTradeRows.push({
-                  txHash: batch[j],
-                  trader: event.trader,
-                  eventType: event.type,
-                  size: event.size,
-                  pnl: event.pnl,
-                });
+              const { hash, createdAt } = batch[j];
+              const result = results[j];
+              if (result.ok) {
+                alreadyProcessed.add(hash);
+                for (const event of result.events) {
+                  newEventsCount++;
+                  newTradeRows.push({
+                    // Composite key so multiple position_closed in one tx (cross
+                    // closes) don't collide on UNIQUE(tx_hash, event_type, trader).
+                    txHash: `${hash}#${event.positionId}`,
+                    trader: event.trader,
+                    eventType: event.type,
+                    size: event.size,
+                    pnl: event.pnl,
+                  });
 
-                // Discover new traders for BFS
-                if (!scannedTraders.has(event.trader) && !queue.includes(event.trader)) {
-                  queue.push(event.trader);
+                  // Remember this trader so they stay scannable after closing out.
+                  tradersToRemember.add(event.trader);
+
+                  // Discover new traders for BFS
+                  if (!scannedTraders.has(event.trader) && !queue.includes(event.trader)) {
+                    queue.push(event.trader);
+                  }
                 }
+              } else if (Date.now() - createdAt > RETRY_MAX_AGE_MS) {
+                // Give up on an old, unfetchable tx so we stop re-scanning it.
+                alreadyProcessed.add(hash);
+                unrecoverableCount++;
               }
+              // else: transient failure on a recent tx — leave unprocessed, retry next run.
             }
           }
 
@@ -287,18 +394,20 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Recompute aggregates and save processed tx hashes
+    // Recompute aggregates, persist the seen-trader set + processed tx hashes
     await recomputeTraderAggregates();
+    await rememberTraders(tradersToRemember);
     await saveProcessedTxs(alreadyProcessed);
 
     const newTxCount = alreadyProcessed.size - initialSize;
-    console.log(`[Cron] Sync complete: ${newEventsCount} new events, ${newTxCount} new txs, ${scannedTraders.size} traders scanned`);
+    console.log(`[Cron] Sync complete: ${newEventsCount} new events, ${newTxCount} new txs, ${scannedTraders.size} traders scanned, ${unrecoverableCount} unrecoverable (gave up after ${RETRY_MAX_AGE_MS / 3600000}h)`);
 
     return NextResponse.json({
       ok: true,
       newEvents: newEventsCount,
       newTxs: newTxCount,
       tradersScanned: scannedTraders.size,
+      unrecoverable: unrecoverableCount,
     });
   } catch (error) {
     console.error('[Cron] Sync error:', error);

@@ -26,6 +26,7 @@ export const PnlShareCard = forwardRef<HTMLDivElement, { data: PnlShareData }>(
           <div className="bg-[#0a0a0c] rounded-2xl p-6">
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
+              {/* eslint-disable-next-line @next/next/no-img-element -- captured to PNG by html-to-image; a raw <img> with crossOrigin is required, next/image breaks canvas capture */}
               <img
                 src="/noethersvg.svg"
                 alt="Noether"
