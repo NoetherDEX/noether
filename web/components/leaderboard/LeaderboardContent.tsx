@@ -32,7 +32,7 @@ function SkeletonRow() {
 export function LeaderboardContent() {
   const [traders, setTraders] = useState<LeaderboardTrader[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortBy, setSortBy] = useState<SortField>('totalVolume');
+  const [sortBy, setSortBy] = useState<SortField>('pnl');
 
   useEffect(() => {
     async function fetchData() {
