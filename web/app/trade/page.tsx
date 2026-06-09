@@ -125,19 +125,27 @@ function TradePage() {
           open.map((p) => p.positionId),
         );
       } else {
-        // Personal mode: same fast path. Fall back to the full contract scan
-        // ONLY if the API call fails, so a degraded indexer never hides a
-        // trader's positions. (An empty-but-successful response is trusted as
-        // "no open positions", same as leader mode.)
+        // Personal mode: fast path via the indexer API, then fall back to the
+        // full contract scan whenever the API yields NOTHING — whether it
+        // errored OR returned empty. Empty-but-OK is not trusted here because
+        // it also happens (a) on staging, where the shared API indexes the
+        // PRODUCTION market and so never has staging-market positions, and
+        // (b) in the brief window after opening before the indexer catches up.
+        // Net effect: never show "no positions" when the chain has them, while
+        // staying fast whenever the API does have the trader's positions. (At
+        // worst this is exactly the old whole-market scan, never slower.)
+        let apiPositions: Awaited<ReturnType<typeof getPositionsByIds>> = [];
         try {
           const open = await listOpenPositions(publicKey);
-          contractPositions = await getPositionsByIds(
+          apiPositions = await getPositionsByIds(
             publicKey,
             open.map((p) => p.positionId),
           );
         } catch {
-          contractPositions = await getPositions(publicKey);
+          // API/indexer unavailable — fall through to the contract scan.
         }
+        contractPositions =
+          apiPositions.length > 0 ? apiPositions : await getPositions(publicKey);
       }
 
       if (contractPositions.length === 0) {
