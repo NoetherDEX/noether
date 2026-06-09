@@ -26,9 +26,17 @@ interface OrderPanelProps {
   positions?: DisplayPosition[];
   onSubmit?: () => void;
   onPositionOpened?: () => void;
+  /**
+   * Live Noeracle mark price (USD) for `asset`, streamed by the parent trade
+   * page (~500ms SSE). This is the price the contract actually triggers and
+   * liquidates against, so it — not Binance — is the reference shown for
+   * trigger prices and the liquidation preview. Falls back to the Binance
+   * ticker only until the first Noeracle frame arrives.
+   */
+  markPrice?: number;
 }
 
-export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }: OrderPanelProps) {
+export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, markPrice = 0 }: OrderPanelProps) {
   const { isConnected, publicKey, walletId, xlmBalance, usdcBalance, sign, refreshBalances } = useWallet();
   const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
   const isLeader = !!leaderVault;
@@ -66,8 +74,15 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
   const [isCrossDepositing, setIsCrossDepositing] = useState(false);
   const [isCrossWithdrawing, setIsCrossWithdrawing] = useState(false);
 
-  // Price states
-  const [assetPrice, setAssetPrice] = useState<number>(0);
+  // Price states.
+  // `assetPrice` is the reference price shown for trigger prices and the
+  // liquidation preview. It MUST match what the contract executes against —
+  // the live Noeracle mark price (`markPrice`, streamed by the parent). The
+  // Binance ticker below is only a bootstrap fallback until the first
+  // Noeracle frame arrives.
+  const [fallbackPrice, setFallbackPrice] = useState<number>(0);
+  const hasMarkPrice = markPrice > 0;
+  const assetPrice = hasMarkPrice ? markPrice : fallbackPrice;
 
   // Limit order states
   const [triggerPrice, setTriggerPrice] = useState<string>('');
@@ -92,22 +107,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened }
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Fetch asset price
+  // Fetch a Binance fallback price ONLY while the Noeracle mark price is
+  // unavailable (e.g. before the first SSE frame). Once `markPrice` is live we
+  // stop polling — the contract triggers/liquidates against Noeracle, not
+  // Binance, so the panel should quote the same source as execution.
   useEffect(() => {
+    if (hasMarkPrice) return;
+    let cancelled = false;
     const loadPrice = async () => {
       try {
         const ticker = await fetchTicker(asset);
-        setAssetPrice(ticker.price);
+        if (!cancelled) setFallbackPrice(ticker.price);
       }
       catch (error) {
-        console.error('Failed to fetch price:', error);
+        console.error('Failed to fetch fallback price:', error);
       }
     };
 
     loadPrice();
     const interval = setInterval(loadPrice, 5000);
-    return () => clearInterval(interval);
-  }, [asset]);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [asset, hasMarkPrice]);
 
   // Fetch existing 14d volume and cross-margin balance
   useEffect(() => {
