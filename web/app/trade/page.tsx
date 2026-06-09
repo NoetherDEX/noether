@@ -112,13 +112,11 @@ function TradePage() {
       // the positions tab to flash its skeleton every few seconds.
       const currentLeaderVault = useLeaderModeStore.getState().vault;
 
-      // Two flavours of position fetch:
-      //  - Leader mode: the indexer projection knows exactly which
-      //    positions the factory contract owns, so we ask the API for
-      //    that short list and pull on-chain detail just for those
-      //    ids (much faster than scanning every market position).
-      //  - Personal mode: the contract-side iterator stays, since
-      //    we don't yet expose a "by trader" filter for normal users.
+      // Both flavours resolve the open-position id list from the indexer-backed
+      // API (constant-time, no whole-market scan) and pull on-chain detail only
+      // for that short list:
+      //  - Leader mode: ids owned by the vault factory contract.
+      //  - Personal mode: ids for this trader.
       let contractPositions;
       if (currentLeaderVault && factoryAddress) {
         const open = await listOpenPositions(factoryAddress).catch(() => []);
@@ -127,7 +125,19 @@ function TradePage() {
           open.map((p) => p.positionId),
         );
       } else {
-        contractPositions = await getPositions(publicKey);
+        // Personal mode: same fast path. Fall back to the full contract scan
+        // ONLY if the API call fails, so a degraded indexer never hides a
+        // trader's positions. (An empty-but-successful response is trusted as
+        // "no open positions", same as leader mode.)
+        try {
+          const open = await listOpenPositions(publicKey);
+          contractPositions = await getPositionsByIds(
+            publicKey,
+            open.map((p) => p.positionId),
+          );
+        } catch {
+          contractPositions = await getPositions(publicKey);
+        }
       }
 
       if (contractPositions.length === 0) {
@@ -163,6 +173,15 @@ function TradePage() {
   // Manual refresh handler
   const handleRefreshPositions = useCallback(() => {
     fetchPositions(false); // Don't show full loading state for manual refresh
+  }, [fetchPositions]);
+
+  // Personal positions now come from the indexer-backed API, which lags a beat
+  // behind a just-submitted open/close. Refetch immediately (snappy) and a
+  // couple of times after so a freshly opened position appears — and a freshly
+  // closed one drops — without the user hitting refresh (read-your-writes).
+  const refreshPositionsAfterTrade = useCallback(() => {
+    fetchPositions(false);
+    [2500, 6000].forEach((ms) => window.setTimeout(() => fetchPositions(false), ms));
   }, [fetchPositions]);
 
   // Fetch orders function — detects status changes and shows toasts
@@ -336,8 +355,9 @@ function TradePage() {
         console.log('Position closed:', result);
       }
 
-      // Refresh positions and balances
-      await fetchPositions(false);
+      // Refresh positions and balances. The staggered refetch covers the
+      // indexer lag so the closed position drops without a manual refresh.
+      refreshPositionsAfterTrade();
       refreshBalances();
     } catch (error) {
       console.error('Failed to close position:', error);
@@ -558,7 +578,7 @@ function TradePage() {
                   markPrice={currentPrices[selectedAsset] || 0}
                   positions={positions}
                   onPositionOpened={() => {
-                    fetchPositions(false);
+                    refreshPositionsAfterTrade();
                     refreshBalances();
                   }}
                 />
