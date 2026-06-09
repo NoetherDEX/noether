@@ -170,6 +170,38 @@ async function getTransactionEvents(txHash: string): Promise<FetchResult> {
   return { ok: false };
 }
 
+// Optional comma-separated wallets to force into the scan, set via Vercel env.
+// Use it to recover a specific reported wallet (e.g. one that closed out before
+// it was ever recorded) without a redeploy: set it, let one cron run scan +
+// backfill them, then clear it. They become sticky via known_traders.
+function parseEnvSeeds(): string[] {
+  return (process.env.LEADERBOARD_SEED_ADDRESSES ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+async function loadKnownTraders(): Promise<string[]> {
+  const db = getDb();
+  const res = await db.execute('SELECT address FROM known_traders');
+  return res.rows.map((r) => r.address as string);
+}
+
+async function rememberTraders(addresses: Set<string>): Promise<void> {
+  if (addresses.size === 0) return;
+  const db = getDb();
+  const list = Array.from(addresses);
+  for (let i = 0; i < list.length; i += 100) {
+    const batch = list.slice(i, i + 100);
+    await db.batch(
+      batch.map((address) => ({
+        sql: 'INSERT OR IGNORE INTO known_traders (address) VALUES (?)',
+        args: [address],
+      }))
+    );
+  }
+}
+
 async function loadProcessedTxs(): Promise<Set<string>> {
   const db = getDb();
   const row = await db.execute({
@@ -225,16 +257,26 @@ export async function GET(request: NextRequest) {
     // Get current open positions
     const { traders: openTraders, positions } = await getOpenPositionTraders();
 
+    // Every trader we have ever seen, so closed-out wallets stay scannable, plus
+    // any one-off recovery wallets injected via env.
+    const persistedKnown = await loadKnownTraders();
+    const envSeeds = parseEnvSeeds();
+
     // Collect all known trader addresses for BFS
     const allKnownTraders = new Set([
       ...KNOWN_SEEDS,
+      ...envSeeds,
       ...openTraders,
+      ...persistedKnown,
       ...Array.from(knownAddresses),
     ]);
 
     const horizon = new Horizon.Server(NETWORK.HORIZON_URL);
     const queue = Array.from(allKnownTraders);
     const scannedTraders = new Set<string>();
+    // Traders to persist into known_traders this run (anyone with a real
+    // position or event), so they are re-scanned even after closing out.
+    const tradersToRemember = new Set<string>(openTraders);
     let newEventsCount = 0;
     let unrecoverableCount = 0;
 
@@ -298,6 +340,9 @@ export async function GET(request: NextRequest) {
                     pnl: event.pnl,
                   });
 
+                  // Remember this trader so they stay scannable after closing out.
+                  tradersToRemember.add(event.trader);
+
                   // Discover new traders for BFS
                   if (!scannedTraders.has(event.trader) && !queue.includes(event.trader)) {
                     queue.push(event.trader);
@@ -349,8 +394,9 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Recompute aggregates and save processed tx hashes
+    // Recompute aggregates, persist the seen-trader set + processed tx hashes
     await recomputeTraderAggregates();
+    await rememberTraders(tradersToRemember);
     await saveProcessedTxs(alreadyProcessed);
 
     const newTxCount = alreadyProcessed.size - initialSize;

@@ -36,5 +36,13 @@ export async function ensureSchema(): Promise<void> {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     )`,
+    // Append-only set of every trader we have ever seen (open position or a
+    // parsed event). The leaderboard scan seeds from this so a trader who
+    // closed all positions — and whose `traders` row was therefore rebuilt
+    // away — is still re-scanned next run instead of falling off the board.
+    `CREATE TABLE IF NOT EXISTS known_traders (
+      address TEXT PRIMARY KEY,
+      first_seen INTEGER NOT NULL DEFAULT (unixepoch())
+    )`,
   ]);
 }
