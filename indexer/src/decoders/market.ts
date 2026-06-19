@@ -118,8 +118,10 @@ function decodeCrossLiq(raw: RawEvent, v: unknown[]): CrossLiquidatedEvent {
   return {
     ...envelope(raw, 'cross_liq'),
     topic: 'cross_liq',
+    // Contract emits (trader, total_pnl, keeper_reward) — lib.rs:1131.
     trader: asString(v[0], 'cross_liq.trader'),
-    keeperReward: asBigInt(v[1], 'cross_liq.keeper_reward'),
+    totalPnl: asBigInt(v[1], 'cross_liq.total_pnl'),
+    keeperReward: asBigInt(v[2], 'cross_liq.keeper_reward'),
   };
 }
 

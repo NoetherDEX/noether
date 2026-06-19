@@ -3,6 +3,7 @@ import { createClient } from '@libsql/client';
 import { IndexerBus } from '../src/bus.js';
 import { EventRouter, type HandlerContext } from '../src/router.js';
 import { buildMarketRegistrations } from '../src/handlers/market.js';
+import { buildReferralRegistrations } from '../src/handlers/referral.js';
 import { runMigrations } from '../src/migrations.js';
 import type { PositionOpenedEvent } from '../src/types/events.js';
 import type { Logger } from 'pino';
@@ -94,12 +95,62 @@ describe('market handler', () => {
       size: 100n,
       entryPrice: 60n,
     };
+    const seenEvent = vi.fn();
+    const seenTrade = vi.fn();
+    bus.on('event', seenEvent);
+    bus.on('trade', seenTrade);
+
     const ctx: HandlerContext = { db, rpc: {} as never, bus, log: noopLogger };
     await router.dispatch(event, ctx);
     await router.dispatch(event, ctx);
 
     const rows = await db.execute('SELECT COUNT(*) AS n FROM events_raw');
     expect(Number(rows.rows[0]!.n)).toBe(1);
+    // The duplicate dispatch must not re-emit on the bus (I-2 / P0-16).
+    expect(seenEvent).toHaveBeenCalledOnce();
+    expect(seenTrade).toHaveBeenCalledOnce();
+
+    db.close();
+  });
+});
+
+describe('referral handler idempotency', () => {
+  it('code_created preserves accrued counters when re-emitted (R-4)', async () => {
+    const db = await setupDb();
+    const bus = new IndexerBus();
+    const router = new EventRouter();
+    for (const reg of buildReferralRegistrations(FAKE_CONTRACT)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    const ctx: HandlerContext = { db, rpc: {} as never, bus, log: noopLogger };
+
+    const codeCreated = (id: string) => ({
+      id,
+      contractId: FAKE_CONTRACT,
+      topic: 'code_created',
+      ledger: 100,
+      ledgerCloseTs: 1745923200,
+      txHash: 'a'.repeat(64),
+      referrer: FAKE_TRADER,
+      code: 'NOE',
+    });
+
+    await router.dispatch(codeCreated('cc-1') as never, ctx);
+    // Simulate counters accruing after the code is created.
+    await db.execute({
+      sql: `UPDATE referrers SET referred_count = 5, claimable = 999 WHERE referrer = ?`,
+      args: [FAKE_TRADER],
+    });
+    // A second code_created with a different event_id (so persistRaw inserts and
+    // applyEvent runs) must NOT zero the accrued counters.
+    await router.dispatch(codeCreated('cc-2') as never, ctx);
+
+    const row = await db.execute({
+      sql: `SELECT referred_count, claimable FROM referrers WHERE referrer = ?`,
+      args: [FAKE_TRADER],
+    });
+    expect(Number(row.rows[0]!.referred_count)).toBe(5);
+    expect(Number(row.rows[0]!.claimable)).toBe(999);
 
     db.close();
   });

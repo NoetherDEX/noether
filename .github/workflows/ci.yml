@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, staging]
   push:
-    branches: [main, develop]
+    branches: [main, develop, staging]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -116,3 +116,84 @@ jobs:
           name: sdk-ts-dist
           path: sdk-ts/dist
           retention-days: 7
+
+  web-typecheck:
+    name: Web typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: Typecheck web (tsc --noEmit)
+        working-directory: web
+        run: npm run typecheck
+
+  contracts:
+    name: Soroban contracts (test + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo + build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      # The market tests embed vault.wasm via `contractimport!`, which reads the
+      # file at macro-expansion time. cargo does NOT track it as a dependency, so
+      # it must exist before `cargo test` compiles the market crate.
+      - name: Build contract wasm (embedded by market tests)
+        working-directory: contracts
+        run: cargo build -p vault --target wasm32-unknown-unknown --release
+
+      - name: cargo test --workspace
+        working-directory: contracts
+        run: cargo test --workspace
+
+      - name: cargo clippy
+        working-directory: contracts
+        # Deny warnings. The -A allow-list covers pre-existing lints that are
+        # either inherent to Soroban contract entry points (too_many_arguments)
+        # or pervasive style nits (digit grouping, len_zero, clone_on_copy,
+        # dead storage helpers). Burn these down separately; any NEW lint
+        # category — or a real correctness lint — still fails the build.
+        run: |
+          cargo clippy --workspace -- -D warnings \
+            -A clippy::too_many_arguments \
+            -A clippy::inconsistent_digit_grouping \
+            -A clippy::len_zero \
+            -A clippy::clone_on_copy \
+            -A dead_code
+
+  sdk-py:
+    name: Python SDK tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install sdk-py (dev extras)
+        working-directory: sdk-py
+        run: pip install -e ".[dev]"
+
+      - name: pytest
+        working-directory: sdk-py
+        run: pytest

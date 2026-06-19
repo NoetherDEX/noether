@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button, Input } from '@/components/ui';
 import { useWalletStore } from '@/lib/store';
-import { createReferralCode, lookupCode } from '@/lib/stellar/referral';
+import { createReferralCode, resolveCode } from '@/lib/stellar/referral';
 import toast from 'react-hot-toast';
 
 const MIN = 3;
@@ -16,8 +16,6 @@ function humanize(raw: string): string {
   if (/Error\(Contract, #7\)/.test(s)) return 'Code is too long (max 16 characters).';
   if (/Error\(Contract, #8\)/.test(s)) return 'That code is already taken.';
   if (/Error\(Contract, #9\)/.test(s)) return 'You already have a code registered.';
-  if (/Error\(Contract, #13\)/.test(s))
-    return 'Insufficient trading volume — your 14-day volume must cross the threshold first.';
   if (/Error\(Contract, #5\)/.test(s)) return 'Invalid parameter.';
   return s.length > 200 ? `${s.slice(0, 200)}…` : s;
 }
@@ -27,9 +25,10 @@ const VALID_RE = /^[A-Za-z0-9_-]+$/;
 /**
  * Closed-beta allowlist for code creation. Reads
  * `NEXT_PUBLIC_REFERRAL_CREATOR_ALLOWLIST` (comma-separated Stellar
- * addresses) at build time. Empty/unset → anyone may try (contract
- * still enforces InsufficientVolume on-chain). Set → only wallets in
- * the list see the create form active.
+ * addresses) at build time. Empty/unset → anyone may try (the contract
+ * only enforces code length + uniqueness + one-code-per-wallet; there is
+ * no on-chain volume gate). Set → only wallets in the list see the create
+ * form active.
  */
 const ALLOWLIST = (() => {
   const raw = (process.env.NEXT_PUBLIC_REFERRAL_CREATOR_ALLOWLIST ?? '').trim();
@@ -62,9 +61,11 @@ export function CreateCodeCard({ onCreated }: Props) {
     }
     setChecking(true);
     try {
-      const owner = await lookupCode(wallet.address, trimmed);
+      const owner = await resolveCode(wallet.address, trimmed);
       setAvailable(owner === null);
     } catch {
+      // Lookup failed (not "free") — leave availability unknown so a taken code
+      // is never shown as available; the contract still enforces uniqueness.
       setAvailable(null);
     } finally {
       setChecking(false);

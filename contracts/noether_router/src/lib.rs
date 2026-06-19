@@ -32,7 +32,7 @@
 
 #![no_std]
 
-use noether_common::{Direction, NoetherError, Position};
+use noether_common::{Direction, NoetherError, Position, TTL_THRESHOLD, TTL_EXTEND_TO};
 use soroban_sdk::{
     contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
@@ -44,6 +44,9 @@ pub enum DataKey {
     Market,
     Noeracle,
     Initialized,
+    /// Allowed Noeracle publisher ed25519 pubkeys. Empty = allow any (the shim's
+    /// own checks still apply); non-empty = refresh_price rejects foreign keys (O-2).
+    Publishers,
 }
 
 #[contract]
@@ -58,6 +61,7 @@ impl NoetherRouterContract {
         admin: Address,
         market: Address,
         noeracle: Address,
+        publishers: Vec<BytesN<32>>,
     ) -> Result<(), NoetherError> {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(NoetherError::AlreadyInitialized);
@@ -66,8 +70,9 @@ impl NoetherRouterContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Market, &market);
         env.storage().instance().set(&DataKey::Noeracle, &noeracle);
+        env.storage().instance().set(&DataKey::Publishers, &publishers);
         env.storage().instance().set(&DataKey::Initialized, &true);
-        env.storage().instance().extend_ttl(518_400, 518_400);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -149,11 +154,31 @@ impl NoetherRouterContract {
         Ok(())
     }
 
+    /// Replace the allowed-publisher set (O-2). Empty = allow any publisher.
+    pub fn set_publishers(env: Env, publishers: Vec<BytesN<32>>) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Publishers, &publishers);
+        Ok(())
+    }
+
+    /// Current allowed-publisher set (view).
+    pub fn get_publishers(env: Env) -> Vec<BytesN<32>> {
+        Self::publishers(&env)
+    }
+
     /// Rotate the admin. Both old and new admins must sign.
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         new_admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        Ok(())
+    }
+
+    /// Admin-gated WASM upgrade. Swaps the contract code in place; storage is
+    /// preserved (SEC-2). The new WASM must already be installed on-chain.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 
@@ -195,7 +220,28 @@ impl NoetherRouterContract {
         sigs: Vec<BytesN<64>>,
     ) -> Result<(), NoetherError> {
         let noeracle = Self::noeracle_addr(env)?;
-        let tag = symbol_to_tag(env, asset)?;
+
+        // Publisher allowlist (O-2, defense-in-depth — does not replace the
+        // shim/Noeracle signature + staleness checks). When configured, every
+        // attestation pubkey must be on the list, else the trade reverts.
+        let allowed = Self::publishers(env);
+        if allowed.len() > 0 {
+            for i in 0..pubkeys.len() {
+                let pk = pubkeys.get(i).unwrap();
+                let mut ok = false;
+                for j in 0..allowed.len() {
+                    if allowed.get(j).unwrap() == pk {
+                        ok = true;
+                        break;
+                    }
+                }
+                if !ok {
+                    return Err(NoetherError::Unauthorized);
+                }
+            }
+        }
+
+        let tag = noether_common::symbol_to_tag(env, asset)?;
         let update_args: Vec<Val> =
             (tag, price, timestamp, round_id, pubkeys, sigs).into_val(env);
         env.invoke_contract::<()>(
@@ -204,6 +250,13 @@ impl NoetherRouterContract {
             update_args,
         );
         Ok(())
+    }
+
+    fn publishers(env: &Env) -> Vec<BytesN<32>> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Publishers)
+            .unwrap_or_else(|| Vec::new(env))
     }
 
     fn market_addr(env: &Env) -> Result<Address, NoetherError> {
@@ -242,29 +295,9 @@ impl NoetherRouterContract {
 // Symbol → 8-byte tag mapping
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Identical to `noeracle_shim::symbol_to_tag`: Noeracle's on-chain tag is
-// `ASCII(<symbol>USD)` zero-padded to 8 bytes. Deriving it here (rather than
-// trusting a caller-supplied tag) guarantees the slot this router WRITES is the
-// same slot the shim READS for the market. Hardcoded for the three trading
-// pairs; adding a pair means a redeploy of both this and the shim.
-
-fn symbol_to_tag(env: &Env, asset: &Symbol) -> Result<BytesN<8>, NoetherError> {
-    let btc = Symbol::new(env, "BTC");
-    let eth = Symbol::new(env, "ETH");
-    let xlm = Symbol::new(env, "XLM");
-
-    let bytes: [u8; 8] = if asset == &btc {
-        [b'B', b'T', b'C', b'U', b'S', b'D', 0, 0]
-    } else if asset == &eth {
-        [b'E', b'T', b'H', b'U', b'S', b'D', 0, 0]
-    } else if asset == &xlm {
-        [b'X', b'L', b'M', b'U', b'S', b'D', 0, 0]
-    } else {
-        return Err(NoetherError::InvalidPrice);
-    };
-
-    Ok(BytesN::from_array(env, &bytes))
-}
+// Symbol → 8-byte Noeracle tag lives in noether_common::symbol_to_tag (O-8),
+// shared with noeracle_shim so the slot this router WRITES always matches the
+// slot the shim READS for the market.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tests
@@ -376,7 +409,8 @@ mod tests {
         let market_id = env.register_contract(None, mock_market::MockMarket);
         let router_id = env.register_contract(None, NoetherRouterContract);
         let client = NoetherRouterContractClient::new(&env, &router_id);
-        client.initialize(&admin, &market_id, &noeracle_id);
+        // Allowlist the test publisher so the happy-path open/close tests pass.
+        client.initialize(&admin, &market_id, &noeracle_id, &pubkeys(&env));
         Fixture { env, admin, market_id, noeracle_id, client }
     }
 
@@ -392,7 +426,26 @@ mod tests {
     #[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
     fn initialize_twice_errors() {
         let f = setup();
-        f.client.initialize(&f.admin, &f.market_id, &f.noeracle_id);
+        f.client.initialize(&f.admin, &f.market_id, &f.noeracle_id, &pubkeys(&f.env));
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")] // Unauthorized — foreign publisher
+    fn open_with_foreign_publisher_rejected() {
+        let f = setup();
+        let foreign = soroban_sdk::vec![&f.env, BytesN::from_array(&f.env, &[8u8; 32])];
+        f.client.open_with_price(
+            &Address::generate(&f.env),
+            &Symbol::new(&f.env, "BTC"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &700_000_000_000_000i128,
+            &1_700_000_000u64,
+            &42u64,
+            &foreign,
+            &sigs(&f.env),
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, Clock } from 'lucide-react';
-import { Card, Tabs } from '@/components/ui';
+import { Card, Tabs, Badge } from '@/components/ui';
 import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import {
@@ -40,8 +40,7 @@ import {
   getFundingRate,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
-import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
-import { subscribeLivePrices } from '@/lib/stellar/noeracle';
+import { useLivePrices } from '@/lib/hooks/useLivePrices';
 import { toPrecision } from '@/lib/utils';
 import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
@@ -59,8 +58,22 @@ function TradePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const [fundingRate, setFundingRate] = useState<number>(0);
-  const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const prevOrdersRef = useRef<Map<number, string>>(new Map());
+
+  const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
+
+  // Live Noeracle prices for the charted asset + any open-position assets.
+  // Drives the order-panel mark and every position's PnL / Mark / Net Value,
+  // and exposes stream health (`priceStreamStatus`) for the staleness badge,
+  // with an on-chain shim-poll fallback when the SSE stream goes unhealthy.
+  const livePriceAssets = useMemo(
+    () => Array.from(new Set([selectedAsset, ...rawPositions.map(p => p.asset)])),
+    [selectedAsset, rawPositions],
+  );
+  const { prices: currentPrices, status: priceStreamStatus } = useLivePrices(
+    livePriceAssets,
+    { publicKey },
+  );
 
   // Display positions are derived from raw positions + the latest prices,
   // so a price tick re-renders just the PnL / Mark / Net Value cells
@@ -70,8 +83,6 @@ function TradePage() {
     () => rawPositions.map(p => toDisplayPosition(p, currentPrices[p.asset] || 0)),
     [rawPositions, currentPrices],
   );
-
-  const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
   const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -153,23 +164,9 @@ function TradePage() {
         return;
       }
 
-      // Fetch current prices for all unique assets so PnL / Mark display
-      // is correct on the first paint after a refresh — the 5 s ticker
-      // below keeps them fresh afterwards.
-      const uniqueAssets = Array.from(new Set(contractPositions.map(p => p.asset)));
-      const priceMap: Record<string, number> = {};
-
-      await Promise.all(
-        uniqueAssets.map(async (asset) => {
-          const priceData = await getPrice(publicKey, asset);
-          if (priceData) {
-            priceMap[asset] = priceToDisplay(priceData.price);
-          }
-        })
-      );
-
+      // Marks for these assets come from the live-price hook (it streams every
+      // open-position asset), so no separate on-chain price seed is needed here.
       setRawPositions(contractPositions);
-      setCurrentPrices(prev => ({ ...prev, ...priceMap }));
     } catch (error) {
       console.error('Failed to fetch positions:', error);
     } finally {
@@ -282,56 +279,6 @@ function TradePage() {
     }, 60000);
     return () => clearInterval(interval);
   }, []);
-
-  // Stable join of the unique assets in the open positions list. Used
-  // as the effect dep below so the price poll only tears down + restarts
-  // when the SET of assets changes — not on every rawPositions reference
-  // change (a price tick that mutates currentPrices doesn't change this).
-  const positionAssetKey = useMemo(
-    () => Array.from(new Set(rawPositions.map(p => p.asset))).sort().join(','),
-    [rawPositions],
-  );
-
-  // Live mark prices for assets in open positions. Decoupled from the
-  // position-list fetch so PnL / Mark / Net Value stay live without re-running
-  // the heavy N+1 contract iteration.
-  //
-  // Two sources: (1) one initial on-chain read via the shim for an accurate
-  // starting mark, then (2) Noeracle's ~500ms SSE stream for real-time updates
-  // (display only — no RPC/auth needed). Replaces the prior 5s on-chain poll, so
-  // marks now refresh ~10x faster.
-  useEffect(() => {
-    if (!isConnected || !publicKey || !positionAssetKey) return;
-    const assets = positionAssetKey.split(',');
-
-    let cancelled = false;
-
-    // (1) seed with an accurate on-chain mark
-    (async () => {
-      const updates: Record<string, number> = {};
-      await Promise.all(
-        assets.map(async (asset) => {
-          const priceData = await getPrice(publicKey, asset);
-          if (priceData) updates[asset] = priceToDisplay(priceData.price);
-        }),
-      );
-      if (!cancelled && Object.keys(updates).length > 0) {
-        setCurrentPrices(prev => ({ ...prev, ...updates }));
-      }
-    })();
-
-    // (2) stream live updates (~500ms) for those assets
-    const unsubscribe = subscribeLivePrices(assets, ({ asset, price }) => {
-      if (!cancelled) {
-        setCurrentPrices(prev => ({ ...prev, [asset]: price }));
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [isConnected, publicKey, positionAssetKey]);
 
   const handleClosePosition = async (positionId: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
@@ -521,11 +468,19 @@ function TradePage() {
                 {/* Chart Header with Asset Selector */}
                 <div className="border-b border-white/5">
                   <div className="flex items-center justify-between px-4 py-2">
-                    {/* Asset Selector Dropdown */}
-                    <AssetSelectorDropdown
-                      selectedAsset={selectedAsset}
-                      onSelect={setSelectedAsset}
-                    />
+                    {/* Asset Selector Dropdown + live-price health */}
+                    <div className="flex items-center gap-2">
+                      <AssetSelectorDropdown
+                        selectedAsset={selectedAsset}
+                        onSelect={setSelectedAsset}
+                      />
+                      {priceStreamStatus !== 'live' && (
+                        <Badge variant="warning" size="sm" className="gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                          {priceStreamStatus === 'stale' ? 'Live prices stale' : 'Reconnecting…'}
+                        </Badge>
+                      )}
+                    </div>
                     {/* Chart Header Stats (price, change, etc.) */}
                     <div className="hidden sm:block">
                       <ChartHeader asset={selectedAsset} compact />

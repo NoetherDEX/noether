@@ -61,7 +61,7 @@ async function main(): Promise<void> {
   const bus = new IndexerBus();
   const router = new EventRouter();
 
-  for (const reg of buildMarketRegistrations(market)) {
+  for (const reg of buildMarketRegistrations(market, getNetworkPassphrase(config.network))) {
     router.register(reg.contractId, reg.topic, reg.handler);
   }
   if (vaultFactory) {

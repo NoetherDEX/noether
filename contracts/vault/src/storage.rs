@@ -3,7 +3,7 @@
 //! Storage keys and helper functions for the Vault contract.
 
 use soroban_sdk::{contracttype, Address, Env};
-use noether_common::NoetherError;
+use noether_common::{NoetherError, TTL_THRESHOLD, TTL_EXTEND_TO};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
@@ -28,6 +28,11 @@ pub enum DataKey {
     UnrealizedPnl,
     /// Total fees collected (7 decimals)
     TotalFees,
+    /// Cumulative unpaid winner profit from when the pool was undercollateralised
+    /// — a protocol liability the insurance buffer reconciles in T3 (V-3).
+    Shortfall,
+    /// Aggregate committed open-position payout reserved against the pool (M-4).
+    TotalReserved,
     /// Deposit fee in basis points
     DepositFeeBps,
     /// Withdrawal fee in basis points
@@ -116,7 +121,7 @@ pub fn get_total_usdc(env: &Env) -> i128 {
 
 pub fn set_total_usdc(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::TotalUsdc, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::TotalUsdc, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(&DataKey::TotalUsdc, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_total_noe_circulating(env: &Env) -> i128 {
@@ -125,7 +130,7 @@ pub fn get_total_noe_circulating(env: &Env) -> i128 {
 
 pub fn set_total_noe_circulating(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::TotalNoeCirculating, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::TotalNoeCirculating, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(&DataKey::TotalNoeCirculating, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_unrealized_pnl(env: &Env) -> i128 {
@@ -134,7 +139,7 @@ pub fn get_unrealized_pnl(env: &Env) -> i128 {
 
 pub fn set_unrealized_pnl(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::UnrealizedPnl, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::UnrealizedPnl, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(&DataKey::UnrealizedPnl, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_total_fees(env: &Env) -> i128 {
@@ -143,7 +148,26 @@ pub fn get_total_fees(env: &Env) -> i128 {
 
 pub fn set_total_fees(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::TotalFees, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::TotalFees, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(&DataKey::TotalFees, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+pub fn get_shortfall(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::Shortfall).unwrap_or(0)
+}
+
+pub fn add_shortfall(env: &Env, amount: i128) {
+    let current = get_shortfall(env);
+    env.storage().persistent().set(&DataKey::Shortfall, &(current + amount));
+    env.storage().persistent().extend_ttl(&DataKey::Shortfall, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+pub fn get_total_reserved(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::TotalReserved).unwrap_or(0)
+}
+
+pub fn set_total_reserved(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::TotalReserved, &amount);
+    env.storage().persistent().extend_ttl(&DataKey::TotalReserved, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -177,5 +201,5 @@ pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
 
 /// Extend TTL for instance storage (30 days).
 pub fn extend_instance_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(2_592_000, 2_592_000);
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 }

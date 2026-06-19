@@ -52,6 +52,7 @@ export interface PositionLiquidatedEvent extends EventEnvelope {
 export interface CrossLiquidatedEvent extends EventEnvelope {
   topic: 'cross_liq';
   trader: StellarAddress;
+  totalPnl: bigint;
   keeperReward: bigint;
 }
 
