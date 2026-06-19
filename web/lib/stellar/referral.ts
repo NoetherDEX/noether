@@ -77,14 +77,19 @@ async function simulateView(method: string, args: any[], source: string): Promis
   return scValToNative(sim.result.retval);
 }
 
-/** Resolve a code to its referrer address, or null. */
-export async function lookupCode(source: string, code: string): Promise<string | null> {
-  try {
-    const v = await simulateView('lookup_code', [toScVal(code, 'string')], source);
-    return typeof v === 'string' ? v : null;
-  } catch {
-    return null;
-  }
+/**
+ * Resolve a code to its referrer address, or null when the code is unregistered
+ * (free). Calls the contract's `resolve_code` view — there is no `lookup_code`,
+ * so the old name always failed simulation and made every code look available.
+ *
+ * Deliberately does NOT swallow errors: a failed simulation must propagate so
+ * callers can tell "code is free" (null) apart from "lookup failed" (throws).
+ * Swallowing it showed already-taken codes as available until the create tx
+ * reverted on-chain.
+ */
+export async function resolveCode(source: string, code: string): Promise<string | null> {
+  const v = await simulateView('resolve_code', [toScVal(code, 'string')], source);
+  return typeof v === 'string' ? v : null;
 }
 
 export const REFERRAL_CONFIGURED = (): boolean =>

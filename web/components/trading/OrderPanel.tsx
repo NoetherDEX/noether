@@ -8,6 +8,7 @@ import { useTradeStore, useLeaderModeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo } from '@/lib/stellar/market';
 import { leaderOpenPosition } from '@/lib/stellar/vaultFactory';
+import { decodeContractError } from '@/lib/stellar/errors';
 import { getVault } from '@/lib/api/vaults';
 import { VAULT_PRECISION } from '@/types/vault';
 import {
@@ -364,16 +365,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           },
           error: (err) => {
             console.error('Failed to open position:', err);
-            if (err?.message?.includes('InsufficientCollateral')) {
-              return 'Insufficient collateral. Minimum is 10 USDC.';
-            }
-            if (err?.message?.includes('InvalidLeverage')) {
-              return 'Invalid leverage. Must be between 1x and 10x.';
-            }
-            if (err?.message?.includes('AllOraclesFailed')) {
-              return 'Price feed unavailable. Please try again.';
-            }
-            return err?.message || 'Failed to open position';
+            // Contract reverts (e.g. #22 InsufficientCollateral, #21 InvalidLeverage,
+            // #30 PriceStale) surface as numeric `#N` codes — decode them centrally.
+            return decodeContractError(err);
           },
         });
 
@@ -482,12 +476,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       const bal = await getCrossMarginBalance(publicKey);
       setCrossBalance(Number(bal) / 10_000_000);
     } catch (err: any) {
-      const msg = err?.message || '';
-      if (msg.includes('CrossMarginInsufficientFreeMargin')) {
-        toast.error('Insufficient free margin — reduce positions first');
-      } else {
-        toast.error(msg || 'Failed to withdraw');
-      }
+      toast.error(decodeContractError(err));
     } finally {
       setIsCrossWithdrawing(false);
     }

@@ -30,12 +30,30 @@ export const CONTRACTS = {
 export const DEPLOY_ENV = process.env.NEXT_PUBLIC_VERCEL_ENV || 'development';
 
 // Contract addresses that MUST be configured for the trading UI to function.
+// NOERACLE_SHIM is included: it is the only on-chain oracle in the Noeracle-only
+// stack, so without it every open/close reverts with #30 PriceStale.
 const REQUIRED_CONTRACTS: ReadonlyArray<keyof typeof CONTRACTS> = [
   'VAULT',
   'MARKET',
   'USDC_TOKEN',
   'NOE_TOKEN',
+  'NOERACLE_SHIM',
 ];
+
+/** Env-var names for required contract addresses that are currently unset. */
+export function missingContractEnvVars(): string[] {
+  return REQUIRED_CONTRACTS.filter((k) => !CONTRACTS[k]).map((k) => `NEXT_PUBLIC_${k}_ID`);
+}
+
+/**
+ * True when the verify-then-trade router is unset on a production deploy.
+ * In that mode trades go straight to the market on a possibly-stale on-chain
+ * price (the router exists to execute on a sub-second-fresh Noeracle price), so
+ * it is a degraded configuration worth surfacing loudly to operators.
+ */
+export function isRouterMissingInProd(): boolean {
+  return DEPLOY_ENV === 'production' && !CONTRACTS.NOETHER_ROUTER;
+}
 
 /**
  * Fail loud on a misconfigured deploy. Call once on the client at app start.
@@ -46,12 +64,11 @@ const REQUIRED_CONTRACTS: ReadonlyArray<keyof typeof CONTRACTS> = [
  * clear, immediate error instead of trading on the wrong contracts.
  */
 export function assertContractsConfigured(): void {
-  const missing = REQUIRED_CONTRACTS.filter((k) => !CONTRACTS[k]);
+  const missing = missingContractEnvVars();
   if (missing.length === 0) return;
 
-  const envVars = missing.map((k) => `NEXT_PUBLIC_${k}_ID`).join(', ');
   const message =
-    `Missing contract address env var(s) for the "${DEPLOY_ENV}" deploy: ${envVars}. ` +
+    `Missing contract address env var(s) for the "${DEPLOY_ENV}" deploy: ${missing.join(', ')}. ` +
     `Set them in the matching Vercel Environment Variables scope ` +
     `(Production = live addresses, Preview = staging/green addresses).`;
 

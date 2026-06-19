@@ -58,12 +58,17 @@ export function ClaimFeesCard({ claimable, onClaimed }: Props) {
             >
               ${fmtReferralUsdc(claimable)}
             </p>
-            <p className="mt-2 text-xs text-muted-foreground hidden md:block">
-              Released directly to your Stellar wallet in a single transaction.
+            <p className="mt-2 text-xs text-amber-400/90">
+              Earnings accrual and on-chain claims go live in v1.1 — codes you
+              register now carry over.
             </p>
           </div>
-          <Button onClick={claim} disabled={busy || !hasClaim || !wallet.address}>
-            {busy ? 'Signing…' : hasClaim ? 'Claim now' : 'Nothing to claim'}
+          <Button
+            onClick={claim}
+            disabled
+            title="Referral earnings accrual and claims go live in v1.1"
+          >
+            Claims live in v1.1
           </Button>
         </div>
       </div>
