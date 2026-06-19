@@ -13,6 +13,70 @@ pub const PRECISION: i128 = 10_000_000; // 10^7
 /// 10000 basis points = 100%
 pub const BASIS_POINTS: u32 = 10_000;
 
+/// Shared storage-TTL bump parameters (V-6). Ledgers close ~every 5s, so these
+/// are ~1 day and ~30 days. Bump only when the remaining TTL drops below the
+/// threshold, and extend to ~30 days — used by every contract's storage layer
+/// (market, vault, vault_factory, router, shim) so an archived instance can't
+/// silently kill one contract while the others stay live.
+pub const TTL_THRESHOLD: u32 = 17_280; // ~1 day at 5s ledgers
+pub const TTL_EXTEND_TO: u32 = 518_400; // ~30 days at 5s ledgers
+
+/// Max fraction of vault AUM that may be committed as open-position payout
+/// reservations (M-4/V-3). At 70% the pool always keeps a buffer for LP
+/// withdrawals and adverse moves. Tunable within the audited 60–75% band.
+pub const RESERVE_CAP_BPS: u32 = 7_000;
+
+/// Noeracle's on-chain 8-byte asset tag: `ASCII(<symbol>USD)` zero-padded to 8
+/// bytes — the first 8 bytes of Noeracle's signed attestation message. Shared by
+/// the router (which WRITES the slot) and the shim (which READS it) so the two
+/// can never derive different slots for the same asset (O-8). Hardcoded for the
+/// three launch pairs; adding a pair means redeploying both. Returns
+/// `InvalidPrice` for an unknown symbol.
+pub fn symbol_to_tag(
+    env: &soroban_sdk::Env,
+    asset: &Symbol,
+) -> Result<soroban_sdk::BytesN<8>, crate::errors::NoetherError> {
+    let btc = Symbol::new(env, "BTC");
+    let eth = Symbol::new(env, "ETH");
+    let xlm = Symbol::new(env, "XLM");
+
+    let bytes: [u8; 8] = if asset == &btc {
+        [b'B', b'T', b'C', b'U', b'S', b'D', 0, 0]
+    } else if asset == &eth {
+        [b'E', b'T', b'H', b'U', b'S', b'D', 0, 0]
+    } else if asset == &xlm {
+        [b'X', b'L', b'M', b'U', b'S', b'D', 0, 0]
+    } else {
+        return Err(crate::errors::NoetherError::InvalidPrice);
+    };
+
+    Ok(soroban_sdk::BytesN::from_array(env, &bytes))
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::symbol_to_tag;
+    use soroban_sdk::{Env, Symbol};
+
+    #[test]
+    fn tags_match_noeracle_message_prefix() {
+        let env = Env::default();
+        assert_eq!(
+            symbol_to_tag(&env, &Symbol::new(&env, "BTC")).unwrap().to_array(),
+            [b'B', b'T', b'C', b'U', b'S', b'D', 0, 0],
+        );
+        assert_eq!(
+            symbol_to_tag(&env, &Symbol::new(&env, "ETH")).unwrap().to_array(),
+            [b'E', b'T', b'H', b'U', b'S', b'D', 0, 0],
+        );
+        assert_eq!(
+            symbol_to_tag(&env, &Symbol::new(&env, "XLM")).unwrap().to_array(),
+            [b'X', b'L', b'M', b'U', b'S', b'D', 0, 0],
+        );
+        assert!(symbol_to_tag(&env, &Symbol::new(&env, "DOGE")).is_err());
+    }
+}
+
 /// Fee precision for sub-basis-point fee rates.
 /// 1 unit = 0.1 bps = 0.001%. 100_000 units = 100%.
 /// This allows representing rates like 1.5 bps (= 15 fee units).

@@ -890,6 +890,7 @@ mod tests {
     /// real market does — to exercise the auth chain end-to-end.
     mod fake_market {
         use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+        use noether_common::types::{Direction, Position};
 
         #[contract]
         pub struct FakeMarket;
@@ -902,14 +903,16 @@ mod tests {
                     .instance()
                     .set(&Symbol::new(&env, "next_id"), &0u64);
             }
+            // Returns a full Position (matching the real market) so the
+            // factory's `let position: Position = invoke_contract(...)` decodes.
             pub fn open_position(
                 env: Env,
                 trader: Address,
-                _asset: Symbol,
+                asset: Symbol,
                 collateral: i128,
-                _leverage: u32,
-                _direction: u32,
-            ) -> u64 {
+                leverage: u32,
+                direction: u32,
+            ) -> Position {
                 trader.require_auth();
                 let usdc: Address = env
                     .storage()
@@ -930,10 +933,25 @@ mod tests {
                 env.storage()
                     .instance()
                     .set(&Symbol::new(&env, "next_id"), &id);
-                id
+                Position {
+                    id,
+                    trader,
+                    asset,
+                    collateral,
+                    size: collateral.saturating_mul(leverage as i128),
+                    entry_price: 0,
+                    direction: if direction == 1 { Direction::Short } else { Direction::Long },
+                    leverage,
+                    liquidation_price: 0,
+                    timestamp: 0,
+                    entry_cumulative_funding: 0,
+                    margin_mode: 0,
+                }
             }
-            pub fn close_position(env: Env, trader: Address, _position_id: u64) {
-                // Refund a fixed amount so the vault receives "settled" USDC.
+            // Returns settled USDC as i128 (matching the real market), so the
+            // factory's `let _: i128 = invoke_contract(...)` decodes.
+            pub fn close_position(env: Env, trader: Address, _position_id: u64) -> i128 {
+                // Refund the held balance so the vault receives "settled" USDC.
                 trader.require_auth();
                 let usdc: Address = env
                     .storage()
@@ -945,6 +963,7 @@ mod tests {
                 if bal > 0 {
                     token::Client::new(&env, &usdc).transfer(&market_addr, &trader, &bal);
                 }
+                bal
             }
         }
     }

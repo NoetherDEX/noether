@@ -27,9 +27,9 @@
 
 #![no_std]
 
-use noether_common::NoetherError;
+use noether_common::{NoetherError, TTL_THRESHOLD, TTL_EXTEND_TO};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, Address, BytesN, Env, IntoVal, Symbol,
+    contract, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal, Symbol,
     Vec,
 };
 
@@ -86,7 +86,7 @@ impl NoeracleShimContract {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::NoeracleOracle, &noeracle_oracle);
         env.storage().instance().set(&DataKey::Initialized, &true);
-        env.storage().instance().extend_ttl(518_400, 518_400);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -104,7 +104,10 @@ impl NoeracleShimContract {
             .get(&DataKey::NoeracleOracle)
             .unwrap_or_else(|| panic_with_error!(&env, NoetherError::NotInitialized));
 
-        let tag = symbol_to_tag(&env, &asset);
+        let tag = match noether_common::symbol_to_tag(&env, &asset) {
+            Ok(t) => t,
+            Err(e) => panic_with_error!(&env, e),
+        };
 
         // Build the args Vec the way Soroban expects for invoke_contract.
         let args: Vec<soroban_sdk::Val> = (tag,).into_val(&env);
@@ -189,32 +192,9 @@ impl NoeracleShimContract {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Symbol → 8-byte tag mapping
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Noeracle's on-chain tag is `ASCII(<symbol>USD)` padded to 8 bytes with
-// trailing zeros — confirmed against the live attestation messages from
-// api.noeracle.org (the first 8 bytes of the signed message). Hardcoded
-// for the three trading pairs; adding a pair means a shim redeploy.
-
-fn symbol_to_tag(env: &Env, asset: &Symbol) -> BytesN<8> {
-    let btc = Symbol::new(env, "BTC");
-    let eth = Symbol::new(env, "ETH");
-    let xlm = Symbol::new(env, "XLM");
-
-    let bytes: [u8; 8] = if asset == &btc {
-        [b'B', b'T', b'C', b'U', b'S', b'D', 0, 0]
-    } else if asset == &eth {
-        [b'E', b'T', b'H', b'U', b'S', b'D', 0, 0]
-    } else if asset == &xlm {
-        [b'X', b'L', b'M', b'U', b'S', b'D', 0, 0]
-    } else {
-        panic_with_error!(env, NoetherError::InvalidPrice);
-    };
-
-    BytesN::from_array(env, &bytes)
-}
+// Symbol → 8-byte Noeracle tag lives in noether_common::symbol_to_tag (O-8),
+// shared with noether_router so the slot this shim READS always matches the
+// slot the router WRITES.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tests
