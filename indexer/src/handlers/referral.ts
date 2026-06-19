@@ -3,13 +3,14 @@ import type { ReferralEvent } from '@noether/types';
 import type { Handler, HandlerContext } from '../router.js';
 import type { DecodedMarketEvent } from '../types/events.js';
 
+/** Returns rowsAffected: 1 on a fresh insert, 0 when the event_id already exists. */
 async function persistRaw(
   db: Client,
   contractId: string,
   eventId: string,
   event: ReferralEvent,
-): Promise<void> {
-  await db.execute({
+): Promise<number> {
+  const result = await db.execute({
     sql: `
       INSERT OR IGNORE INTO events_raw (
         event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
@@ -26,17 +27,23 @@ async function persistRaw(
       Date.now(),
     ],
   });
+  return result.rowsAffected;
 }
 
 async function applyEvent(db: Client, event: ReferralEvent): Promise<void> {
   switch (event.topic) {
     case 'code_created':
+      // ON CONFLICT (not OR REPLACE) so a re-emitted code_created for an
+      // existing referrer keeps accrued counters instead of zeroing them (R-4).
       await db.execute({
         sql: `
-          INSERT OR REPLACE INTO referrers (
+          INSERT INTO referrers (
             referrer, code, created_at,
             referred_count, total_volume_generated, total_earned, claimable, updated_at
           ) VALUES (?, ?, ?, 0, 0, 0, 0, ?)
+          ON CONFLICT(referrer) DO UPDATE SET
+            code = excluded.code,
+            updated_at = excluded.updated_at
         `,
         args: [event.referrer, event.code, event.ledgerCloseTs, Date.now()],
       });
@@ -143,7 +150,11 @@ function makeHandler(topic: ReferralEvent['topic'], contractId: string): Handler
     const r = event as unknown as ReferralEvent;
     if (r.topic !== topic) return;
     const eventId = (event as unknown as { id: string }).id;
-    await persistRaw(ctx.db, contractId, eventId, r);
+    const inserted = await persistRaw(ctx.db, contractId, eventId, r);
+    if (inserted === 0) {
+      ctx.log.debug({ topic, contractId, eventId }, 'duplicate referral event — skipped');
+      return;
+    }
     await applyEvent(ctx.db, r);
     ctx.bus.emit('event', event);
     ctx.log.debug({ topic, contractId }, 'referral event processed');

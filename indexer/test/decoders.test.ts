@@ -106,14 +106,17 @@ describe('decodeMarketEvent', () => {
   });
 
   it('decodes cross_liq', () => {
+    // Contract emits (trader, total_pnl, keeper_reward) — lib.rs:1131.
     const value = vec(
       Address.fromString(FAKE_TRADER).toScVal(),
-      nativeToScVal(25_0000n, { type: 'i128' }),
+      nativeToScVal(-120_0000n, { type: 'i128' }), // total_pnl
+      nativeToScVal(25_0000n, { type: 'i128' }),   // keeper_reward
     );
     const decoded = decodeMarketEvent(makeRawEvent('cross_liq', value));
     expect(decoded?.topic).toBe('cross_liq');
     if (decoded?.topic !== 'cross_liq') throw new Error('wrong topic');
     expect(decoded.trader).toBe(FAKE_TRADER);
+    expect(decoded.totalPnl).toBe(-120_0000n);
     expect(decoded.keeperReward).toBe(25_0000n);
   });
 
