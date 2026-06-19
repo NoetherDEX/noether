@@ -26,7 +26,6 @@ export class EventsService {
   constructor(private readonly db: Client) {}
 
   async list(query: EventQuery = {}): Promise<RawEventRow[]> {
-    const limit = Math.min(MAX_LIMIT, Math.max(1, query.limit ?? DEFAULT_LIMIT));
     const conditions: string[] = [];
     const args: (string | number)[] = [];
 
@@ -47,6 +46,35 @@ export class EventsService {
       args.push(query.toLedger);
     }
 
+    return this.query(conditions, args, query.limit);
+  }
+
+  /**
+   * Events whose payload `trader` field equals `trader`, optionally restricted
+   * to a set of topics. The filter runs in SQL, so a trader's events are found
+   * no matter how many unrelated global events sit ahead of theirs — fixing the
+   * prior "fetch recent N, filter in JS" window that hid active traders.
+   */
+  async listByTrader(
+    trader: string,
+    topics: string[] = [],
+    limit?: number,
+  ): Promise<RawEventRow[]> {
+    const conditions: string[] = [`json_extract(payload_json, '$.trader') = ?`];
+    const args: (string | number)[] = [trader];
+    if (topics.length > 0) {
+      conditions.push(`topic IN (${topics.map(() => '?').join(', ')})`);
+      args.push(...topics);
+    }
+    return this.query(conditions, args, limit);
+  }
+
+  private async query(
+    conditions: string[],
+    args: (string | number)[],
+    limit?: number,
+  ): Promise<RawEventRow[]> {
+    const cappedLimit = Math.min(MAX_LIMIT, Math.max(1, limit ?? DEFAULT_LIMIT));
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     let result;
     try {
@@ -58,7 +86,7 @@ export class EventsService {
           ORDER BY ledger DESC, event_id DESC
           LIMIT ?
         `,
-        args: [...args, limit],
+        args: [...args, cappedLimit],
       });
     } catch (err) {
       // events_raw is owned by the indexer. If the indexer hasn't run yet

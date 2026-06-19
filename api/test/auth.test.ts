@@ -206,3 +206,55 @@ describe('account/me/events filtering', () => {
     expect(ids).toEqual(['e1', 'e2']);
   });
 });
+
+describe('account/me/positions SQL filtering', () => {
+  it('returns the trader position events even behind >200 newer global events', async () => {
+    const setup = await setupTestServer();
+    app = setup.app;
+    const kp = Keypair.random();
+    const address = kp.publicKey();
+    const other = Keypair.random().publicKey();
+
+    const insert = (
+      eventId: string,
+      topic: string,
+      ledger: number,
+      payload: object,
+    ) =>
+      setup.db.execute({
+        sql: `INSERT INTO events_raw (event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [eventId, 'C', topic, ledger, 1, 't', JSON.stringify(payload), Date.now()],
+      });
+
+    // Our trader: one open at a LOW ledger, plus an order (must NOT show under positions).
+    await insert('mine-open', 'position_opened', 10, { trader: address, positionId: 1 });
+    await insert('mine-order', 'order_placed', 11, { trader: address, orderId: 5 });
+    // 250 newer events for someone else — these would bury ours in the old
+    // "fetch recent 200, filter in JS" window.
+    for (let i = 0; i < 250; i++) {
+      await insert(`other-${i}`, 'position_opened', 1000 + i, { trader: other, positionId: i });
+    }
+
+    const cRes = await app.inject({ method: 'POST', url: '/v1/keys/challenge', payload: { address } });
+    const challenge = cRes.json() as { challengeHex: string };
+    const sig = signChallengeXdr(kp, challenge.challengeHex);
+    const issued = await app.inject({
+      method: 'POST',
+      url: '/v1/keys',
+      payload: { address, challenge: challenge.challengeHex, signature: sig },
+    });
+    const { keyId, secret } = issued.json() as { keyId: string; secret: string };
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/account/me/positions',
+      headers: { authorization: `Bearer ${keyId}:${secret}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { events: Array<{ eventId: string; topic: string }> };
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]!.eventId).toBe('mine-open');
+    expect(body.events[0]!.topic).toBe('position_opened');
+  });
+});
