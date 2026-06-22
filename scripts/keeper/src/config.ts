@@ -14,9 +14,9 @@ dotenv.config({ path: path.join(projectRoot, '.env') }); // fallback for monorep
 
 // Default assets to monitor
 const DEFAULT_ASSETS: AssetConfig[] = [
-  { symbol: 'BTC', decimals: 8 },
-  { symbol: 'ETH', decimals: 8 },
-  { symbol: 'XLM', decimals: 7 },
+  { symbol: 'BTC', decimals: 8, maxJumpPct: 0.10, binanceSymbol: 'BTCUSDT' },
+  { symbol: 'ETH', decimals: 8, maxJumpPct: 0.10, binanceSymbol: 'ETHUSDT' },
+  { symbol: 'XLM', decimals: 7, maxJumpPct: 0.15, binanceSymbol: 'XLMUSDT' },
 ];
 
 /**
@@ -74,6 +74,10 @@ export function loadConfig(): KeeperConfig {
 
     // Alerting (optional Discord/Slack webhook)
     alertWebhookUrl: process.env.ALERT_WEBHOOK_URL || undefined,
+
+    // Publish-path defenses (K-2)
+    stateFile: process.env.KEEPER_STATE_FILE || './.keeper-state.json',
+    referenceDivergencePct: parseFloat(process.env.REFERENCE_DIVERGENCE_PCT || '0.03'),
 
     // Assets
     assets: DEFAULT_ASSETS,

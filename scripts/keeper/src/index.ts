@@ -15,6 +15,7 @@
  *   npm run dev      - Start with auto-reload
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
 import { loadConfig } from './config';
 import { StellarClient } from './stellar';
 import { KeeperConfig, KeeperStats, PriceData, AssetConfig } from './types';
@@ -110,6 +111,9 @@ class KeeperBot {
     console.log('🚀 Keeper bot started. Monitoring...\n');
     console.log('═'.repeat(80) + '\n');
 
+    // Restore the price baseline so the jump breaker is armed on the first cycle (K-2).
+    this.loadPersistedPrices();
+
     // Watchdog: if no cycle completes within watchdogMs the process is wedged
     // (hung RPC, deadlock) — alert and exit so the supervisor restarts us (K-1).
     this.lastCycleAt = Date.now();
@@ -142,6 +146,64 @@ class KeeperBot {
       }
 
       await this.sleep(this.config.pollIntervalMs);
+    }
+  }
+
+  /**
+   * Load last-pushed prices from disk so the jump circuit breaker has a baseline
+   * immediately on (re)start — otherwise the first post-restart push would pass
+   * the breaker unchecked and could relay a manipulated price (K-2).
+   */
+  private loadPersistedPrices(): void {
+    try {
+      const raw = readFileSync(this.config.stateFile, 'utf8');
+      const obj = JSON.parse(raw) as Record<string, { price: number; priceScaled: string; timestamp: number }>;
+      for (const [symbol, p] of Object.entries(obj)) {
+        if (p && isFinite(p.price) && p.price > 0) {
+          this.currentPrices.set(symbol, {
+            asset: symbol,
+            price: p.price,
+            priceScaled: BigInt(p.priceScaled ?? '0'),
+            timestamp: p.timestamp ?? 0,
+          });
+        }
+      }
+      console.log(`  Loaded ${this.currentPrices.size} persisted price(s) from ${this.config.stateFile}`);
+    } catch {
+      // No state file yet (first run) — fine.
+    }
+  }
+
+  /** Persist the current price baseline so the breaker survives a restart (K-2). */
+  private savePersistedPrices(): void {
+    try {
+      const obj: Record<string, { price: number; priceScaled: string; timestamp: number }> = {};
+      for (const [symbol, p] of this.currentPrices) {
+        obj[symbol] = { price: p.price, priceScaled: p.priceScaled.toString(), timestamp: p.timestamp };
+      }
+      writeFileSync(this.config.stateFile, JSON.stringify(obj));
+    } catch (e) {
+      console.error('Failed to persist keeper state:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  /**
+   * Independent reference price (Binance) for the sanity check. Best-effort:
+   * returns null if unavailable so a Binance outage never blocks publishing.
+   */
+  private async fetchReferencePrice(binanceSymbol: string): Promise<number | null> {
+    if (!binanceSymbol) return null;
+    try {
+      const res = await fetch(
+        `https://api.binance.com/api/v3/ticker/price?symbol=${binanceSymbol}`,
+        { signal: AbortSignal.timeout(5_000) },
+      );
+      if (!res.ok) return null;
+      const body = (await res.json()) as { price?: string };
+      const price = body.price ? parseFloat(body.price) : NaN;
+      return isFinite(price) && price > 0 ? price : null;
+    } catch {
+      return null;
     }
   }
 
@@ -287,12 +349,30 @@ class KeeperBot {
         continue;
       }
 
-      // 50% circuit breaker against bad publisher data
+      // Independent-ticker sanity check (K-2): skip + alert when the attestation
+      // diverges materially from Binance. Best-effort — a Binance outage (null)
+      // never blocks publishing.
+      const ref = await this.fetchReferencePrice(asset.binanceSymbol);
+      if (ref !== null) {
+        const divergence = Math.abs(priceHuman - ref) / ref;
+        if (divergence > this.config.referenceDivergencePct) {
+          const pct = (divergence * 100).toFixed(1);
+          console.warn(`\n⚠️  ${asset.symbol} attestation $${priceHuman} diverges ${pct}% from ${asset.binanceSymbol} $${ref} — skipping`);
+          void this.notify(`⚠️ Keeper: ${asset.symbol} attestation $${priceHuman} diverges ${pct}% from ${asset.binanceSymbol} $${ref} — skipped push.`);
+          continue;
+        }
+      }
+
+      // Per-asset jump circuit breaker against bad publisher data (K-2). The
+      // baseline survives restarts via the persisted state file.
       const lastPrice = this.currentPrices.get(asset.symbol);
       if (lastPrice && lastPrice.price > 0) {
         const changePercent = Math.abs(priceHuman - lastPrice.price) / lastPrice.price;
-        if (changePercent > 0.5) {
-          console.warn(`\n⚠️  ${asset.symbol} price changed ${(changePercent * 100).toFixed(1)}% ($${lastPrice.price} → $${priceHuman}) — skipping (>50% change)`);
+        if (changePercent > asset.maxJumpPct) {
+          const pct = (changePercent * 100).toFixed(1);
+          const cap = (asset.maxJumpPct * 100).toFixed(0);
+          console.warn(`\n⚠️  ${asset.symbol} price changed ${pct}% ($${lastPrice.price} → $${priceHuman}) — skipping (>${cap}%)`);
+          void this.notify(`⚠️ Keeper: ${asset.symbol} jump ${pct}% ($${lastPrice.price} → $${priceHuman}) exceeds ${cap}% — skipped push.`);
           continue;
         }
       }
@@ -307,6 +387,7 @@ class KeeperBot {
             priceScaled: BigInt(attestation.price),
             timestamp: Date.now(),
           });
+          this.savePersistedPrices(); // keep the breaker baseline durable (K-2)
           this.stats.oracleUpdates++;
           if (this.stats.oracleUpdates <= 3 || this.stats.oracleUpdates % 50 === 0) {
             console.log(`\n✅ Noeracle ${asset.symbol} = $${priceHuman.toLocaleString()} round=${attestation.round_id} (tx: ${result.txHash?.slice(0,8)}...)`);
