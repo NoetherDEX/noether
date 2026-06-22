@@ -32,14 +32,21 @@ export function loadConfig(): KeeperConfig {
     console.log('📄 Loaded contract addresses from contracts.json');
   }
 
-  // Validate required environment variables
-  const rawKey = process.env.KEEPER_SECRET_KEY || process.env.ORACLE_SECRET_KEY || process.env.ADMIN_SECRET_KEY;
+  // Validate required environment variables. Privilege separation (K-8): the
+  // keeper must use a DEDICATED key on mainnet, never the admin key.
+  const keeperKey = process.env.KEEPER_SECRET_KEY || process.env.ORACLE_SECRET_KEY;
+  const rawKey = keeperKey || process.env.ADMIN_SECRET_KEY;
   if (!rawKey) {
     throw new Error('❌ KEEPER_SECRET_KEY, ORACLE_SECRET_KEY, or ADMIN_SECRET_KEY must be set in .env');
   }
-  // Strip quotes, whitespace, newlines that Railway might inject
+  if ((process.env.NETWORK || 'testnet') === 'mainnet' && !keeperKey) {
+    throw new Error('❌ Refusing to run on mainnet with the admin key — set a dedicated KEEPER_SECRET_KEY (K-8).');
+  }
+  // Strip quotes, whitespace, newlines that Railway might inject.
   const secretKey = rawKey.replace(/['"\s\n\r]/g, '').trim();
-  console.log(`🔑 Key loaded: ${secretKey.substring(0, 4)}...${secretKey.substring(secretKey.length - 4)} (${secretKey.length} chars)`);
+  // Never log key material (not even fragments) — the keeper address is logged
+  // separately at startup from the derived public key (K-8).
+  console.log(`🔑 Keeper key loaded (${secretKey.length} chars).`);
 
   const config: KeeperConfig = {
     // Network configuration
