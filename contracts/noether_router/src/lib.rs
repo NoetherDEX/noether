@@ -136,6 +136,58 @@ impl NoetherRouterContract {
         Ok(pnl)
     }
 
+    /// Verify a freshly-signed price for the position's asset, store it, then
+    /// liquidate the position against it — atomically (O-3, K-3). Lets the
+    /// keeper liquidate on a sub-second-fresh price even when the on-chain
+    /// heartbeat slot is >60s stale. `asset` MUST be the position's asset.
+    /// Returns the keeper reward.
+    pub fn liquidate_with_price(
+        env: Env,
+        keeper: Address,
+        position_id: u64,
+        asset: Symbol,
+        price: i128,
+        timestamp: u64,
+        round_id: u64,
+        pubkeys: Vec<BytesN<32>>,
+        sigs: Vec<BytesN<64>>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        keeper.require_auth();
+
+        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (keeper, position_id).into_val(&env);
+        let reward: i128 = env.invoke_contract(&market, &Symbol::new(&env, "liquidate"), args);
+        Ok(reward)
+    }
+
+    /// Verify a freshly-signed price for the order's asset, store it, then
+    /// execute the triggered order against it — atomically (O-3, K-3).
+    /// `asset` MUST be the order's asset. Returns the keeper reward.
+    pub fn execute_with_price(
+        env: Env,
+        keeper: Address,
+        order_id: u64,
+        asset: Symbol,
+        price: i128,
+        timestamp: u64,
+        round_id: u64,
+        pubkeys: Vec<BytesN<32>>,
+        sigs: Vec<BytesN<64>>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        keeper.require_auth();
+
+        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (keeper, order_id).into_val(&env);
+        let reward: i128 = env.invoke_contract(&market, &Symbol::new(&env, "execute_order"), args);
+        Ok(reward)
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Admin
     // ───────────────────────────────────────────────────────────────────────
@@ -382,6 +434,14 @@ mod tests {
             pub fn close_position(_env: Env, _trader: Address, _position_id: u64) -> i128 {
                 4_321
             }
+
+            pub fn liquidate(_env: Env, _keeper: Address, _position_id: u64) -> i128 {
+                111 // fixed keeper reward for the test
+            }
+
+            pub fn execute_order(_env: Env, _keeper: Address, _order_id: u64) -> i128 {
+                222 // fixed keeper reward for the test
+            }
         }
     }
 
@@ -503,6 +563,43 @@ mod tests {
             noeracle.recorded_tag(),
             BytesN::from_array(&f.env, &[b'E', b'T', b'H', b'U', b'S', b'D', 0, 0])
         );
+    }
+
+    #[test]
+    fn liquidate_with_price_refreshes_then_liquidates() {
+        let f = setup();
+        let price = 690_000_000_000_000i128;
+        let reward = f.client.liquidate_with_price(
+            &Address::generate(&f.env), // keeper
+            &7u64,                      // position_id
+            &Symbol::new(&f.env, "BTC"),
+            &price,
+            &1_700_000_000u64,
+            &42u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
+        assert_eq!(reward, 111); // forwarded from the market liquidate
+
+        // The fresh price was relayed to the oracle before liquidating.
+        let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
+        assert_eq!(noeracle.recorded_price(), price);
+    }
+
+    #[test]
+    fn execute_with_price_refreshes_then_executes() {
+        let f = setup();
+        let reward = f.client.execute_with_price(
+            &Address::generate(&f.env), // keeper
+            &9u64,                      // order_id
+            &Symbol::new(&f.env, "ETH"),
+            &300_000_000_000_000i128,
+            &1_700_000_000u64,
+            &43u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
+        assert_eq!(reward, 222); // forwarded from the market execute_order
     }
 
     #[test]
