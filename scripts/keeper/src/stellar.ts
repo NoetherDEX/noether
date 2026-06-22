@@ -35,7 +35,11 @@ export class StellarClient {
   private noeracleContract: Contract;
 
   constructor(private config: KeeperConfig) {
-    this.server = new rpc.Server(config.rpcUrl);
+    // 15s HTTP timeout so a hung RPC can't wedge a keeper cycle indefinitely (K-1).
+    this.server = new rpc.Server(config.rpcUrl, {
+      timeout: 15_000,
+      allowHttp: config.rpcUrl.startsWith('http://'),
+    });
     this.keypair = Keypair.fromSecret(config.secretKey);
     this.networkPassphrase = config.networkPassphrase;
     this.marketContract = new Contract(config.marketContractId);

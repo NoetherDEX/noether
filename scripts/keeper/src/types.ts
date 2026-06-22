@@ -106,6 +106,11 @@ export interface KeeperConfig {
   // Timing
   pollIntervalMs: number;
   oracleUpdateIntervalMs: number;
+  /** Exit (for supervisor restart) if no cycle completes within this window. */
+  watchdogMs: number;
+
+  /** Discord/Slack-compatible webhook for startup/error-streak/watchdog/shutdown alerts. */
+  alertWebhookUrl?: string;
 
   // Assets to monitor
   assets: AssetConfig[];

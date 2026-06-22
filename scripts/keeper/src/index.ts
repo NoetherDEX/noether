@@ -51,6 +51,9 @@ class KeeperBot {
   private knownCrossTraders: Set<string> = new Set();
   private lastCrossTraderScan: number = 0;
   private noeracleClient: NoeracleClient | null = null;
+  private lastCycleAt: number = Date.now();
+  private consecutiveErrors: number = 0;
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.config = loadConfig();
@@ -107,16 +110,55 @@ class KeeperBot {
     console.log('🚀 Keeper bot started. Monitoring...\n');
     console.log('═'.repeat(80) + '\n');
 
+    // Watchdog: if no cycle completes within watchdogMs the process is wedged
+    // (hung RPC, deadlock) — alert and exit so the supervisor restarts us (K-1).
+    this.lastCycleAt = Date.now();
+    this.watchdogTimer = setInterval(() => {
+      const stalledMs = Date.now() - this.lastCycleAt;
+      if (stalledMs > this.config.watchdogMs) {
+        const secs = Math.round(stalledMs / 1000);
+        console.error(`\n❌ Watchdog: no completed cycle in ${secs}s — exiting for restart.`);
+        void this.notify(`🛑 Keeper watchdog tripped: no cycle in ${secs}s. Exiting for restart.`);
+        setTimeout(() => process.exit(1), 1500); // let the alert flush
+      }
+    }, 30_000);
+
+    void this.notify(`✅ Keeper started (${this.config.network}, ${this.stellar.publicKey.slice(0, 8)}…).`);
+
     // Main loop
     while (this.isRunning) {
       try {
         await this.runKeeperCycle();
+        this.lastCycleAt = Date.now();
+        this.consecutiveErrors = 0;
       } catch (error) {
         console.error('Error in keeper loop:', error);
         this.stats.errors++;
+        this.consecutiveErrors++;
+        if (this.consecutiveErrors === 5) {
+          const msg = error instanceof Error ? error.message : String(error);
+          void this.notify(`⚠️ Keeper: 5 consecutive cycle errors. Latest: ${msg}`);
+        }
       }
 
       await this.sleep(this.config.pollIntervalMs);
+    }
+  }
+
+  /** Best-effort alert to the configured Discord/Slack-compatible webhook. */
+  private async notify(message: string): Promise<void> {
+    const url = this.config.alertWebhookUrl;
+    if (!url) return;
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        // `content` = Discord, `text` = Slack; each ignores the other's field.
+        body: JSON.stringify({ content: message, text: message }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (e) {
+      console.error('Alert webhook failed:', e instanceof Error ? e.message : e);
     }
   }
 
@@ -124,6 +166,8 @@ class KeeperBot {
    * Stop the keeper bot
    */
   stop(): void {
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+    void this.notify('🔻 Keeper shutting down.');
     console.log('\n\n' + '═'.repeat(80));
     console.log('Shutting down keeper bot...\n');
     console.log('Session Statistics:');

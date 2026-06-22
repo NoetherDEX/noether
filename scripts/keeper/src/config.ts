@@ -70,6 +70,10 @@ export function loadConfig(): KeeperConfig {
     // Timing
     pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '5000', 10),
     oracleUpdateIntervalMs: parseInt(process.env.ORACLE_UPDATE_INTERVAL_MS || '30000', 10),
+    watchdogMs: parseInt(process.env.WATCHDOG_MS || '180000', 10), // 3 min
+
+    // Alerting (optional Discord/Slack webhook)
+    alertWebhookUrl: process.env.ALERT_WEBHOOK_URL || undefined,
 
     // Assets
     assets: DEFAULT_ASSETS,
