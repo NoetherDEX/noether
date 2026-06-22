@@ -273,6 +273,14 @@ impl NoetherRouterContract {
     ) -> Result<(), NoetherError> {
         let noeracle = Self::noeracle_addr(env)?;
 
+        // Coarse sanity backstop (O-7): reject an absurd price before relaying it
+        // on-chain. Real 7-decimal prices sit far below this ceiling (e.g. $1M BTC
+        // = 1e13); this only catches a non-positive or wildly-out-of-range glitch.
+        const MAX_SANE_PRICE: i128 = 1_000_000_000_000_000_000; // 1e18
+        if price <= 0 || price > MAX_SANE_PRICE {
+            return Err(NoetherError::InvalidPrice);
+        }
+
         // Publisher allowlist (O-2, defense-in-depth — does not replace the
         // shim/Noeracle signature + staleness checks). When configured, every
         // attestation pubkey must be on the list, else the trade reverts.
@@ -600,6 +608,24 @@ mod tests {
             &sigs(&f.env),
         );
         assert_eq!(reward, 222); // forwarded from the market execute_order
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #31)")] // InvalidPrice — sanity backstop
+    fn open_with_absurd_price_rejected() {
+        let f = setup();
+        f.client.open_with_price(
+            &Address::generate(&f.env),
+            &Symbol::new(&f.env, "BTC"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &2_000_000_000_000_000_000i128, // 2e18 — over the 1e18 ceiling
+            &1_700_000_000u64,
+            &42u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
     }
 
     #[test]
