@@ -67,6 +67,18 @@ function handle(
           ts: event.ledgerCloseTs,
         });
         break;
+      case 'position_reduced':
+        // Partial close (P5-9): the position survives at the reduced size.
+        ctx.bus.emit('position', { positionId: event.positionId, trader: event.trader, state: 'reduced' });
+        ctx.bus.emit('trade', {
+          kind: 'close',
+          positionId: event.positionId,
+          trader: event.trader,
+          price: event.price,
+          size: event.closeSize,
+          ts: event.ledgerCloseTs,
+        });
+        break;
       case 'order_placed':
         ctx.bus.emit('order', { orderId: event.orderId, state: 'placed' });
         break;
@@ -120,6 +132,13 @@ async function maintainPositionsProjection(db: Client, event: DecodedMarketEvent
         args: [event.positionId],
       });
       return;
+    case 'position_reduced':
+      // Partial close (P5-9): keep the row, update its size to the residual.
+      await db.execute({
+        sql: 'UPDATE positions SET size = ? WHERE position_id = ?',
+        args: [event.newSize.toString(), event.positionId],
+      });
+      return;
     default:
       return;
   }
@@ -164,6 +183,7 @@ const MARKET_TOPICS: DecodedMarketEvent['topic'][] = [
   'position_opened',
   'position_closed',
   'position_liquidated',
+  'position_reduced',
   'cross_liq',
   'order_placed',
   'order_cancelled',

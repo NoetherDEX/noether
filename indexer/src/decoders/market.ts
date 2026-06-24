@@ -18,6 +18,7 @@ import type {
   OrderPlacedEvent,
   PositionClosedEvent,
   PositionLiquidatedEvent,
+  PositionReducedEvent,
   PositionOpenedEvent,
 } from '../types/events.js';
 import { decodeEventValue, decodeTopics, asBigInt, asNumber, asString } from './scval.js';
@@ -54,6 +55,8 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
       return decodePositionClosed(raw, value);
     case 'position_liquidated':
       return decodePositionLiquidated(raw, value);
+    case 'position_reduced':
+      return decodePositionReduced(raw, value);
     case 'cross_liq':
       return decodeCrossLiq(raw, value);
     case 'order_placed':
@@ -100,6 +103,21 @@ function decodePositionClosed(raw: RawEvent, v: unknown[]): PositionClosedEvent 
     trader: asString(v[1], 'position_closed.trader'),
     pnl: asBigInt(v[7], 'position_closed.pnl'),
     closePrice: asBigInt(v[6], 'position_closed.close_price'),
+  };
+}
+
+// position_reduced (P5-9): (id, trader, asset, close_size, new_size, price, pnl)
+function decodePositionReduced(raw: RawEvent, v: unknown[]): PositionReducedEvent {
+  return {
+    ...envelope(raw, 'position_reduced'),
+    topic: 'position_reduced',
+    positionId: asNumber(v[0], 'position_reduced.position_id'),
+    trader: asString(v[1], 'position_reduced.trader'),
+    asset: asString(v[2], 'position_reduced.asset'),
+    closeSize: asBigInt(v[3], 'position_reduced.close_size'),
+    newSize: asBigInt(v[4], 'position_reduced.new_size'),
+    price: asBigInt(v[5], 'position_reduced.price'),
+    pnl: asBigInt(v[6], 'position_reduced.pnl'),
   };
 }
 

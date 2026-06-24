@@ -19,11 +19,11 @@ Legend: ✅ done · 🔨 in progress · ⬜ todo · 🔗 external (Noeracle/Yahy
 ## P5 — Risk engine (MAINNET-CRITICAL, contracts) — PRIORITY 1
 - ✅ P5-1  RiskConfig + per-asset OI caps + max-leverage enforcement (50 tests, set_risk_config admin)
 - ✅ P5-2  Maintenance-margin raise — per-asset MM on isolated AND cross health (cross gap closed after verification)
-- ⬜ P5-5  Partial liquidation (restore margin, don't nuke the whole position) — designed
-- ⬜ P5-6  Insurance buffer (absorbs bad debt before LP NAV) — designed
+- 🛑 P5-5  Partial liquidation — BLOCKED on a product/economic decision (pro-rata can't change the margin ratio; needs survivor-recapitalisation). See docs/issues/P5-5-partial-liquidation.md. Needs P5-6 first.
+- ⬜ P5-6  Insurance buffer (absorbs bad debt before LP NAV) — designed (gates P5-5 + P5-7)
 - ⬜ P5-7  ADL (auto-deleverage) when insurance is exhausted — designed
-- ⬜ P5-9  Partial position close — designed (shares settle_and_close_partial core with P5-5)
-- ⬜ P5-8  TWAP / multi-sample oracle smoothing (interim before Noeracle median) — designed
+- ✅ P5-9  Partial position close (settle_and_close_partial core, 2 tests) + indexer position_reduced
+- ⬜ P5-8  TWAP / multi-sample oracle smoothing — designed; INTERIM defense-in-depth (real fix = Noeracle median P2-1, external). Lower priority than P5-6/7.
 - ⬜ P5-3/4 Funding accounting upgrade (vault-as-counterparty model is in; formalize the pool) — designed
 
 ## P2 — Keeper tail (contracts already done; keeper code) — PRIORITY 2
