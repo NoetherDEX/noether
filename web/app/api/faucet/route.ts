@@ -1,12 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { mintTestUSDC } from '@/lib/stellar/token';
-import { TRADING } from '@/lib/utils/constants';
+import { TRADING, NETWORK } from '@/lib/utils/constants';
 
 // Amount to mint: 10,000 USDC (with 7 decimals)
 const MINT_AMOUNT = BigInt(10_000 * TRADING.PRECISION);
 
 export async function POST(request: NextRequest) {
   try {
+    // Fail-closed: the faucet mints TEST assets and must NEVER run on mainnet.
+    // It operates only when the network is explicitly testnet, so flipping the
+    // network constant to mainnet auto-disables it (P6-3 / config-parity).
+    if ((NETWORK.NAME as string) !== 'testnet') {
+      return NextResponse.json(
+        { error: 'Faucet is disabled outside testnet.' },
+        { status: 403 }
+      );
+    }
+
     const { recipientAddress } = await request.json();
 
     if (!recipientAddress) {
