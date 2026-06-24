@@ -90,12 +90,28 @@ export const NOE_ASSET = {
   ISSUER: process.env.NEXT_PUBLIC_NOE_ISSUER || 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN',
 } as const;
 
-// Network configuration
+// Network configuration. Env-driven (P3-4) so a mainnet cutover needs no code
+// change — defaults preserve the testnet behaviour. NEXT_PUBLIC_* are inlined at
+// build time by Next.js. A mainnet build is just: NEXT_PUBLIC_NETWORK=mainnet +
+// the matching passphrase/RPC. The faucet (P6-3) keys off NAME, so it auto-disables.
+const NETWORK_NAME = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
 export const NETWORK = {
-  NAME: 'testnet' as const,
-  PASSPHRASE: 'Test SDF Network ; September 2015',
-  RPC_URL: 'https://soroban-testnet.stellar.org',
-  HORIZON_URL: 'https://horizon-testnet.stellar.org',
+  NAME: NETWORK_NAME,
+  PASSPHRASE:
+    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+    (NETWORK_NAME === 'mainnet'
+      ? 'Public Global Stellar Network ; September 2015'
+      : 'Test SDF Network ; September 2015'),
+  RPC_URL:
+    process.env.NEXT_PUBLIC_RPC_URL ||
+    (NETWORK_NAME === 'mainnet'
+      ? 'https://mainnet.sorobanrpc.com'
+      : 'https://soroban-testnet.stellar.org'),
+  HORIZON_URL:
+    process.env.NEXT_PUBLIC_HORIZON_URL ||
+    (NETWORK_NAME === 'mainnet'
+      ? 'https://horizon.stellar.org'
+      : 'https://horizon-testnet.stellar.org'),
 } as const;
 
 // Trading constants
