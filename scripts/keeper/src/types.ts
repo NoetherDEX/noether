@@ -120,6 +120,12 @@ export interface KeeperConfig {
   stateFile: string;
   /** Max divergence from the independent ticker before an attestation push is skipped. */
   referenceDivergencePct: number;
+  /** Hard upper bound on a single push even when the independent ticker corroborates it,
+   *  so a correlated flash-wick/glitch can't publish an extreme move. */
+  corroboratedMaxJumpPct: number;
+  /** If the last-pushed baseline is older than this, publish anyway to re-seed —
+   *  guarantees the jump breaker can never freeze the feed permanently. */
+  maxBaselineAgeMs: number;
 
   // Assets to monitor
   assets: AssetConfig[];

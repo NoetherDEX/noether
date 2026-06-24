@@ -12,6 +12,25 @@ dotenv.config(); // loads .env from cwd (Railway sets env vars directly)
 const projectRoot = path.resolve(__dirname, '../../../');
 dotenv.config({ path: path.join(projectRoot, '.env') }); // fallback for monorepo
 
+/**
+ * Parse a float env var, falling back to `def` if unset/empty/NaN and clamping to
+ * [min, max]. A bad value must never silently disable or invert a safety guard (K-2).
+ */
+function parseFloatEnv(name: string, def: number, min: number, max: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return def;
+  const v = parseFloat(raw);
+  if (!Number.isFinite(v)) {
+    console.warn(`⚠️  ${name}="${raw}" is not a finite number — using default ${def}.`);
+    return def;
+  }
+  if (v < min || v > max) {
+    console.warn(`⚠️  ${name}=${v} out of range [${min}, ${max}] — clamping.`);
+    return Math.min(Math.max(v, min), max);
+  }
+  return v;
+}
+
 // Default assets to monitor
 const DEFAULT_ASSETS: AssetConfig[] = [
   { symbol: 'BTC', decimals: 8, maxJumpPct: 0.10, binanceSymbol: 'BTCUSDT' },
@@ -39,7 +58,12 @@ export function loadConfig(): KeeperConfig {
   const MAINNET_PASSPHRASE = 'Public Global Stellar Network ; September 2015';
   const networkPassphrase = (process.env.NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015').trim();
   const networkLabel = (process.env.NETWORK || 'testnet').trim().toLowerCase();
-  const isMainnet = networkLabel === 'mainnet' || networkPassphrase === MAINNET_PASSPHRASE;
+  const rpcUrl = process.env.RPC_URL || 'https://soroban-testnet.stellar.org';
+  // An RPC host that looks like mainnet while the passphrase says otherwise is a
+  // misconfiguration — fail loudly rather than sign with the wrong assumptions (K-8).
+  const rpcLooksMainnet = /(^|[^a-z])mainnet([^a-z]|$)|soroban-rpc\.stellar\.org|pubnet/i.test(rpcUrl);
+  const isMainnet =
+    networkLabel === 'mainnet' || networkPassphrase === MAINNET_PASSPHRASE || rpcLooksMainnet;
 
   // Validate required environment variables. Privilege separation (K-8): the
   // keeper must use a DEDICATED key on mainnet, never the admin key.
@@ -60,7 +84,7 @@ export function loadConfig(): KeeperConfig {
   const config: KeeperConfig = {
     // Network configuration (normalized + passphrase-derived, K-8)
     network: isMainnet ? 'mainnet' : 'testnet',
-    rpcUrl: process.env.RPC_URL || 'https://soroban-testnet.stellar.org',
+    rpcUrl,
     networkPassphrase,
 
     // Credentials
@@ -93,7 +117,9 @@ export function loadConfig(): KeeperConfig {
 
     // Publish-path defenses (K-2)
     stateFile: process.env.KEEPER_STATE_FILE || './.keeper-state.json',
-    referenceDivergencePct: parseFloat(process.env.REFERENCE_DIVERGENCE_PCT || '0.03'),
+    referenceDivergencePct: parseFloatEnv('REFERENCE_DIVERGENCE_PCT', 0.03, 0.001, 0.5),
+    corroboratedMaxJumpPct: parseFloatEnv('CORROBORATED_MAX_JUMP_PCT', 0.5, 0.05, 0.95),
+    maxBaselineAgeMs: parseInt(process.env.MAX_BASELINE_AGE_MS || '300000', 10), // 5 min
 
     // Assets
     assets: DEFAULT_ASSETS,

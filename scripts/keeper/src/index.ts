@@ -351,8 +351,9 @@ class KeeperBot {
 
       // Independent-ticker sanity check (K-2): skip + alert when the attestation
       // diverges materially from Binance. Best-effort — a Binance outage (null)
-      // never blocks publishing. A price the independent ticker CORROBORATES is
-      // real (even a large fast move), so it bypasses the jump breaker below.
+      // never blocks publishing. Corroboration RAISES the jump bound (below) but
+      // never removes it, so a glitch correlated across Binance + the index can't
+      // publish an extreme wick.
       const ref = await this.fetchReferencePrice(asset.binanceSymbol);
       let corroborated = false;
       if (ref !== null) {
@@ -366,22 +367,26 @@ class KeeperBot {
         corroborated = true;
       }
 
-      // Per-asset jump circuit breaker against bad PUBLISHER data — only a
-      // FALLBACK for when the independent ticker is unavailable. A Binance-
-      // corroborated move is genuine and must NOT be frozen out, otherwise a
-      // single legitimate >maxJumpPct move would wedge the feed permanently
-      // (the stale baseline only advances on a successful push) (K-2).
-      if (!corroborated) {
-        const lastPrice = this.currentPrices.get(asset.symbol);
-        if (lastPrice && lastPrice.price > 0) {
-          const changePercent = Math.abs(priceHuman - lastPrice.price) / lastPrice.price;
-          if (changePercent > asset.maxJumpPct) {
-            const pct = (changePercent * 100).toFixed(1);
-            const cap = (asset.maxJumpPct * 100).toFixed(0);
-            console.warn(`\n⚠️  ${asset.symbol} price changed ${pct}% ($${lastPrice.price} → $${priceHuman}) with no independent corroboration — skipping (>${cap}%)`);
-            void this.notify(`⚠️ Keeper: ${asset.symbol} uncorroborated jump ${pct}% ($${lastPrice.price} → $${priceHuman}) exceeds ${cap}% — skipped push.`);
-            continue;
-          }
+      // Jump circuit breaker against bad PUBLISHER data. The bound is the tight
+      // per-asset cap normally, RAISED to a higher hard ceiling when the move is
+      // independently corroborated (a genuine fast move) — but never removed (#7).
+      // The baseline only advances on a successful push, so to guarantee the
+      // breaker can NEVER freeze the feed permanently (a sustained move or a
+      // persistent reference divergence), a baseline older than maxBaselineAgeMs is
+      // treated as expired and the push proceeds to re-seed it (#8).
+      const lastPrice = this.currentPrices.get(asset.symbol);
+      if (lastPrice && lastPrice.price > 0) {
+        const baselineAgeMs = Date.now() - lastPrice.timestamp;
+        const baselineExpired = baselineAgeMs > this.config.maxBaselineAgeMs;
+        const bound = corroborated ? this.config.corroboratedMaxJumpPct : asset.maxJumpPct;
+        const changePercent = Math.abs(priceHuman - lastPrice.price) / lastPrice.price;
+        if (changePercent > bound && !baselineExpired) {
+          const pct = (changePercent * 100).toFixed(1);
+          const cap = (bound * 100).toFixed(0);
+          const tag = corroborated ? 'corroborated' : 'uncorroborated';
+          console.warn(`\n⚠️  ${asset.symbol} ${tag} jump ${pct}% ($${lastPrice.price} → $${priceHuman}) — skipping (>${cap}%)`);
+          void this.notify(`⚠️ Keeper: ${asset.symbol} ${tag} jump ${pct}% ($${lastPrice.price} → $${priceHuman}) exceeds ${cap}% — skipped push.`);
+          continue;
         }
       }
 

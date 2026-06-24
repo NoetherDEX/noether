@@ -1764,11 +1764,15 @@ impl MarketContract {
             return Err(NoetherError::OrderNotPending);
         }
 
-        // Get current price. SL / TP / trailing-stop are risk-OUT (protective
-        // closes) and MUST fire even on a stale/deviating price, so they use the
-        // lenient read; limit entries are risk-IN and use the strict read (M-2).
+        // Get current price. Risk-OUT orders (SL / TP / trailing-stop, AND any
+        // reduce-only limit/stop-limit — bit 8 of time_in_force) are protective and
+        // MUST fire even on a stale/deviating price, so they use the lenient read;
+        // risk-IN limit entries use the strict read (M-2).
         let current_price = match order.order_type {
             OrderType::StopLoss | OrderType::TakeProfit | OrderType::TrailingStop => {
+                Self::get_oracle_close_price(&env, &order.asset)?
+            }
+            _ if order.time_in_force & 0x100 != 0 => {
                 Self::get_oracle_close_price(&env, &order.asset)?
             }
             _ => Self::get_oracle_price(&env, &order.asset)?,
@@ -1921,11 +1925,15 @@ impl MarketContract {
             return Ok(false);
         }
 
-        // Match execute_order's read policy: lenient for risk-OUT (SL/TP/trailing)
-        // so the keeper's pre-check doesn't falsely skip a protective close during
-        // a deviation/staleness window; strict for risk-IN limit entries (M-2).
+        // Match execute_order's read policy: lenient for risk-OUT (SL/TP/trailing
+        // and reduce-only limit/stop-limit) so the keeper's pre-check doesn't
+        // falsely skip a protective fill during a deviation/staleness window;
+        // strict for risk-IN limit entries (M-2).
         let current_price = match order.order_type {
             OrderType::StopLoss | OrderType::TakeProfit | OrderType::TrailingStop => {
+                Self::get_oracle_close_price(&env, &order.asset)?
+            }
+            _ if order.time_in_force & 0x100 != 0 => {
                 Self::get_oracle_close_price(&env, &order.asset)?
             }
             _ => Self::get_oracle_price(&env, &order.asset)?,
