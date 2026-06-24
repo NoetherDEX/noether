@@ -128,23 +128,30 @@ fn record_volume_only(env: &Env, trader: &Address, size: i128) {
 
 /// Cancel any stop-loss / take-profit order linked to a position as it closes,
 /// so a stale order can't later fire against a deleted position (zombie orders,
-/// M-3). SL/TP lock no collateral, so there is nothing to refund.
-fn cancel_linked_position_orders(env: &Env, position_id: u64) {
+/// M-3). SL/TP lock no collateral, so there is nothing to refund. `exclude` is the
+/// order currently being executed (the one that triggered the close) — it must NOT
+/// be cancelled here, since its caller finalizes it to Executed; pass None for a
+/// user-initiated close so BOTH linked orders are cancelled.
+fn cancel_linked_position_orders(env: &Env, position_id: u64, exclude: Option<u64>) {
     if let Some(sl_id) = get_position_stop_loss(env, position_id) {
-        update_order_status(env, sl_id, OrderStatus::Cancelled);
         remove_position_stop_loss(env, position_id);
-        env.events().publish(
-            (Symbol::new(env, "order_cancelled"),),
-            (sl_id, Symbol::new(env, "position_closed")),
-        );
+        if Some(sl_id) != exclude {
+            update_order_status(env, sl_id, OrderStatus::Cancelled);
+            env.events().publish(
+                (Symbol::new(env, "order_cancelled"),),
+                (sl_id, Symbol::new(env, "position_closed")),
+            );
+        }
     }
     if let Some(tp_id) = get_position_take_profit(env, position_id) {
-        update_order_status(env, tp_id, OrderStatus::Cancelled);
         remove_position_take_profit(env, position_id);
-        env.events().publish(
-            (Symbol::new(env, "order_cancelled"),),
-            (tp_id, Symbol::new(env, "position_closed")),
-        );
+        if Some(tp_id) != exclude {
+            update_order_status(env, tp_id, OrderStatus::Cancelled);
+            env.events().publish(
+                (Symbol::new(env, "order_cancelled"),),
+                (tp_id, Symbol::new(env, "position_closed")),
+            );
+        }
     }
 }
 
@@ -394,26 +401,29 @@ impl MarketContract {
     /// Authorisation/ownership is the caller's responsibility. Returns realised PnL.
     fn close_isolated_position(env: &Env, position: &Position) -> Result<i128, NoetherError> {
         let current_price = Self::get_oracle_close_price(env, &position.asset)?;
-        Self::settle_and_close(env, position, current_price, &position.trader, 0)
+        Self::settle_and_close(env, position, current_price, &position.trader, 0, None)
     }
 
     /// Settle and delete an isolated position with CONSERVATION-SAFE distribution
-    /// (V-3): the keeper fee and any positive funding charge are reserved out of
-    /// collateral FIRST, then the loss is capped at the remainder — so
-    /// `loss + funding + fee` can never exceed the position's own collateral and a
-    /// close can never draw on other positions' pooled collateral. A winner's
-    /// profit is whatever the vault actually paid (shortfall-capped, never
-    /// reverts). Releases the payout reservation (M-4), cancels linked SL/TP (M-3),
-    /// drops OI, records volume, deletes the position. `keeper_fee` (>=0) is paid to
-    /// `keeper` from the trader's proceeds (pass 0 for a user-initiated close).
-    /// Returns the position's mark PnL. `current_price` MUST be a lenient read so a
-    /// position can always be closed.
+    /// (V-3). Funding is FOLDED INTO the value settled with the vault, so the vault
+    /// is the funding counterparty (its `total_usdc` accounts for it) and funding is
+    /// never paid out of — or into — the pooled market balance. The keeper fee is
+    /// reserved out of collateral, then a NET loss (price PnL minus funding) is
+    /// capped at the remainder, so the market never transfers out more than this
+    /// position's own collateral and a close can never draw on other positions'
+    /// collateral. A winner's payout is whatever the vault actually settled
+    /// (shortfall-capped, never reverts). Releases the payout reservation (M-4),
+    /// cancels the SIBLING linked SL/TP (M-3) — `exclude_order_id` is the order that
+    /// triggered the close (its caller finalizes it; pass None for a user close).
+    /// Drops OI, records volume, deletes the position. Returns the mark PnL.
+    /// `current_price` MUST be a lenient read so a position can always be closed.
     fn settle_and_close(
         env: &Env,
         position: &Position,
         current_price: i128,
         keeper: &Address,
         keeper_fee: i128,
+        exclude_order_id: Option<u64>,
     ) -> Result<i128, NoetherError> {
         let cumulative = get_cumulative_funding_rate(env);
         let funding = calculate_cumulative_funding(
@@ -422,36 +432,35 @@ impl MarketContract {
         );
         let pnl = calculate_pnl(position, current_price)?;
 
-        // Reserve the keeper fee + any positive funding out of collateral, then
-        // cap the loss at what remains. This guarantees
-        // loss + funding_paid + fee_paid <= collateral (no draw on others, V-3).
+        // Net economic PnL = price PnL minus funding owed (negative funding is a
+        // credit that increases the trader's gain). Reserve the keeper fee out of
+        // collateral, then cap a NET loss at the remainder so the market never
+        // sends out more than this position's own collateral (V-3).
         let fee_paid = (if keeper_fee > 0 { keeper_fee } else { 0 }).min(position.collateral);
-        let funding_owed = if funding > 0 { funding } else { 0 };
-        let funding_paid = funding_owed.min(position.collateral - fee_paid);
-        let avail_for_loss = position.collateral - fee_paid - funding_paid;
-        let loss = if pnl < 0 { (-pnl).min(avail_for_loss) } else { 0 };
-        let effective_pnl = if pnl < 0 { -loss } else { pnl };
+        let net_pnl = pnl.checked_sub(funding).unwrap_or(pnl);
+        let capped_loss = if net_pnl < 0 {
+            (-net_pnl).min(position.collateral - fee_paid)
+        } else {
+            0
+        };
+        let settle_value = if net_pnl < 0 { -capped_loss } else { net_pnl };
 
-        // Settle (winner payout is shortfall-capped, never reverts) + free reservation.
+        // The vault settles the (capped) net PnL — funding included — so it is the
+        // funding counterparty. Gains are shortfall-capped (never reverts).
         let vault_address = get_vault(env);
-        let settled_pnl = Self::settle_with_vault(env, &vault_address, effective_pnl)?;
+        let settled = Self::settle_with_vault(env, &vault_address, settle_value)?;
         Self::release_vault_reservation(env, &vault_address, position.size);
 
-        // Trader proceeds: collateral + vault-paid profit + any funding owed TO the
-        // trader (negative funding), minus the capped loss / funding paid / fee.
-        let profit = if settled_pnl > 0 { settled_pnl } else { 0 };
-        let funding_credit = if funding < 0 { -funding } else { 0 };
-        let to_trader =
-            position.collateral + profit + funding_credit - loss - funding_paid - fee_paid;
-        let to_trader = if to_trader > 0 { to_trader } else { 0 };
+        // Trader proceeds = collateral + what the vault settled (gain paid in by the
+        // vault, loss already capped) − keeper fee. Clamped at zero.
+        let to_trader = (position.collateral + settled - fee_paid).max(0);
 
         let usdc_token = get_usdc_token(env);
         let token_client = token::Client::new(env, &usdc_token);
-        if loss > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
-        }
-        if funding_paid > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &funding_paid);
+        // Net loss: the market sends the capped loss tokens to the vault. Net gain:
+        // the vault already paid the market inside settle_with_vault.
+        if settle_value < 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &capped_loss);
         }
         if fee_paid > 0 {
             token_client.transfer(&env.current_contract_address(), keeper, &fee_paid);
@@ -472,7 +481,7 @@ impl MarketContract {
         }
 
         record_volume_only(env, &position.trader, position.size);
-        cancel_linked_position_orders(env, position.id);
+        cancel_linked_position_orders(env, position.id, exclude_order_id);
         delete_position(env, position.id, &position.trader);
 
         env.events().publish(
@@ -620,7 +629,7 @@ impl MarketContract {
         }
 
         // Cancel any attached SL/TP so they can't fire on the liquidated position.
-        cancel_linked_position_orders(&env, position_id);
+        cancel_linked_position_orders(&env, position_id, None);
 
         // Delete position
         delete_position(&env, position_id, &position.trader);
@@ -1012,39 +1021,31 @@ impl MarketContract {
         let current_price = Self::get_oracle_close_price(&env, &pos.asset)?;
         let pnl = calculate_pnl(&pos, current_price)?;
 
-        // Cap loss + funding within this position's own margin so closing a single
-        // cross leg can't transfer out more USDC than it backs and drain other
-        // traders' pooled cross funds (V-3). Account-level bad debt remains the job
-        // of liquidate_cross_account.
-        let funding_paid = if funding > 0 { funding.min(pos.collateral) } else { 0 };
-        let avail_for_loss = pos.collateral - funding_paid;
-        let loss = if pnl < 0 { (-pnl).min(avail_for_loss) } else { 0 };
-        let effective_pnl = if pnl < 0 { -loss } else { pnl };
+        // Fold funding into the value settled with the vault (vault is the funding
+        // counterparty, accounted in total_usdc) and cap a NET loss within this
+        // leg's own margin so closing a single cross leg can't transfer out more
+        // USDC than it backs and drain other traders' pooled cross funds (V-3).
+        // Account-level bad debt remains the job of liquidate_cross_account.
+        let net_pnl = pnl.checked_sub(funding).unwrap_or(pnl);
+        let capped_loss = if net_pnl < 0 { (-net_pnl).min(pos.collateral) } else { 0 };
+        let settle_value = if net_pnl < 0 { -capped_loss } else { net_pnl };
 
-        // Settle the capped pnl (winner payout is shortfall-capped, never reverts).
         let vault_address = get_vault(&env);
-        let settled_pnl = Self::settle_with_vault(&env, &vault_address, effective_pnl)?;
+        let settled_pnl = Self::settle_with_vault(&env, &vault_address, settle_value)?;
         // Free the payout reserved for this position when it opened (M-4).
         Self::release_vault_reservation(&env, &vault_address, pos.size);
 
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
-        if loss > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
-        }
-        if funding_paid > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &funding_paid);
+        // Net loss: send the capped loss to the vault. Net gain: the vault already
+        // paid the market inside settle_with_vault.
+        if settle_value < 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &capped_loss);
         }
 
-        // Return remaining equity to the cross-margin pool (NOT trader wallet),
-        // using the same capped components so the credit can't exceed what backs it.
-        let profit = if settled_pnl > 0 { settled_pnl } else { 0 };
-        let funding_credit = if funding < 0 { -funding } else { 0 };
-        let to_pool = pos.collateral
-            .checked_add(profit).unwrap_or(0)
-            .checked_add(funding_credit).unwrap_or(0)
-            .checked_sub(loss).unwrap_or(0)
-            .checked_sub(funding_paid).unwrap_or(0);
+        // Return remaining equity to the cross-margin pool (NOT the trader wallet):
+        // collateral + whatever the vault settled (funding already folded in).
+        let to_pool = pos.collateral.checked_add(settled_pnl).unwrap_or(0).max(0);
         if to_pool > 0 {
             let current_balance = get_cross_margin_balance(&env, &trader);
             let new_balance = current_balance.checked_add(to_pool).unwrap_or(current_balance);
@@ -1070,7 +1071,7 @@ impl MarketContract {
         remove_cross_margin_position(&env, &trader, position_id);
         // Defensive: cancel any legacy SL/TP linked to this cross position
         // (new cross positions can't attach them) before deleting it.
-        cancel_linked_position_orders(&env, position_id);
+        cancel_linked_position_orders(&env, position_id, None);
         delete_position(&env, position_id, &trader);
 
         extend_instance_ttl(&env);
@@ -1175,7 +1176,7 @@ impl MarketContract {
                 }
 
                 // Defensive: cancel any legacy SL/TP linked to this position.
-                cancel_linked_position_orders(&env, pid);
+                cancel_linked_position_orders(&env, pid, None);
 
                 // Delete position
                 delete_position(&env, pid, &trader);
@@ -2509,8 +2510,10 @@ impl MarketContract {
         // keeper fee within this position's own collateral (V-3), releases the
         // reservation (M-4), and cancels the sibling SL/TP so it can't zombie (M-3).
         // `current_price` is the lenient read from execute_order, so a protective
-        // close is never blocked by the deviation/staleness guard.
-        Self::settle_and_close(env, &position, current_price, keeper, keeper_fee)?;
+        // close is never blocked by the deviation/staleness guard. Exclude THIS
+        // firing order from the sibling-cancel so it isn't relabelled Cancelled —
+        // execute_order finalizes it to Executed (and pays the keeper reward).
+        Self::settle_and_close(env, &position, current_price, keeper, keeper_fee, Some(order.id))?;
         Ok(keeper_fee)
     }
 
@@ -3128,6 +3131,64 @@ mod tests {
         // not over-transfer the ~$125 mark loss and raid other traders' collateral.
         assert!(drained <= pos.collateral, "execute_close_order over-drained the pool");
         assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    // Regression: a keeper-fired SL must end Executed (not Cancelled) and must cancel
+    // its SIBLING TP (no zombie) — the cancel_linked exclude path (M-3 + M-6).
+    #[test]
+    fn sl_fire_marks_executed_and_cancels_sibling_tp() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader, &Symbol::new(&test.env, "XLM"), &(100 * PRECISION), &3, &Direction::Long,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 9 / 100), &10_000);
+        let tp = test.market.set_take_profit(&trader, &pos.id, &(PRECISION * 12 / 100), &10_000, &0);
+
+        // Drop to $0.085 → SL triggers (loss well within collateral).
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 85 / 1000));
+        test.market.execute_order(&keeper, &sl.id);
+
+        assert_eq!(test.market.get_order(&sl.id).unwrap().status, OrderStatus::Executed);
+        assert_eq!(test.market.get_order(&tp.id).unwrap().status, OrderStatus::Cancelled);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    // Funding must settle THROUGH the vault, never out of the pooled market balance:
+    // a position that owes funding can't draw on another trader's collateral, and
+    // the vault accounts for the funding inflow (V-3 funding-folding).
+    #[test]
+    fn funding_settles_through_vault_not_pool() {
+        let test = setup();
+        let alice = fund_trader(&test, 10_000 * PRECISION);
+        let bob = fund_trader(&test, 10_000 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+
+        // Bob's collateral sits pooled in the market backing his open long.
+        let bob_pos = test.market.open_position(
+            &bob, &Symbol::new(&test.env, "XLM"), &(100 * PRECISION), &2, &Direction::Long,
+        );
+        // Long-heavy OI so funding accrues positive (longs pay).
+        let alice_pos = test.market.open_position(
+            &alice, &Symbol::new(&test.env, "XLM"), &(500 * PRECISION), &5, &Direction::Long,
+        );
+
+        // Advance 3h and accrue funding → cumulative rate rises; Alice now owes funding.
+        test.env.ledger().set_timestamp(1_700_000_000 + 3 * 3600 + 1);
+        test.market.apply_funding();
+
+        let vault_before = vault.get_total_usdc();
+        test.market.close_position(&alice, &alice_pos.id);
+
+        // Bob's pooled collateral is still fully backed in the market...
+        assert!(usdc.balance(&test.market_id) >= bob_pos.collateral,
+            "funding close drew on another trader's pooled collateral");
+        // ...and the vault captured the funding (not lost to an unaccounted transfer).
+        assert!(vault.get_total_usdc() >= vault_before);
     }
 
     // ═══════════════════════════════════════════════════════════════════
