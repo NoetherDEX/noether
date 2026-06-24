@@ -31,6 +31,26 @@ function parseFloatEnv(name: string, def: number, min: number, max: number): num
   return v;
 }
 
+/**
+ * Parse an integer env var, falling back to `def` if unset/empty/NaN and clamping
+ * to [min, max]. A bad value must never disable a safety guard (e.g. a 0 or NaN
+ * baseline-age must not switch the jump breaker permanently on or off) (K-2).
+ */
+function parseIntEnv(name: string, def: number, min: number, max: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return def;
+  const v = parseInt(raw, 10);
+  if (!Number.isFinite(v)) {
+    console.warn(`⚠️  ${name}="${raw}" is not an integer — using default ${def}.`);
+    return def;
+  }
+  if (v < min || v > max) {
+    console.warn(`⚠️  ${name}=${v} out of range [${min}, ${max}] — clamping.`);
+    return Math.min(Math.max(v, min), max);
+  }
+  return v;
+}
+
 // Default assets to monitor
 const DEFAULT_ASSETS: AssetConfig[] = [
   { symbol: 'BTC', decimals: 8, maxJumpPct: 0.10, binanceSymbol: 'BTCUSDT' },
@@ -119,7 +139,8 @@ export function loadConfig(): KeeperConfig {
     stateFile: process.env.KEEPER_STATE_FILE || './.keeper-state.json',
     referenceDivergencePct: parseFloatEnv('REFERENCE_DIVERGENCE_PCT', 0.03, 0.001, 0.5),
     corroboratedMaxJumpPct: parseFloatEnv('CORROBORATED_MAX_JUMP_PCT', 0.5, 0.05, 0.95),
-    maxBaselineAgeMs: parseInt(process.env.MAX_BASELINE_AGE_MS || '300000', 10), // 5 min
+    // Validated + clamped [30s, 1h]: a 0/NaN must not permanently disable the breaker.
+    maxBaselineAgeMs: parseIntEnv('MAX_BASELINE_AGE_MS', 300000, 30_000, 3_600_000),
 
     // Assets
     assets: DEFAULT_ASSETS,

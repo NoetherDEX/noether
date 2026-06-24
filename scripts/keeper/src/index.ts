@@ -368,22 +368,23 @@ class KeeperBot {
       }
 
       // Jump circuit breaker against bad PUBLISHER data. The bound is the tight
-      // per-asset cap normally, RAISED to a higher hard ceiling when the move is
-      // independently corroborated (a genuine fast move) — but never removed (#7).
-      // The baseline only advances on a successful push, so to guarantee the
-      // breaker can NEVER freeze the feed permanently (a sustained move or a
-      // persistent reference divergence), a baseline older than maxBaselineAgeMs is
-      // treated as expired and the push proceeds to re-seed it (#8).
+      // per-asset cap normally, WIDENED to the higher hard ceiling when the move is
+      // independently corroborated (a genuine fast move) OR when the baseline has
+      // gone stale (so a sustained move / persistent divergence can re-seed instead
+      // of freezing the feed) — but NEVER removed (#3/#6). Even an expired baseline
+      // keeps the ceiling, so an extreme wick can't publish unchecked while Binance
+      // is down; that case stays frozen + alerted for an operator rather than
+      // pushing an arbitrary price that could trigger mass wrongful liquidations.
       const lastPrice = this.currentPrices.get(asset.symbol);
       if (lastPrice && lastPrice.price > 0) {
-        const baselineAgeMs = Date.now() - lastPrice.timestamp;
-        const baselineExpired = baselineAgeMs > this.config.maxBaselineAgeMs;
-        const bound = corroborated ? this.config.corroboratedMaxJumpPct : asset.maxJumpPct;
+        const baselineExpired = Date.now() - lastPrice.timestamp > this.config.maxBaselineAgeMs;
+        const bound =
+          corroborated || baselineExpired ? this.config.corroboratedMaxJumpPct : asset.maxJumpPct;
         const changePercent = Math.abs(priceHuman - lastPrice.price) / lastPrice.price;
-        if (changePercent > bound && !baselineExpired) {
+        if (changePercent > bound) {
           const pct = (changePercent * 100).toFixed(1);
           const cap = (bound * 100).toFixed(0);
-          const tag = corroborated ? 'corroborated' : 'uncorroborated';
+          const tag = corroborated ? 'corroborated' : baselineExpired ? 'stale-baseline' : 'uncorroborated';
           console.warn(`\n⚠️  ${asset.symbol} ${tag} jump ${pct}% ($${lastPrice.price} → $${priceHuman}) — skipping (>${cap}%)`);
           void this.notify(`⚠️ Keeper: ${asset.symbol} ${tag} jump ${pct}% ($${lastPrice.price} → $${priceHuman}) exceeds ${cap}% — skipped push.`);
           continue;

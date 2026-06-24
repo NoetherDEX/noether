@@ -63,6 +63,9 @@ pub enum DataKey {
     PositionStopLoss(u64),
     /// Take-profit order ID attached to a position
     PositionTakeProfit(u64),
+    /// Trailing-stop order ID attached to a position (so it is cancelled, not left
+    /// a zombie, when the position closes — M-3 tail)
+    PositionTrailingStop(u64),
     /// Per-trader 14-day rolling volume record
     TraderVolume(Address),
     /// Fee tier configuration (Vec<FeeTier>)
@@ -537,6 +540,19 @@ pub fn set_position_take_profit(env: &Env, position_id: u64, order_id: u64) {
 
 pub fn remove_position_take_profit(env: &Env, position_id: u64) {
     env.storage().persistent().remove(&DataKey::PositionTakeProfit(position_id));
+}
+
+pub fn get_position_trailing_stop(env: &Env, position_id: u64) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::PositionTrailingStop(position_id))
+}
+
+pub fn set_position_trailing_stop(env: &Env, position_id: u64, order_id: u64) {
+    env.storage().persistent().set(&DataKey::PositionTrailingStop(position_id), &order_id);
+    extend_persistent_ttl(env, &DataKey::PositionTrailingStop(position_id));
+}
+
+pub fn remove_position_trailing_stop(env: &Env, position_id: u64) {
+    env.storage().persistent().remove(&DataKey::PositionTrailingStop(position_id));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

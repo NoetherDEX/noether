@@ -153,6 +153,17 @@ fn cancel_linked_position_orders(env: &Env, position_id: u64, exclude: Option<u6
             );
         }
     }
+    if let Some(ts_id) = get_position_trailing_stop(env, position_id) {
+        remove_position_trailing_stop(env, position_id);
+        remove_trailing_stop_peak(env, ts_id);
+        if Some(ts_id) != exclude {
+            update_order_status(env, ts_id, OrderStatus::Cancelled);
+            env.events().publish(
+                (Symbol::new(env, "order_cancelled"),),
+                (ts_id, Symbol::new(env, "position_closed")),
+            );
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2159,6 +2170,9 @@ impl MarketContract {
 
         // Store peak price
         set_trailing_stop_peak(&env, order_id, current_price);
+        // Register on the position so it's cancelled (not left a zombie) when the
+        // position closes via any path (M-3 tail).
+        set_position_trailing_stop(&env, position_id, order_id);
 
         save_order(&env, &order);
         extend_instance_ttl(&env);
@@ -3162,6 +3176,23 @@ mod tests {
 
         assert_eq!(test.market.get_order(&sl.id).unwrap().status, OrderStatus::Executed);
         assert_eq!(test.market.get_order(&tp.id).unwrap().status, OrderStatus::Cancelled);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    // Regression: closing a position must cancel its attached TRAILING stop too —
+    // it isn't in the SL/TP slots, so it used to be left a Pending zombie (M-3 tail).
+    #[test]
+    fn closing_position_cancels_attached_trailing_stop() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let pos = test.market.open_position(
+            &trader, &Symbol::new(&test.env, "XLM"), &(100 * PRECISION), &3, &Direction::Long,
+        );
+        let ts = test.market.place_trailing_stop(&trader, &pos.id, &500u32, &1_000u32); // 5% trail
+
+        test.market.close_position(&trader, &pos.id);
+
+        assert_eq!(test.market.get_order(&ts.id).unwrap().status, OrderStatus::Cancelled);
         assert!(test.market.get_position(&pos.id).is_none());
     }
 
