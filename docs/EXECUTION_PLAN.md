@@ -17,17 +17,17 @@ Legend: ✅ done · 🔨 in progress · ⬜ todo · 🔗 external (Noeracle/Yahy
 - ✅ stellar-dev skill updated to upstream latest (7 skills) + 128KB correction
 
 ## P5 — Risk engine (MAINNET-CRITICAL, contracts) — PRIORITY 1
-- ⬜ P5-1  RiskConfig + per-asset OI caps + max-leverage enforcement
-- ⬜ P5-2  Maintenance-margin raise (config-driven, per-asset)
-- ⬜ P5-5  Partial liquidation (restore margin, don't nuke the whole position)
-- ⬜ P5-6  Insurance buffer (absorbs bad debt before LP NAV)
-- ⬜ P5-7  ADL (auto-deleverage) when insurance is exhausted
-- ⬜ P5-9  Partial position close
-- ⬜ P5-8  TWAP / multi-sample oracle smoothing (interim before Noeracle median)
-- ⬜ P5-3/4 Funding accounting upgrade (the vault-as-counterparty model is in; formalize the pool)
+- ✅ P5-1  RiskConfig + per-asset OI caps + max-leverage enforcement (50 tests, set_risk_config admin)
+- ✅ P5-2  Maintenance-margin raise — per-asset MM on isolated health + liq price (cross MM still global = known gap)
+- ⬜ P5-5  Partial liquidation (restore margin, don't nuke the whole position) — designed
+- ⬜ P5-6  Insurance buffer (absorbs bad debt before LP NAV) — designed
+- ⬜ P5-7  ADL (auto-deleverage) when insurance is exhausted — designed
+- ⬜ P5-9  Partial position close — designed (shares settle_and_close_partial core with P5-5)
+- ⬜ P5-8  TWAP / multi-sample oracle smoothing (interim before Noeracle median) — designed
+- ⬜ P5-3/4 Funding accounting upgrade (vault-as-counterparty model is in; formalize the pool) — designed
 
 ## P2 — Keeper tail (contracts already done; keeper code) — PRIORITY 2
-- ⬜ P2-5(tail) keeper calls router liquidate_with_price / execute_with_price
+- ✅ P2-5(tail) keeper calls router liquidate_with_price / execute_with_price (with safe fallback)
 - ⬜ P2-9  keeper scan restructure (single snapshot/cycle, local health calc)
 - ⬜ P2-10 trailing-stop simulate-before-submit
 - ⬜ P2-11 RPC failover + fee escalation

@@ -63,8 +63,19 @@ The script prints the new contract IDs. Then:
    set+fire, an open/close, the oracle deviation guard, an OI-cap reject.
 2. **Update addresses**: write the new ids into `contracts.json` and the
    `NEXT_PUBLIC_*` env vars (api/web/keeper) so all services point at GREEN.
+   This now includes **`NEXT_PUBLIC_NOETHER_ROUTER_ID`** for the keeper (P2-5: when
+   set, the keeper liquidates/executes via the router's fresh-price methods).
 3. If you initialized the router with an empty allowlist, set it now:
    `stellar contract invoke --id <ROUTER> ... -- set_publishers --publishers '["<hex>"]'`
+4. **Set per-asset risk config (P5-1/P5-2, guarded launch).** For each live pair set
+   the OI caps + leverage + maintenance margin via the new admin setter — this is
+   how P6-6's "3 pairs @10x + OI caps" is enforced on-chain. Example (BTC):
+   ```bash
+   stellar contract invoke --id <MARKET> --source admin --network testnet -- \
+     set_risk_config --asset BTC --rc '{"max_oi_long":"5000000000000","max_oi_short":"5000000000000","max_leverage":10,"maintenance_margin_bps":100,"max_position_size":"1000000000000"}'
+   ```
+   (i128 values are 7-dec strings; assets with no override stay UNCAPPED, so set
+   every launch pair.) `maintenance_margin_bps` must be `< 10000 / max_leverage`.
 
 ---
 
