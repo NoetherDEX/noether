@@ -458,6 +458,49 @@ impl MarketContract {
         Self::close_isolated_position(&env, &position)
     }
 
+    /// Partially close an isolated position (P5-9): settle `close_size` of it and
+    /// keep the residual open. Rejects cross positions (use close_position_cross),
+    /// a non-positive or oversized `close_size`, and a residual that would fall
+    /// below the min-collateral dust floor. A full-size request delegates to the
+    /// normal close. Returns the realised PnL on the closed portion.
+    pub fn close_position_partial(
+        env: Env,
+        trader: Address,
+        position_id: u64,
+        close_size: i128,
+    ) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        trader.require_auth();
+
+        let position = get_position(&env, position_id)
+            .ok_or(NoetherError::PositionNotFound)?;
+        if position.trader != trader {
+            return Err(NoetherError::NotPositionOwner);
+        }
+        if position.margin_mode == 1 {
+            return Err(NoetherError::InvalidParameter); // cross uses close_position_cross
+        }
+        if close_size <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        if close_size > position.size {
+            return Err(NoetherError::InvalidParameter);
+        }
+        if close_size == position.size {
+            return Self::close_isolated_position(&env, &position); // full close
+        }
+        // Dust floor: the residual must keep at least min_collateral of collateral.
+        let collateral_closed = position.collateral * close_size / position.size;
+        let config = get_config(&env);
+        if position.collateral - collateral_closed < config.min_collateral {
+            return Err(NoetherError::PositionTooSmall);
+        }
+
+        let current_price = Self::get_oracle_close_price(&env, &position.asset)?;
+        Self::settle_and_close_partial(&env, &position, close_size, current_price, &position.trader, 0)
+    }
+
     /// Close an isolated position at a user's request. Reads the lenient close
     /// price (a position must always be closeable) and settles with no keeper fee.
     /// Authorisation/ownership is the caller's responsibility. Returns realised PnL.
@@ -541,6 +584,79 @@ impl MarketContract {
         env.events().publish(
             (Symbol::new(env, "position_closed"),),
             (position.id, position.trader.clone(), position.asset.clone(), position.direction.clone(), position.size, position.entry_price, current_price, pnl),
+        );
+
+        extend_instance_ttl(env);
+        Ok(pnl)
+    }
+
+    /// Settle the CLOSED portion of a partial close and REDUCE (not delete) the
+    /// position to the residual (P5-9). Conservation-safe and a strict pro-rata of
+    /// `settle_and_close`: collateral is pro-rated to the closed size rounding DOWN
+    /// (so repeated tiny partials can never short the residual), the closed-portion
+    /// net PnL (incl. funding) is settled with the vault loss-capped at its own
+    /// collateral, OI + reservation drop by `close_size`, and the residual keeps the
+    /// same collateral/size ratio so its stored liquidation price stays valid.
+    /// Caller guarantees `0 < close_size < position.size`. Returns the closed PnL.
+    fn settle_and_close_partial(
+        env: &Env,
+        position: &Position,
+        close_size: i128,
+        current_price: i128,
+        keeper: &Address,
+        keeper_fee: i128,
+    ) -> Result<i128, NoetherError> {
+        // Pro-rata the closed portion (round DOWN on collateral → residual is favoured).
+        let collateral_closed = position.collateral * close_size / position.size;
+        let cumulative = get_cumulative_funding_rate(env);
+        let funding = calculate_cumulative_funding(
+            close_size, position.direction.clone(),
+            position.entry_cumulative_funding, cumulative,
+        );
+        // PnL on just the closed size (a temp view of the position at `close_size`).
+        let mut closed_view = position.clone();
+        closed_view.size = close_size;
+        closed_view.collateral = collateral_closed;
+        let pnl = calculate_pnl(&closed_view, current_price)?;
+
+        // Same conservation-safe settlement as settle_and_close, bounded by the
+        // CLOSED portion's collateral.
+        let fee_paid = (if keeper_fee > 0 { keeper_fee } else { 0 }).min(collateral_closed);
+        let net_pnl = pnl.checked_sub(funding).unwrap_or(pnl);
+        let capped_loss = if net_pnl < 0 { (-net_pnl).min(collateral_closed - fee_paid) } else { 0 };
+        let settle_value = if net_pnl < 0 { -capped_loss } else { net_pnl };
+
+        let vault_address = get_vault(env);
+        let settled = Self::settle_with_vault(env, &vault_address, settle_value)?;
+        Self::release_vault_reservation(env, &vault_address, close_size);
+
+        let to_trader = (collateral_closed + settled - fee_paid).max(0);
+        let usdc_token = get_usdc_token(env);
+        let token_client = token::Client::new(env, &usdc_token);
+        if settle_value < 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &capped_loss);
+        }
+        if fee_paid > 0 {
+            token_client.transfer(&env.current_contract_address(), keeper, &fee_paid);
+        }
+        if to_trader > 0 {
+            token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
+        }
+
+        // Drop OI + record volume for the closed size only.
+        drop_oi(env, &position.asset, &position.direction, close_size);
+        record_volume_only(env, &position.trader, close_size);
+
+        // Reduce (don't delete) the position to the residual. Collateral/size ratio
+        // is preserved, so the stored liquidation_price stays valid (slightly safer).
+        let mut updated = position.clone();
+        updated.size = position.size - close_size;
+        updated.collateral = position.collateral - collateral_closed;
+        save_position(env, &updated);
+
+        env.events().publish(
+            (Symbol::new(env, "position_reduced"),),
+            (position.id, position.trader.clone(), position.asset.clone(), close_size, updated.size, current_price, pnl),
         );
 
         extend_instance_ttl(env);
@@ -3293,6 +3409,35 @@ mod tests {
         // Raise MM to 6% ($60 > $50 margin) → now liquidatable on existing position.
         test.market.set_risk_config(&xlm, &risk_cfg(i128::MAX, 10, 600));
         assert!(test.market.is_liquidatable(&p.id), "liquidatable after MM raise");
+    }
+
+    // P5-9: a partial close reduces the position to the residual and pays the
+    // proportional proceeds; a full-size request delegates to the normal close.
+    #[test]
+    fn partial_close_reduces_position() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let p = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long); // $500
+        test.market.close_position_partial(&trader, &p.id, &(250 * PRECISION)); // close half
+
+        let resid = test.market.get_position(&p.id).unwrap();
+        assert_eq!(resid.size, 250 * PRECISION);
+        assert!(resid.collateral < p.collateral && resid.collateral > 0);
+        // Closing the remainder (full size) delegates to a full close → deleted.
+        test.market.close_position_partial(&trader, &p.id, &resid.size);
+        assert!(test.market.get_position(&p.id).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #27)")] // PositionTooSmall
+    fn partial_close_rejects_dust_residual() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let p = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        // Closing $490 of $500 leaves ~$2 collateral, below the $10 min — rejected.
+        test.market.close_position_partial(&trader, &p.id, &(490 * PRECISION));
     }
 
     // Funding must settle THROUGH the vault, never out of the pooled market balance:
