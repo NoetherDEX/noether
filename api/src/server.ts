@@ -15,6 +15,7 @@ import { registerTxRoutes, type TxRoutesDeps } from './routes/tx.js';
 import { registerVaultRoutes } from './routes/vaults.js';
 import { registerReferralRoutes } from './routes/referral.js';
 import { registerPositionsRoutes } from './routes/positions.js';
+import { registerStatsRoutes } from './routes/stats.js';
 import { VaultsService } from './services/vaults.js';
 import { ReferralReadService } from './services/referral.js';
 import { ContractReader } from './services/contractReader.js';
@@ -90,6 +91,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerVaultRoutes(instance, deps.vaults));
   await app.register((instance) => registerReferralRoutes(instance, deps.referral));
   await app.register((instance) => registerPositionsRoutes(instance, deps.db));
+  await app.register((instance) => registerStatsRoutes(instance, deps.db));
 
   deps.wsManager.attachBus();
   app.addHook('onReady', async () => {
