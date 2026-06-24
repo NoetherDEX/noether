@@ -33,6 +33,7 @@ export class StellarClient {
   private networkPassphrase: string;
   private marketContract: Contract;
   private noeracleContract: Contract;
+  private routerContract: Contract | null;
 
   constructor(private config: KeeperConfig) {
     // 15s HTTP timeout so a hung RPC can't wedge a keeper cycle indefinitely (K-1).
@@ -44,6 +45,12 @@ export class StellarClient {
     this.networkPassphrase = config.networkPassphrase;
     this.marketContract = new Contract(config.marketContractId);
     this.noeracleContract = new Contract(config.noeracleContractId);
+    this.routerContract = config.routerContractId ? new Contract(config.routerContractId) : null;
+  }
+
+  /** True when the router is configured, so fresh-price liq/exec is available. */
+  get hasRouter(): boolean {
+    return this.routerContract !== null;
   }
 
   get publicKey(): string {
@@ -157,6 +164,37 @@ export class StellarClient {
     );
   }
 
+  /** The [asset, price, timestamp, round_id, pubkeys, sigs] tail shared by the
+   *  router's fresh-price methods, built from a signed Noeracle attestation. */
+  private freshPriceArgs(assetSymbol: string, att: Attestation): xdr.ScVal[] {
+    const pubkey = Buffer.from(att.publisher, 'hex');
+    const sig = Buffer.from(att.signature, 'hex');
+    return [
+      nativeToScVal(assetSymbol, { type: 'symbol' }),
+      nativeToScVal(BigInt(att.price), { type: 'i128' }),
+      nativeToScVal(BigInt(att.timestamp), { type: 'u64' }),
+      nativeToScVal(BigInt(att.round_id), { type: 'u64' }),
+      xdr.ScVal.scvVec([xdr.ScVal.scvBytes(pubkey)]),
+      xdr.ScVal.scvVec([xdr.ScVal.scvBytes(sig)]),
+    ];
+  }
+
+  /** Liquidate via the router: refresh price from a just-signed attestation, then
+   *  liquidate atomically on that fresh price (P2-5). Falls back to a direct market
+   *  liquidate when the router isn't configured. */
+  async liquidateWithPrice(
+    positionId: bigint,
+    assetSymbol: string,
+    att: Attestation,
+  ): Promise<ExecutionResult> {
+    if (!this.routerContract) return this.liquidate(positionId);
+    return this.invokeContractWriteWithRetry(this.routerContract, 'liquidate_with_price', [
+      new Address(this.publicKey).toScVal(),
+      nativeToScVal(positionId, { type: 'u64' }),
+      ...this.freshPriceArgs(assetSymbol, att),
+    ]);
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   // Order Functions
   // ═══════════════════════════════════════════════════════════════════════
@@ -232,6 +270,21 @@ export class StellarClient {
         nativeToScVal(orderId, { type: 'u64' }),
       ]
     );
+  }
+
+  /** Execute an order via the router on a just-signed fresh price (P2-5). Falls
+   *  back to a direct market execute_order when the router isn't configured. */
+  async executeWithPrice(
+    orderId: bigint,
+    assetSymbol: string,
+    att: Attestation,
+  ): Promise<ExecutionResult> {
+    if (!this.routerContract) return this.executeOrder(orderId);
+    return this.invokeContractWriteWithRetry(this.routerContract, 'execute_with_price', [
+      new Address(this.publicKey).toScVal(),
+      nativeToScVal(orderId, { type: 'u64' }),
+      ...this.freshPriceArgs(assetSymbol, att),
+    ]);
   }
 
   // ═══════════════════════════════════════════════════════════════════════

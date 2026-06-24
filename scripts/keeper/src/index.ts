@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { loadConfig } from './config';
 import { StellarClient } from './stellar';
-import { KeeperConfig, KeeperStats, PriceData, AssetConfig } from './types';
+import { KeeperConfig, KeeperStats, PriceData, AssetConfig, Position } from './types';
 
 // Type-only imports — the @noeracle/sdk package is ESM-only, so the runtime
 // load happens via dynamic import() inside getNoeracle().
@@ -49,6 +49,9 @@ class KeeperBot {
   private lastFundingApplication: number = 0;
   private oracleUpdateInProgress: boolean = false;
   private currentPrices: Map<string, PriceData> = new Map();
+  /** Latest signed attestation per base symbol (e.g. "BTC"), cached from the oracle
+   *  cycle so liquidations/executions can refresh the on-chain price via the router (P2-5). */
+  private latestAttestations: Map<string, Attestation> = new Map();
   private knownCrossTraders: Set<string> = new Set();
   private lastCrossTraderScan: number = 0;
   private noeracleClient: NoeracleClient | null = null;
@@ -335,6 +338,13 @@ class KeeperBot {
       return;
     }
 
+    // Cache by base symbol ("BTC/USD" -> "BTC") so this cycle's liquidations/
+    // executions can refresh the on-chain price via the router (P2-5).
+    this.latestAttestations.clear();
+    for (const a of attestations) {
+      this.latestAttestations.set(a.asset.replace(/\/USD$/, ''), a);
+    }
+
     for (const asset of this.config.assets) {
       const pair = `${asset.symbol}/USD`;
       const attestation = attestations.find(a => a.asset === pair);
@@ -470,7 +480,7 @@ class KeeperBot {
 
         if (isLiquidatable) {
           console.log(`\n⚠️  Position ${positionId} is liquidatable!`);
-          await this.executeLiquidation(positionId);
+          await this.executeLiquidation(positionId, pos);
         }
       } catch (error) {
         // Position might have been closed, ignore
@@ -481,10 +491,17 @@ class KeeperBot {
   /**
    * Execute a liquidation
    */
-  private async executeLiquidation(positionId: bigint): Promise<void> {
+  private async executeLiquidation(positionId: bigint, pos: Position | null): Promise<void> {
     console.log(`   Executing liquidation for position ${positionId}...`);
 
-    const result = await this.stellar.liquidate(positionId);
+    // Prefer the router's fresh-price path: refresh the on-chain price from a
+    // just-signed attestation, then liquidate atomically on it (P2-5). Falls back
+    // to a direct market liquidate when the router or attestation is unavailable.
+    const att = pos ? this.latestAttestations.get(pos.asset) : undefined;
+    const result =
+      this.stellar.hasRouter && pos && att
+        ? await this.stellar.liquidateWithPrice(positionId, pos.asset, att)
+        : await this.stellar.liquidate(positionId);
 
     if (result.success) {
       this.stats.liquidationsExecuted++;
@@ -595,7 +612,7 @@ class KeeperBot {
           const order = await this.stellar.getOrder(orderId);
           if (order) {
             console.log(`\n📋 Order ${orderId} triggered! (${order.order_type} ${order.direction} ${order.asset})`);
-            await this.executeOrder(orderId, order.order_type);
+            await this.executeOrder(orderId, order.order_type, order.asset);
           }
         }
       } catch (error) {
@@ -607,10 +624,15 @@ class KeeperBot {
   /**
    * Execute a triggered order
    */
-  private async executeOrder(orderId: bigint, orderType: string): Promise<void> {
+  private async executeOrder(orderId: bigint, orderType: string, asset?: string): Promise<void> {
     console.log(`   Executing order ${orderId}...`);
 
-    const result = await this.stellar.executeOrder(orderId);
+    // Prefer the router's fresh-price execution when available (P2-5).
+    const att = asset ? this.latestAttestations.get(asset) : undefined;
+    const result =
+      this.stellar.hasRouter && asset && att
+        ? await this.stellar.executeWithPrice(orderId, asset, att)
+        : await this.stellar.executeOrder(orderId);
 
     if (result.success) {
       // Check if order was cancelled due to slippage or StopLimit phase transition (reward = 0)

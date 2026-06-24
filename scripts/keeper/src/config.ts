@@ -126,6 +126,12 @@ export function loadConfig(): KeeperConfig {
       process.env.NEXT_PUBLIC_VAULT_ID ||
       contracts.contracts?.vault ||
       '',
+    // Optional: when set, liquidations/executions route through the router's
+    // fresh-price methods (P2-5). Empty falls back to direct market calls.
+    routerContractId:
+      process.env.NEXT_PUBLIC_NOETHER_ROUTER_ID ||
+      contracts.contracts?.noetherRouter ||
+      '',
 
     // Timing
     pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '5000', 10),

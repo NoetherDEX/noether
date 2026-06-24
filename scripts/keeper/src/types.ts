@@ -106,6 +106,9 @@ export interface KeeperConfig {
   /** Noeracle on-chain contract — destination for update_ed25519_persistent. */
   noeracleContractId: string;
   vaultContractId: string;
+  /** noether_router — when set, liquidations/executions go through its fresh-price
+   *  methods (refresh price → act atomically). Empty = fall back to direct market calls. */
+  routerContractId: string;
 
   // Timing
   pollIntervalMs: number;
