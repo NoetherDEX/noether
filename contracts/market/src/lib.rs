@@ -37,7 +37,7 @@
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec, IntoVal};
 use noether_common::{
-    NoetherError, Position, Direction, MarketConfig,
+    NoetherError, Position, Direction, MarketConfig, RiskConfig,
     Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
     VolumeRecord, BASIS_POINTS,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
@@ -166,6 +166,69 @@ fn cancel_linked_position_orders(env: &Env, position_id: u64, exclude: Option<u6
     }
 }
 
+/// Add `size` to BOTH the global and per-asset open interest for `dir` (P5-1).
+/// Saturating so the i128::MAX OI sentinel can never overflow.
+fn add_oi(env: &Env, asset: &Symbol, dir: &Direction, size: i128) {
+    match dir {
+        Direction::Long => {
+            set_total_long_size(env, get_total_long_size(env).saturating_add(size));
+            set_asset_oi_long(env, asset, get_asset_oi_long(env, asset).saturating_add(size));
+        }
+        Direction::Short => {
+            set_total_short_size(env, get_total_short_size(env).saturating_add(size));
+            set_asset_oi_short(env, asset, get_asset_oi_short(env, asset).saturating_add(size));
+        }
+    }
+}
+
+/// Subtract `size` (saturating at 0) from BOTH global and per-asset OI (P5-1), so
+/// the per-asset caps stay accurate as positions close/liquidate.
+fn drop_oi(env: &Env, asset: &Symbol, dir: &Direction, size: i128) {
+    match dir {
+        Direction::Long => {
+            let g = get_total_long_size(env);
+            set_total_long_size(env, if g > size { g - size } else { 0 });
+            let a = get_asset_oi_long(env, asset);
+            set_asset_oi_long(env, asset, if a > size { a - size } else { 0 });
+        }
+        Direction::Short => {
+            let g = get_total_short_size(env);
+            set_total_short_size(env, if g > size { g - size } else { 0 });
+            let a = get_asset_oi_short(env, asset);
+            set_asset_oi_short(env, asset, if a > size { a - size } else { 0 });
+        }
+    }
+}
+
+/// Enforce the per-asset risk limits at every open path (P5-1): leverage,
+/// max-position-size, and the per-asset open-interest cap. Returns the resolved
+/// RiskConfig so the caller can use the live maintenance margin for the liq price.
+fn enforce_open_limits(
+    env: &Env,
+    asset: &Symbol,
+    size: i128,
+    leverage: u32,
+    dir: &Direction,
+    cfg: &MarketConfig,
+) -> Result<RiskConfig, NoetherError> {
+    let rc = resolve_risk_config(env, asset, cfg);
+    if leverage < 1 || leverage > rc.max_leverage {
+        return Err(NoetherError::InvalidLeverage);
+    }
+    if size > rc.max_position_size {
+        return Err(NoetherError::PositionTooLarge);
+    }
+    let (cur, cap) = match dir {
+        Direction::Long => (get_asset_oi_long(env, asset), rc.max_oi_long),
+        Direction::Short => (get_asset_oi_short(env, asset), rc.max_oi_short),
+    };
+    // Saturating so the i128::MAX uncapped sentinel can't overflow.
+    if cur.saturating_add(size) > cap {
+        return Err(NoetherError::OiCapExceeded);
+    }
+    Ok(rc)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Contract Definition
 // ═══════════════════════════════════════════════════════════════════════════
@@ -283,15 +346,12 @@ impl MarketContract {
         if collateral < config.min_collateral {
             return Err(NoetherError::InsufficientCollateral);
         }
-        if leverage < 1 || leverage > config.max_leverage {
-            return Err(NoetherError::InvalidLeverage);
-        }
-
         // Calculate position size
         let size = calculate_position_size(collateral, leverage);
-        if size > config.max_position_size {
-            return Err(NoetherError::PositionTooLarge);
-        }
+
+        // Per-asset risk limits: leverage, max size, OI cap (P5-1). Returns the
+        // resolved RiskConfig so the liq price uses the live per-asset MM (P5-2).
+        let rc = enforce_open_limits(&env, &asset, size, leverage, &direction, &config)?;
 
         // Check Vault has enough liquidity for potential payout
         // Maximum potential payout is the position size (100% gain)
@@ -301,12 +361,12 @@ impl MarketContract {
         // Fetch current price
         let entry_price = Self::get_oracle_price(&env, &asset)?;
 
-        // Calculate liquidation price
+        // Calculate liquidation price (per-asset MM, P5-2)
         let liquidation_price = calculate_liquidation_price(
             entry_price,
             leverage,
             direction.clone(),
-            config.maintenance_margin_bps,
+            rc.maintenance_margin_bps,
         );
 
         // Calculate taker fee and record volume
@@ -343,17 +403,8 @@ impl MarketContract {
         // Store position
         save_position(&env, &position);
 
-        // Update market stats
-        match direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, total + size);
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, total + size);
-            }
-        }
+        // Update market + per-asset open interest (P5-1).
+        add_oi(&env, &asset, &direction, size);
 
         // Transfer fee to vault
         distribute_fee(&env, &vault_address, fee);
@@ -480,16 +531,8 @@ impl MarketContract {
             token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
         }
 
-        match position.direction {
-            Direction::Long => {
-                let total = get_total_long_size(env);
-                set_total_long_size(env, if total > position.size { total - position.size } else { 0 });
-            }
-            Direction::Short => {
-                let total = get_total_short_size(env);
-                set_total_short_size(env, if total > position.size { total - position.size } else { 0 });
-            }
-        }
+        // Update market + per-asset open interest (P5-1).
+        drop_oi(env, &position.asset, &position.direction, position.size);
 
         record_volume_only(env, &position.trader, position.size);
         cancel_linked_position_orders(env, position.id, exclude_order_id);
@@ -627,17 +670,8 @@ impl MarketContract {
             token_client.transfer(&env.current_contract_address(), &keeper, &actual_keeper_reward);
         }
 
-        // Update market stats
-        match position.direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, if total > position.size { total - position.size } else { 0 });
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, if total > position.size { total - position.size } else { 0 });
-            }
-        }
+        // Update market + per-asset open interest (P5-1).
+        drop_oi(&env, &position.asset, &position.direction, position.size);
 
         // Cancel any attached SL/TP so they can't fire on the liquidated position.
         cancel_linked_position_orders(&env, position_id, None);
@@ -891,14 +925,10 @@ impl MarketContract {
         if collateral < config.min_collateral {
             return Err(NoetherError::InsufficientCollateral);
         }
-        if leverage < 1 || leverage > config.max_leverage {
-            return Err(NoetherError::InvalidLeverage);
-        }
-
         let size = calculate_position_size(collateral, leverage);
-        if size > config.max_position_size {
-            return Err(NoetherError::PositionTooLarge);
-        }
+
+        // Per-asset risk limits: leverage, max size, OI cap (P5-1).
+        enforce_open_limits(&env, &asset, size, leverage, &direction, &config)?;
 
         // Auto-deposit: if pool balance is insufficient, pull from wallet
         let pool_balance = get_cross_margin_balance(&env, &trader);
@@ -976,17 +1006,8 @@ impl MarketContract {
         save_position(&env, &position);
         add_cross_margin_position(&env, &trader, position_id);
 
-        // Update market stats
-        match direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, total + size);
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, total + size);
-            }
-        }
+        // Update market + per-asset open interest (P5-1).
+        add_oi(&env, &asset, &direction, size);
 
         // Split the trading fee between LPs and the treasury.
         distribute_fee(&env, &vault_address, fee);
@@ -1066,17 +1087,8 @@ impl MarketContract {
         // Record volume
         record_volume_only(&env, &trader, pos.size);
 
-        // Update market stats (saturating to prevent underflow)
-        match pos.direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, if total > pos.size { total - pos.size } else { 0 });
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, if total > pos.size { total - pos.size } else { 0 });
-            }
-        }
+        // Update market + per-asset open interest (P5-1).
+        drop_oi(&env, &pos.asset, &pos.direction, pos.size);
 
         // Clean up
         remove_cross_margin_position(&env, &trader, position_id);
@@ -1174,17 +1186,8 @@ impl MarketContract {
                     total_loss_to_vault += funding;
                 }
 
-                // Update market stats (saturating to prevent underflow)
-                match pos.direction {
-                    Direction::Long => {
-                        let total = get_total_long_size(&env);
-                        set_total_long_size(&env, if total > pos.size { total - pos.size } else { 0 });
-                    }
-                    Direction::Short => {
-                        let total = get_total_short_size(&env);
-                        set_total_short_size(&env, if total > pos.size { total - pos.size } else { 0 });
-                    }
-                }
+                // Update market + per-asset open interest (P5-1).
+                drop_oi(&env, &pos.asset, &pos.direction, pos.size);
 
                 // Defensive: cancel any legacy SL/TP linked to this position.
                 cancel_linked_position_orders(&env, pid, None);
@@ -2225,8 +2228,12 @@ impl MarketContract {
             pos.entry_cumulative_funding, cumulative,
         );
         let margin = pos.collateral + pnl - funding;
+        // Live per-asset maintenance margin (P5-2): an admin MM raise takes effect
+        // on existing positions immediately. The frozen-liq-price fast-path above
+        // is kept as a floor (it can only liquidate EARLIER, which is safe).
         let config = get_config(env);
-        margin < pos.size * (config.maintenance_margin_bps as i128) / (BASIS_POINTS as i128)
+        let mm_bps = resolve_risk_config(env, &pos.asset, &config).maintenance_margin_bps;
+        margin < pos.size * (mm_bps as i128) / (BASIS_POINTS as i128)
     }
 
     /// Fetch price from oracle adapter.
@@ -2441,16 +2448,20 @@ impl MarketContract {
         // Calculate position size
         let size = calculate_position_size(order.collateral, order.leverage);
 
+        // Per-asset risk limits at the keeper fill too (P5-1): leverage/size/OI may
+        // have tightened since placement, and a limit order consumes OI here.
+        let rc = enforce_open_limits(env, &order.asset, size, order.leverage, &order.direction, &config)?;
+
         // Check Vault has enough liquidity
         let vault_address = get_vault(env);
         Self::check_vault_liquidity(env, &vault_address, size)?;
 
-        // Calculate liquidation price using current price as entry
+        // Calculate liquidation price using current price as entry (per-asset MM, P5-2)
         let liquidation_price = calculate_liquidation_price(
             current_price,
             order.leverage,
             order.direction.clone(),
-            config.maintenance_margin_bps,
+            rc.maintenance_margin_bps,
         );
 
         // Calculate maker fee and record volume (limit orders = maker)
@@ -2486,17 +2497,8 @@ impl MarketContract {
         // Store position
         save_position(env, &position);
 
-        // Update market stats
-        match order.direction {
-            Direction::Long => {
-                let total = get_total_long_size(env);
-                set_total_long_size(env, total + size);
-            }
-            Direction::Short => {
-                let total = get_total_short_size(env);
-                set_total_short_size(env, total + size);
-            }
-        }
+        // Update market + per-asset open interest (P5-1).
+        add_oi(env, &order.asset, &order.direction, size);
 
         // Transfer trading fee to vault
         let usdc_token = get_usdc_token(env);
@@ -2616,6 +2618,38 @@ impl MarketContract {
     /// Treasury address, if configured (view).
     pub fn get_treasury(env: Env) -> Option<Address> {
         get_treasury(&env)
+    }
+
+    /// Admin: set per-asset risk parameters (P5-1/P5-2). Validates sane bounds and
+    /// that the maintenance margin keeps the liquidation price strictly inside the
+    /// entry for the allowed leverage band (mm_bps < BASIS_POINTS / max_leverage).
+    pub fn set_risk_config(env: Env, asset: Symbol, rc: RiskConfig) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if rc.max_leverage < 1 || rc.max_leverage > 100 {
+            return Err(NoetherError::InvalidLeverage);
+        }
+        if rc.maintenance_margin_bps == 0 || rc.maintenance_margin_bps >= BASIS_POINTS {
+            return Err(NoetherError::InvalidParameter);
+        }
+        if rc.max_position_size <= 0 || rc.max_oi_long < 0 || rc.max_oi_short < 0 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        // Liquidation price must not cross entry at max leverage.
+        if (rc.maintenance_margin_bps as i128) >= (BASIS_POINTS as i128) / (rc.max_leverage as i128) {
+            return Err(NoetherError::InvalidParameter);
+        }
+        set_risk_config(&env, &asset, &rc);
+        extend_instance_ttl(&env);
+        env.events().publish(
+            (Symbol::new(&env, "risk_config_set"),),
+            (asset, rc.max_leverage, rc.maintenance_margin_bps, rc.max_position_size, rc.max_oi_long, rc.max_oi_short),
+        );
+        Ok(())
+    }
+
+    /// Per-asset risk config override, if set (view, P5-1).
+    pub fn get_risk_config(env: Env, asset: Symbol) -> Option<RiskConfig> {
+        get_risk_config(&env, &asset)
     }
 }
 
@@ -3194,6 +3228,67 @@ mod tests {
 
         assert_eq!(test.market.get_order(&ts.id).unwrap().status, OrderStatus::Cancelled);
         assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // P5-1 / P5-2 Risk engine: per-asset OI caps + maintenance margin
+    // ═══════════════════════════════════════════════════════════════════
+
+    fn risk_cfg(max_oi: i128, max_lev: u32, mm_bps: u32) -> RiskConfig {
+        RiskConfig {
+            max_oi_long: max_oi,
+            max_oi_short: i128::MAX,
+            max_leverage: max_lev,
+            maintenance_margin_bps: mm_bps,
+            max_position_size: 100_000 * PRECISION,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #26)")] // OiCapExceeded
+    fn oi_cap_blocks_open_over_limit() {
+        let test = setup();
+        let trader = fund_trader(&test, 100_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        // Cap long OI at $600 — one $500 position fits, a second doesn't.
+        test.market.set_risk_config(&xlm, &risk_cfg(600 * PRECISION, 10, 100));
+        test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long); // $500
+        test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long); // → $1000 > cap
+    }
+
+    #[test]
+    fn oi_cap_frees_on_close() {
+        let test = setup();
+        let trader = fund_trader(&test, 100_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        test.market.set_risk_config(&xlm, &risk_cfg(600 * PRECISION, 10, 100));
+        let p = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        test.market.close_position(&trader, &p.id); // frees the per-asset OI
+        // A fresh $500 fits again — the cap was decremented on close.
+        test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #5)")] // InvalidParameter — MM crosses entry
+    fn set_risk_config_rejects_unsafe_mm() {
+        let test = setup();
+        let xlm = Symbol::new(&test.env, "XLM");
+        // mm 1500 bps with 10x: 1500 >= 10000/10 = 1000 → rejected.
+        test.market.set_risk_config(&xlm, &risk_cfg(i128::MAX, 10, 1500));
+    }
+
+    #[test]
+    fn mm_raise_makes_position_liquidatable() {
+        let test = setup();
+        let trader = fund_trader(&test, 100_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let p = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long); // $1000
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 95 / 1000)); // -5% → pnl ≈ -$50, margin ≈ $50
+        assert!(!test.market.is_liquidatable(&p.id), "healthy at default 1% MM");
+        // Raise MM to 6% ($60 > $50 margin) → now liquidatable on existing position.
+        test.market.set_risk_config(&xlm, &risk_cfg(i128::MAX, 10, 600));
+        assert!(test.market.is_liquidatable(&p.id), "liquidatable after MM raise");
     }
 
     // Funding must settle THROUGH the vault, never out of the pooled market balance:

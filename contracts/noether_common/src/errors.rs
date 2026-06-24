@@ -45,6 +45,8 @@ pub enum NoetherError {
     NotPositionOwner = 24,
     /// Position has insufficient margin for operation
     InsufficientMargin = 25,
+    /// Opening this position would exceed the per-asset open-interest cap (P5-1)
+    OiCapExceeded = 26,
 
     // ═══════════════════════════════════════════════════════════════
     // Oracle Errors (30-39)

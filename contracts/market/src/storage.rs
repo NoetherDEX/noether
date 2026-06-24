@@ -3,7 +3,7 @@
 //! Storage keys and helpers for the Market contract.
 
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
-use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord, TTL_THRESHOLD, TTL_EXTEND_TO};
+use noether_common::{NoetherError, Position, MarketConfig, RiskConfig, Order, OrderStatus, FeeTier, VolumeRecord, TTL_THRESHOLD, TTL_EXTEND_TO};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
@@ -78,6 +78,12 @@ pub enum DataKey {
     AllCrossMarginTraders,
     /// Peak price tracked for trailing stop orders (order_id -> i128)
     TrailingStopPeak(u64),
+    /// Per-asset risk parameters override (asset -> RiskConfig) (P5-1)
+    RiskConfigKey(Symbol),
+    /// Per-asset aggregate long open interest (asset -> i128) (P5-1)
+    AssetOiLong(Symbol),
+    /// Per-asset aggregate short open interest (asset -> i128) (P5-1)
+    AssetOiShort(Symbol),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -385,6 +391,47 @@ pub fn get_last_oracle_price(env: &Env, asset: &Symbol) -> Option<(i128, u64)> {
 pub fn set_last_oracle_price(env: &Env, asset: &Symbol, price: i128, ts: u64) {
     let key = DataKey::LastOraclePrice(asset.clone());
     env.storage().persistent().set(&key, &(price, ts));
+    extend_persistent_ttl(env, &key);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Per-asset risk config + open interest (P5-1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub fn get_risk_config(env: &Env, asset: &Symbol) -> Option<RiskConfig> {
+    env.storage().persistent().get(&DataKey::RiskConfigKey(asset.clone()))
+}
+
+pub fn set_risk_config(env: &Env, asset: &Symbol, rc: &RiskConfig) {
+    let key = DataKey::RiskConfigKey(asset.clone());
+    env.storage().persistent().set(&key, rc);
+    extend_persistent_ttl(env, &key);
+}
+
+/// Concrete RiskConfig for an asset: the admin override if set, else a fallback
+/// derived from the global MarketConfig (uncapped OI), so every caller gets a
+/// usable config whether or not an override exists.
+pub fn resolve_risk_config(env: &Env, asset: &Symbol, cfg: &MarketConfig) -> RiskConfig {
+    get_risk_config(env, asset).unwrap_or_else(|| RiskConfig::from_market(cfg))
+}
+
+pub fn get_asset_oi_long(env: &Env, asset: &Symbol) -> i128 {
+    env.storage().persistent().get(&DataKey::AssetOiLong(asset.clone())).unwrap_or(0)
+}
+
+pub fn set_asset_oi_long(env: &Env, asset: &Symbol, v: i128) {
+    let key = DataKey::AssetOiLong(asset.clone());
+    env.storage().persistent().set(&key, &v);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn get_asset_oi_short(env: &Env, asset: &Symbol) -> i128 {
+    env.storage().persistent().get(&DataKey::AssetOiShort(asset.clone())).unwrap_or(0)
+}
+
+pub fn set_asset_oi_short(env: &Env, asset: &Symbol, v: i128) {
+    let key = DataKey::AssetOiShort(asset.clone());
+    env.storage().persistent().set(&key, &v);
     extend_persistent_ttl(env, &key);
 }
 

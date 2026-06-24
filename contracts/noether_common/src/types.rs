@@ -248,6 +248,39 @@ pub struct MarketConfig {
     pub base_taker_fee_bps: u32,
 }
 
+/// Per-asset risk parameters (P5-1). An admin-set override of the global
+/// `MarketConfig` for one asset; when no override exists, `from_market` derives a
+/// fallback with UNCAPPED open interest so existing behaviour is preserved.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RiskConfig {
+    /// Max aggregate long open interest for this asset (7-dec USD).
+    pub max_oi_long: i128,
+    /// Max aggregate short open interest for this asset (7-dec USD).
+    pub max_oi_short: i128,
+    /// Max leverage allowed for this asset.
+    pub max_leverage: u32,
+    /// Maintenance margin in basis points.
+    pub maintenance_margin_bps: u32,
+    /// Max single position size for this asset (7-dec USD).
+    pub max_position_size: i128,
+}
+
+impl RiskConfig {
+    /// Fallback derived from the global config: leverage / MM / max-size carry
+    /// over, OI uncapped (`i128::MAX`) so an asset with no override behaves exactly
+    /// as before P5-1.
+    pub fn from_market(c: &MarketConfig) -> Self {
+        RiskConfig {
+            max_oi_long: i128::MAX,
+            max_oi_short: i128::MAX,
+            max_leverage: c.max_leverage,
+            maintenance_margin_bps: c.maintenance_margin_bps,
+            max_position_size: c.max_position_size,
+        }
+    }
+}
+
 impl Default for MarketConfig {
     fn default() -> Self {
         Self {
