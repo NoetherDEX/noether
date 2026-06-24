@@ -695,7 +695,7 @@ mod tests {
         assert_eq!(info.circulating_shares, 0);
         assert_eq!(info.hwm_nav, PRECISION);
         assert_eq!(info.profit_share_bps, DEFAULT_PROFIT_SHARE_BPS);
-        assert_eq!(info.paused, false);
+        assert!(!info.paused);
     }
 
     #[test]
@@ -1114,7 +1114,7 @@ mod tests {
         client.deposit(&leader, &vault_id, &200_0000000);
         client.admin_pause(&vault_id, &true);
         let info = client.get_vault(&vault_id);
-        assert_eq!(info.paused, true);
+        assert!(info.paused);
     }
 
     #[test]

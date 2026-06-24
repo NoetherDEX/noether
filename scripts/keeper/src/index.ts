@@ -351,8 +351,10 @@ class KeeperBot {
 
       // Independent-ticker sanity check (K-2): skip + alert when the attestation
       // diverges materially from Binance. Best-effort — a Binance outage (null)
-      // never blocks publishing.
+      // never blocks publishing. A price the independent ticker CORROBORATES is
+      // real (even a large fast move), so it bypasses the jump breaker below.
       const ref = await this.fetchReferencePrice(asset.binanceSymbol);
+      let corroborated = false;
       if (ref !== null) {
         const divergence = Math.abs(priceHuman - ref) / ref;
         if (divergence > this.config.referenceDivergencePct) {
@@ -361,19 +363,25 @@ class KeeperBot {
           void this.notify(`⚠️ Keeper: ${asset.symbol} attestation $${priceHuman} diverges ${pct}% from ${asset.binanceSymbol} $${ref} — skipped push.`);
           continue;
         }
+        corroborated = true;
       }
 
-      // Per-asset jump circuit breaker against bad publisher data (K-2). The
-      // baseline survives restarts via the persisted state file.
-      const lastPrice = this.currentPrices.get(asset.symbol);
-      if (lastPrice && lastPrice.price > 0) {
-        const changePercent = Math.abs(priceHuman - lastPrice.price) / lastPrice.price;
-        if (changePercent > asset.maxJumpPct) {
-          const pct = (changePercent * 100).toFixed(1);
-          const cap = (asset.maxJumpPct * 100).toFixed(0);
-          console.warn(`\n⚠️  ${asset.symbol} price changed ${pct}% ($${lastPrice.price} → $${priceHuman}) — skipping (>${cap}%)`);
-          void this.notify(`⚠️ Keeper: ${asset.symbol} jump ${pct}% ($${lastPrice.price} → $${priceHuman}) exceeds ${cap}% — skipped push.`);
-          continue;
+      // Per-asset jump circuit breaker against bad PUBLISHER data — only a
+      // FALLBACK for when the independent ticker is unavailable. A Binance-
+      // corroborated move is genuine and must NOT be frozen out, otherwise a
+      // single legitimate >maxJumpPct move would wedge the feed permanently
+      // (the stale baseline only advances on a successful push) (K-2).
+      if (!corroborated) {
+        const lastPrice = this.currentPrices.get(asset.symbol);
+        if (lastPrice && lastPrice.price > 0) {
+          const changePercent = Math.abs(priceHuman - lastPrice.price) / lastPrice.price;
+          if (changePercent > asset.maxJumpPct) {
+            const pct = (changePercent * 100).toFixed(1);
+            const cap = (asset.maxJumpPct * 100).toFixed(0);
+            console.warn(`\n⚠️  ${asset.symbol} price changed ${pct}% ($${lastPrice.price} → $${priceHuman}) with no independent corroboration — skipping (>${cap}%)`);
+            void this.notify(`⚠️ Keeper: ${asset.symbol} uncorroborated jump ${pct}% ($${lastPrice.price} → $${priceHuman}) exceeds ${cap}% — skipped push.`);
+            continue;
+          }
         }
       }
 

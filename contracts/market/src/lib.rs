@@ -389,43 +389,72 @@ impl MarketContract {
         Self::close_isolated_position(&env, &position)
     }
 
-    /// Close an isolated position: settle PnL with the vault (capped for a
-    /// winner, V-3), return the trader's equity, drop OI, record volume, release
-    /// the payout reservation (M-4), cancel any linked SL/TP and delete it.
+    /// Close an isolated position at a user's request. Reads the lenient close
+    /// price (a position must always be closeable) and settles with no keeper fee.
     /// Authorisation/ownership is the caller's responsibility. Returns realised PnL.
     fn close_isolated_position(env: &Env, position: &Position) -> Result<i128, NoetherError> {
-        // Calculate funding from cumulative rate
+        let current_price = Self::get_oracle_close_price(env, &position.asset)?;
+        Self::settle_and_close(env, position, current_price, &position.trader, 0)
+    }
+
+    /// Settle and delete an isolated position with CONSERVATION-SAFE distribution
+    /// (V-3): the keeper fee and any positive funding charge are reserved out of
+    /// collateral FIRST, then the loss is capped at the remainder — so
+    /// `loss + funding + fee` can never exceed the position's own collateral and a
+    /// close can never draw on other positions' pooled collateral. A winner's
+    /// profit is whatever the vault actually paid (shortfall-capped, never
+    /// reverts). Releases the payout reservation (M-4), cancels linked SL/TP (M-3),
+    /// drops OI, records volume, deletes the position. `keeper_fee` (>=0) is paid to
+    /// `keeper` from the trader's proceeds (pass 0 for a user-initiated close).
+    /// Returns the position's mark PnL. `current_price` MUST be a lenient read so a
+    /// position can always be closed.
+    fn settle_and_close(
+        env: &Env,
+        position: &Position,
+        current_price: i128,
+        keeper: &Address,
+        keeper_fee: i128,
+    ) -> Result<i128, NoetherError> {
         let cumulative = get_cumulative_funding_rate(env);
         let funding = calculate_cumulative_funding(
             position.size, position.direction.clone(),
             position.entry_cumulative_funding, cumulative,
         );
-
-        // Lenient price: a position must always be closeable.
-        let current_price = Self::get_oracle_close_price(env, &position.asset)?;
         let pnl = calculate_pnl(position, current_price)?;
 
-        // Isolated margin can lose at most its collateral; cap the loss so the
-        // pool is credited only funds that actually exist (not phantom bad debt)
-        // and a payout can't draw on other positions' collateral (V-3 tail).
-        let loss = if pnl < 0 { (-pnl).min(position.collateral) } else { 0 };
+        // Reserve the keeper fee + any positive funding out of collateral, then
+        // cap the loss at what remains. This guarantees
+        // loss + funding_paid + fee_paid <= collateral (no draw on others, V-3).
+        let fee_paid = (if keeper_fee > 0 { keeper_fee } else { 0 }).min(position.collateral);
+        let funding_owed = if funding > 0 { funding } else { 0 };
+        let funding_paid = funding_owed.min(position.collateral - fee_paid);
+        let avail_for_loss = position.collateral - fee_paid - funding_paid;
+        let loss = if pnl < 0 { (-pnl).min(avail_for_loss) } else { 0 };
         let effective_pnl = if pnl < 0 { -loss } else { pnl };
 
-        // Settle first; a winner's payout may be capped (shortfall recorded,
-        // never reverted, V-3). Free this position's reservation (M-4).
+        // Settle (winner payout is shortfall-capped, never reverts) + free reservation.
         let vault_address = get_vault(env);
         let settled_pnl = Self::settle_with_vault(env, &vault_address, effective_pnl)?;
         Self::release_vault_reservation(env, &vault_address, position.size);
 
-        let to_trader = position.collateral + settled_pnl - funding;
+        // Trader proceeds: collateral + vault-paid profit + any funding owed TO the
+        // trader (negative funding), minus the capped loss / funding paid / fee.
+        let profit = if settled_pnl > 0 { settled_pnl } else { 0 };
+        let funding_credit = if funding < 0 { -funding } else { 0 };
+        let to_trader =
+            position.collateral + profit + funding_credit - loss - funding_paid - fee_paid;
+        let to_trader = if to_trader > 0 { to_trader } else { 0 };
 
         let usdc_token = get_usdc_token(env);
         let token_client = token::Client::new(env, &usdc_token);
         if loss > 0 {
             token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
         }
-        if funding > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &funding);
+        if funding_paid > 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &funding_paid);
+        }
+        if fee_paid > 0 {
+            token_client.transfer(&env.current_contract_address(), keeper, &fee_paid);
         }
         if to_trader > 0 {
             token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
@@ -983,35 +1012,39 @@ impl MarketContract {
         let current_price = Self::get_oracle_close_price(&env, &pos.asset)?;
         let pnl = calculate_pnl(&pos, current_price)?;
 
-        // Settle with vault; a winner's payout may be capped when the pool is
-        // undercollateralised (shortfall recorded, never reverted, V-3).
+        // Cap loss + funding within this position's own margin so closing a single
+        // cross leg can't transfer out more USDC than it backs and drain other
+        // traders' pooled cross funds (V-3). Account-level bad debt remains the job
+        // of liquidate_cross_account.
+        let funding_paid = if funding > 0 { funding.min(pos.collateral) } else { 0 };
+        let avail_for_loss = pos.collateral - funding_paid;
+        let loss = if pnl < 0 { (-pnl).min(avail_for_loss) } else { 0 };
+        let effective_pnl = if pnl < 0 { -loss } else { pnl };
+
+        // Settle the capped pnl (winner payout is shortfall-capped, never reverts).
         let vault_address = get_vault(&env);
-        let settled_pnl = Self::settle_with_vault(&env, &vault_address, pnl)?;
+        let settled_pnl = Self::settle_with_vault(&env, &vault_address, effective_pnl)?;
         // Free the payout reserved for this position when it opened (M-4).
         Self::release_vault_reservation(&env, &vault_address, pos.size);
 
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
-
-        // Transfer loss to vault if needed
-        if pnl < 0 {
-            let loss = -pnl;
+        if loss > 0 {
             token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
         }
-
-        // Transfer funding to vault if needed
-        if funding > 0 {
-            token_client.transfer(
-                &env.current_contract_address(),
-                &vault_address,
-                &funding,
-            );
+        if funding_paid > 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &funding_paid);
         }
 
-        // Return remaining equity to cross-margin pool (NOT trader wallet),
-        // based on what the pool actually settled.
-        let to_pool = pos.collateral.checked_add(settled_pnl).unwrap_or(0)
-            .checked_sub(funding).unwrap_or(0);
+        // Return remaining equity to the cross-margin pool (NOT trader wallet),
+        // using the same capped components so the credit can't exceed what backs it.
+        let profit = if settled_pnl > 0 { settled_pnl } else { 0 };
+        let funding_credit = if funding < 0 { -funding } else { 0 };
+        let to_pool = pos.collateral
+            .checked_add(profit).unwrap_or(0)
+            .checked_add(funding_credit).unwrap_or(0)
+            .checked_sub(loss).unwrap_or(0)
+            .checked_sub(funding_paid).unwrap_or(0);
         if to_pool > 0 {
             let current_balance = get_cross_margin_balance(&env, &trader);
             let new_balance = current_balance.checked_add(to_pool).unwrap_or(current_balance);
@@ -1730,8 +1763,15 @@ impl MarketContract {
             return Err(NoetherError::OrderNotPending);
         }
 
-        // Get current price
-        let current_price = Self::get_oracle_price(&env, &order.asset)?;
+        // Get current price. SL / TP / trailing-stop are risk-OUT (protective
+        // closes) and MUST fire even on a stale/deviating price, so they use the
+        // lenient read; limit entries are risk-IN and use the strict read (M-2).
+        let current_price = match order.order_type {
+            OrderType::StopLoss | OrderType::TakeProfit | OrderType::TrailingStop => {
+                Self::get_oracle_close_price(&env, &order.asset)?
+            }
+            _ => Self::get_oracle_price(&env, &order.asset)?,
+        };
 
         // Determine reference price for trigger/slippage check
         // TakeProfit with limit_price > 0 acts as "Take Limit": trigger at trigger_price,
@@ -1850,15 +1890,21 @@ impl MarketContract {
 
         match result {
             Ok(reward) => {
-                update_order_status(&env, order_id, OrderStatus::Executed);
-
+                // Only finalize to Executed if a sub-path hasn't already set a
+                // terminal status — the reduce-only branches cancel+refund (no
+                // opposing position) or self-mark Executed. Overwriting here would
+                // relabel a Cancelled order and double-emit order_executed (M-6).
+                let still_pending = get_order(&env, order_id)
+                    .map(|o| o.status == OrderStatus::Pending)
+                    .unwrap_or(false);
+                if still_pending {
+                    update_order_status(&env, order_id, OrderStatus::Executed);
+                    env.events().publish(
+                        (Symbol::new(&env, "order_executed"),),
+                        (order_id, reward),
+                    );
+                }
                 extend_instance_ttl(&env);
-
-                env.events().publish(
-                    (Symbol::new(&env, "order_executed"),),
-                    (order_id, reward),
-                );
-
                 Ok(reward)
             }
             Err(e) => Err(e),
@@ -1874,7 +1920,15 @@ impl MarketContract {
             return Ok(false);
         }
 
-        let current_price = Self::get_oracle_price(&env, &order.asset)?;
+        // Match execute_order's read policy: lenient for risk-OUT (SL/TP/trailing)
+        // so the keeper's pre-check doesn't falsely skip a protective close during
+        // a deviation/staleness window; strict for risk-IN limit entries (M-2).
+        let current_price = match order.order_type {
+            OrderType::StopLoss | OrderType::TakeProfit | OrderType::TrailingStop => {
+                Self::get_oracle_close_price(&env, &order.asset)?
+            }
+            _ => Self::get_oracle_price(&env, &order.asset)?,
+        };
 
         match order.order_type {
             OrderType::TrailingStop => {
@@ -2196,15 +2250,26 @@ impl MarketContract {
             return Err(NoetherError::PriceStale);
         }
 
-        // Deviation circuit breaker — only meaningful against a fresh reference.
+        // Deviation circuit breaker. Against a FRESH reference it applies the tight
+        // configured bound; against a STALE one (the baseline only advances on a
+        // market read, so a quiet window leaves it stale) it still applies a COARSE
+        // catch-all so a wildly anomalous price can't fully disarm the breaker and
+        // re-anchor the baseline after an idle period (O-7). This is an interim
+        // anomaly filter until the oracle-layer median/TWAP land (P2-1 / P5-8).
+        const STALE_BASELINE_MAX_DEVIATION_BPS: i128 = 5_000; // 50%
         if config.max_oracle_deviation_bps > 0 {
             if let Some((last_price, last_ts)) = get_last_oracle_price(env, asset) {
-                let ref_fresh = now.saturating_sub(last_ts) <= config.max_price_staleness;
-                if ref_fresh && last_price > 0 {
+                if last_price > 0 {
                     let dev_bps = (price - last_price).abs()
                         .saturating_mul(BASIS_POINTS as i128)
                         / last_price;
-                    if dev_bps > config.max_oracle_deviation_bps as i128 {
+                    let ref_fresh = now.saturating_sub(last_ts) <= config.max_price_staleness;
+                    let bound = if ref_fresh {
+                        config.max_oracle_deviation_bps as i128
+                    } else {
+                        STALE_BASELINE_MAX_DEVIATION_BPS
+                    };
+                    if dev_bps > bound {
                         if !allow_stale {
                             return Err(NoetherError::InvalidPrice);
                         }
@@ -2345,6 +2410,11 @@ impl MarketContract {
             }
         }
 
+        // Past here we OPEN new risk, so honour the emergency pause (M-1). The
+        // reduce-only branch above returns before this point and stays exempt
+        // (like liquidations), so protective exits still work while paused.
+        require_not_paused(env)?;
+
         // Calculate position size
         let size = calculate_position_size(order.collateral, order.leverage);
 
@@ -2435,82 +2505,12 @@ impl MarketContract {
         let position = get_position(env, order.position_id)
             .ok_or(NoetherError::PositionNotFound)?;
 
-        // Calculate funding from cumulative rate
-        let cumulative = get_cumulative_funding_rate(env);
-        let funding = calculate_cumulative_funding(
-            position.size, position.direction.clone(),
-            position.entry_cumulative_funding, cumulative,
-        );
-
-        // Calculate PnL
-        let pnl = calculate_pnl(&position, current_price)?;
-
-        // Settle with vault first; a winner's payout may be capped when the pool
-        // is undercollateralised (shortfall recorded, never reverted, V-3).
-        let vault_address = get_vault(env);
-        let settled_pnl = Self::settle_with_vault(env, &vault_address, pnl)?;
-        // Free the payout reserved for this position when it opened (M-4).
-        Self::release_vault_reservation(env, &vault_address, position.size);
-
-        // Amount to return to trader, based on what the pool actually settled.
-        let to_trader = position.collateral + settled_pnl - funding - keeper_fee;
-
-        // Get token client for transfers
-        let usdc_token = get_usdc_token(env);
-        let token_client = token::Client::new(env, &usdc_token);
-
-        // If trader lost, transfer the loss amount to Vault
-        if pnl < 0 {
-            let loss = -pnl;
-            token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
-        }
-
-        // Transfer funding to vault if trader owes funding
-        if funding > 0 {
-            token_client.transfer(
-                &env.current_contract_address(),
-                &vault_address,
-                &funding,
-            );
-        }
-
-        // Pay keeper fee
-        if keeper_fee > 0 {
-            token_client.transfer(&env.current_contract_address(), keeper, &keeper_fee);
-        }
-
-        // Transfer to trader (if positive)
-        if to_trader > 0 {
-            token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
-        }
-
-        // Update market stats
-        match position.direction {
-            Direction::Long => {
-                let total = get_total_long_size(env);
-                set_total_long_size(env, if total > position.size { total - position.size } else { 0 });
-            }
-            Direction::Short => {
-                let total = get_total_short_size(env);
-                set_total_short_size(env, if total > position.size { total - position.size } else { 0 });
-            }
-        }
-
-        // Record volume for fee tier tracking
-        record_volume_only(env, &position.trader, position.size);
-
-        // Remove SL/TP links
-        remove_position_stop_loss(env, position.id);
-        remove_position_take_profit(env, position.id);
-
-        // Delete position
-        delete_position(env, position.id, &position.trader);
-
-        env.events().publish(
-            (Symbol::new(env, "position_closed"),),
-            (position.id, position.trader.clone(), position.asset.clone(), position.direction.clone(), position.size, position.entry_price, current_price, pnl),
-        );
-
+        // Settle via the shared conservation-safe path: it caps loss + funding +
+        // keeper fee within this position's own collateral (V-3), releases the
+        // reservation (M-4), and cancels the sibling SL/TP so it can't zombie (M-3).
+        // `current_price` is the lenient read from execute_order, so a protective
+        // close is never blocked by the deviation/staleness guard.
+        Self::settle_and_close(env, &position, current_price, keeper, keeper_fee)?;
         Ok(keeper_fee)
     }
 
@@ -3095,6 +3095,41 @@ mod tests {
         assert!(credited < 125 * PRECISION);
     }
 
+    // V-3 CRITICAL: the keeper-driven SL/TP close path must ALSO cap the loss at
+    // collateral — it must never transfer out more than the position's own
+    // collateral and drain other traders' pooled funds.
+    #[test]
+    fn execute_close_order_caps_loss_at_collateral() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+
+        // Long $100 @ 5x on XLM ($0.10) → size $500.
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+        // Stop-loss below entry, max slippage so a far-below fill isn't cancelled.
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 9 / 100), &10_000);
+
+        // Crash 25% to $0.075 → SL triggers; mark loss ($125) exceeds collateral.
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 75 / 1000));
+
+        let market_before = usdc.balance(&test.market_id);
+        test.market.execute_order(&keeper, &sl.id);
+        let drained = market_before - usdc.balance(&test.market_id);
+
+        // The keeper-fired close drained AT MOST this position's collateral — it did
+        // not over-transfer the ~$125 mark loss and raid other traders' collateral.
+        assert!(drained <= pos.collateral, "execute_close_order over-drained the pool");
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // Cross-Margin Tests
     // ═══════════════════════════════════════════════════════════════════
@@ -3437,6 +3472,8 @@ mod tests {
         // Execute — should cancel because no opposing position exists
         let reward = test.market.execute_order(&keeper, &order.id);
         assert_eq!(reward, 0); // 0 = cancelled, not executed
+        // ...and the order must remain Cancelled, not be relabelled Executed (M-6).
+        assert_eq!(test.market.get_order(&order.id).unwrap().status, OrderStatus::Cancelled);
     }
 
     // M-6: a reduce-only order with an opposing position CLOSES it (reduces),

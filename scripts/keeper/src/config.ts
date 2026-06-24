@@ -32,6 +32,15 @@ export function loadConfig(): KeeperConfig {
     console.log('📄 Loaded contract addresses from contracts.json');
   }
 
+  // Resolve the network robustly: NETWORK may arrive mis-cased or whitespace-
+  // padded (Railway injects newlines), and the keeper actually SIGNS against
+  // whatever NETWORK_PASSPHRASE/RPC point at — so treat the mainnet passphrase as
+  // authoritative regardless of the NETWORK string (K-8).
+  const MAINNET_PASSPHRASE = 'Public Global Stellar Network ; September 2015';
+  const networkPassphrase = (process.env.NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015').trim();
+  const networkLabel = (process.env.NETWORK || 'testnet').trim().toLowerCase();
+  const isMainnet = networkLabel === 'mainnet' || networkPassphrase === MAINNET_PASSPHRASE;
+
   // Validate required environment variables. Privilege separation (K-8): the
   // keeper must use a DEDICATED key on mainnet, never the admin key.
   const keeperKey = process.env.KEEPER_SECRET_KEY || process.env.ORACLE_SECRET_KEY;
@@ -39,8 +48,8 @@ export function loadConfig(): KeeperConfig {
   if (!rawKey) {
     throw new Error('❌ KEEPER_SECRET_KEY, ORACLE_SECRET_KEY, or ADMIN_SECRET_KEY must be set in .env');
   }
-  if ((process.env.NETWORK || 'testnet') === 'mainnet' && !keeperKey) {
-    throw new Error('❌ Refusing to run on mainnet with the admin key — set a dedicated KEEPER_SECRET_KEY (K-8).');
+  if (isMainnet && !keeperKey) {
+    throw new Error('❌ Refusing to run against mainnet with the admin key — set a dedicated KEEPER_SECRET_KEY (K-8).');
   }
   // Strip quotes, whitespace, newlines that Railway might inject.
   const secretKey = rawKey.replace(/['"\s\n\r]/g, '').trim();
@@ -49,10 +58,10 @@ export function loadConfig(): KeeperConfig {
   console.log(`🔑 Keeper key loaded (${secretKey.length} chars).`);
 
   const config: KeeperConfig = {
-    // Network configuration
-    network: (process.env.NETWORK || 'testnet') as 'testnet' | 'mainnet',
+    // Network configuration (normalized + passphrase-derived, K-8)
+    network: isMainnet ? 'mainnet' : 'testnet',
     rpcUrl: process.env.RPC_URL || 'https://soroban-testnet.stellar.org',
-    networkPassphrase: process.env.NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+    networkPassphrase,
 
     // Credentials
     secretKey,
