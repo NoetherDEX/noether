@@ -338,12 +338,10 @@ class KeeperBot {
       return;
     }
 
-    // Cache by base symbol ("BTC/USD" -> "BTC") so this cycle's liquidations/
-    // executions can refresh the on-chain price via the router (P2-5).
+    // Cleared each cycle and repopulated below ONLY with attestations that pass the
+    // divergence + jump checks, so the router liq/exec path (P2-5) can never use a
+    // price the keeper itself refused to publish to the heartbeat (K-2).
     this.latestAttestations.clear();
-    for (const a of attestations) {
-      this.latestAttestations.set(a.asset.replace(/\/USD$/, ''), a);
-    }
 
     for (const asset of this.config.assets) {
       const pair = `${asset.symbol}/USD`;
@@ -400,6 +398,10 @@ class KeeperBot {
           continue;
         }
       }
+
+      // Passed the divergence + jump checks → safe for the router liq/exec path too
+      // (P2-5). The on-chain router still re-verifies the signature + staleness.
+      this.latestAttestations.set(asset.symbol, attestation);
 
       try {
         const result = await this.stellar.updateNoeraclePersistent(attestation);

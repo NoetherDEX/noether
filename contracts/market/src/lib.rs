@@ -1158,10 +1158,14 @@ impl MarketContract {
         for i in 0..position_ids.len() {
             let pid = position_ids.get(i).unwrap();
             if let Some(pos) = get_position(&env, pid) {
-                // Use actual oracle price for settlement; skip position if oracle fails
+                // Settle on the live oracle price. If ANY leg can't be priced, ABORT
+                // the whole liquidation (Soroban reverts all state) rather than skip
+                // the leg — a skip would leave it open while the post-loop wipe clears
+                // the account, permanently leaking its OI (global + per-asset) and
+                // orphaning the position. The keeper retries when the oracle recovers.
                 let current_price = match Self::get_oracle_close_price(&env, &pos.asset) {
                     Ok(p) if p > 0 => p,
-                    _ => continue, // Skip this position if oracle unavailable
+                    _ => return Err(NoetherError::PriceStale),
                 };
                 let pnl = calculate_pnl(&pos, current_price).unwrap_or(0);
                 total_pnl += pnl;
