@@ -120,5 +120,22 @@ See **`docs/DEPLOY_RUNBOOK.md`** — ordered manual steps (merge, secrets, redep
 with `ROUTER_PUBLISHERS_JSON`, per-asset `set_risk_config`, point services, restart
 keeper, smoke test). And **`docs/EXECUTION_PLAN.md`** for the live task status.
 
-> Verification of P5-1/P5-2 + P2-5 was in flight at the time of writing; any
-> confirmed findings and their fixes are appended below once triaged.
+## 7. Verification outcome (P5-1/P5-2 + P2-5)
+
+The adversarial review of the risk-engine + keeper changes confirmed **4 findings**;
+all real ones are fixed (commit `d1c8d62`):
+- **HIGH** — `liquidate_cross_account` leaked OI when a leg's oracle was down (skip +
+  unconditional account wipe), which P5-1's per-asset counters turn into an
+  open-path DoS. **Fixed**: abort the whole liquidation atomically if any leg can't
+  be priced (no partial wipe; keeper retries).
+- **MEDIUM** — cross-margin health used the global maintenance margin, not per-asset
+  (the P5-2 cross gap). **Fixed**: `aggregate_cross_positions` resolves per-asset MM
+  per leg.
+- **MEDIUM** — the keeper cached attestations before its divergence/jump checks, so
+  the router liq/exec path could use a refused price. **Fixed**: cache only after the
+  checks pass.
+- **LOW** — confirmation (not a bug) that an admin MM raise correctly affects
+  existing isolated positions. No change.
+
+Net: the risk-engine slice (P5-1/P5-2, incl. the cross-MM tail) is now verified
+fund-safe. 140 contract tests pass, clippy clean, keeper type-clean.

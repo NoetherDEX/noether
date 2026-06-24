@@ -18,7 +18,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ todo · 🔗 external (Noeracle/Yahy
 
 ## P5 — Risk engine (MAINNET-CRITICAL, contracts) — PRIORITY 1
 - ✅ P5-1  RiskConfig + per-asset OI caps + max-leverage enforcement (50 tests, set_risk_config admin)
-- ✅ P5-2  Maintenance-margin raise — per-asset MM on isolated health + liq price (cross MM still global = known gap)
+- ✅ P5-2  Maintenance-margin raise — per-asset MM on isolated AND cross health (cross gap closed after verification)
 - ⬜ P5-5  Partial liquidation (restore margin, don't nuke the whole position) — designed
 - ⬜ P5-6  Insurance buffer (absorbs bad debt before LP NAV) — designed
 - ⬜ P5-7  ADL (auto-deleverage) when insurance is exhausted — designed
