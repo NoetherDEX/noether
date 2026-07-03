@@ -43,7 +43,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ todo · 🔗 external (Noeracle/Yahy
 - ⬜ P4-16 mobile trade flow
 
 ## P3 — Ops/infra (code + docs; deploy is manual) — PRIORITY 4
-- ⬜ P3-4  env-var address overrides (so a redeploy needs no rebuild)
+- ✅ P3-4  env-var address overrides (so a redeploy needs no rebuild)
 - ⬜ P3-1  monitoring config (Prometheus/Grafana or OZ Monitor) — config + docs
 - ⬜ P3-7  incident runbook (doc)
 - ⬜ P3-2  retire legacy deploy scripts
@@ -52,7 +52,7 @@ Legend: ✅ done · 🔨 in progress · ⬜ todo · 🔗 external (Noeracle/Yahy
 ## P6 — Audit + guarded launch — PRIORITY 5
 - ⬜ P6-2  run `cargo scout-audit` (static analysis) + triage
 - ⬜ P6-6  guarded-config constants (allowlist, deposit caps, 3 pairs @10x, OI caps)
-- ⬜ P6-3  config-parity inventory (demo→mainnet constants)
+- ✅ P6-3  config-parity inventory (docs/CONFIG_PARITY.md) + faucet fail-close outside testnet
 - ⬜ P6-4  geo-block + ToS gate (web)
 - 👤 P6-1 SCF Audit Bank application (manual, external)
 
