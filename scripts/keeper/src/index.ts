@@ -15,9 +15,10 @@
  *   npm run dev      - Start with auto-reload
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
 import { loadConfig } from './config';
 import { StellarClient } from './stellar';
-import { KeeperConfig, KeeperStats, PriceData, AssetConfig } from './types';
+import { KeeperConfig, KeeperStats, PriceData, AssetConfig, Position } from './types';
 
 // Type-only imports — the @noeracle/sdk package is ESM-only, so the runtime
 // load happens via dynamic import() inside getNoeracle().
@@ -48,9 +49,15 @@ class KeeperBot {
   private lastFundingApplication: number = 0;
   private oracleUpdateInProgress: boolean = false;
   private currentPrices: Map<string, PriceData> = new Map();
+  /** Latest signed attestation per base symbol (e.g. "BTC"), cached from the oracle
+   *  cycle so liquidations/executions can refresh the on-chain price via the router (P2-5). */
+  private latestAttestations: Map<string, Attestation> = new Map();
   private knownCrossTraders: Set<string> = new Set();
   private lastCrossTraderScan: number = 0;
   private noeracleClient: NoeracleClient | null = null;
+  private lastCycleAt: number = Date.now();
+  private consecutiveErrors: number = 0;
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.config = loadConfig();
@@ -107,13 +114,38 @@ class KeeperBot {
     console.log('🚀 Keeper bot started. Monitoring...\n');
     console.log('═'.repeat(80) + '\n');
 
+    // Restore the price baseline so the jump breaker is armed on the first cycle (K-2).
+    this.loadPersistedPrices();
+
+    // Watchdog: if no cycle completes within watchdogMs the process is wedged
+    // (hung RPC, deadlock) — alert and exit so the supervisor restarts us (K-1).
+    this.lastCycleAt = Date.now();
+    this.watchdogTimer = setInterval(() => {
+      const stalledMs = Date.now() - this.lastCycleAt;
+      if (stalledMs > this.config.watchdogMs) {
+        const secs = Math.round(stalledMs / 1000);
+        console.error(`\n❌ Watchdog: no completed cycle in ${secs}s — exiting for restart.`);
+        void this.notify(`🛑 Keeper watchdog tripped: no cycle in ${secs}s. Exiting for restart.`);
+        setTimeout(() => process.exit(1), 1500); // let the alert flush
+      }
+    }, 30_000);
+
+    void this.notify(`✅ Keeper started (${this.config.network}, ${this.stellar.publicKey.slice(0, 8)}…).`);
+
     // Main loop
     while (this.isRunning) {
       try {
         await this.runKeeperCycle();
+        this.lastCycleAt = Date.now();
+        this.consecutiveErrors = 0;
       } catch (error) {
         console.error('Error in keeper loop:', error);
         this.stats.errors++;
+        this.consecutiveErrors++;
+        if (this.consecutiveErrors === 5) {
+          const msg = error instanceof Error ? error.message : String(error);
+          void this.notify(`⚠️ Keeper: 5 consecutive cycle errors. Latest: ${msg}`);
+        }
       }
 
       await this.sleep(this.config.pollIntervalMs);
@@ -121,9 +153,86 @@ class KeeperBot {
   }
 
   /**
+   * Load last-pushed prices from disk so the jump circuit breaker has a baseline
+   * immediately on (re)start — otherwise the first post-restart push would pass
+   * the breaker unchecked and could relay a manipulated price (K-2).
+   */
+  private loadPersistedPrices(): void {
+    try {
+      const raw = readFileSync(this.config.stateFile, 'utf8');
+      const obj = JSON.parse(raw) as Record<string, { price: number; priceScaled: string; timestamp: number }>;
+      for (const [symbol, p] of Object.entries(obj)) {
+        if (p && isFinite(p.price) && p.price > 0) {
+          this.currentPrices.set(symbol, {
+            asset: symbol,
+            price: p.price,
+            priceScaled: BigInt(p.priceScaled ?? '0'),
+            timestamp: p.timestamp ?? 0,
+          });
+        }
+      }
+      console.log(`  Loaded ${this.currentPrices.size} persisted price(s) from ${this.config.stateFile}`);
+    } catch {
+      // No state file yet (first run) — fine.
+    }
+  }
+
+  /** Persist the current price baseline so the breaker survives a restart (K-2). */
+  private savePersistedPrices(): void {
+    try {
+      const obj: Record<string, { price: number; priceScaled: string; timestamp: number }> = {};
+      for (const [symbol, p] of this.currentPrices) {
+        obj[symbol] = { price: p.price, priceScaled: p.priceScaled.toString(), timestamp: p.timestamp };
+      }
+      writeFileSync(this.config.stateFile, JSON.stringify(obj));
+    } catch (e) {
+      console.error('Failed to persist keeper state:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  /**
+   * Independent reference price (Binance) for the sanity check. Best-effort:
+   * returns null if unavailable so a Binance outage never blocks publishing.
+   */
+  private async fetchReferencePrice(binanceSymbol: string): Promise<number | null> {
+    if (!binanceSymbol) return null;
+    try {
+      const res = await fetch(
+        `https://api.binance.com/api/v3/ticker/price?symbol=${binanceSymbol}`,
+        { signal: AbortSignal.timeout(5_000) },
+      );
+      if (!res.ok) return null;
+      const body = (await res.json()) as { price?: string };
+      const price = body.price ? parseFloat(body.price) : NaN;
+      return isFinite(price) && price > 0 ? price : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Best-effort alert to the configured Discord/Slack-compatible webhook. */
+  private async notify(message: string): Promise<void> {
+    const url = this.config.alertWebhookUrl;
+    if (!url) return;
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        // `content` = Discord, `text` = Slack; each ignores the other's field.
+        body: JSON.stringify({ content: message, text: message }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (e) {
+      console.error('Alert webhook failed:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  /**
    * Stop the keeper bot
    */
   stop(): void {
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+    void this.notify('🔻 Keeper shutting down.');
     console.log('\n\n' + '═'.repeat(80));
     console.log('Shutting down keeper bot...\n');
     console.log('Session Statistics:');
@@ -229,6 +338,11 @@ class KeeperBot {
       return;
     }
 
+    // Cleared each cycle and repopulated below ONLY with attestations that pass the
+    // divergence + jump checks, so the router liq/exec path (P2-5) can never use a
+    // price the keeper itself refused to publish to the heartbeat (K-2).
+    this.latestAttestations.clear();
+
     for (const asset of this.config.assets) {
       const pair = `${asset.symbol}/USD`;
       const attestation = attestations.find(a => a.asset === pair);
@@ -243,15 +357,51 @@ class KeeperBot {
         continue;
       }
 
-      // 50% circuit breaker against bad publisher data
+      // Independent-ticker sanity check (K-2): skip + alert when the attestation
+      // diverges materially from Binance. Best-effort — a Binance outage (null)
+      // never blocks publishing. Corroboration RAISES the jump bound (below) but
+      // never removes it, so a glitch correlated across Binance + the index can't
+      // publish an extreme wick.
+      const ref = await this.fetchReferencePrice(asset.binanceSymbol);
+      let corroborated = false;
+      if (ref !== null) {
+        const divergence = Math.abs(priceHuman - ref) / ref;
+        if (divergence > this.config.referenceDivergencePct) {
+          const pct = (divergence * 100).toFixed(1);
+          console.warn(`\n⚠️  ${asset.symbol} attestation $${priceHuman} diverges ${pct}% from ${asset.binanceSymbol} $${ref} — skipping`);
+          void this.notify(`⚠️ Keeper: ${asset.symbol} attestation $${priceHuman} diverges ${pct}% from ${asset.binanceSymbol} $${ref} — skipped push.`);
+          continue;
+        }
+        corroborated = true;
+      }
+
+      // Jump circuit breaker against bad PUBLISHER data. The bound is the tight
+      // per-asset cap normally, WIDENED to the higher hard ceiling when the move is
+      // independently corroborated (a genuine fast move) OR when the baseline has
+      // gone stale (so a sustained move / persistent divergence can re-seed instead
+      // of freezing the feed) — but NEVER removed (#3/#6). Even an expired baseline
+      // keeps the ceiling, so an extreme wick can't publish unchecked while Binance
+      // is down; that case stays frozen + alerted for an operator rather than
+      // pushing an arbitrary price that could trigger mass wrongful liquidations.
       const lastPrice = this.currentPrices.get(asset.symbol);
       if (lastPrice && lastPrice.price > 0) {
+        const baselineExpired = Date.now() - lastPrice.timestamp > this.config.maxBaselineAgeMs;
+        const bound =
+          corroborated || baselineExpired ? this.config.corroboratedMaxJumpPct : asset.maxJumpPct;
         const changePercent = Math.abs(priceHuman - lastPrice.price) / lastPrice.price;
-        if (changePercent > 0.5) {
-          console.warn(`\n⚠️  ${asset.symbol} price changed ${(changePercent * 100).toFixed(1)}% ($${lastPrice.price} → $${priceHuman}) — skipping (>50% change)`);
+        if (changePercent > bound) {
+          const pct = (changePercent * 100).toFixed(1);
+          const cap = (bound * 100).toFixed(0);
+          const tag = corroborated ? 'corroborated' : baselineExpired ? 'stale-baseline' : 'uncorroborated';
+          console.warn(`\n⚠️  ${asset.symbol} ${tag} jump ${pct}% ($${lastPrice.price} → $${priceHuman}) — skipping (>${cap}%)`);
+          void this.notify(`⚠️ Keeper: ${asset.symbol} ${tag} jump ${pct}% ($${lastPrice.price} → $${priceHuman}) exceeds ${cap}% — skipped push.`);
           continue;
         }
       }
+
+      // Passed the divergence + jump checks → safe for the router liq/exec path too
+      // (P2-5). The on-chain router still re-verifies the signature + staleness.
+      this.latestAttestations.set(asset.symbol, attestation);
 
       try {
         const result = await this.stellar.updateNoeraclePersistent(attestation);
@@ -263,6 +413,7 @@ class KeeperBot {
             priceScaled: BigInt(attestation.price),
             timestamp: Date.now(),
           });
+          this.savePersistedPrices(); // keep the breaker baseline durable (K-2)
           this.stats.oracleUpdates++;
           if (this.stats.oracleUpdates <= 3 || this.stats.oracleUpdates % 50 === 0) {
             console.log(`\n✅ Noeracle ${asset.symbol} = $${priceHuman.toLocaleString()} round=${attestation.round_id} (tx: ${result.txHash?.slice(0,8)}...)`);
@@ -331,7 +482,7 @@ class KeeperBot {
 
         if (isLiquidatable) {
           console.log(`\n⚠️  Position ${positionId} is liquidatable!`);
-          await this.executeLiquidation(positionId);
+          await this.executeLiquidation(positionId, pos);
         }
       } catch (error) {
         // Position might have been closed, ignore
@@ -342,10 +493,17 @@ class KeeperBot {
   /**
    * Execute a liquidation
    */
-  private async executeLiquidation(positionId: bigint): Promise<void> {
+  private async executeLiquidation(positionId: bigint, pos: Position | null): Promise<void> {
     console.log(`   Executing liquidation for position ${positionId}...`);
 
-    const result = await this.stellar.liquidate(positionId);
+    // Prefer the router's fresh-price path: refresh the on-chain price from a
+    // just-signed attestation, then liquidate atomically on it (P2-5). Falls back
+    // to a direct market liquidate when the router or attestation is unavailable.
+    const att = pos ? this.latestAttestations.get(pos.asset) : undefined;
+    const result =
+      this.stellar.hasRouter && pos && att
+        ? await this.stellar.liquidateWithPrice(positionId, pos.asset, att)
+        : await this.stellar.liquidate(positionId);
 
     if (result.success) {
       this.stats.liquidationsExecuted++;
@@ -456,7 +614,7 @@ class KeeperBot {
           const order = await this.stellar.getOrder(orderId);
           if (order) {
             console.log(`\n📋 Order ${orderId} triggered! (${order.order_type} ${order.direction} ${order.asset})`);
-            await this.executeOrder(orderId, order.order_type);
+            await this.executeOrder(orderId, order.order_type, order.asset);
           }
         }
       } catch (error) {
@@ -468,10 +626,15 @@ class KeeperBot {
   /**
    * Execute a triggered order
    */
-  private async executeOrder(orderId: bigint, orderType: string): Promise<void> {
+  private async executeOrder(orderId: bigint, orderType: string, asset?: string): Promise<void> {
     console.log(`   Executing order ${orderId}...`);
 
-    const result = await this.stellar.executeOrder(orderId);
+    // Prefer the router's fresh-price execution when available (P2-5).
+    const att = asset ? this.latestAttestations.get(asset) : undefined;
+    const result =
+      this.stellar.hasRouter && asset && att
+        ? await this.stellar.executeWithPrice(orderId, asset, att)
+        : await this.stellar.executeOrder(orderId);
 
     if (result.success) {
       // Check if order was cancelled due to slippage or StopLimit phase transition (reward = 0)

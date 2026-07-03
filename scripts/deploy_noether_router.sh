@@ -116,6 +116,13 @@ echo ""
 # Step 4: Initialize
 # ═══════════════════════════════════════════════════════════════════════════════
 echo -e "${YELLOW}[4/4] Initializing noether_router...${NC}"
+# O-2 publisher allowlist: ROUTER_PUBLISHERS_JSON is a JSON array of 32-byte
+# ed25519 pubkeys in hex (e.g. '["ab12..."]'). Empty ([]) = allow-all; set the
+# real Noeracle publisher key(s) before mainnet, or call set_publishers after.
+ROUTER_PUBLISHERS_JSON="${ROUTER_PUBLISHERS_JSON:-[]}"
+if [ "$ROUTER_PUBLISHERS_JSON" = "[]" ]; then
+  echo -e "${YELLOW}  ⚠️  ROUTER_PUBLISHERS_JSON empty — O-2 allowlist is allow-all until set_publishers is called.${NC}"
+fi
 $CLI contract invoke \
     --id "$ROUTER_ID" \
     --source "$IDENTITY" \
@@ -123,7 +130,8 @@ $CLI contract invoke \
     -- initialize \
     --admin "$ADMIN_PUBLIC_KEY" \
     --market "$MARKET_ID" \
-    --noeracle "$NOERACLE_ID"
+    --noeracle "$NOERACLE_ID" \
+    --publishers "$ROUTER_PUBLISHERS_JSON"
 echo -e "${GREEN}✓ Router initialized${NC}"
 echo ""
 

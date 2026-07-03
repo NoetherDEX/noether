@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Settings, Clock } from 'lucide-react';
-import { Card, Tabs } from '@/components/ui';
+import { Card, Tabs, Badge } from '@/components/ui';
 import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import {
@@ -40,8 +40,7 @@ import {
   getFundingRate,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
-import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
-import { subscribeLivePrices } from '@/lib/stellar/noeracle';
+import { useLivePrices } from '@/lib/hooks/useLivePrices';
 import { toPrecision } from '@/lib/utils';
 import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
@@ -59,8 +58,22 @@ function TradePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const [fundingRate, setFundingRate] = useState<number>(0);
-  const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const prevOrdersRef = useRef<Map<number, string>>(new Map());
+
+  const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
+
+  // Live Noeracle prices for the charted asset + any open-position assets.
+  // Drives the order-panel mark and every position's PnL / Mark / Net Value,
+  // and exposes stream health (`priceStreamStatus`) for the staleness badge,
+  // with an on-chain shim-poll fallback when the SSE stream goes unhealthy.
+  const livePriceAssets = useMemo(
+    () => Array.from(new Set([selectedAsset, ...rawPositions.map(p => p.asset)])),
+    [selectedAsset, rawPositions],
+  );
+  const { prices: currentPrices, status: priceStreamStatus } = useLivePrices(
+    livePriceAssets,
+    { publicKey },
+  );
 
   // Display positions are derived from raw positions + the latest prices,
   // so a price tick re-renders just the PnL / Mark / Net Value cells
@@ -70,8 +83,6 @@ function TradePage() {
     () => rawPositions.map(p => toDisplayPosition(p, currentPrices[p.asset] || 0)),
     [rawPositions, currentPrices],
   );
-
-  const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
   const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -112,13 +123,11 @@ function TradePage() {
       // the positions tab to flash its skeleton every few seconds.
       const currentLeaderVault = useLeaderModeStore.getState().vault;
 
-      // Two flavours of position fetch:
-      //  - Leader mode: the indexer projection knows exactly which
-      //    positions the factory contract owns, so we ask the API for
-      //    that short list and pull on-chain detail just for those
-      //    ids (much faster than scanning every market position).
-      //  - Personal mode: the contract-side iterator stays, since
-      //    we don't yet expose a "by trader" filter for normal users.
+      // Both flavours resolve the open-position id list from the indexer-backed
+      // API (constant-time, no whole-market scan) and pull on-chain detail only
+      // for that short list:
+      //  - Leader mode: ids owned by the vault factory contract.
+      //  - Personal mode: ids for this trader.
       let contractPositions;
       if (currentLeaderVault && factoryAddress) {
         const open = await listOpenPositions(factoryAddress).catch(() => []);
@@ -127,7 +136,27 @@ function TradePage() {
           open.map((p) => p.positionId),
         );
       } else {
-        contractPositions = await getPositions(publicKey);
+        // Personal mode: fast path via the indexer API, then fall back to the
+        // full contract scan whenever the API yields NOTHING — whether it
+        // errored OR returned empty. Empty-but-OK is not trusted here because
+        // it also happens (a) on staging, where the shared API indexes the
+        // PRODUCTION market and so never has staging-market positions, and
+        // (b) in the brief window after opening before the indexer catches up.
+        // Net effect: never show "no positions" when the chain has them, while
+        // staying fast whenever the API does have the trader's positions. (At
+        // worst this is exactly the old whole-market scan, never slower.)
+        let apiPositions: Awaited<ReturnType<typeof getPositionsByIds>> = [];
+        try {
+          const open = await listOpenPositions(publicKey);
+          apiPositions = await getPositionsByIds(
+            publicKey,
+            open.map((p) => p.positionId),
+          );
+        } catch {
+          // API/indexer unavailable — fall through to the contract scan.
+        }
+        contractPositions =
+          apiPositions.length > 0 ? apiPositions : await getPositions(publicKey);
       }
 
       if (contractPositions.length === 0) {
@@ -135,23 +164,9 @@ function TradePage() {
         return;
       }
 
-      // Fetch current prices for all unique assets so PnL / Mark display
-      // is correct on the first paint after a refresh — the 5 s ticker
-      // below keeps them fresh afterwards.
-      const uniqueAssets = Array.from(new Set(contractPositions.map(p => p.asset)));
-      const priceMap: Record<string, number> = {};
-
-      await Promise.all(
-        uniqueAssets.map(async (asset) => {
-          const priceData = await getPrice(publicKey, asset);
-          if (priceData) {
-            priceMap[asset] = priceToDisplay(priceData.price);
-          }
-        })
-      );
-
+      // Marks for these assets come from the live-price hook (it streams every
+      // open-position asset), so no separate on-chain price seed is needed here.
       setRawPositions(contractPositions);
-      setCurrentPrices(prev => ({ ...prev, ...priceMap }));
     } catch (error) {
       console.error('Failed to fetch positions:', error);
     } finally {
@@ -163,6 +178,15 @@ function TradePage() {
   // Manual refresh handler
   const handleRefreshPositions = useCallback(() => {
     fetchPositions(false); // Don't show full loading state for manual refresh
+  }, [fetchPositions]);
+
+  // Personal positions now come from the indexer-backed API, which lags a beat
+  // behind a just-submitted open/close. Refetch immediately (snappy) and a
+  // couple of times after so a freshly opened position appears — and a freshly
+  // closed one drops — without the user hitting refresh (read-your-writes).
+  const refreshPositionsAfterTrade = useCallback(() => {
+    fetchPositions(false);
+    [2500, 6000].forEach((ms) => window.setTimeout(() => fetchPositions(false), ms));
   }, [fetchPositions]);
 
   // Fetch orders function — detects status changes and shows toasts
@@ -256,56 +280,6 @@ function TradePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Stable join of the unique assets in the open positions list. Used
-  // as the effect dep below so the price poll only tears down + restarts
-  // when the SET of assets changes — not on every rawPositions reference
-  // change (a price tick that mutates currentPrices doesn't change this).
-  const positionAssetKey = useMemo(
-    () => Array.from(new Set(rawPositions.map(p => p.asset))).sort().join(','),
-    [rawPositions],
-  );
-
-  // Live mark prices for assets in open positions. Decoupled from the
-  // position-list fetch so PnL / Mark / Net Value stay live without re-running
-  // the heavy N+1 contract iteration.
-  //
-  // Two sources: (1) one initial on-chain read via the shim for an accurate
-  // starting mark, then (2) Noeracle's ~500ms SSE stream for real-time updates
-  // (display only — no RPC/auth needed). Replaces the prior 5s on-chain poll, so
-  // marks now refresh ~10x faster.
-  useEffect(() => {
-    if (!isConnected || !publicKey || !positionAssetKey) return;
-    const assets = positionAssetKey.split(',');
-
-    let cancelled = false;
-
-    // (1) seed with an accurate on-chain mark
-    (async () => {
-      const updates: Record<string, number> = {};
-      await Promise.all(
-        assets.map(async (asset) => {
-          const priceData = await getPrice(publicKey, asset);
-          if (priceData) updates[asset] = priceToDisplay(priceData.price);
-        }),
-      );
-      if (!cancelled && Object.keys(updates).length > 0) {
-        setCurrentPrices(prev => ({ ...prev, ...updates }));
-      }
-    })();
-
-    // (2) stream live updates (~500ms) for those assets
-    const unsubscribe = subscribeLivePrices(assets, ({ asset, price }) => {
-      if (!cancelled) {
-        setCurrentPrices(prev => ({ ...prev, [asset]: price }));
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [isConnected, publicKey, positionAssetKey]);
-
   const handleClosePosition = async (positionId: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
 
@@ -336,8 +310,9 @@ function TradePage() {
         console.log('Position closed:', result);
       }
 
-      // Refresh positions and balances
-      await fetchPositions(false);
+      // Refresh positions and balances. The staggered refetch covers the
+      // indexer lag so the closed position drops without a manual refresh.
+      refreshPositionsAfterTrade();
       refreshBalances();
     } catch (error) {
       console.error('Failed to close position:', error);
@@ -493,11 +468,19 @@ function TradePage() {
                 {/* Chart Header with Asset Selector */}
                 <div className="border-b border-white/5">
                   <div className="flex items-center justify-between px-4 py-2">
-                    {/* Asset Selector Dropdown */}
-                    <AssetSelectorDropdown
-                      selectedAsset={selectedAsset}
-                      onSelect={setSelectedAsset}
-                    />
+                    {/* Asset Selector Dropdown + live-price health */}
+                    <div className="flex items-center gap-2">
+                      <AssetSelectorDropdown
+                        selectedAsset={selectedAsset}
+                        onSelect={setSelectedAsset}
+                      />
+                      {priceStreamStatus !== 'live' && (
+                        <Badge variant="warning" size="sm" className="gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                          {priceStreamStatus === 'stale' ? 'Live prices stale' : 'Reconnecting…'}
+                        </Badge>
+                      )}
+                    </div>
                     {/* Chart Header Stats (price, change, etc.) */}
                     <div className="hidden sm:block">
                       <ChartHeader asset={selectedAsset} compact />
@@ -558,7 +541,7 @@ function TradePage() {
                   markPrice={currentPrices[selectedAsset] || 0}
                   positions={positions}
                   onPositionOpened={() => {
-                    fetchPositions(false);
+                    refreshPositionsAfterTrade();
                     refreshBalances();
                   }}
                 />
@@ -569,11 +552,11 @@ function TradePage() {
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Open Interest</span>
-                      <span className="text-white">$1.2M</span>
+                      <span className="text-neutral-500">—</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">24h Volume</span>
-                      <span className="text-white">$890K</span>
+                      <span className="text-neutral-500">—</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Funding Rate</span>

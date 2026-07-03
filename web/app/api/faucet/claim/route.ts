@@ -22,6 +22,15 @@ const USDC_ASSET = new Asset('USDC', USDC_ISSUER);
 
 export async function POST(request: NextRequest) {
   try {
+    // Fail-closed: the faucet issues TEST assets and must NEVER run on mainnet
+    // (P6-3 / config-parity). Operates only when the network is explicitly testnet.
+    if ((NETWORK.NAME as string) !== 'testnet') {
+      return NextResponse.json(
+        { success: false, error: 'Faucet is disabled outside testnet.' },
+        { status: 403 }
+      );
+    }
+
     const { address, amount } = await request.json();
 
     // Validate address

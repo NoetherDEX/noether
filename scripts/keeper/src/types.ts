@@ -85,6 +85,10 @@ export interface ExecutionResult {
 export interface AssetConfig {
   symbol: string;
   decimals: number;
+  /** Max allowed per-push price jump vs the last pushed price (circuit breaker). */
+  maxJumpPct: number;
+  /** Binance ticker symbol for the independent sanity check (e.g. "BTCUSDT"). */
+  binanceSymbol: string;
 }
 
 // Keeper configuration
@@ -102,10 +106,29 @@ export interface KeeperConfig {
   /** Noeracle on-chain contract — destination for update_ed25519_persistent. */
   noeracleContractId: string;
   vaultContractId: string;
+  /** noether_router — when set, liquidations/executions go through its fresh-price
+   *  methods (refresh price → act atomically). Empty = fall back to direct market calls. */
+  routerContractId: string;
 
   // Timing
   pollIntervalMs: number;
   oracleUpdateIntervalMs: number;
+  /** Exit (for supervisor restart) if no cycle completes within this window. */
+  watchdogMs: number;
+
+  /** Discord/Slack-compatible webhook for startup/error-streak/watchdog/shutdown alerts. */
+  alertWebhookUrl?: string;
+
+  /** File where last-pushed prices persist so the circuit breaker survives restarts. */
+  stateFile: string;
+  /** Max divergence from the independent ticker before an attestation push is skipped. */
+  referenceDivergencePct: number;
+  /** Hard upper bound on a single push even when the independent ticker corroborates it,
+   *  so a correlated flash-wick/glitch can't publish an extreme move. */
+  corroboratedMaxJumpPct: number;
+  /** If the last-pushed baseline is older than this, publish anyway to re-seed —
+   *  guarantees the jump breaker can never freeze the feed permanently. */
+  maxBaselineAgeMs: number;
 
   // Assets to monitor
   assets: AssetConfig[];

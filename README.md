@@ -15,7 +15,7 @@
     Trade crypto perpetuals with up to 10x leverage — fully on-chain, powered by Soroban smart contracts.
     <br />
     <br />
-    <a href="https://testnet.noether.exchange/trade"><strong>Trade on Testnet »</strong></a>
+    <a href="https://noether.exchange/trade"><strong>Trade on Testnet »</strong></a>
     <br />
     <br />
     <a href="https://noether.exchange">Website</a>
@@ -80,7 +80,7 @@
 
 **Noether** is a decentralized perpetual futures exchange (PerpDEX) built on the [Stellar](https://stellar.org) blockchain using [Soroban](https://soroban.stellar.org) smart contracts. Every order, match, and settlement lives on-chain — verifiable by anyone, custodied by nobody.
 
-The protocol is funded by [Stellar Community Fund #41](https://communityfund.stellar.org/) with a grant of **$86,200** delivered across three tranches. Tranche 1 (trading engine) is complete and live on testnet; **Tranche 2** (developer tooling, user-created vaults, on-chain referral) is **code-complete with operator steps pending**; Tranche 3 (mainnet launch) is ahead.
+The protocol is funded by [Stellar Community Fund #41](https://communityfund.stellar.org/) with a grant of **$86,200** delivered across three tranches. **Tranches 1 and 2** (trading engine; developer tooling, user-created vaults, on-chain referral) are **delivered and paid**; **Tranche 3** (mainnet launch) is **in progress — final stage**.
 
 ### Why Stellar?
 
@@ -123,7 +123,7 @@ The protocol is funded by [Stellar Community Fund #41](https://communityfund.ste
 - **Earn a 10% profit share** above the high-water mark on depositor PnL
 - **Trade on shared collateral** via proxied `leader_trade` calls — depositors keep custody of their share token, you keep the upside
 - **5% min-holding invariant** — leaders are required to keep their own skin in the game, enforced on-chain
-- **Browse the marketplace** at [`/vaults`](https://testnet.noether.exchange/vaults); manage your vault at `/vaults/[id]/manage`
+- **Browse the marketplace** at [`/vaults`](https://noether.exchange/vaults); manage your vault at `/vaults/[id]/manage`
 
 ### For Developers
 
@@ -147,8 +147,8 @@ The protocol is funded by [Stellar Community Fund #41](https://communityfund.ste
 Trade on testnet in under a minute:
 
 1. Install [Freighter Wallet](https://freighter.app/) and switch to **Testnet**
-2. Visit [testnet.noether.exchange/faucet](https://testnet.noether.exchange/faucet) and claim USDC (up to 1,000/day)
-3. Head to [testnet.noether.exchange/trade](https://testnet.noether.exchange/trade) and open your first position
+2. Visit [noether.exchange/faucet](https://noether.exchange/faucet) and claim USDC (up to 1,000/day)
+3. Head to [noether.exchange/trade](https://noether.exchange/trade) and open your first position
 
 No signup. No KYC. No custody. Just a browser and a wallet.
 
@@ -378,7 +378,7 @@ Anyone can deploy a new trading vault via `vault_factory.create_vault(leader, na
   Invariant    : leader's own deposit ≥ 5% of total shares   (checked every withdraw)
 ```
 
-The 5% min-holding invariant is enforced on every withdraw — leaders cannot drain below it while depositors remain. Browse the marketplace at [`/vaults`](https://testnet.noether.exchange/vaults).
+The 5% min-holding invariant is enforced on every withdraw — leaders cannot drain below it while depositors remain. Browse the marketplace at [`/vaults`](https://noether.exchange/vaults).
 
 ### Referral System (Tranche 2)
 
@@ -423,7 +423,7 @@ The `referral` contract lets traders mint a short code, share it via `?ref=CODE`
 > contract-level path is fully implemented and tested (13 tests) — it's a
 > deploy-time step, not new code.
 
-Browse and claim at [`/referrals`](https://testnet.noether.exchange/referrals).
+Browse and claim at [`/referrals`](https://noether.exchange/referrals).
 
 ### Oracle (Noeracle, pull-based + signed)
 
@@ -582,12 +582,13 @@ Current testnet deployment — canonical source is [`contracts.json`](./contract
 
 | Contract | Address |
 |----------|---------|
-| **Market** | `CC2HH34Q7GOMNBNPSNSQIIUSYYXLYLOOLMUY3ZTFFBLJ2DENWHGS6GNB` |
-| **Vault** | `CD5WYLEHTFHOKPPH2GMNUFW2MK7XIQFKI365G6CBAATYWVNPE3RFYMY3` |
+| **Market** | `CCDNKEZ6VOKRNB3ER7YTGTOGYPL3S4UXMLN5ONPCYTQ7222RYQ5ZMGPT` |
+| **Vault** | `CAFCMUUJ6B42JXMFEHE2EDOMDHHPBE7AQBUHPTWMNO6QC566DUYYVPFF` |
+| **Router** | `CDMRBBR36WP4GFXS3BN3JWWEFI2XQKXI6UTDW6GDO67AXDTHM4NM62YQ` |
 | **Noeracle Shim** | `CDHIGZLUPKSY747I3TLSKB4F6AQXQV4T54AKSQNFAEILUB6ROVAVUJHN` |
 | **Noeracle** (signed price source) | `CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG` |
-| **Vault Factory** (T2) | `CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA` |
-| **Referral** (T2) | `CAGZXABWTJN6FU7TMCIWL3RH7EC6K4CQLLZJWUFN3CD7YHVDYWJCIG3O` |
+| **Vault Factory** (T2) | `CBAWCGMUS3DN57KXYKHHZ6Y7T7C27AFLCEBMHGCQXW5AUPF3X5XJBC4M` |
+| **Referral** (T2) | `CARNY35UVWZVW4KL4UBCZDCB4IASBJQOACKWDDRNOQRU7IITR5GGVRLB` |
 | **USDC Token** | `CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4` |
 | **NOE Token** | `CD7VRBXIDYP2C2F2AZZL242GY4PRDVDH2BG3LAN2ASXYUXCPHWQJTDP5` |
 | **Admin** | `GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN` |
@@ -825,21 +826,27 @@ Noether is being delivered in three tranches under [Stellar Community Fund #41](
 - [x] On-chain referral system — `referral` contract (13 tests) + sticky `?ref=CODE` banner + `/referrals` dashboard
 - [x] Soroban event indexer — libSQL/Turso projections feeding the API gateway
 
-Pending operator steps:
+Remaining operator steps:
 
 - [ ] Market WASM-optimise + redeploy with the on-chain referral discount hook (currently applied off-chain at the gateway — see [Referral System](#referral-system-tranche-2))
-- [ ] `npm publish @noether/sdk` (currently `private: true`)
-- [ ] PyPI publish `noether-sdk`
+- [x] npm publish — [`noether-sdk`](https://www.npmjs.com/package/noether-sdk) (0.1.1, May 2026)
+- [x] PyPI publish — [`noether-sdk`](https://pypi.org/project/noether-sdk/) (0.1.1, May 2026)
 - [ ] Paid Soroban RPC endpoint (`SOROBAN_RPC_URLS`) for keeper + indexer — see [`docs/RPC.md`](./docs/RPC.md)
 
-### Tranche 3 — Mainnet Launch · $34,480 · **Future**
+### Tranche 3 — Mainnet Launch · $34,480 · **In progress — final stage**
 
-- [ ] Production oracle hardening — Noeracle multi-publisher (M-of-N) signatures + TWAP for funding/liquidation
-- [ ] All contracts deployed to Stellar mainnet with 25x leverage
-- [ ] Partial liquidation (20% initial, 30s grace period) + insurance fund
-- [ ] 10+ trading pairs
-- [ ] Mobile-responsive UI
-- [ ] Full technical documentation
+The plan of record is a **guarded lean mainnet launch**: 3 pairs (BTC, ETH, XLM) at up
+to 10x leverage, per-account deposit caps and global open-interest caps, allowlist-first
+rollout — gated on the security-hardening program and an external audit. Higher leverage
+(25x) and additional pairs are post-audit roadmap.
+
+- [x] Risk engine — per-asset risk config, open-interest caps, maintenance-margin enforcement (isolated + cross), partial position close
+- [x] Security hardening — 3 adversarial review rounds, ~18 confirmed findings fixed (incl. insolvency and funding-accounting classes); Rust tests + clippy in public CI
+- [ ] Production oracle hardening — Noeracle multi-publisher (M-of-N) signatures + median/TWAP (in progress)
+- [ ] Insurance buffer + auto-deleveraging (designed; in progress)
+- [ ] External audit (SCF Audit Bank) + guarded mainnet deployment
+- [ ] Mobile trade flow polish
+- [ ] Full technical documentation (deploy runbook and config-parity docs shipped; user/developer docs in progress)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

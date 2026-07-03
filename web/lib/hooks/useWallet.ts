@@ -4,6 +4,8 @@ import { useCallback } from 'react';
 import { useWalletStore } from '@/lib/store';
 import { NETWORK } from '@/lib/utils/constants';
 import { getUSDCBalance } from '@/lib/stellar/token';
+import { getNoeBalance } from '@/lib/stellar/vault';
+import { fromPrecision } from '@/lib/utils';
 import { signWithWallet, disconnectWallet, WALLETCONNECT_ID } from '@/lib/stellar/walletKit';
 import toast from 'react-hot-toast';
 
@@ -54,11 +56,12 @@ export function useWallet() {
       try {
         setConnected(walletAddress, walletAddress, walletId);
 
-        const [xlmBal, usdcBal] = await Promise.all([
+        const [xlmBal, usdcBal, noeBal] = await Promise.all([
           fetchXLMBalance(walletAddress),
           getUSDCBalance(walletAddress),
+          getNoeBalance(walletAddress, walletAddress),
         ]);
-        setBalances(xlmBal, usdcBal, 0);
+        setBalances(xlmBal, usdcBal, fromPrecision(noeBal));
       } catch (error) {
         console.error('Failed to complete wallet connection:', error);
         setDisconnected();
@@ -118,12 +121,13 @@ export function useWallet() {
   const refreshBalances = useCallback(async () => {
     if (!publicKey) return;
 
-    const [xlmBal, usdcBal] = await Promise.all([
+    const [xlmBal, usdcBal, noeBal] = await Promise.all([
       fetchXLMBalance(publicKey),
       getUSDCBalance(publicKey),
+      getNoeBalance(publicKey, publicKey),
     ]);
-    setBalances(xlmBal, usdcBal, noeBalance);
-  }, [publicKey, noeBalance, setBalances]);
+    setBalances(xlmBal, usdcBal, fromPrecision(noeBal));
+  }, [publicKey, setBalances]);
 
   return {
     isConnected,

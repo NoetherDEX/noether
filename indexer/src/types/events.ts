@@ -49,9 +49,22 @@ export interface PositionLiquidatedEvent extends EventEnvelope {
   closePrice: bigint;
 }
 
+/** Partial close (P5-9): the position survives, reduced to `newSize`. */
+export interface PositionReducedEvent extends EventEnvelope {
+  topic: 'position_reduced';
+  positionId: number;
+  trader: StellarAddress;
+  asset: string;
+  closeSize: bigint;
+  newSize: bigint;
+  price: bigint;
+  pnl: bigint;
+}
+
 export interface CrossLiquidatedEvent extends EventEnvelope {
   topic: 'cross_liq';
   trader: StellarAddress;
+  totalPnl: bigint;
   keeperReward: bigint;
 }
 
@@ -91,6 +104,7 @@ export type DecodedMarketEvent =
   | PositionOpenedEvent
   | PositionClosedEvent
   | PositionLiquidatedEvent
+  | PositionReducedEvent
   | CrossLiquidatedEvent
   | OrderPlacedEvent
   | OrderCancelledEvent

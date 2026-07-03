@@ -30,12 +30,30 @@ export const CONTRACTS = {
 export const DEPLOY_ENV = process.env.NEXT_PUBLIC_VERCEL_ENV || 'development';
 
 // Contract addresses that MUST be configured for the trading UI to function.
+// NOERACLE_SHIM is included: it is the only on-chain oracle in the Noeracle-only
+// stack, so without it every open/close reverts with #30 PriceStale.
 const REQUIRED_CONTRACTS: ReadonlyArray<keyof typeof CONTRACTS> = [
   'VAULT',
   'MARKET',
   'USDC_TOKEN',
   'NOE_TOKEN',
+  'NOERACLE_SHIM',
 ];
+
+/** Env-var names for required contract addresses that are currently unset. */
+export function missingContractEnvVars(): string[] {
+  return REQUIRED_CONTRACTS.filter((k) => !CONTRACTS[k]).map((k) => `NEXT_PUBLIC_${k}_ID`);
+}
+
+/**
+ * True when the verify-then-trade router is unset on a production deploy.
+ * In that mode trades go straight to the market on a possibly-stale on-chain
+ * price (the router exists to execute on a sub-second-fresh Noeracle price), so
+ * it is a degraded configuration worth surfacing loudly to operators.
+ */
+export function isRouterMissingInProd(): boolean {
+  return DEPLOY_ENV === 'production' && !CONTRACTS.NOETHER_ROUTER;
+}
 
 /**
  * Fail loud on a misconfigured deploy. Call once on the client at app start.
@@ -46,12 +64,11 @@ const REQUIRED_CONTRACTS: ReadonlyArray<keyof typeof CONTRACTS> = [
  * clear, immediate error instead of trading on the wrong contracts.
  */
 export function assertContractsConfigured(): void {
-  const missing = REQUIRED_CONTRACTS.filter((k) => !CONTRACTS[k]);
+  const missing = missingContractEnvVars();
   if (missing.length === 0) return;
 
-  const envVars = missing.map((k) => `NEXT_PUBLIC_${k}_ID`).join(', ');
   const message =
-    `Missing contract address env var(s) for the "${DEPLOY_ENV}" deploy: ${envVars}. ` +
+    `Missing contract address env var(s) for the "${DEPLOY_ENV}" deploy: ${missing.join(', ')}. ` +
     `Set them in the matching Vercel Environment Variables scope ` +
     `(Production = live addresses, Preview = staging/green addresses).`;
 
@@ -73,12 +90,28 @@ export const NOE_ASSET = {
   ISSUER: process.env.NEXT_PUBLIC_NOE_ISSUER || 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN',
 } as const;
 
-// Network configuration
+// Network configuration. Env-driven (P3-4) so a mainnet cutover needs no code
+// change — defaults preserve the testnet behaviour. NEXT_PUBLIC_* are inlined at
+// build time by Next.js. A mainnet build is just: NEXT_PUBLIC_NETWORK=mainnet +
+// the matching passphrase/RPC. The faucet (P6-3) keys off NAME, so it auto-disables.
+const NETWORK_NAME = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
 export const NETWORK = {
-  NAME: 'testnet' as const,
-  PASSPHRASE: 'Test SDF Network ; September 2015',
-  RPC_URL: 'https://soroban-testnet.stellar.org',
-  HORIZON_URL: 'https://horizon-testnet.stellar.org',
+  NAME: NETWORK_NAME,
+  PASSPHRASE:
+    process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
+    (NETWORK_NAME === 'mainnet'
+      ? 'Public Global Stellar Network ; September 2015'
+      : 'Test SDF Network ; September 2015'),
+  RPC_URL:
+    process.env.NEXT_PUBLIC_RPC_URL ||
+    (NETWORK_NAME === 'mainnet'
+      ? 'https://mainnet.sorobanrpc.com'
+      : 'https://soroban-testnet.stellar.org'),
+  HORIZON_URL:
+    process.env.NEXT_PUBLIC_HORIZON_URL ||
+    (NETWORK_NAME === 'mainnet'
+      ? 'https://horizon.stellar.org'
+      : 'https://horizon-testnet.stellar.org'),
 } as const;
 
 // Trading constants

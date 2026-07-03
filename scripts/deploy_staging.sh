@@ -175,9 +175,17 @@ init_contract "market (oracle → shim)" --id "$GREEN_MARKET_ID" --source "$ADMI
   --usdc_token "$NEXT_PUBLIC_USDC_TOKEN_ID" --config-file-path "$MKTCFG"
 rm -f "$MKTCFG"
 
-# Router: initialize(admin, market, noeracle)
+# Router: initialize(admin, market, noeracle, publishers)
+# O-2 publisher allowlist: ROUTER_PUBLISHERS_JSON is a JSON array of 32-byte
+# ed25519 pubkeys in hex (e.g. '["ab12..."]'). Empty ([]) = allow-all; set the
+# real Noeracle publisher key(s) before mainnet, or call set_publishers after.
+ROUTER_PUBLISHERS_JSON="${ROUTER_PUBLISHERS_JSON:-[]}"
+if [ "$ROUTER_PUBLISHERS_JSON" = "[]" ]; then
+  echo "  ⚠️  ROUTER_PUBLISHERS_JSON empty — O-2 allowlist is allow-all until set_publishers is called."
+fi
 init_contract "router" --id "$GREEN_ROUTER_ID" --source "$ADMIN" --network testnet -- initialize \
-  --admin "$ADMIN_PK" --market "$GREEN_MARKET_ID" --noeracle "$NEXT_PUBLIC_NOERACLE_ID"
+  --admin "$ADMIN_PK" --market "$GREEN_MARKET_ID" --noeracle "$NEXT_PUBLIC_NOERACLE_ID" \
+  --publishers "$ROUTER_PUBLISHERS_JSON"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════

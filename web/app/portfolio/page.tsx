@@ -10,13 +10,12 @@ import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import type { DisplayPosition, Trade } from '@/types';
 
 function PortfolioPage() {
-  const { isConnected, publicKey } = useWallet();
+  const { isConnected, publicKey, usdcBalance, refreshBalances } = useWallet();
 
   const [positions, setPositions] = useState<DisplayPosition[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(true);
   const [isLoadingTrades, setIsLoadingTrades] = useState(true);
-  const [usdcBalance, setUsdcBalance] = useState(0);
 
   // Fetch positions from Soroban contract
   const fetchPositions = useCallback(async () => {
@@ -86,13 +85,14 @@ function PortfolioPage() {
     if (isConnected && publicKey) {
       fetchPositions();
       fetchTrades();
+      refreshBalances();
     } else {
       setPositions([]);
       setTrades([]);
       setIsLoadingPositions(false);
       setIsLoadingTrades(false);
     }
-  }, [isConnected, publicKey, fetchPositions, fetchTrades]);
+  }, [isConnected, publicKey, fetchPositions, fetchTrades, refreshBalances]);
 
   // Auto-refresh every 60 seconds
   useEffect(() => {

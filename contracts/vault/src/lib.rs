@@ -44,9 +44,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol};
 use noether_common::{
-    NoetherError, PoolInfo, BASIS_POINTS,
+    NoetherError, PoolInfo, BASIS_POINTS, RESERVE_CAP_BPS,
     calculate_glp_for_deposit, calculate_usdc_for_withdrawal, calculate_glp_price,
 };
 
@@ -299,56 +299,68 @@ impl VaultContract {
     ///
     /// **Break-even (pnl = 0):**
     /// - No transfers needed, just emit event
-    pub fn settle_pnl(env: Env, pnl: i128) -> Result<(), NoetherError> {
+    /// Settle a position's PnL with the pool. Returns the amount actually
+    /// settled to the market: for a winner this is the profit *paid* (which may
+    /// be capped below `pnl` when the pool is undercollateralised); for a loss
+    /// it is `pnl` unchanged. The caller pays the trader from this figure.
+    ///
+    /// A winning close MUST NEVER revert (V-3): if the pool can't cover the full
+    /// profit, it pays what it has, records the remainder as a `Shortfall`
+    /// liability (reconciled by the insurance buffer in T3), and emits an event.
+    pub fn settle_pnl(env: Env, pnl: i128) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
 
         // Only market contract can call this
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
-        if pnl > 0 {
-            // Trader WON - Vault must pay profit to Market
+        let settled = if pnl > 0 {
+            // Trader WON - pay what the pool can actually cover.
             let total_usdc = get_total_usdc(&env);
-
-            // Check we have enough liquidity
-            if pnl > total_usdc {
-                return Err(NoetherError::InsufficientLiquidity);
-            }
-
-            // Verify actual token balance
             let usdc_token = get_usdc_token(&env);
             let token_client = token::Client::new(&env, &usdc_token);
             let vault_balance = token_client.balance(&env.current_contract_address());
 
-            if pnl > vault_balance {
-                return Err(NoetherError::InsufficientLiquidity);
+            // Available = the lesser of LP accounting and the real token balance,
+            // floored at zero.
+            let mut available = if total_usdc < vault_balance { total_usdc } else { vault_balance };
+            if available < 0 {
+                available = 0;
             }
+            let paid = if pnl > available { available } else { pnl };
 
-            // Transfer profit from Vault to Market
-            token_client.transfer(&env.current_contract_address(), &market_contract, &pnl);
-
-            // Update accounting
-            set_total_usdc(&env, total_usdc - pnl);
-
+            if paid > 0 {
+                token_client.transfer(&env.current_contract_address(), &market_contract, &paid);
+                set_total_usdc(&env, total_usdc - paid);
+            }
+            if paid < pnl {
+                // Record the unpaid remainder as a protocol liability.
+                add_shortfall(&env, pnl - paid);
+                env.events().publish(
+                    (Symbol::new(&env, "pnl_shortfall"),),
+                    (pnl, paid, pnl - paid),
+                );
+            }
+            paid
         } else if pnl < 0 {
-            // Trader LOST - Just update accounting
-            // The Market will call receive_loss() to transfer the actual funds
-            // We don't transfer here because Vault cannot pull tokens from Market
+            // Trader LOST - Just update accounting. The Market transfers the
+            // actual funds via receive_loss() (Vault cannot pull from Market).
             let loss = -pnl;
             let total_usdc = get_total_usdc(&env);
             set_total_usdc(&env, total_usdc + loss);
-        }
-        // If pnl == 0, no action needed
+            pnl
+        } else {
+            0
+        };
 
-        // Emit event
         env.events().publish(
             (Symbol::new(&env, "pnl_settled"),),
-            (pnl,),
+            (pnl, settled),
         );
 
         extend_instance_ttl(&env);
 
-        Ok(())
+        Ok(settled)
     }
 
     /// Receive loss payment from Market contract.
@@ -414,6 +426,11 @@ impl VaultContract {
     /// * `amount` - Maximum potential payout needed for this position
     ///
     /// This is a check-only function - no actual fund movement.
+    /// Reserve `amount` of committed payout for a position being opened (M-4).
+    /// Accumulates a running total so concurrent opens can't collectively
+    /// over-commit the pool: the aggregate reserve must stay within
+    /// `RESERVE_CAP_BPS` of AUM, otherwise the open is rejected. Released on
+    /// close/liquidate via `release_reservation`. Market-gated.
     pub fn reserve_for_position(env: Env, amount: i128) -> Result<(), NoetherError> {
         require_initialized(&env)?;
 
@@ -424,22 +441,38 @@ impl VaultContract {
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
-        // Check we have enough liquidity to potentially pay out
-        let total_usdc = get_total_usdc(&env);
-        if amount > total_usdc {
+        // Aggregate reserve must stay within RESERVE_CAP_BPS of AUM.
+        let aum = Self::calculate_aum_internal(&env);
+        let cap = aum * (RESERVE_CAP_BPS as i128) / (BASIS_POINTS as i128);
+        let new_reserved = get_total_reserved(&env)
+            .checked_add(amount)
+            .ok_or(NoetherError::Overflow)?;
+        if new_reserved > cap {
             return Err(NoetherError::InsufficientLiquidity);
         }
 
-        // Verify actual token balance
-        let usdc_token = get_usdc_token(&env);
-        let token_client = token::Client::new(&env, &usdc_token);
-        let vault_balance = token_client.balance(&env.current_contract_address());
-
-        if amount > vault_balance {
-            return Err(NoetherError::InsufficientLiquidity);
-        }
-
+        set_total_reserved(&env, new_reserved);
         Ok(())
+    }
+
+    /// Release a previously-reserved payout when a position closes/liquidates.
+    /// Saturating + never reverts, so it can't block a close (V-3). Market-gated.
+    pub fn release_reservation(env: Env, amount: i128) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        let market_contract = get_market_contract(&env);
+        market_contract.require_auth();
+
+        if amount > 0 {
+            let reserved = get_total_reserved(&env);
+            let next = if reserved > amount { reserved - amount } else { 0 };
+            set_total_reserved(&env, next);
+        }
+        Ok(())
+    }
+
+    /// Aggregate committed payout currently reserved against the pool (view).
+    pub fn get_total_reserved(env: Env) -> i128 {
+        get_total_reserved(&env)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -489,6 +522,13 @@ impl VaultContract {
     /// Get total USDC in pool (accounting value).
     pub fn get_total_usdc(env: Env) -> i128 {
         get_total_usdc(&env)
+    }
+
+    /// Cumulative unpaid winner profit (a protocol liability the insurance
+    /// buffer reconciles in T3). Non-zero means the pool was undercollateralised
+    /// when a winner closed (V-3).
+    pub fn get_shortfall(env: Env) -> i128 {
+        get_shortfall(&env)
     }
 
     /// Get actual USDC token balance held by vault.
@@ -626,6 +666,14 @@ impl VaultContract {
         Ok(())
     }
 
+    /// Admin-gated WASM upgrade. Swaps the contract code in place; storage is
+    /// preserved (SEC-2). The new WASM must already be installed on-chain.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
     /// Get admin address.
     pub fn get_admin(env: Env) -> Result<Address, NoetherError> {
         require_initialized(&env)?;
@@ -708,8 +756,137 @@ impl VaultContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::StellarAssetClient;
+    use soroban_sdk::{Address, Env};
 
-    // Tests will be added in integration test file
-    // as they require token contract setup
+    // 7-decimal unit, matching noether_common::PRECISION.
+    const UNIT: i128 = 10_000_000;
+
+    /// Vault funded with $100 and zero fees → AUM == real balance == $100.
+    fn setup_funded() -> (Env, VaultContractClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let market = Address::generate(&env); // stand-in for the market contract
+        let usdc = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let noe = env.register_stellar_asset_contract_v2(admin.clone()).address();
+
+        let vault_id = env.register_contract(None, VaultContract);
+        let vault = VaultContractClient::new(&env, &vault_id);
+        vault.initialize(&admin, &usdc, &noe, &market, &0, &0);
+
+        StellarAssetClient::new(&env, &noe).mint(&vault_id, &(1_000_000_000 * UNIT));
+        StellarAssetClient::new(&env, &usdc).mint(&admin, &(100 * UNIT));
+        vault.deposit(&admin, &(100 * UNIT));
+        (env, vault)
+    }
+
+    // V-3: a winning close must never revert. When the pool can't cover the full
+    // profit it pays what it has and records the remainder as a shortfall.
+    #[test]
+    fn winning_close_caps_payout_and_records_shortfall() {
+        let (_env, vault) = setup_funded();
+        let funded = vault.get_total_usdc();
+        assert_eq!(funded, 100 * UNIT);
+
+        let owed = funded + 500 * UNIT;
+        let settled = vault.settle_pnl(&owed);
+
+        assert_eq!(settled, funded);
+        assert_eq!(vault.get_total_usdc(), 0);
+        assert_eq!(vault.get_shortfall(), owed - funded);
+    }
+
+    // M-4: reservations accumulate, the aggregate is capped at RESERVE_CAP_BPS
+    // (70%) of AUM, and release frees capacity.
+    #[test]
+    fn reservation_accumulates_caps_and_releases() {
+        let (_env, vault) = setup_funded(); // AUM = $100 → cap = $70
+
+        vault.reserve_for_position(&(50 * UNIT));
+        assert_eq!(vault.get_total_reserved(), 50 * UNIT);
+
+        // 50 + 30 = 80 > 70 cap → rejected.
+        let over = vault.try_reserve_for_position(&(30 * UNIT));
+        assert!(matches!(over, Err(Ok(NoetherError::InsufficientLiquidity))));
+
+        // 50 + 20 = 70 == cap → allowed.
+        vault.reserve_for_position(&(20 * UNIT));
+        assert_eq!(vault.get_total_reserved(), 70 * UNIT);
+
+        // Release frees capacity for new opens.
+        vault.release_reservation(&(40 * UNIT));
+        assert_eq!(vault.get_total_reserved(), 30 * UNIT);
+        vault.reserve_for_position(&(40 * UNIT)); // back to the 70 cap
+        let over2 = vault.try_reserve_for_position(&UNIT);
+        assert!(matches!(over2, Err(Ok(NoetherError::InsufficientLiquidity))));
+    }
+
+    // Deposit → withdraw round-trip returns the principal when fees are zero.
+    #[test]
+    fn deposit_withdraw_round_trip() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let market = Address::generate(&env);
+        let usdc = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let noe = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let vault_id = env.register_contract(None, VaultContract);
+        let vault = VaultContractClient::new(&env, &vault_id);
+        vault.initialize(&admin, &usdc, &noe, &market, &0, &0);
+        StellarAssetClient::new(&env, &noe).mint(&vault_id, &(1_000_000_000 * UNIT));
+
+        let lp = Address::generate(&env);
+        StellarAssetClient::new(&env, &usdc).mint(&lp, &(100 * UNIT));
+
+        let shares = vault.deposit(&lp, &(100 * UNIT));
+        assert!(shares > 0);
+        assert_eq!(vault.get_noe_balance(&lp), shares);
+
+        // Withdraw pulls NOE via transfer_from, so the LP approves the vault
+        // first (the real flow's "approve NOE" step).
+        soroban_sdk::token::Client::new(&env, &noe).approve(
+            &lp,
+            &vault_id,
+            &shares,
+            &(env.ledger().sequence() + 1000),
+        );
+        let usdc_back = vault.withdraw(&lp, &shares);
+        assert_eq!(usdc_back, 100 * UNIT);
+    }
+
+    // V-2: a trader loss raises NOE price (LPs gain); a win lowers it.
+    #[test]
+    fn noe_price_tracks_settled_pnl() {
+        let (_env, vault) = setup_funded();
+        let p0 = vault.get_noe_price();
+
+        vault.settle_pnl(&(-10 * UNIT)); // traders lose $10 → pool gains
+        let p_loss = vault.get_noe_price();
+        assert!(p_loss > p0);
+
+        vault.settle_pnl(&(5 * UNIT)); // traders win $5 → pool pays out
+        let p_win = vault.get_noe_price();
+        assert!(p_win < p_loss);
+    }
+
+    // Money-moving entry points are market-gated: a caller without the market's
+    // authorization is rejected.
+    #[test]
+    fn settle_pnl_requires_market_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let market = Address::generate(&env);
+        let usdc = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let noe = env.register_stellar_asset_contract_v2(admin.clone()).address();
+        let vault_id = env.register_contract(None, VaultContract);
+        let vault = VaultContractClient::new(&env, &vault_id);
+        vault.initialize(&admin, &usdc, &noe, &market, &0, &0);
+
+        // Require real authorization (none supplied) — the market-gated call fails.
+        env.set_auths(&[]);
+        assert!(vault.try_settle_pnl(&(10 * UNIT)).is_err());
+    }
 }

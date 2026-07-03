@@ -1,5 +1,14 @@
 # Tranche 2 — Implementation Status
 
+> **Status (July 2026): Tranche 2 is delivered and paid.** This document is a
+> historical snapshot from the close of the T2 build session. The operator
+> punch list below has since been executed: branches pushed, `vault_factory`
+> and `referral` deployed to testnet (addresses in [`contracts.json`](../contracts.json)),
+> SDKs published ([npm `noether-sdk`](https://www.npmjs.com/package/noether-sdk),
+> [PyPI `noether-sdk`](https://pypi.org/project/noether-sdk/)). The one open
+> follow-up — the on-chain referral discount hook in the market contract — is
+> tracked as a Tranche 3 hardening item.
+
 This document tracks deliverable-level completion at the close of the
 local build session. All artifacts are reviewed by typecheck + unit
 tests; deployment-time work (testnet contract redeploys, GitHub

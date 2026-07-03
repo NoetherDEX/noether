@@ -66,7 +66,8 @@ export class IndexerPoller {
     this.deps.log.info('Poller stopped');
   }
 
-  private async pollOnce(): Promise<number> {
+  /** Public for tests; the loop above is the only production caller. */
+  async pollOnce(): Promise<number> {
     const cursor = await readCursor(this.deps.db);
     const startLedger = cursor?.lastLedger ?? (await this.coldStartLedger());
 
@@ -88,21 +89,30 @@ export class IndexerPoller {
 
     for (const raw of response.events) {
       const contractId = raw.contractId?.toString() ?? '';
-      let decoded: ReturnType<typeof decodeMarketEvent> | null = null;
-      if (contractId === this.deps.vaultFactoryContract) {
-        decoded = decodeVaultEvent(raw as unknown as RawEvent) as any;
-      } else if (contractId === this.deps.referralContract) {
-        decoded = decodeReferralEvent(raw as unknown as RawEvent) as any;
-      } else {
-        decoded = decodeMarketEvent(raw as unknown as RawEvent);
+      try {
+        let decoded: ReturnType<typeof decodeMarketEvent> | null = null;
+        if (contractId === this.deps.vaultFactoryContract) {
+          decoded = decodeVaultEvent(raw as unknown as RawEvent) as any;
+        } else if (contractId === this.deps.referralContract) {
+          decoded = decodeReferralEvent(raw as unknown as RawEvent) as any;
+        } else {
+          decoded = decodeMarketEvent(raw as unknown as RawEvent);
+        }
+        if (!decoded) {
+          this.deps.log.debug({ id: raw.id, topics: raw.topic.length }, 'Unrecognised event topic — skipped');
+          continue;
+        }
+        await this.deps.router.dispatch(decoded as any, ctx);
+        processed++;
+        highestLedger = Math.max(highestLedger, decoded.ledger);
+      } catch (err) {
+        // Per-event isolation (I-1): a single malformed payload or failing
+        // handler must not wedge the cursor. Record it to dead_letter and keep
+        // going so the batch — and the cursor — still advances. The event is
+        // preserved for inspection/replay, never silently dropped.
+        await this.deadLetter(raw as unknown as RawEvent, err);
+        highestLedger = Math.max(highestLedger, (raw as { ledger?: number }).ledger ?? 0);
       }
-      if (!decoded) {
-        this.deps.log.debug({ id: raw.id, topics: raw.topic.length }, 'Unrecognised event topic — skipped');
-        continue;
-      }
-      await this.deps.router.dispatch(decoded as any, ctx);
-      processed++;
-      highestLedger = Math.max(highestLedger, decoded.ledger);
     }
 
     if (response.events.length > 0 || cursor === null) {
@@ -119,6 +129,53 @@ export class IndexerPoller {
   private async coldStartLedger(): Promise<number> {
     const latest = await getLatestLedger(this.deps.rpc);
     return Math.max(1, latest - this.deps.coldStartLedgers);
+  }
+
+  /**
+   * Record an event that failed to decode or dispatch. Best-effort: if even the
+   * dead_letter write fails we log loudly but do NOT rethrow — rethrowing would
+   * re-wedge the poller, the exact failure mode this guard exists to prevent.
+   */
+  private async deadLetter(raw: RawEvent, err: unknown): Promise<void> {
+    const eventId = raw.id ?? `unknown-${(raw as { ledger?: number }).ledger ?? 0}`;
+    const errorMsg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    this.deps.log.error({ err, eventId }, 'Event decode/handler failed — dead-lettered');
+    try {
+      await this.deps.db.execute({
+        sql: `
+          INSERT INTO dead_letter (event_id, contract_id, ledger, error, raw_xdr, inserted_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(event_id) DO UPDATE SET
+            error = excluded.error,
+            inserted_at = excluded.inserted_at
+        `,
+        args: [
+          eventId,
+          raw.contractId?.toString() ?? null,
+          (raw as { ledger?: number }).ledger ?? null,
+          errorMsg.slice(0, 4000),
+          rawEventXdr(raw),
+          Date.now(),
+        ],
+      });
+    } catch (dlErr) {
+      this.deps.log.error({ dlErr, eventId }, 'Failed to persist dead_letter row');
+    }
+  }
+}
+
+/** Best-effort base64-XDR capture of a raw event for the dead-letter row. */
+function rawEventXdr(raw: RawEvent): string | null {
+  try {
+    const value = (raw as { value?: { toXDR?: (f: string) => string } }).value;
+    const valueXdr = typeof value?.toXDR === 'function' ? value.toXDR('base64') : null;
+    const topicArr = (raw as { topic?: Array<{ toXDR?: (f: string) => string }> }).topic;
+    const topic = Array.isArray(topicArr)
+      ? topicArr.map((t) => (typeof t?.toXDR === 'function' ? t.toXDR('base64') : null))
+      : [];
+    return JSON.stringify({ value: valueXdr, topic });
+  } catch {
+    return null;
   }
 }
 

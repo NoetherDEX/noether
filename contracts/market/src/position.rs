@@ -8,7 +8,7 @@
 use soroban_sdk::{Address, Env, Symbol};
 use noether_common::{BASIS_POINTS, calculate_pnl, calculate_cumulative_funding};
 use crate::storage::{
-    get_position,
+    get_position, get_config, resolve_risk_config,
     get_cross_margin_balance, get_cross_margin_position_ids,
     get_cumulative_funding_rate,
 };
@@ -46,11 +46,14 @@ struct CrossAggregates {
 fn aggregate_cross_positions(
     env: &Env,
     trader: &Address,
-    maintenance_margin_bps: u32,
+    // Vestigial: maintenance margin is now resolved PER ASSET below (P5-2). Kept in
+    // the signature so callers don't change; the passed value is ignored.
+    _maintenance_margin_bps: u32,
     get_price: &dyn Fn(&Symbol) -> i128,
 ) -> CrossAggregates {
     let position_ids = get_cross_margin_position_ids(env, trader);
     let current_cumulative = get_cumulative_funding_rate(env);
+    let config = get_config(env);
 
     let mut agg = CrossAggregates {
         total_collateral: 0,
@@ -76,8 +79,10 @@ fn aggregate_cross_positions(
                 pos.entry_cumulative_funding, current_cumulative,
             );
             agg.total_funding = agg.total_funding.checked_add(pos_funding).unwrap_or(agg.total_funding);
-            // Maintenance margin
-            let mm = pos.size * (maintenance_margin_bps as i128) / (BASIS_POINTS as i128);
+            // Maintenance margin — LIVE per-asset MM per leg (P5-2), so a per-asset
+            // RiskConfig MM raise tightens cross health consistently with isolated.
+            let mm_bps = resolve_risk_config(env, &pos.asset, &config).maintenance_margin_bps;
+            let mm = pos.size * (mm_bps as i128) / (BASIS_POINTS as i128);
             agg.maintenance_margin = agg.maintenance_margin.checked_add(mm).unwrap_or(agg.maintenance_margin);
             // Used margin (initial margin = size / leverage)
             let im = pos.size / (pos.leverage as i128);

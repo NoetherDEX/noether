@@ -5,7 +5,7 @@ import { formatUSD } from '@/lib/utils';
 interface StatsBarProps {
   tvl: number;
   noePrice: number;
-  apy: number;
+  apy: number | null;
   isLoading?: boolean;
 }
 
@@ -42,9 +42,19 @@ export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
       <div className="rounded-2xl border border-white/10 bg-card p-4 md:p-6">
         <span className="text-xs md:text-sm text-muted-foreground">Current APR</span>
         <div className="mt-2">
-          <span className="text-xl md:text-3xl font-bold font-mono text-[#22c55e]">~{apy.toFixed(1)}%</span>
+          <span
+            className={
+              apy == null
+                ? 'text-xl md:text-3xl font-bold font-mono text-muted-foreground'
+                : 'text-xl md:text-3xl font-bold font-mono text-[#22c55e]'
+            }
+          >
+            {apy == null ? '—' : `~${apy.toFixed(1)}%`}
+          </span>
         </div>
-        <p className="mt-2 text-xs text-muted-foreground hidden md:block">Variable rate based on trading fees</p>
+        <p className="mt-2 text-xs text-muted-foreground hidden md:block">
+          Variable rate from realized trading fees — yield display in progress
+        </p>
       </div>
 
       {/* NOE Price Card */}

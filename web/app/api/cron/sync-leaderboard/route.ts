@@ -237,9 +237,14 @@ async function recomputeTraderAggregates(): Promise<void> {
 }
 
 export async function GET(request: NextRequest) {
-  // Verify cron secret
+  // Verify cron secret. Fail closed when unset — otherwise the comparison below
+  // would accept a literal `Bearer undefined` from anyone (P0-14).
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 });
+  }
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

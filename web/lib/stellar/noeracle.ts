@@ -92,6 +92,20 @@ interface StreamEntry {
   round_id: number;
 }
 
+/** Health of the live price stream, surfaced to the UI. */
+export type PriceStreamStatus = 'live' | 'stale' | 'connecting';
+
+/** No live frame within this many ms ⇒ the stream is treated as stale. */
+export const PRICE_STALE_MS = 4000;
+
+/** Optional hooks for observing stream health (P0-9 / W-4). */
+export interface SubscribeOptions {
+  /** Fires whenever the stream's health changes (deduped). */
+  onStatus?: (status: PriceStreamStatus) => void;
+  /** Override the staleness window (default {@link PRICE_STALE_MS}). */
+  staleMs?: number;
+}
+
 /**
  * Subscribe to Noeracle's live ~500ms price stream for the given assets.
  *
@@ -104,22 +118,45 @@ interface StreamEntry {
  *
  * This drives the real-time price DISPLAY. It does NOT replace the on-chain
  * read (`getPrice` via the shim) used where a transaction needs a verified price.
+ *
+ * `opts.onStatus` reports stream health: `live` while frames flow, `stale` when
+ * none arrive within the watchdog window, `connecting` on transport error or
+ * (re)connect. The browser auto-reconnects, so `connecting` is usually transient.
  */
 export function subscribeLivePrices(
   assets: string[],
   onPrice: (p: LivePrice) => void,
+  opts: SubscribeOptions = {},
 ): () => void {
   if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
     return () => {};
   }
 
+  const { onStatus, staleMs = PRICE_STALE_MS } = opts;
+
   const wanted = new Set(assets.map((a) => `${a}/USD`));
   const es = new EventSource(`${NOERACLE_API_URL}/v1/stream`);
+
+  // Measure staleness from subscribe time so a connected-but-silent stream is
+  // also caught, not just a dropped connection.
+  let lastFrameAt = Date.now();
+  // Start `null` (not `connecting`) so a resubscribe — e.g. the user switching
+  // markets — doesn't briefly flash the staleness badge. Real gaps are surfaced
+  // by `onerror` and the watchdog below; the consumer owns the initial state.
+  let status: PriceStreamStatus | null = null;
+  const report = (next: PriceStreamStatus) => {
+    if (next !== status) {
+      status = next;
+      onStatus?.(next);
+    }
+  };
 
   const handlePrices = (ev: MessageEvent) => {
     try {
       const data = JSON.parse(ev.data) as { assets?: Record<string, StreamEntry> };
       const map = data.assets ?? {};
+      lastFrameAt = Date.now();
+      report('live');
       for (const pair of wanted) {
         const e = map[pair];
         if (!e) continue;
@@ -141,9 +178,18 @@ export function subscribeLivePrices(
   // The service tags its frames `event: prices`; also handle default messages.
   es.addEventListener('prices', handlePrices as EventListener);
   es.onmessage = handlePrices;
+  // EventSource retries on its own; surface the gap so the UI can warn + fall back.
+  es.onerror = () => report('connecting');
+
+  // Last-frame watchdog: if rounds stop arriving, flip to `stale`.
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastFrameAt > staleMs) report('stale');
+  }, 1000);
 
   return () => {
+    clearInterval(watchdog);
     es.removeEventListener('prices', handlePrices as EventListener);
+    es.onerror = null;
     es.close();
   };
 }

@@ -7,7 +7,7 @@
 branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 
 case "$branch" in
-  main|develop)
+  main|develop|staging)
     if [ -z "$ALLOW_PROTECTED_COMMIT" ]; then
       echo ""
       echo "✗ Direct commits to '$branch' are blocked."

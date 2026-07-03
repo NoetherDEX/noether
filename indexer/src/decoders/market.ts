@@ -18,6 +18,7 @@ import type {
   OrderPlacedEvent,
   PositionClosedEvent,
   PositionLiquidatedEvent,
+  PositionReducedEvent,
   PositionOpenedEvent,
 } from '../types/events.js';
 import { decodeEventValue, decodeTopics, asBigInt, asNumber, asString } from './scval.js';
@@ -54,6 +55,8 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
       return decodePositionClosed(raw, value);
     case 'position_liquidated':
       return decodePositionLiquidated(raw, value);
+    case 'position_reduced':
+      return decodePositionReduced(raw, value);
     case 'cross_liq':
       return decodeCrossLiq(raw, value);
     case 'order_placed':
@@ -103,6 +106,21 @@ function decodePositionClosed(raw: RawEvent, v: unknown[]): PositionClosedEvent 
   };
 }
 
+// position_reduced (P5-9): (id, trader, asset, close_size, new_size, price, pnl)
+function decodePositionReduced(raw: RawEvent, v: unknown[]): PositionReducedEvent {
+  return {
+    ...envelope(raw, 'position_reduced'),
+    topic: 'position_reduced',
+    positionId: asNumber(v[0], 'position_reduced.position_id'),
+    trader: asString(v[1], 'position_reduced.trader'),
+    asset: asString(v[2], 'position_reduced.asset'),
+    closeSize: asBigInt(v[3], 'position_reduced.close_size'),
+    newSize: asBigInt(v[4], 'position_reduced.new_size'),
+    price: asBigInt(v[5], 'position_reduced.price'),
+    pnl: asBigInt(v[6], 'position_reduced.pnl'),
+  };
+}
+
 function decodePositionLiquidated(raw: RawEvent, v: unknown[]): PositionLiquidatedEvent {
   return {
     ...envelope(raw, 'position_liquidated'),
@@ -118,8 +136,10 @@ function decodeCrossLiq(raw: RawEvent, v: unknown[]): CrossLiquidatedEvent {
   return {
     ...envelope(raw, 'cross_liq'),
     topic: 'cross_liq',
+    // Contract emits (trader, total_pnl, keeper_reward) — lib.rs:1131.
     trader: asString(v[0], 'cross_liq.trader'),
-    keeperReward: asBigInt(v[1], 'cross_liq.keeper_reward'),
+    totalPnl: asBigInt(v[1], 'cross_liq.total_pnl'),
+    keeperReward: asBigInt(v[2], 'cross_liq.keeper_reward'),
   };
 }
 

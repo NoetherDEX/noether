@@ -2,8 +2,8 @@
 //!
 //! Storage keys and helpers for the Market contract.
 
-use soroban_sdk::{contracttype, Address, Env, Vec};
-use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord};
+use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
+use noether_common::{NoetherError, Position, MarketConfig, RiskConfig, Order, OrderStatus, FeeTier, VolumeRecord, TTL_THRESHOLD, TTL_EXTEND_TO};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
@@ -22,6 +22,13 @@ pub enum DataKey {
     UsdcToken,
     /// Market configuration
     Config,
+    /// Last accepted oracle price per asset: (price, timestamp). Backs the
+    /// deviation circuit breaker in get_oracle_price (M-2 / P1-5).
+    LastOraclePrice(Symbol),
+    /// Treasury / insurance address receiving the protocol fee share (P1-10).
+    Treasury,
+    /// Protocol fee share in bps routed to the treasury (the rest goes to LPs).
+    ProtocolFeeShareBps,
     /// Position counter (for ID generation)
     PositionCounter,
     /// Total long position size
@@ -56,6 +63,9 @@ pub enum DataKey {
     PositionStopLoss(u64),
     /// Take-profit order ID attached to a position
     PositionTakeProfit(u64),
+    /// Trailing-stop order ID attached to a position (so it is cancelled, not left
+    /// a zombie, when the position closes — M-3 tail)
+    PositionTrailingStop(u64),
     /// Per-trader 14-day rolling volume record
     TraderVolume(Address),
     /// Fee tier configuration (Vec<FeeTier>)
@@ -68,6 +78,12 @@ pub enum DataKey {
     AllCrossMarginTraders,
     /// Peak price tracked for trailing stop orders (order_id -> i128)
     TrailingStopPeak(u64),
+    /// Per-asset risk parameters override (asset -> RiskConfig) (P5-1)
+    RiskConfigKey(Symbol),
+    /// Per-asset aggregate long open interest (asset -> i128) (P5-1)
+    AssetOiLong(Symbol),
+    /// Per-asset aggregate short open interest (asset -> i128) (P5-1)
+    AssetOiShort(Symbol),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -104,6 +120,24 @@ pub fn get_oracle_adapter(env: &Env) -> Address {
 
 pub fn set_oracle_adapter(env: &Env, oracle: &Address) {
     env.storage().instance().set(&DataKey::OracleAdapter, oracle);
+}
+
+pub fn get_treasury(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Treasury)
+}
+
+pub fn set_treasury(env: &Env, treasury: &Address) {
+    env.storage().instance().set(&DataKey::Treasury, treasury);
+}
+
+/// Protocol fee share routed to the treasury, in bps. Default 2000 (20%); the
+/// remaining 80% goes to LPs. Only takes effect once a treasury is configured.
+pub fn get_protocol_fee_share_bps(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::ProtocolFeeShareBps).unwrap_or(2_000)
+}
+
+pub fn set_protocol_fee_share_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&DataKey::ProtocolFeeShareBps, &bps);
 }
 
 pub fn get_vault(env: &Env) -> Address {
@@ -201,6 +235,14 @@ pub fn set_cumulative_funding_rate(env: &Env, rate: i128) {
 
 pub fn get_position(env: &Env, id: u64) -> Option<Position> {
     env.storage().persistent().get(&DataKey::Position(id))
+}
+
+/// Position IDs owned by a trader (the per-trader index, avoids global scans).
+pub fn get_trader_position_ids(env: &Env, trader: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TraderPositions(trader.clone()))
+        .unwrap_or(Vec::new(env))
 }
 
 pub fn save_position(env: &Env, position: &Position) {
@@ -326,10 +368,9 @@ pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
 // TTL Management
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Stellar best practice: threshold (check if TTL < this) + extend_to (set TTL to this)
-// Only extends if current TTL < threshold, avoiding wasted gas on every call
-const TTL_THRESHOLD: u32 = 17_280; // ~1 day at 5s ledgers
-const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
+// Shared TTL bump params (threshold / extend-to) live in noether_common (V-6),
+// so every contract bumps storage consistently. Only extends when the remaining
+// TTL drops below the threshold, avoiding wasted gas on every call.
 
 pub fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
@@ -337,6 +378,61 @@ pub fn extend_instance_ttl(env: &Env) {
 
 fn extend_persistent_ttl(env: &Env, key: &DataKey) {
     env.storage().persistent().extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+/// Last accepted oracle (price, timestamp) for an asset — the reference the
+/// deviation breaker compares against (M-2 / P1-5).
+pub fn get_last_oracle_price(env: &Env, asset: &Symbol) -> Option<(i128, u64)> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::LastOraclePrice(asset.clone()))
+}
+
+pub fn set_last_oracle_price(env: &Env, asset: &Symbol, price: i128, ts: u64) {
+    let key = DataKey::LastOraclePrice(asset.clone());
+    env.storage().persistent().set(&key, &(price, ts));
+    extend_persistent_ttl(env, &key);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Per-asset risk config + open interest (P5-1)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub fn get_risk_config(env: &Env, asset: &Symbol) -> Option<RiskConfig> {
+    env.storage().persistent().get(&DataKey::RiskConfigKey(asset.clone()))
+}
+
+pub fn set_risk_config(env: &Env, asset: &Symbol, rc: &RiskConfig) {
+    let key = DataKey::RiskConfigKey(asset.clone());
+    env.storage().persistent().set(&key, rc);
+    extend_persistent_ttl(env, &key);
+}
+
+/// Concrete RiskConfig for an asset: the admin override if set, else a fallback
+/// derived from the global MarketConfig (uncapped OI), so every caller gets a
+/// usable config whether or not an override exists.
+pub fn resolve_risk_config(env: &Env, asset: &Symbol, cfg: &MarketConfig) -> RiskConfig {
+    get_risk_config(env, asset).unwrap_or_else(|| RiskConfig::from_market(cfg))
+}
+
+pub fn get_asset_oi_long(env: &Env, asset: &Symbol) -> i128 {
+    env.storage().persistent().get(&DataKey::AssetOiLong(asset.clone())).unwrap_or(0)
+}
+
+pub fn set_asset_oi_long(env: &Env, asset: &Symbol, v: i128) {
+    let key = DataKey::AssetOiLong(asset.clone());
+    env.storage().persistent().set(&key, &v);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn get_asset_oi_short(env: &Env, asset: &Symbol) -> i128 {
+    env.storage().persistent().get(&DataKey::AssetOiShort(asset.clone())).unwrap_or(0)
+}
+
+pub fn set_asset_oi_short(env: &Env, asset: &Symbol, v: i128) {
+    let key = DataKey::AssetOiShort(asset.clone());
+    env.storage().persistent().set(&key, &v);
+    extend_persistent_ttl(env, &key);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -491,6 +587,19 @@ pub fn set_position_take_profit(env: &Env, position_id: u64, order_id: u64) {
 
 pub fn remove_position_take_profit(env: &Env, position_id: u64) {
     env.storage().persistent().remove(&DataKey::PositionTakeProfit(position_id));
+}
+
+pub fn get_position_trailing_stop(env: &Env, position_id: u64) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::PositionTrailingStop(position_id))
+}
+
+pub fn set_position_trailing_stop(env: &Env, position_id: u64, order_id: u64) {
+    env.storage().persistent().set(&DataKey::PositionTrailingStop(position_id), &order_id);
+    extend_persistent_ttl(env, &DataKey::PositionTrailingStop(position_id));
+}
+
+pub fn remove_position_trailing_stop(env: &Env, position_id: u64) {
+    env.storage().persistent().remove(&DataKey::PositionTrailingStop(position_id));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

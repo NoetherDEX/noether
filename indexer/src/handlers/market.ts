@@ -1,16 +1,36 @@
 import type { Client } from '@libsql/client';
 import type { DecodedMarketEvent } from '../types/events.js';
 import type { Handler, HandlerContext } from '../router.js';
+import { reconcileCrossPositions } from '../crossLiqSync.js';
 
 /**
  * Phase 2 v0 market handler: persist the decoded event to events_raw and
  * emit on the bus. Phase 3+ will add projections that derive trades,
  * candles, positions, and orders from this log.
  */
-function handle(topic: DecodedMarketEvent['topic']): Handler {
+function handle(
+  topic: DecodedMarketEvent['topic'],
+  marketContractId: string,
+  networkPassphrase?: string,
+): Handler {
   return async (event, ctx) => {
-    await insertEvent(ctx.db, event);
+    // Idempotency (I-2): the events_raw insert is OR IGNORE, so rowsAffected==0
+    // means we have already processed this event_id. Skip the projection mutation
+    // and every bus emit to avoid double-counting / duplicate WS frames on replay.
+    const inserted = await insertEvent(ctx.db, event);
+    if (inserted === 0) {
+      ctx.log.debug({ topic, eventId: event.id }, 'duplicate event — skipped projection + emit');
+      return;
+    }
     await maintainPositionsProjection(ctx.db, event);
+    // cross_liq closes all the trader's cross positions but names none, so the
+    // open-position projection would keep them as phantoms. Reconcile against
+    // on-chain truth (best-effort; skipped when no passphrase, e.g. in tests).
+    if (event.topic === 'cross_liq' && networkPassphrase) {
+      await reconcileCrossPositions(
+        ctx.db, ctx.rpc, marketContractId, networkPassphrase, event.trader, ctx.log,
+      ).catch((err) => ctx.log.warn({ err }, 'cross_liq phantom cleanup failed'));
+    }
     ctx.bus.emit('event', event);
 
     switch (event.topic) {
@@ -44,6 +64,18 @@ function handle(topic: DecodedMarketEvent['topic']): Handler {
           trader: event.trader,
           price: event.closePrice,
           size: 0n,
+          ts: event.ledgerCloseTs,
+        });
+        break;
+      case 'position_reduced':
+        // Partial close (P5-9): the position survives at the reduced size.
+        ctx.bus.emit('position', { positionId: event.positionId, trader: event.trader, state: 'reduced' });
+        ctx.bus.emit('trade', {
+          kind: 'close',
+          positionId: event.positionId,
+          trader: event.trader,
+          price: event.price,
+          size: event.closeSize,
           ts: event.ledgerCloseTs,
         });
         break;
@@ -100,14 +132,22 @@ async function maintainPositionsProjection(db: Client, event: DecodedMarketEvent
         args: [event.positionId],
       });
       return;
+    case 'position_reduced':
+      // Partial close (P5-9): keep the row, update its size to the residual.
+      await db.execute({
+        sql: 'UPDATE positions SET size = ? WHERE position_id = ?',
+        args: [event.newSize.toString(), event.positionId],
+      });
+      return;
     default:
       return;
   }
 }
 
-async function insertEvent(db: Client, event: DecodedMarketEvent): Promise<void> {
+/** Returns rowsAffected: 1 on a fresh insert, 0 when the event_id already exists. */
+async function insertEvent(db: Client, event: DecodedMarketEvent): Promise<number> {
   const payload = serialisePayload(event);
-  await db.execute({
+  const result = await db.execute({
     sql: `
       INSERT OR IGNORE INTO events_raw (
         event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
@@ -124,6 +164,7 @@ async function insertEvent(db: Client, event: DecodedMarketEvent): Promise<void>
       Date.now(),
     ],
   });
+  return result.rowsAffected;
 }
 
 function serialisePayload(event: DecodedMarketEvent): string {
@@ -142,6 +183,7 @@ const MARKET_TOPICS: DecodedMarketEvent['topic'][] = [
   'position_opened',
   'position_closed',
   'position_liquidated',
+  'position_reduced',
   'cross_liq',
   'order_placed',
   'order_cancelled',
@@ -149,11 +191,14 @@ const MARKET_TOPICS: DecodedMarketEvent['topic'][] = [
   'funding_applied',
 ];
 
-export function buildMarketRegistrations(marketContractId: string): MarketHandlerRegistration[] {
+export function buildMarketRegistrations(
+  marketContractId: string,
+  networkPassphrase?: string,
+): MarketHandlerRegistration[] {
   return MARKET_TOPICS.map((topic) => ({
     contractId: marketContractId,
     topic,
-    handler: handle(topic),
+    handler: handle(topic, marketContractId, networkPassphrase),
   }));
 }
 

@@ -106,13 +106,7 @@ export async function registerAccountRoutes(
     },
     async (req, reply) => {
       const owner = req.user!.owner;
-      const rows = await events.list({ topic: undefined, limit: 200 });
-      // EventsService doesn't yet support topic-IN; do an explicit query here.
-      const filtered = rows.filter(
-        (e) =>
-          POSITION_TOPICS.includes(e.topic) &&
-          isOwnedByTrader(e.payload as Record<string, unknown>, owner),
-      );
+      const filtered = await events.listByTrader(owner, POSITION_TOPICS, 500);
       return reply.send({ events: filtered });
     },
   );
@@ -128,18 +122,8 @@ export async function registerAccountRoutes(
     },
     async (req, reply) => {
       const owner = req.user!.owner;
-      const rows = await events.list({ topic: undefined, limit: 500 });
-      const filtered = rows.filter(
-        (e) =>
-          ORDER_TOPICS.includes(e.topic) &&
-          isOwnedByTrader(e.payload as Record<string, unknown>, owner),
-      );
+      const filtered = await events.listByTrader(owner, ORDER_TOPICS, 500);
       return reply.send({ events: filtered });
     },
   );
-}
-
-function isOwnedByTrader(payload: Record<string, unknown>, owner: string): boolean {
-  const t = payload.trader;
-  return typeof t === 'string' && t === owner;
 }
