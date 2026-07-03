@@ -552,11 +552,11 @@ function TradePage() {
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Open Interest</span>
-                      <span className="text-white">$1.2M</span>
+                      <span className="text-neutral-500">—</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">24h Volume</span>
-                      <span className="text-white">$890K</span>
+                      <span className="text-neutral-500">—</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Funding Rate</span>

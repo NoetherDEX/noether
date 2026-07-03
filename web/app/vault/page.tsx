@@ -35,10 +35,15 @@ function VaultPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Pool stats
-  const [poolStats, setPoolStats] = useState({
+  const [poolStats, setPoolStats] = useState<{
+    tvl: number;
+    noePrice: number;
+    apy: number | null;
+    noeBalance: number;
+  }>({
     tvl: 0,
     noePrice: 1.0,
-    apy: 12.5, // TODO: Calculate from actual fees
+    apy: null, // Variable — computed from realized fees once yield integration lands; never a promised rate
     noeBalance: 0,
   });
 
@@ -95,7 +100,7 @@ function VaultPage() {
         setPoolStats({
           tvl: isNaN(tvl) ? 0 : tvl,
           noePrice: isNaN(noePriceNum) ? 1.0 : noePriceNum,
-          apy: 12.5, // TODO: Calculate from actual fees
+          apy: null, // Variable — computed from realized fees once yield integration lands; never a promised rate
           noeBalance: isNaN(noeBalanceNum) ? 0 : noeBalanceNum,
         });
       }
