@@ -89,6 +89,8 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 
 ### Keeper (`scripts/keeper` + Railway `noetherkeeperbotv2`)
 
+> **IN FLIGHT 2026-07-04:** P2-7..P2-12 being implemented in one keeper-hardening pass (workflow). CRITICAL coupling: the market removed `is_liquidatable` + `should_execute_order` for WASM budget this session, so the keeper switch to local-health-calc + simulate-first execution ships in the SAME rollout, plus it must call the new router `liquidate_with_price`/`execute_with_price` (P2-5) and `market.sync_asset_pnl` per cycle. Apply to BOTH keeper copies.
+
 - [ ] **P2-7** [critical/d] **Timeouts + watchdog + alerting** (K-1): `{timeout:15000}` on rpc.Server; `AbortSignal.timeout(10s)` on all fetches; watchdog `process.exit(1)` if no cycle completes in 3 min; Discord/Telegram webhook on startup/error-streak/shutdown; run compiled dist in prod. Apply to BOTH keeper copies.
 - [ ] **P2-8** [critical/d] Publish-path defenses (K-2): persist last-pushed prices across restarts (file/libsql) so the circuit breaker survives boot; tighten per-asset jump bounds; sanity-check each attestation against one independent ticker before pushing, skip+alert on divergence.
 - [ ] **P2-9** [high/d] Scan restructure (K-4): one per-cycle snapshot shared across phases; constant dummy Account for simulations; compute cross health locally; count consecutive read failures into stats + alert.
@@ -114,6 +116,8 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 ---
 
 ## Phase 4 — Off-chain correctness (api / indexer / web / SDKs)
+
+> **IN FLIGHT 2026-07-04 (workflow):** api P4-2/4/5/6, indexer P4-7/8/9/10/11, sdk P4-19/20/21/22 being implemented. Web items (P4-13..P4-17) and the api-dependent web bits are NOT in that batch — they remain for a focused web pass. P4-25 already done (pre-session).
 
 ### API
 
