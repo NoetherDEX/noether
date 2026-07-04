@@ -144,8 +144,8 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
   - [x] **Positions DONE** 2026-06-10 (commit `4c5788d`, staging). Personal mode now loads from `/v1/positions/open?trader=` + `getPositionsByIds` (was a whole-market `get_all_position_ids` + per-id scan on the public RPC); chain scan kept as fallback only on API error; staggered post-trade refetch (now+2.5s+6s) for read-your-writes. Prod API verified live + on current stack. **Still needs to reach `main` to help production.**
   - [ ] Orders list (`getOrders`) + OrderBook still do the whole-market RPC scan → move to a `/v1/orders?trader=` endpoint (table exists, needs an api route).
 - [~] **P4-15** [medium/d] Vault APY (W-3 tail) — HIDDEN-UNTIL-REAL DONE 2026-07-04 (commit `16a5b37`). Fabricated 12.5% removed everywhere (vault StatsBar/YourPosition null-safe, /vaults hero 'Variable'). Real computation still needs LP-vault fee history from the indexer (I-8/P4-12, in flight). Real NOE price on /vaults marketplace cards still TODO.
-- [ ] **P4-16** [medium/d] Mobile trade flow: bottom Long/Short bar + bottom-sheet OrderPanel (or order-* reflow); audit /vault + /vaults at 390px (W-7 — contractual T3 deliverable).
-- [ ] **P4-17** [medium/d] TP/SL inputs at open (pipelined post-open txs now; router `open_with_price_and_tpsl` later); trade history from `/v1/trades` (W-6).
+- [x] **P4-16** [medium/d] Mobile trade flow (W-7) — DONE 2026-07-04 (commit `ea5754e`). Fixed bottom Long/Short bar (safe-area inset) presets direction + opens the OrderPanel in a bottom-sheet Modal below lg; desktop sidebar OrderPanel hidden on mobile, Market Info kept. tsc clean; 390px visual pass is the Vercel/manual step. NOTE: /vault + /vaults 390px audit not separately done.
+- [x] **P4-17** [medium/d] TP/SL at open (W-6) — DONE 2026-07-04 (commit `5506158`). Optional TP/SL inputs on isolated Market orders, pipelined as follow-up set_stop_loss/set_take_profit signatures after the open confirms (best-effort, never unwinds the fill). Router single-sig path (open_with_price_and_tpsl) is G-1/later. Trade-history-from-/v1/trades still TODO (web cutover).
 
 ### SDKs + tx-builders
 
