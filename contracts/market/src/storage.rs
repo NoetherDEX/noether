@@ -68,6 +68,8 @@ pub enum DataKey {
     AllCrossMarginTraders,
     /// Peak price tracked for trailing stop orders (order_id -> i128)
     TrailingStopPeak(u64),
+    /// Trailing-stop order ID attached to a position
+    PositionTrailingStop(u64),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -293,10 +295,6 @@ pub fn get_all_position_ids(env: &Env) -> Vec<u64> {
         .unwrap_or(Vec::new(env))
 }
 
-pub fn get_position_count(env: &Env) -> u64 {
-    get_all_position_ids(env).len() as u64
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Authorization Helpers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -491,6 +489,19 @@ pub fn set_position_take_profit(env: &Env, position_id: u64, order_id: u64) {
 
 pub fn remove_position_take_profit(env: &Env, position_id: u64) {
     env.storage().persistent().remove(&DataKey::PositionTakeProfit(position_id));
+}
+
+pub fn get_position_trailing_stop(env: &Env, position_id: u64) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::PositionTrailingStop(position_id))
+}
+
+pub fn set_position_trailing_stop(env: &Env, position_id: u64, order_id: u64) {
+    env.storage().persistent().set(&DataKey::PositionTrailingStop(position_id), &order_id);
+    extend_persistent_ttl(env, &DataKey::PositionTrailingStop(position_id));
+}
+
+pub fn remove_position_trailing_stop(env: &Env, position_id: u64) {
+    env.storage().persistent().remove(&DataKey::PositionTrailingStop(position_id));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

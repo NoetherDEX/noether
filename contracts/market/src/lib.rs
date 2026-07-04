@@ -397,7 +397,8 @@ impl MarketContract {
         // Record volume for fee tier tracking
         record_volume_only(&env, &trader, position.size);
 
-        // Delete position
+        // Cancel any attached SL/TP/trailing orders, then delete position
+        Self::cancel_position_orders(&env, position_id, None);
         delete_position(&env, position_id, &trader);
 
         env.events().publish(
@@ -522,7 +523,8 @@ impl MarketContract {
             }
         }
 
-        // Delete position
+        // Cancel any attached SL/TP/trailing orders, then delete position
+        Self::cancel_position_orders(&env, position_id, None);
         delete_position(&env, position_id, &position.trader);
 
         env.events().publish(
@@ -960,7 +962,8 @@ impl MarketContract {
             }
         }
 
-        // Clean up
+        // Clean up (defensive: legacy cross positions may carry attached orders)
+        Self::cancel_position_orders(&env, position_id, None);
         remove_cross_margin_position(&env, &trader, position_id);
         delete_position(&env, position_id, &trader);
 
@@ -1063,7 +1066,8 @@ impl MarketContract {
                     }
                 }
 
-                // Delete position
+                // Cancel any attached orders (defensive), then delete position
+                Self::cancel_position_orders(&env, pid, None);
                 delete_position(&env, pid, &trader);
             }
         }
@@ -1357,6 +1361,12 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
+        // Cross-margin positions must close via the cross path; an attached
+        // order would pay out of the shared pool through the isolated path.
+        if position.margin_mode == 1 {
+            return Err(NoetherError::CrossMarginOrderNotSupported);
+        }
+
         // Check if SL already exists
         if get_position_stop_loss(&env, position_id).is_some() {
             return Err(NoetherError::OrderAlreadyExists);
@@ -1458,6 +1468,11 @@ impl MarketContract {
         // Verify ownership
         if position.trader != trader {
             return Err(NoetherError::NotPositionOwner);
+        }
+
+        // Cross-margin positions must close via the cross path
+        if position.margin_mode == 1 {
+            return Err(NoetherError::CrossMarginOrderNotSupported);
         }
 
         // Check if TP already exists
@@ -1592,6 +1607,7 @@ impl MarketContract {
             match order.order_type {
                 OrderType::StopLoss => remove_position_stop_loss(&env, order.position_id),
                 OrderType::TakeProfit => remove_position_take_profit(&env, order.position_id),
+                OrderType::TrailingStop => remove_position_trailing_stop(&env, order.position_id),
                 _ => {}
             }
         }
@@ -1704,6 +1720,7 @@ impl MarketContract {
                 match order.order_type {
                     OrderType::StopLoss => remove_position_stop_loss(&env, order.position_id),
                     OrderType::TakeProfit => remove_position_take_profit(&env, order.position_id),
+                    OrderType::TrailingStop => remove_position_trailing_stop(&env, order.position_id),
                     _ => {}
                 }
             }
@@ -1962,6 +1979,16 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
+        // Cross-margin positions must close via the cross path
+        if position.margin_mode == 1 {
+            return Err(NoetherError::CrossMarginOrderNotSupported);
+        }
+
+        // One trailing stop per position
+        if get_position_trailing_stop(&env, position_id).is_some() {
+            return Err(NoetherError::OrderAlreadyExists);
+        }
+
         // Get current price as initial peak
         let current_price = Self::get_oracle_price(&env, &position.asset)?;
 
@@ -2000,6 +2027,7 @@ impl MarketContract {
         set_trailing_stop_peak(&env, order_id, current_price);
 
         save_order(&env, &order);
+        set_position_trailing_stop(&env, position_id, order_id);
         extend_instance_ttl(&env);
         Ok(order)
     }
@@ -2079,6 +2107,34 @@ impl MarketContract {
         }
 
         Ok(price)
+    }
+
+    /// Cancel any SL/TP/trailing orders still attached to a position that is
+    /// being closed or liquidated, so no zombie Pending orders survive it.
+    /// `skip` is the order currently being executed (its status transition is
+    /// owned by the caller); its link is still removed.
+    fn cancel_position_orders(env: &Env, position_id: u64, skip: Option<u64>) {
+        let linked = [
+            get_position_stop_loss(env, position_id),
+            get_position_take_profit(env, position_id),
+            get_position_trailing_stop(env, position_id),
+        ];
+        for maybe_id in linked.iter() {
+            if let Some(order_id) = maybe_id {
+                if skip == Some(*order_id) {
+                    continue;
+                }
+                update_order_status(env, *order_id, OrderStatus::Cancelled);
+                remove_trailing_stop_peak(env, *order_id);
+                env.events().publish(
+                    (Symbol::new(env, "order_cancelled"),),
+                    (*order_id, Symbol::new(env, "pos_closed")),
+                );
+            }
+        }
+        remove_position_stop_loss(env, position_id);
+        remove_position_take_profit(env, position_id);
+        remove_position_trailing_stop(env, position_id);
     }
 
     /// Check if Vault has enough liquidity for a potential payout.
@@ -2328,9 +2384,9 @@ impl MarketContract {
         // Record volume for fee tier tracking
         record_volume_only(env, &position.trader, position.size);
 
-        // Remove SL/TP links
-        remove_position_stop_loss(env, position.id);
-        remove_position_take_profit(env, position.id);
+        // Cancel sibling SL/TP/trailing orders and remove all links; the
+        // executing order's own status transition is handled by execute_order
+        Self::cancel_position_orders(env, position.id, Some(order.id));
 
         // Delete position
         delete_position(env, position.id, &position.trader);
@@ -2967,5 +3023,131 @@ mod tests {
         // Execute — should cancel because no opposing position exists
         let reward = test.market.execute_order(&keeper, &order.id);
         assert_eq!(reward, 0); // 0 = cancelled, not executed
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Cross-Margin Order Guard + Zombie-Order Cleanup (M-3 / P1-2)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_cross_position_rejects_attached_orders() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader,
+            &Symbol::new(&test.env, "BTC"),
+            &(200 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // All three attach paths must reject cross-margin positions (#80)
+        let sl = test.market.try_set_stop_loss(
+            &trader, &pos.id, &(55_000 * PRECISION), &500,
+        );
+        assert!(matches!(sl, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
+
+        let tp = test.market.try_set_take_profit(
+            &trader, &pos.id, &(70_000 * PRECISION), &500, &0,
+        );
+        assert!(matches!(tp, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
+
+        let ts = test.market.try_place_trailing_stop(&trader, &pos.id, &500, &500);
+        assert!(matches!(ts, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
+    }
+
+    #[test]
+    fn test_close_position_cancels_attached_sl_tp() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Attach SL below entry and TP above entry
+        let sl = test.market.set_stop_loss(
+            &trader, &pos.id, &(PRECISION * 9 / 100), &500,
+        );
+        let tp = test.market.set_take_profit(
+            &trader, &pos.id, &(PRECISION * 12 / 100), &500, &0,
+        );
+        assert_eq!(test.market.get_all_order_ids().len(), 2);
+
+        // Manual close must cancel both attached orders — no zombies
+        test.market.close_position(&trader, &pos.id);
+
+        assert_eq!(test.market.get_all_order_ids().len(), 0);
+        let sl_after = test.market.get_order(&sl.id).unwrap();
+        let tp_after = test.market.get_order(&tp.id).unwrap();
+        assert_eq!(sl_after.status, OrderStatus::Cancelled);
+        assert_eq!(tp_after.status, OrderStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_liquidation_cancels_attached_orders() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+
+        // 10x long at $0.10 — liquidation near $0.091
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &10,
+            &Direction::Long,
+        );
+        let sl = test.market.set_stop_loss(
+            &trader, &pos.id, &(PRECISION * 5 / 100), &500,
+        );
+
+        // Crash the price below liquidation threshold and liquidate
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 85 / 1000));
+        test.market.liquidate(&keeper, &pos.id);
+
+        // The attached SL must not survive as a pending zombie
+        assert_eq!(test.market.get_all_order_ids().len(), 0);
+        let sl_after = test.market.get_order(&sl.id).unwrap();
+        assert_eq!(sl_after.status, OrderStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_trailing_stop_link_lifecycle() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        let ts = test.market.place_trailing_stop(&trader, &pos.id, &500, &500);
+
+        // Second trailing stop on the same position is rejected
+        let dup = test.market.try_place_trailing_stop(&trader, &pos.id, &300, &500);
+        assert!(matches!(dup, Err(Ok(NoetherError::OrderAlreadyExists))));
+
+        // Cancelling frees the slot for a new trailing stop
+        test.market.cancel_order(&trader, &ts.id);
+        let ts2 = test.market.place_trailing_stop(&trader, &pos.id, &300, &500);
+
+        // Closing the position cancels the attached trailing stop
+        test.market.close_position(&trader, &pos.id);
+        assert_eq!(test.market.get_all_order_ids().len(), 0);
+        assert_eq!(
+            test.market.get_order(&ts2.id).unwrap().status,
+            OrderStatus::Cancelled
+        );
     }
 }

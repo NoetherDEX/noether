@@ -123,4 +123,8 @@ pub enum NoetherError {
     CrossMarginNotLiquidatable = 78,
     /// No cross-margin positions found for this trader
     CrossMarginNoPositions = 79,
+    /// SL/TP/trailing-stop orders are not supported on cross-margin
+    /// positions (they would execute via the isolated path and pay
+    /// out of the shared pool)
+    CrossMarginOrderNotSupported = 80,
 }
