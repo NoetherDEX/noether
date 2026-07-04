@@ -332,10 +332,7 @@ pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
 // TTL Management
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Stellar best practice: threshold (check if TTL < this) + extend_to (set TTL to this)
-// Only extends if current TTL < threshold, avoiding wasted gas on every call
-const TTL_THRESHOLD: u32 = 17_280; // ~1 day at 5s ledgers
-const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
+use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
 
 pub fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);

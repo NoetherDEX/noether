@@ -34,7 +34,7 @@
 // Soroban entry points carrying full oracle attestations exceed clippy's 7-arg heuristic
 #![allow(clippy::too_many_arguments)]
 
-use noether_common::{Direction, NoetherError, Position};
+use noether_common::{assets::symbol_to_tag, ttl::{TTL_EXTEND_TO, TTL_THRESHOLD}, Direction, NoetherError, Position};
 use soroban_sdk::{
     contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
@@ -69,7 +69,7 @@ impl NoetherRouterContract {
         env.storage().instance().set(&DataKey::Market, &market);
         env.storage().instance().set(&DataKey::Noeracle, &noeracle);
         env.storage().instance().set(&DataKey::Initialized, &true);
-        env.storage().instance().extend_ttl(518_400, 518_400);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -247,33 +247,6 @@ impl NoetherRouterContract {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Symbol → 8-byte tag mapping
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Identical to `noeracle_shim::symbol_to_tag`: Noeracle's on-chain tag is
-// `ASCII(<symbol>USD)` zero-padded to 8 bytes. Deriving it here (rather than
-// trusting a caller-supplied tag) guarantees the slot this router WRITES is the
-// same slot the shim READS for the market. Hardcoded for the three trading
-// pairs; adding a pair means a redeploy of both this and the shim.
-
-fn symbol_to_tag(env: &Env, asset: &Symbol) -> Result<BytesN<8>, NoetherError> {
-    let btc = Symbol::new(env, "BTC");
-    let eth = Symbol::new(env, "ETH");
-    let xlm = Symbol::new(env, "XLM");
-
-    let bytes: [u8; 8] = if asset == &btc {
-        [b'B', b'T', b'C', b'U', b'S', b'D', 0, 0]
-    } else if asset == &eth {
-        [b'E', b'T', b'H', b'U', b'S', b'D', 0, 0]
-    } else if asset == &xlm {
-        [b'X', b'L', b'M', b'U', b'S', b'D', 0, 0]
-    } else {
-        return Err(NoetherError::InvalidPrice);
-    };
-
-    Ok(BytesN::from_array(env, &bytes))
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tests

@@ -2,6 +2,7 @@
 //!
 //! Storage keys and helper functions for the Vault contract.
 
+use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
 use soroban_sdk::{contracttype, Address, Env};
 use noether_common::NoetherError;
 
@@ -116,7 +117,7 @@ pub fn get_total_usdc(env: &Env) -> i128 {
 
 pub fn set_total_usdc(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::TotalUsdc, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::TotalUsdc, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(&DataKey::TotalUsdc, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_total_noe_circulating(env: &Env) -> i128 {
@@ -125,7 +126,7 @@ pub fn get_total_noe_circulating(env: &Env) -> i128 {
 
 pub fn set_total_noe_circulating(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::TotalNoeCirculating, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::TotalNoeCirculating, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(&DataKey::TotalNoeCirculating, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_unrealized_pnl(env: &Env) -> i128 {
@@ -134,7 +135,7 @@ pub fn get_unrealized_pnl(env: &Env) -> i128 {
 
 pub fn set_unrealized_pnl(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::UnrealizedPnl, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::UnrealizedPnl, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(&DataKey::UnrealizedPnl, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 pub fn get_total_fees(env: &Env) -> i128 {
@@ -143,7 +144,7 @@ pub fn get_total_fees(env: &Env) -> i128 {
 
 pub fn set_total_fees(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::TotalFees, &amount);
-    env.storage().persistent().extend_ttl(&DataKey::TotalFees, 2_592_000, 2_592_000);
+    env.storage().persistent().extend_ttl(&DataKey::TotalFees, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -177,5 +178,5 @@ pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
 
 /// Extend TTL for instance storage (30 days).
 pub fn extend_instance_ttl(env: &Env) {
-    env.storage().instance().extend_ttl(2_592_000, 2_592_000);
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 }
