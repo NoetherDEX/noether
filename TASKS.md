@@ -2,6 +2,19 @@
 
 Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 87 findings with file:line evidence, 40 research insights, critic prioritization). Finding IDs below (M-1, V-2, O-1, …) reference that report.
 
+## Status — updated 2026-07-04
+
+**The audit blocker set is cleared.** In this sprint (on `staging`, CI green):
+- **Phase 0** (16), **Phase 1** (11 — the solvency core), **Phase 2** router + keeper (P2-4…12), **Phase 3** ops (P3-1…10), **Phase 4** off-chain + web (P4-1…26 minus the two below), **Phase 6** code artifacts (P6-2/3/4/5/6), and the **Phase 5 Tranche-3 risk engine** (P5-1/2/6 done; P5-3/4/5/7 math + `risk` contract done, market-wiring documented as WASM-budget-blocked). All tested: 167 contract tests, api 96, indexer 33, tx-builders 16, sdk-ts 39, sdk-py 21; clippy clean on a pinned 1.96.0 toolchain; keeper/e2e/web tsc clean.
+
+**What's left (the unchecked `[ ]` items) — none are blocker code in this repo:**
+- **Operator / ops:** the coupled contract redeploy (market + vault ship TOGETHER; the keeper's removed-view replacements ride the same rollout), then `market.set_fee_split`, router re-init with the publisher key, `risk.set_config` per asset, `vault.seed_buffer` + `set_deposit_cap`, `npm run reindex`, SDK npm/PyPI publish, monitoring hookup (`/v1/health` + `/healthz`), multisig ceremony (P3-8), env/Railway checks (P0-1/2), Audit-Bank application (P6-1), DefiLlama listing (P6-7). Each is tagged ⚠️ OPERATOR inline below.
+- **Noeracle repo (external):** P2-1/2/3 (write-path hardening, TWAP ring buffer) live in the separate Noeracle project; P5-8 (TWAP marks) depends on them.
+- **Founder-deferred to v1.1:** V1.1-1…6 (vault_factory + on-chain referral payouts) — OUT of v1 per the locked decision below.
+- **Growth backlog:** G-1…10 — post-blocker, research-backed features.
+
+Legend below: `[x]` done · `[~]` partially done (note says what remains) · `[ ]` not started.
+
 ## Decisions locked 2026-06-09
 
 - **Mainnet date:** no date pressure. Apply to the SCF Audit Bank (`sorobanaudits@stellar.org`) once Phase 1–2 blockers are cleared; the audit then sets the launch date.
