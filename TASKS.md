@@ -22,34 +22,34 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 
 ### Contract-adjacent one-liners (no redeploy needed)
 
-- [ ] **P0-3** [critical/h] **Cross-margin SL/TP guard — web-side interim** (M-3): until the contract fix deploys, hide/disable SL/TP and trailing-stop UI for cross-margin positions so users can't corrupt their own cross accounts. Done when: order-attach UI unavailable when `margin_mode==1`.
+- [x] **P0-3** [critical/h] **Cross-margin SL/TP guard — web-side interim** (M-3) — DONE 2026-07-04 (commit `9100166`). PositionsList buttons disabled + OrderPanel trailing dropdown filtered + trade-page handlers refuse for `marginMode==='Cross'`. Contract-side fix ALSO landed same day (P1-2, commit `71363e3`).
 
 ### Web quick wins (`web/`)
 
-- [ ] **P0-4** [low/h] Rename `lookup_code` → `resolve_code` in `web/lib/stellar/referral.ts:83`; distinguish simulation-failure from "code free" (R-7). Done when: taken codes show "taken" before signing.
-- [ ] **P0-5** [high/h] **Fix false referral copy** (R-2, R-3): `/referrals` page + `CreateCodeCard` claim the contract enforces a 14-day volume threshold (it doesn't) and `ClaimFeesCard` promises direct wallet payouts (claim transfers nothing). Soften/correct copy; disable the Claim button with an "accrual goes live in v1.1" note. Done when: nothing on the page promises a money flow that can't happen.
-- [ ] **P0-6** [high/h] Portfolio USDC balance: read `useWallet().usdcBalance` in `web/app/portfolio/page.tsx:19` (W-3/F-3). NOE balance: call `getNoeBalance` in `useWallet` onConnect/refresh (`useWallet.ts:61,125`, F-4). Done when: real balances render.
-- [ ] **P0-7** [low/h] Gate the 21 `[DEBUG]` logs behind `NODE_ENV!=='production'` (`client.ts`, `market.ts`, `vault/page.tsx`); add `decodeContractError()` mapping `noether_common/src/errors.rs` codes (#30 → "Price feed stale — retry", etc.); delete the stale `AllOraclesFailed` branch in `OrderPanel.tsx:353` (W-8).
-- [ ] **P0-8** [medium/h] Call `assertContractsConfigured()` from `app/providers.tsx`; add `NOERACLE_SHIM` to `REQUIRED_CONTRACTS`; loud banner when `NOETHER_ROUTER` unset in prod (W-5).
-- [ ] **P0-9** [medium/h] SSE staleness handling in `web/lib/stellar/noeracle.ts`: `onerror` + last-frame watchdog → amber "live prices stale" badge + 5s shim-poll fallback (W-4).
+- [x] **P0-4** [low/h] Rename `lookup_code` → `resolve_code` (R-7) — DONE 2026-07-04 (commit `b709cbd`). lookupCode returns taken/free/unknown; CreateCodeCard shows taken pre-signing, amber on check-failure.
+- [x] **P0-5** [high/h] **Fix false referral copy** (R-2, R-3) — DONE 2026-07-04 (commit `b709cbd`). Rates scoped to v1.1, volume-threshold claim removed, Claim button permanently disabled with v1.1 note.
+- [x] **P0-6** [high/h] Portfolio USDC + NOE balances (W-3/F-3/F-4) — DONE 2026-07-04 (commit `b709cbd`). Note: WalletProvider session-restore path still shows NOE 0 until refresh; portfolio page has no NOE display element yet (follow-up with P4-15).
+- [x] **P0-7** [low/h] Debug-log gating + `decodeContractError()` + stale branch deletion (W-8) — DONE 2026-07-04 (commit `9100166`). NOTE: error map now needs new code #80 CrossMarginOrderNotSupported added (introduced by P1-2 the same day).
+- [x] **P0-8** [medium/h] `assertContractsConfigured()` wired from providers.tsx + NOERACLE_SHIM required + router-missing banner (W-5) — DONE 2026-07-04 (commit `b709cbd`).
+- [x] **P0-9** [medium/h] SSE staleness handling (W-4) — DONE 2026-07-04 (commit `9100166`). onerror + 10s watchdog + amber badge + 5s shim fallback + auto-recovery.
 
 ### API quick wins (`api/src`)
 
-- [ ] **P0-10** [high/h] Fix tiered rate limiting: resolve the bearer key inside the `onRequest` hook so `request.user` exists when the tier is computed; `requireAuth` short-circuits if already set (A-1). Done when: a test asserts `X-RateLimit-Tier: standard` for a real key.
-- [ ] **P0-11** [high/h] `trustProxy: 1` in the Fastify factory; use `request.ip` (delete `pickClientIp`); periodic DELETE sweep of stale `rate_limit_buckets` rows (A-2).
-- [ ] **P0-12** [high/h] Rewrite `/v1/account/me/positions` + `/me/orders` as SQL-side queries against the positions projection / trader-filtered events (A-3). Done when: an active trader with >200 global events still sees their open positions.
-- [ ] **P0-13** [medium/h] `API_HMAC_PEPPER`: fail-fast at startup in production when unset/default; constant-time compare via the existing `timingSafeEqualHex` (A-4, SEC-8).
-- [ ] **P0-14** [high/h] Fail-closed defaults: refuse prod boot when allowlist/CORS unset; reject cron when `CRON_SECRET` undefined; document all three in `.env.example` (SEC-5).
+- [x] **P0-10** [high/h] Tiered rate limiting engaged (A-1) — DONE 2026-07-04 (commit `64fd821`). Test asserts `X-RateLimit-Tier: standard` + key-bucket row.
+- [x] **P0-11** [high/h] trustProxy + request.ip + bucket sweep (A-2) — DONE 2026-07-04 (commit `64fd821`).
+- [x] **P0-12** [high/h] SQL-side /me/positions + /me/orders (A-3) — DONE 2026-07-04 (commit `64fd821`). /me/positions also returns authoritative `positions` array; `events` kept for SDK compat. Test seeds 600 global events. NOTE: /me/orders only sees order_placed (cancel/exec events carry no trader — indexer decoder gap, fold into P4-10).
+- [x] **P0-13** [medium/h] Pepper fail-fast + constant-time compare (A-4, SEC-8) — DONE 2026-07-04 (commit `64fd821`).
+- [x] **P0-14** [high/h] Fail-closed defaults (SEC-5) — DONE 2026-07-04 (commit `64fd821`). ⚠️ OPERATOR: after deploy, Railway api MUST have non-default `API_HMAC_PEPPER`, non-empty `API_KEY_ALLOWLIST`, non-wildcard `API_CORS_ORIGIN` or it refuses to boot; Vercel needs `CRON_SECRET` or the leaderboard cron 401s.
 
 ### Indexer quick wins (`indexer/src`)
 
-- [ ] **P0-15** [high/h] Per-event try/catch in `pollOnce` → `dead_letter` table (event_id, error, raw XDR), keep advancing; rethrow/dead-letter handler failures so the cursor halts instead of silently dropping (I-1). Done when: a malformed-payload vitest passes without wedging the poller.
-- [ ] **P0-16** [medium/h] Idempotency guard: skip `applyEvent` + bus emit when `persistRaw` rowsAffected==0; change `code_created` to `ON CONFLICT DO UPDATE` preserving counters (I-2 minimal, R-4).
-- [ ] **P0-17** [medium/h] Fix `decodeCrossLiq` field mapping (`totalPnl=v[1]`, `keeperReward=v[2]`); clean up phantom open positions on `cross_liq` via on-chain verification (I-5).
+- [x] **P0-15** [high/h] Dead-letter table + poison-loop fix (I-1) — DONE 2026-07-04 (commit `44e3b8c`). Migration 012; decode-fail → dead-letter + advance; apply-fail → dead-letter + rethrow (fail-loud once, recorded for replay; cursor advances after the retry pass hits the idempotency guard).
+- [x] **P0-16** [medium/h] Idempotency guard + counter-preserving code_created (I-2 minimal, R-4) — DONE 2026-07-04 (commit `44e3b8c`). Applied across market/vault/referral handlers.
+- [x] **P0-17** [medium/h] decodeCrossLiq mapping + phantom-position cleanup (I-5) — DONE 2026-07-04 (commit `44e3b8c`). New positionSync.ts verifies each projected row via get_position simulation on cross_liq.
 
 ### CI (do early — everything after this gets a net)
 
-- [ ] **P0-18** [high/h] Add `staging` to `ci.yml` triggers + `.husky/pre-commit` branch case. Add jobs: contracts (`cargo test --workspace` + `cargo clippy -- -D warnings`, rust-cache), web (`npx tsc --noEmit`), sdk-py (`pytest`) (D-1). Fix the two failing `vault_factory` `leader_*` tests so the job starts green (likely V-1-related — investigate, don't paper over).
+- [x] **P0-18** [high/h] CI on staging + contracts/web/sdk-py jobs (D-1) — DONE 2026-07-04 (commits `5d15c4e`, `a79f097`). The two failing leader_* tests were interface drift in the test stub (fake market returned u64/() where the real market returns Position/i128 — invoke_contract decode panic), NOT V-1 corruption; stub now mirrors the deployed interface. V-1 (commingling) remains real and remains the v1.1 gate. 114+ contract tests green; clippy status: see P1 sprint notes.
 
 ---
 
@@ -58,7 +58,7 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 > Bundle all of these into a single WASM refit + blue-green `deploy_staging.sh` → verify → promote. Watch the 64KB budget throughout — drop view helpers if needed (the bulk-read replacement lives in Phase 5 as a separate view contract).
 
 - [ ] **P1-1** [critical/d] **Pause + upgrade entry points on market** (M-1, SEC-2): admin-gated `pause()`/`unpause()` (liquidations exempt from the pause check) + `upgrade(wasm_hash)` via `env.deployer().update_current_contract_wasm`. Add the same upgrade hook to vault + router. Done when: pause blocks open/close/deposit on testnet; upgrade round-trips a no-op WASM.
-- [ ] **P1-2** [critical/h] **Cross-margin SL/TP fix** (M-3): reject `margin_mode==1` in `set_stop_loss`/`set_take_profit`/`place_trailing_stop` (or route execution through the cross close path). Cancel linked SL/TP in `close_position` + `close_position_cross` (zombie orders). Regression tests for both.
+- [x] **P1-2** [critical/h] **Cross-margin SL/TP fix** (M-3) — DONE 2026-07-04 (commit `71363e3`, ships with the Phase 1 redeploy). All three attach fns reject `margin_mode==1` with new error #80; `cancel_position_orders` helper cancels attached SL/TP/trailing in close_position, close_position_cross, liquidate, liquidate_cross_account AND execute_close_order (sibling orders); trailing stops gained a PositionTrailingStop link + one-per-position rule. 4 regression tests; WASM 63,164B.
 - [ ] **P1-3** [critical/w] **OI caps + real reservation** (M-4, V-3): per-asset per-side OI caps (% of vault TVL — see parameter sheet) + aggregate reserve ≤60-75% TVL enforced in `open_position`/`open_position_cross`; `reserve_for_position` actually accumulates committed payouts and releases on close/liquidate; `settle_pnl` must not hard-revert a winning close (cap payout at available + record shortfall against the Phase 5 buffer). Done when: a winner's close cannot freeze, and opens beyond caps reject.
 - [ ] **P1-4** [critical/d] **Wire unrealized PnL into vault NAV** (V-2, M-7, SEC-6): market calls `vault.update_unrealized_pnl` on open/close/liquidate (or `get_noe_price` queries a market aggregate view). Interim (pre-redeploy): keeper periodically pushes aggregate open PnL. Done when: NOE price moves with open trader PnL in a test.
 - [ ] **P1-5** [critical/d] **Market-side oracle deviation guard** (M-2): enforce the existing-but-dead `max_oracle_deviation_bps` against a stored last-good price in `get_oracle_price`; staleness >60s → halt-open/allow-close semantics (never block closes).
