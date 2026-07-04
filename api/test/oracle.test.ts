@@ -1,5 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { setupTestServer } from './helpers.js';
+import { SUPPORTED_ASSETS } from '@noether/shared';
 
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;
 
@@ -21,7 +22,7 @@ describe('oracle routes', () => {
     const res = await app.inject({ method: 'GET', url: '/v1/oracle/prices' });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.prices).toHaveLength(3);
+    expect(body.prices).toHaveLength(SUPPORTED_ASSETS.length);
     const xlm = body.prices.find((p: { asset: string }) => p.asset === 'XLM');
     expect(xlm.priceFloat).toBeCloseTo(1, 5);
     expect(xlm.timestamp).toBe(3);
@@ -43,7 +44,7 @@ describe('oracle routes', () => {
   it('GET /v1/markets/:asset/price 404s for unknown asset', async () => {
     const setup = await setupTestServer({});
     app = setup.app;
-    const res = await app.inject({ method: 'GET', url: '/v1/markets/DOGE/price' });
+    const res = await app.inject({ method: 'GET', url: '/v1/markets/PEPE/price' });
     expect(res.statusCode).toBe(404);
   });
 });

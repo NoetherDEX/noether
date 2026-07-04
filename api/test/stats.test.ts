@@ -1,6 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { Keypair } from '@stellar/stellar-sdk';
 import { setupTestServer } from './helpers.js';
+import { SUPPORTED_ASSET_SYMBOLS } from '@noether/shared';
 
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;
 
@@ -94,7 +95,7 @@ describe('GET /v1/markets/stats', () => {
     const res = await app.inject({ method: 'GET', url: '/v1/markets/stats' });
     expect(res.statusCode).toBe(200);
     const { stats } = res.json() as { stats: AssetStats[] };
-    expect(stats.map((s) => s.asset).sort()).toEqual(['BTC', 'ETH', 'XLM']);
+    expect(stats.map((s) => s.asset).sort()).toEqual([...SUPPORTED_ASSET_SYMBOLS].sort());
     for (const s of stats) {
       expect(s.openInterestLong).toBe('0');
       expect(s.openInterestShort).toBe('0');
