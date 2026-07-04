@@ -1,7 +1,27 @@
-export { buildOpenPositionTx, type OpenPositionParams } from './openPosition.js';
-export { buildClosePositionTx, type ClosePositionParams } from './closePosition.js';
-export { buildPlaceLimitOrderTx, type PlaceLimitOrderParams } from './placeLimitOrder.js';
-export { buildCancelOrderTx, type CancelOrderParams } from './cancelOrder.js';
+export {
+  buildOpenPositionTx,
+  buildOpenPositionArgs,
+  buildOpenPositionOp,
+  type OpenPositionParams,
+} from './openPosition.js';
+export {
+  buildClosePositionTx,
+  buildClosePositionArgs,
+  buildClosePositionOp,
+  type ClosePositionParams,
+} from './closePosition.js';
+export {
+  buildPlaceLimitOrderTx,
+  buildPlaceLimitOrderArgs,
+  buildPlaceLimitOrderOp,
+  type PlaceLimitOrderParams,
+} from './placeLimitOrder.js';
+export {
+  buildCancelOrderTx,
+  buildCancelOrderArgs,
+  buildCancelOrderOp,
+  type CancelOrderParams,
+} from './cancelOrder.js';
 export {
   buildOpenPositionCrossTx,
   buildClosePositionCrossTx,
@@ -10,10 +30,14 @@ export {
 } from './cross.js';
 export {
   buildPlaceStopLimitOrderTx,
+  buildPlaceStopLimitOrderArgs,
+  buildPlaceStopLimitOrderOp,
   type PlaceStopLimitOrderParams,
 } from './stopLimit.js';
 export {
   buildPlaceTrailingStopTx,
+  buildPlaceTrailingStopArgs,
+  buildPlaceTrailingStopOp,
   type PlaceTrailingStopParams,
 } from './trailingStop.js';
 export {

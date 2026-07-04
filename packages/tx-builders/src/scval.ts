@@ -20,7 +20,16 @@ export type ScArgType =
   | 'i64'
   | 'bool'
   | 'direction'
-  | 'trigger_above';
+  | 'trigger_above'
+  | 'bytes'
+  | 'bytes_vec';
+
+/** Raw bytes for a BytesN<N> field: a hex string or a byte array. */
+export type BytesLike = string | Uint8Array;
+
+function toBytes(value: BytesLike): Buffer {
+  return typeof value === 'string' ? Buffer.from(value, 'hex') : Buffer.from(value);
+}
 
 export function toScVal(value: unknown, type: ScArgType): xdr.ScVal {
   switch (type) {
@@ -48,6 +57,10 @@ export function toScVal(value: unknown, type: ScArgType): xdr.ScVal {
       const v = value as TriggerCondition;
       return nativeToScVal(v === 'Above', { type: 'bool' });
     }
+    case 'bytes':
+      return xdr.ScVal.scvBytes(toBytes(value as BytesLike));
+    case 'bytes_vec':
+      return xdr.ScVal.scvVec((value as BytesLike[]).map((b) => xdr.ScVal.scvBytes(toBytes(b))));
     default: {
       const exhaustive: never = type;
       throw new Error(`unknown ScArgType: ${exhaustive as string}`);

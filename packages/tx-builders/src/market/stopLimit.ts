@@ -1,6 +1,15 @@
 import type { Direction, StellarAddress, TriggerCondition } from '@noether/types';
-import { buildContractTx, type PreparedTx, type TxBuildContext } from '../client.js';
+import type { xdr } from '@stellar/stellar-sdk';
+import {
+  buildContractTx,
+  buildInvokeOp,
+  type InvokeOp,
+  type PreparedTx,
+  type TxBuildContext,
+} from '../client.js';
 import { toScVal } from '../scval.js';
+
+const METHOD = 'place_stop_limit_order';
 
 export interface PlaceStopLimitOrderParams {
   trader: StellarAddress;
@@ -14,12 +23,8 @@ export interface PlaceStopLimitOrderParams {
   slippageToleranceBps: number;
 }
 
-export async function buildPlaceStopLimitOrderTx(
-  ctx: TxBuildContext,
-  marketContractId: string,
-  params: PlaceStopLimitOrderParams,
-): Promise<PreparedTx> {
-  const args = [
+export function buildPlaceStopLimitOrderArgs(params: PlaceStopLimitOrderParams): xdr.ScVal[] {
+  return [
     toScVal(params.trader, 'address'),
     toScVal(params.asset, 'symbol'),
     toScVal(params.direction, 'direction'),
@@ -30,5 +35,19 @@ export async function buildPlaceStopLimitOrderTx(
     toScVal(params.triggerCondition, 'trigger_above'),
     toScVal(params.slippageToleranceBps, 'u32'),
   ];
-  return buildContractTx(ctx, params.trader, marketContractId, 'place_stop_limit_order', args);
+}
+
+export function buildPlaceStopLimitOrderOp(
+  marketContractId: string,
+  params: PlaceStopLimitOrderParams,
+): InvokeOp {
+  return buildInvokeOp(marketContractId, METHOD, buildPlaceStopLimitOrderArgs(params));
+}
+
+export async function buildPlaceStopLimitOrderTx(
+  ctx: TxBuildContext,
+  marketContractId: string,
+  params: PlaceStopLimitOrderParams,
+): Promise<PreparedTx> {
+  return buildContractTx(ctx, params.trader, marketContractId, METHOD, buildPlaceStopLimitOrderArgs(params));
 }
