@@ -122,19 +122,19 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 ### API
 
 - [ ] **P4-1** [medium/d] WS hardening: global + per-IP connection caps, 30s ping/idle-close, per-conn token bucket, stringify-once broadcast, bufferedAmount backpressure (A-5).
-- [ ] **P4-2** [medium/d] `/v1/tx/submit` taxonomy: DUPLICATE=idempotent poll-by-hash; TRY_AGAIN_LATER=503+Retry-After; decode resultXdr contract error number+name (A-6).
+- [x] **P4-2** [medium/d] `/v1/tx/submit` taxonomy (A-6) — DONE 2026-07-04 (commit `fd374dc`). DUPLICATE→idempotent poll; TRY_AGAIN_LATER→503+Retry-After; FAILED→contract error #+name from diagnostic events. FAILED stays HTTP 200 for SDK compat. NOTE: tx-builders submitSignedTx still bare-polls for direct SDK users (single-source unify pending).
 - [ ] **P4-3** [low/d] Cursor pagination (`before_ts`) on the six history endpoints; LIMIT on `/v1/positions/open?trader=`; cache or precompute `/v1/vaults` aggregates (A-7).
-- [ ] **P4-4** [low/d] Response schemas for the remaining 9 route files; version from package.json; real servers URL; x-request-id echo; minimal metrics (A-8).
-- [ ] **P4-5** [medium/h] Public `GET /v1/account/volume?address=` (14-day notional from indexer) → OrderPanel fee-tier preview uses it (R-6).
-- [ ] **P4-6** [medium/h] Public `/v1/markets/stats` (OI + 24h volume from projections) + `/v1/trades?trader=` + orders endpoint — kills the remaining fake data (W-3, W-6 partial, I-8).
+- [x] **P4-4** [low/d] Observability (A-8) — DONE 2026-07-04 (commit `fd374dc`). x-request-id echo; response schemas on 8 route files (health.ts/account.ts owned elsewhere, skipped); version from package.json (0.1.0); servers URL from API_PUBLIC_URL.
+- [x] **P4-5** [medium/h] `GET /v1/account/volume?address=` (R-6) — DONE 2026-07-04 (commit `fd374dc`). 14d notional from events_raw. ⚠️ web OrderPanel still needs to CALL it (web pass).
+- [x] **P4-6** [medium/h] `/v1/markets/stats` + `/v1/trades?trader=` (W-3, W-6, I-8) — DONE 2026-07-04 (commit `fd374dc`). Per-asset OI + 24h volume + realized trades from projections/events. ⚠️ web trade page still needs to consume these instead of the hardcoded values.
 
 ### Indexer
 
-- [ ] **P4-7** [high/d] Full idempotency migration: UNIQUE keys on the five activity tables; transactions per event (I-2 complete).
-- [ ] **P4-8** [high/d] Gap detection + retention clamp + RPC failover rotation + `ledger_gaps` table (I-3).
-- [ ] **P4-9** [medium/d] `/healthz` with cursor lag (Railway healthcheck); CAS cursor writes to enforce single-writer (I-4).
-- [ ] **P4-10** [medium/d] Store raw XDR columns in events_raw; extend close/liq decoders to carry asset/direction/size (fixes `trades.UNKNOWN`, enables close-side volume) (I-6).
-- [ ] **P4-11** [medium/d] `npm run reindex` (replay events_raw through handlers) + contract_id stamping on projections (I-7).
+- [x] **P4-7** [high/d] Full idempotency (I-2) — DONE 2026-07-04 (commit `f8ae46a`). Migration 013 UNIQUE keys; one libsql transaction per event.
+- [x] **P4-8** [high/d] Gap detection + retention + RPC failover (I-3) — DONE 2026-07-04 (commit `f8ae46a`). Migration 014 ledger_gaps; RpcPool rotation; retention-error → clamp + record.
+- [x] **P4-9** [medium/d] `/healthz` + CAS cursor (I-4) — DONE 2026-07-04 (commit `f8ae46a`). ⚠️ OPERATOR: set Railway indexer healthcheck path to /healthz.
+- [x] **P4-10** [medium/d] Raw XDR archive + close/liq decoder fields (I-6) — DONE 2026-07-04 (commit `f8ae46a`). Migration 015 topic/value XDR; close/liq carry asset/direction/size/entry.
+- [x] **P4-11** [medium/d] `npm run reindex` + contract_id stamping (I-7) — DONE 2026-07-04 (commit `f8ae46a`). Migration 016 + reindex.ts (bus suppressed). ⚠️ OPERATOR: run once post-deploy with indexer STOPPED to backfill + rebuild.
 - [ ] **P4-12** [low/d] Implement the trades projection (or drop dead tables); add LP vault events if T3 wants TVL/APY history (I-8).
 
 ### Web
@@ -150,10 +150,10 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 ### SDKs + tx-builders
 
 - [ ] **P4-18** [high/d] Router builders in tx-builders (`openWithPrice`/`closeWithPrice`); gateway fetches fresh attestation and routes via router when configured (S-1).
-- [ ] **P4-19** [high/h] Fix sdk-py key issuance (manageData tx) + optional gateway fallback accepting raw ed25519 hex; **republish 0.1.2** (S-2).
-- [ ] **P4-20** [high/h] WS: serialize per-connection message handling server-side; clients surface rejected/failed-login + re-send account.* subs after login ack (S-3). Fix connect() hang + timeout (S-4).
-- [ ] **P4-21** [medium/h] Add missing endpoints to both SDKs (positions.open, vaults.trades, referral.info, keys.betaStatus); re-sync vendored types + CI drift test (S-5).
-- [ ] **P4-22** [medium/h] Fix READMEs (install name!), examples (faucet step), changelog, version single-sourcing, websockets `<14` cap (S-6, S-8).
+- [x] **P4-19** [high/h] sdk-py key issuance (S-2) — DONE 2026-07-04 (commit `206f07c`). manageData challenge tx + signed XDR, verified vs walletAuth. ⚠️ OPERATOR: publish 0.1.2 to PyPI. (Optional raw-hex gateway fallback not done — the manageData fix is the real fix.)
+- [~] **P4-20** [high/h] WS robustness (S-3/S-4) — CLIENT HALF DONE 2026-07-04 (commit `206f07c`): both SDKs surface rejected/failed-login, re-send account.* after login-ack, connect() no longer hangs (readyPromise + timeout). ⚠️ SERVER half (serialize per-conn handling in api/plugins/ws.ts) still pending — fold into P4-1.
+- [x] **P4-21** [medium/h] Missing SDK endpoints + type re-sync (S-5) — DONE 2026-07-04 (commit `206f07c`). Four endpoints in both SDKs; sdk-ts vendored types re-synced + drift guard test.
+- [x] **P4-22** [medium/h] SDK package hygiene (S-6, S-8) — DONE 2026-07-04 (commit `206f07c`). README install name (noether-sdk), faucet step, websockets<14 cap, __version__ single-sourced, CHANGELOGs.
 - [ ] **P4-23** [medium/d] tx-builders XDR snapshot tests (pure buildArgs + fixtures) wired into root npm test (S-7).
 - [ ] **P4-24** [medium/w] E2E harness (critic #8): one scripted trade through web-path tx assembly → router → market → vault → indexer → API read-back against an ephemeral stack; doubles as the audit-readiness integration test.
 - [x] **P4-25** [high/d] **Leaderboard cron data-loss fix (Tier A)** — DONE 2026-06-09 (commit `ef054cd`). The `web/app/api/cron/sync-leaderboard` cron marked txs processed before fetching their events, so RPC failures silently dropped traders' closed PnL forever (tester report). Fixed: mark-processed-only-on-definitive-fetch + retry/backoff + age-out, single-account open-position scan, composite trades key for cross closes, board defaults to PnL. **Follow-ups:** (a) one-time `processed_txs` reset (DELETE the `sync_state` row where key='processed_txs') to recover any wrongly-dropped trades still within Soroban RPC retention; (b) the public-RPC rate-limiting that causes the drops is the real lever — see paid-RPC note below.
