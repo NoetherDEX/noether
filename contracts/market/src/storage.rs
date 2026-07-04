@@ -2,7 +2,7 @@
 //!
 //! Storage keys and helpers for the Market contract.
 
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -70,6 +70,8 @@ pub enum DataKey {
     TrailingStopPeak(u64),
     /// Trailing-stop order ID attached to a position
     PositionTrailingStop(u64),
+    /// Last accepted fresh oracle price + timestamp per asset (deviation guard)
+    LastGoodPrice(Symbol),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -182,6 +184,16 @@ pub fn set_last_funding_time(env: &Env, time: u64) {
 pub fn set_current_funding_rate(env: &Env, rate: i128) {
     env.storage().persistent().set(&DataKey::CurrentFundingRate, &rate);
     extend_persistent_ttl(env, &DataKey::CurrentFundingRate);
+}
+
+pub fn get_last_good_price(env: &Env, asset: &Symbol) -> Option<(i128, u64)> {
+    env.storage().persistent().get(&DataKey::LastGoodPrice(asset.clone()))
+}
+
+pub fn set_last_good_price(env: &Env, asset: &Symbol, price: i128, ts: u64) {
+    let key = DataKey::LastGoodPrice(asset.clone());
+    env.storage().persistent().set(&key, &(price, ts));
+    extend_persistent_ttl(env, &key);
 }
 
 pub fn get_cumulative_funding_rate(env: &Env) -> i128 {

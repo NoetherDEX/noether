@@ -127,4 +127,7 @@ pub enum NoetherError {
     /// positions (they would execute via the isolated path and pay
     /// out of the shared pool)
     CrossMarginOrderNotSupported = 80,
+    /// Oracle price moved beyond max_oracle_deviation_bps vs the stored
+    /// last-good price (opens halt; closes/liquidations stay allowed)
+    PriceDeviationTooHigh = 81,
 }

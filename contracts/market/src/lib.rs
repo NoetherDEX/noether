@@ -264,7 +264,7 @@ impl MarketContract {
         Self::check_vault_liquidity(&env, &vault_address, size)?;
 
         // Fetch current price
-        let entry_price = Self::get_oracle_price(&env, &asset)?;
+        let entry_price = Self::get_oracle_price(&env, &asset, true)?;
 
         // Calculate liquidation price
         let liquidation_price = calculate_liquidation_price(
@@ -360,7 +360,7 @@ impl MarketContract {
         }
 
         // Get current price and run the shared close settlement
-        let current_price = Self::get_oracle_price(&env, &position.asset)?;
+        let current_price = Self::get_oracle_price(&env, &position.asset, false)?;
         let pnl = Self::settle_isolated_close(&env, &position, current_price, 0, None, None)?;
 
         extend_instance_ttl(&env);
@@ -410,7 +410,7 @@ impl MarketContract {
         }
 
         // Get current price
-        let current_price = Self::get_oracle_price(&env, &position.asset)?;
+        let current_price = Self::get_oracle_price(&env, &position.asset, false)?;
 
         // Check if liquidatable (includes pending funding in margin check)
         if !Self::should_liquidate_with_funding(&env, &position, current_price) {
@@ -496,7 +496,7 @@ impl MarketContract {
             return Ok(false);
         }
 
-        let current_price = Self::get_oracle_price(&env, &position.asset)?;
+        let current_price = Self::get_oracle_price(&env, &position.asset, false)?;
 
         Ok(Self::should_liquidate_with_funding(&env, &position, current_price))
     }
@@ -667,7 +667,7 @@ impl MarketContract {
             // Use current oracle prices; if oracle fails, use 0 which makes equity lower = safer
             // (prevents withdrawal when prices unavailable)
             let get_price = |asset: &Symbol| -> i128 {
-                Self::get_oracle_price(&env, asset).unwrap_or(0)
+                Self::get_oracle_price(&env, asset, false).unwrap_or(0)
             };
             let equity_before = position::calculate_cross_equity(&env, &trader, &get_price);
             let equity_after = equity_before - amount;
@@ -750,7 +750,7 @@ impl MarketContract {
         let existing_cross_positions = get_cross_margin_position_ids(&env, &trader);
         if !existing_cross_positions.is_empty() {
             let get_price = |asset: &Symbol| -> i128 {
-                Self::get_oracle_price(&env, asset).unwrap_or(0)
+                Self::get_oracle_price(&env, asset, false).unwrap_or(0)
             };
             let equity = position::calculate_cross_equity(&env, &trader, &get_price);
             let mm = position::calculate_cross_maintenance_margin(
@@ -767,7 +767,7 @@ impl MarketContract {
         Self::check_vault_liquidity(&env, &vault_address, size)?;
 
         // Fetch price from oracle
-        let entry_price = Self::get_oracle_price(&env, &asset)?;
+        let entry_price = Self::get_oracle_price(&env, &asset, true)?;
 
         // Calculate taker fee and record volume
         let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
@@ -849,7 +849,7 @@ impl MarketContract {
         );
 
         // Get current price and calculate PnL
-        let current_price = Self::get_oracle_price(&env, &pos.asset)?;
+        let current_price = Self::get_oracle_price(&env, &pos.asset, false)?;
         let pnl = calculate_pnl(&pos, current_price)?;
 
         // Settle with vault
@@ -919,7 +919,7 @@ impl MarketContract {
         let config = get_config(&env);
         // For liquidation verification: oracle failure = not liquidatable (safe)
         let get_price = |asset: &Symbol| -> i128 {
-            Self::get_oracle_price(&env, asset).unwrap_or(i128::MAX / 2)
+            Self::get_oracle_price(&env, asset, false).unwrap_or(i128::MAX / 2)
         };
 
         // Verify account is liquidatable (will fail if oracle down - safe)
@@ -955,7 +955,7 @@ impl MarketContract {
             let pid = position_ids.get(i).unwrap();
             if let Some(pos) = get_position(&env, pid) {
                 // Use actual oracle price for settlement; skip position if oracle fails
-                let current_price = match Self::get_oracle_price(&env, &pos.asset) {
+                let current_price = match Self::get_oracle_price(&env, &pos.asset, false) {
                     Ok(p) if p > 0 => p,
                     _ => continue, // Skip this position if oracle unavailable
                 };
@@ -1148,7 +1148,7 @@ impl MarketContract {
 
         // Post Only (tif_mode == 2): reject if trigger condition is already met
         if tif_mode == 2 {
-            let current_price = Self::get_oracle_price(&env, &asset)?;
+            let current_price = Self::get_oracle_price(&env, &asset, true)?;
             let would_fill = match trigger_condition {
                 TriggerCondition::Above => current_price >= trigger_price,
                 TriggerCondition::Below => current_price <= trigger_price,
@@ -1165,7 +1165,7 @@ impl MarketContract {
 
         // IOC (tif_mode == 1): check if trigger is met now, execute or cancel
         if tif_mode == 1 {
-            let current_price = Self::get_oracle_price(&env, &asset)?;
+            let current_price = Self::get_oracle_price(&env, &asset, true)?;
             let triggered = match trigger_condition {
                 TriggerCondition::Above => current_price >= trigger_price,
                 TriggerCondition::Below => current_price <= trigger_price,
@@ -1570,7 +1570,7 @@ impl MarketContract {
         }
 
         // Get current price
-        let current_price = Self::get_oracle_price(&env, &order.asset)?;
+        let current_price = Self::get_oracle_price(&env, &order.asset, false)?;
 
         // Determine reference price for trigger/slippage check
         // TakeProfit with limit_price > 0 acts as "Take Limit": trigger at trigger_price,
@@ -1714,7 +1714,11 @@ impl MarketContract {
             return Ok(false);
         }
 
-        let current_price = Self::get_oracle_price(&env, &order.asset)?;
+        let strict_price = matches!(
+            order.order_type,
+            OrderType::LimitEntry | OrderType::StopLimit
+        );
+        let current_price = Self::get_oracle_price(&env, &order.asset, strict_price)?;
 
         match order.order_type {
             OrderType::TrailingStop => {
@@ -1906,7 +1910,7 @@ impl MarketContract {
         }
 
         // Get current price as initial peak
-        let current_price = Self::get_oracle_price(&env, &position.asset)?;
+        let current_price = Self::get_oracle_price(&env, &position.asset, true)?;
 
         // Set trigger condition based on direction
         // Long: trailing stop triggers below peak (price drops)
@@ -1963,7 +1967,7 @@ impl MarketContract {
             return Ok(false);
         }
 
-        let current_price = Self::get_oracle_price(&env, &order.asset)?;
+        let current_price = Self::get_oracle_price(&env, &order.asset, true)?;
 
         if let Some(peak) = get_trailing_stop_peak(&env, order_id) {
             let new_peak = match order.direction {
@@ -1998,11 +2002,18 @@ impl MarketContract {
         margin < pos.size * (config.maintenance_margin_bps as i128) / (BASIS_POINTS as i128)
     }
 
-    /// Fetch price from oracle adapter.
-    fn get_oracle_price(env: &Env, asset: &Symbol) -> Result<i128, NoetherError> {
+    /// Fetch price from the oracle adapter.
+    ///
+    /// `strict` is set on risk-INCREASING paths (opens, trailing peaks):
+    /// they reject stale prices AND moves beyond max_oracle_deviation_bps
+    /// vs the stored last-good price. Risk-reducing paths (closes,
+    /// liquidations) pass strict=false — they are never blocked by
+    /// staleness or the deviation band (M-2 halt-open/allow-close).
+    /// The band is skipped when the last-good price is older than
+    /// 10x the staleness window (nothing traded for a while — a large
+    /// legitimate move must not brick the market).
+    fn get_oracle_price(env: &Env, asset: &Symbol, strict: bool) -> Result<i128, NoetherError> {
         let oracle_address = get_oracle_adapter(env);
-
-        // Call oracle adapter using invoke_contract
         let args: Vec<soroban_sdk::Val> = (asset.clone(),).into_val(env);
         let (price, timestamp): (i128, u64) = env.invoke_contract(
             &oracle_address,
@@ -2010,18 +2021,35 @@ impl MarketContract {
             args,
         );
 
-        // Check staleness
-        let config = get_config(env);
-        let current_time = env.ledger().timestamp();
-
-        if current_time > timestamp && current_time - timestamp > config.max_price_staleness {
-            return Err(NoetherError::PriceStale);
-        }
-
         if price <= 0 {
             return Err(NoetherError::InvalidPrice);
         }
 
+        let config = get_config(env);
+        let now = env.ledger().timestamp();
+        let fresh = !(now > timestamp && now - timestamp > config.max_price_staleness);
+
+        if strict {
+            if !fresh {
+                return Err(NoetherError::PriceStale);
+            }
+            if config.max_oracle_deviation_bps > 0 {
+                if let Some((last, last_ts)) = get_last_good_price(env, asset) {
+                    if last > 0 && now.saturating_sub(last_ts) <= 10 * config.max_price_staleness {
+                        let diff = if price > last { price - last } else { last - price };
+                        if diff * (BASIS_POINTS as i128) / last
+                            > config.max_oracle_deviation_bps as i128
+                        {
+                            return Err(NoetherError::PriceDeviationTooHigh);
+                        }
+                    }
+                }
+            }
+        }
+
+        if fresh {
+            set_last_good_price(env, asset, price, now);
+        }
         Ok(price)
     }
 
@@ -3145,5 +3173,71 @@ mod tests {
         // WASM was swapped in place.
         let res = test.market.try_get_all_position_ids();
         assert!(res.is_err());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Oracle Deviation + Staleness Guard (M-2 / P1-5)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_deviation_guard_halts_opens_allows_closes() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Seeds last-good XLM price at $0.10
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // +20% jump — far beyond the 1% max_oracle_deviation_bps band
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 12 / 100));
+
+        let blocked = test.market.try_open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+        assert!(matches!(blocked, Err(Ok(NoetherError::PriceDeviationTooHigh))));
+
+        // Risk-reducing paths are never blocked by the band
+        let pnl = test.market.close_position(&trader, &pos.id);
+        assert!(pnl > 0);
+    }
+
+    #[test]
+    fn test_stale_price_halts_opens_allows_closes() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Let the feed age past max_price_staleness (60s) with no update
+        test.env.ledger().with_mut(|li| li.timestamp += 120);
+
+        let blocked = test.market.try_open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+        assert!(matches!(blocked, Err(Ok(NoetherError::PriceStale))));
+
+        // Stale feed must not strand an exiting trader
+        let pnl = test.market.close_position(&trader, &pos.id);
+        assert!(pnl <= 0); // flat price, small funding — just must not revert
     }
 }
