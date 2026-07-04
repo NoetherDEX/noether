@@ -41,7 +41,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, V
 use noether_common::{
     NoetherError, Position, Direction, MarketConfig,
     Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
-    VolumeRecord, BASIS_POINTS,
+    VolumeRecord, BASIS_POINTS, PRECISION,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
     calculate_trading_fee, calculate_funding_rate, calculate_cumulative_funding,
     calculate_keeper_reward, should_liquidate,
@@ -50,8 +50,6 @@ use noether_common::{
 mod storage;
 mod position;
 mod trading;
-mod liquidation;
-mod funding;
 
 use storage::*;
 
@@ -87,19 +85,11 @@ fn calculate_fee_and_record_volume(
     }
 }
 
-/// Record only volume (no fee calculation). Used for close operations.
+/// Record only volume (no fee charged). Used for close operations —
+/// reuses the tiered-fee path's bookkeeping and discards the fee.
 fn record_volume_only(env: &Env, trader: &Address, size: i128) {
-    let fee_tiers = get_fee_tiers(env);
-    if !fee_tiers.is_empty() {
-        let mut volume_record = get_trader_volume(env, trader)
-            .unwrap_or(VolumeRecord {
-                daily_volumes: Vec::new(env),
-                last_update_day: 0,
-            });
-        let current_day = trading::timestamp_to_day(env.ledger().timestamp());
-        trading::record_trade_volume(env, &mut volume_record, size, current_day);
-        set_trader_volume(env, trader, &volume_record);
-    }
+    let config = get_config(env);
+    let _ = calculate_fee_and_record_volume(env, trader, size, true, &config);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -197,12 +187,38 @@ impl MarketContract {
         Ok(())
     }
 
+    /// Route a share of trading fees to a treasury address (insurance /
+    /// operations funding). bps is the protocol share in basis points,
+    /// capped at 50%.
+    pub fn set_fee_split(env: Env, treasury: Address, bps: u32) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if bps > 5_000 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        set_treasury(&env, &treasury);
+        set_protocol_fee_bps(&env, bps);
+        Ok(())
+    }
+
     /// Swap the running WASM in place; all storage (positions, orders,
     /// cross balances) is preserved across the upgrade.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
         require_admin(&env)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
+    }
+
+    /// Permissionless NAV freshener: recompute one asset's unrealized
+    /// trader PnL at the current oracle price and push it to the vault,
+    /// so NOE pricing tracks the market between trades. Returns the
+    /// pushed value.
+    pub fn sync_asset_pnl(env: Env, asset: Symbol) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        let price = Self::get_oracle_price(&env, &asset, false)?;
+        let (lk, ls, sk, ss) = get_asset_exposure(&env, &asset);
+        let upnl = Self::exposure_upnl(lk, ls, sk, ss, price);
+        Self::push_exposure(&env, &asset, upnl, 0);
+        Ok(upnl)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -237,6 +253,22 @@ impl MarketContract {
         leverage: u32,
         direction: Direction,
     ) -> Result<Position, NoetherError> {
+        Self::do_open(env, trader, asset, collateral, leverage, direction, false)
+    }
+
+    /// Shared open path for isolated and cross margin (one compiled body —
+    /// WASM budget). Flow: validate → [cross: auto-deposit + free-margin
+    /// check] → reserve payout in vault → strict oracle read → fee →
+    /// [cross: deduct pool | isolated: pull wallet collateral] → persist.
+    fn do_open(
+        env: Env,
+        trader: Address,
+        asset: Symbol,
+        collateral: i128,
+        leverage: u32,
+        direction: Direction,
+        cross: bool,
+    ) -> Result<Position, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
 
@@ -244,7 +276,6 @@ impl MarketContract {
 
         let config = get_config(&env);
 
-        // Validate parameters
         if collateral < config.min_collateral {
             return Err(NoetherError::InsufficientCollateral);
         }
@@ -252,46 +283,77 @@ impl MarketContract {
             return Err(NoetherError::InvalidLeverage);
         }
 
-        // Calculate position size
         let size = calculate_position_size(collateral, leverage);
         if size > config.max_position_size {
             return Err(NoetherError::PositionTooLarge);
         }
 
-        // Check Vault has enough liquidity for potential payout
-        // Maximum potential payout is the position size (100% gain)
-        let vault_address = get_vault(&env);
-        Self::check_vault_liquidity(&env, &vault_address, size)?;
+        if cross {
+            // Auto-deposit: if pool balance is insufficient, pull from wallet
+            let pool_balance = get_cross_margin_balance(&env, &trader);
+            if collateral > pool_balance {
+                let shortfall = collateral - pool_balance;
+                let usdc_token = get_usdc_token(&env);
+                let token_client = token::Client::new(&env, &usdc_token);
+                token_client.transfer(&trader, &env.current_contract_address(), &shortfall);
+                let new_pool = pool_balance.checked_add(shortfall).ok_or(NoetherError::Overflow)?;
+                set_cross_margin_balance(&env, &trader, new_pool);
+                add_cross_margin_trader(&env, &trader);
+            }
 
-        // Fetch current price
+            // Free margin check (Binance-style): equity - used_margin must
+            // cover the new position's initial margin, so an account near
+            // liquidation cannot lever up further.
+            let existing_cross_positions = get_cross_margin_position_ids(&env, &trader);
+            if !existing_cross_positions.is_empty() {
+                let get_price = |asset: &Symbol| -> i128 {
+                    Self::get_oracle_price(&env, asset, false).unwrap_or(0)
+                };
+                let equity = position::calculate_cross_equity(&env, &trader, &get_price);
+                let mm = position::calculate_cross_maintenance_margin(
+                    &env, &trader, config.maintenance_margin_bps,
+                );
+                if equity < mm + collateral {
+                    return Err(NoetherError::CrossMarginInsufficientFreeMargin);
+                }
+            }
+        }
+
+        // Reserve the max payout in the vault (real reservation + OI caps)
+        let vault_address = get_vault(&env);
+        Self::reserve_with_vault(&env, &vault_address, &asset, &direction, size)?;
+
         let entry_price = Self::get_oracle_price(&env, &asset, true)?;
 
-        // Calculate liquidation price
-        let liquidation_price = calculate_liquidation_price(
-            entry_price,
-            leverage,
-            direction,
-            config.maintenance_margin_bps,
-        );
-
-        // Calculate taker fee and record volume
+        // Taker fee + volume
         let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
         let net_collateral = collateral - fee;
         if net_collateral <= 0 {
             return Err(NoetherError::InsufficientCollateral);
         }
 
-        // Transfer collateral from trader to market contract
-        let usdc_token = get_usdc_token(&env);
-        let token_client = token::Client::new(&env, &usdc_token);
-        token_client.transfer(&trader, &env.current_contract_address(), &collateral);
+        if cross {
+            let pool = get_cross_margin_balance(&env, &trader);
+            set_cross_margin_balance(&env, &trader, pool - collateral);
+        } else {
+            let usdc_token = get_usdc_token(&env);
+            let token_client = token::Client::new(&env, &usdc_token);
+            token_client.transfer(&trader, &env.current_contract_address(), &collateral);
+        }
 
-        // Generate position ID
-        let position_id = next_position_id(&env);
+        let liquidation_price = if cross {
+            0 // Cross-margin: account-level liquidation, no per-position price
+        } else {
+            calculate_liquidation_price(
+                entry_price,
+                leverage,
+                direction,
+                config.maintenance_margin_bps,
+            )
+        };
 
-        // Create position (isolated margin mode)
         let position = Position {
-            id: position_id,
+            id: next_position_id(&env),
             trader: trader.clone(),
             asset: asset.clone(),
             collateral: net_collateral,
@@ -302,23 +364,10 @@ impl MarketContract {
             liquidation_price,
             timestamp: env.ledger().timestamp(),
             entry_cumulative_funding: get_cumulative_funding_rate(&env),
-            margin_mode: 0, // Isolated
+            margin_mode: if cross { 1 } else { 0 },
         };
 
-        // Store position
-        save_position(&env, &position);
-
-        Self::adjust_oi(&env, &direction, size, true);
-
-        // Transfer fee to vault
-        token_client.transfer(&env.current_contract_address(), &vault_address, &fee);
-
-        // Emit event
-        env.events().publish(
-            (Symbol::new(&env, "position_opened"),),
-            (position.id, trader, asset, direction, size, entry_price),
-        );
-
+        Self::finalize_open(&env, &position, fee);
         extend_instance_ttl(&env);
 
         Ok(position)
@@ -459,8 +508,8 @@ impl MarketContract {
         // Settle with vault - pass the amount Vault is receiving (as negative pnl)
         // This ensures Vault's total_usdc accounting matches actual token receipt
         if vault_receives > 0 {
-            Self::settle_with_vault(&env, &vault_address, -vault_receives)?;
             token_client.transfer(&env.current_contract_address(), &vault_address, &vault_receives);
+            Self::credit_vault_receipt(&env, &vault_address, vault_receives);
         }
 
         // Pay keeper reward
@@ -468,7 +517,7 @@ impl MarketContract {
             token_client.transfer(&env.current_contract_address(), &keeper, &actual_keeper_reward);
         }
 
-        Self::adjust_oi(&env, &position.direction, position.size, false);
+        Self::adjust_oi(&env, &position.asset, &position.direction, position.size, position.entry_price, current_price, false);
 
         // Cancel any attached SL/TP/trailing orders, then delete position
         Self::cancel_position_orders(&env, position_id, None);
@@ -484,22 +533,9 @@ impl MarketContract {
         Ok(actual_keeper_reward)
     }
 
-    /// Check if a position can be liquidated (includes pending funding).
-    /// Cross-margin positions (margin_mode=1) are never individually liquidatable —
-    /// they use account-level liquidation via `liquidate_cross_account`.
-    pub fn is_liquidatable(env: Env, position_id: u64) -> Result<bool, NoetherError> {
-        let position = get_position(&env, position_id)
-            .ok_or(NoetherError::PositionNotFound)?;
-
-        // Cross-margin positions use account-level liquidation, not per-position
-        if position.margin_mode == 1 {
-            return Ok(false);
-        }
-
-        let current_price = Self::get_oracle_price(&env, &position.asset, false)?;
-
-        Ok(Self::should_liquidate_with_funding(&env, &position, current_price))
-    }
+    // is_liquidatable removed for WASM size — the keeper computes
+    // liquidation health locally from get_position + oracle price
+    // (P2-9), and liquidate() itself re-verifies on-chain.
 
     // get_liquidatable_positions removed for WASM size - keeper checks each position individually
 
@@ -710,115 +746,7 @@ impl MarketContract {
         leverage: u32,
         direction: Direction,
     ) -> Result<Position, NoetherError> {
-        require_initialized(&env)?;
-        require_not_paused(&env)?;
-        trader.require_auth();
-
-        let config = get_config(&env);
-
-        if collateral < config.min_collateral {
-            return Err(NoetherError::InsufficientCollateral);
-        }
-        if leverage < 1 || leverage > config.max_leverage {
-            return Err(NoetherError::InvalidLeverage);
-        }
-
-        let size = calculate_position_size(collateral, leverage);
-        if size > config.max_position_size {
-            return Err(NoetherError::PositionTooLarge);
-        }
-
-        // Auto-deposit: if pool balance is insufficient, pull from wallet
-        let pool_balance = get_cross_margin_balance(&env, &trader);
-        if collateral > pool_balance {
-            let shortfall = collateral - pool_balance;
-            // Transfer shortfall from trader wallet to market contract
-            let usdc_token = get_usdc_token(&env);
-            let token_client = token::Client::new(&env, &usdc_token);
-            token_client.transfer(&trader, &env.current_contract_address(), &shortfall);
-            // Update pool balance (old balance + shortfall = collateral)
-            let new_pool = pool_balance.checked_add(shortfall).ok_or(NoetherError::Overflow)?;
-            set_cross_margin_balance(&env, &trader, new_pool);
-            add_cross_margin_trader(&env, &trader);
-        }
-
-        // Now pool has enough - deduct collateral
-        let updated_pool = get_cross_margin_balance(&env, &trader);
-
-        // Free margin check (Binance-style): equity - used_margin must cover new position's initial margin.
-        // This prevents opening new positions when the account is already near liquidation.
-        let existing_cross_positions = get_cross_margin_position_ids(&env, &trader);
-        if !existing_cross_positions.is_empty() {
-            let get_price = |asset: &Symbol| -> i128 {
-                Self::get_oracle_price(&env, asset, false).unwrap_or(0)
-            };
-            let equity = position::calculate_cross_equity(&env, &trader, &get_price);
-            let mm = position::calculate_cross_maintenance_margin(
-                &env, &trader, config.maintenance_margin_bps,
-            );
-            // Must have positive equity above maintenance margin + new collateral
-            if equity < mm + collateral {
-                return Err(NoetherError::CrossMarginInsufficientFreeMargin);
-            }
-        }
-
-        // Check vault liquidity
-        let vault_address = get_vault(&env);
-        Self::check_vault_liquidity(&env, &vault_address, size)?;
-
-        // Fetch price from oracle
-        let entry_price = Self::get_oracle_price(&env, &asset, true)?;
-
-        // Calculate taker fee and record volume
-        let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
-
-        let net_collateral = collateral - fee;
-        if net_collateral <= 0 {
-            return Err(NoetherError::InsufficientCollateral);
-        }
-
-        // Deduct collateral from pool
-        let new_balance = updated_pool - collateral;
-        set_cross_margin_balance(&env, &trader, new_balance);
-
-        // Generate position ID
-        let position_id = next_position_id(&env);
-
-        // Create cross-margin position (liquidation_price = 0, account-level liquidation)
-        let position = Position {
-            id: position_id,
-            trader: trader.clone(),
-            asset: asset.clone(),
-            collateral: net_collateral,
-            size,
-            entry_price,
-            direction,
-            leverage,
-            liquidation_price: 0, // Cross-margin: no per-position liq price
-            timestamp: env.ledger().timestamp(),
-            entry_cumulative_funding: get_cumulative_funding_rate(&env),
-            margin_mode: 1, // Cross
-        };
-
-        // Store position in both regular and cross-margin indices
-        save_position(&env, &position);
-        add_cross_margin_position(&env, &trader, position_id);
-
-        Self::adjust_oi(&env, &direction, size, true);
-
-        // Transfer fee to vault
-        let usdc_token = get_usdc_token(&env);
-        let token_client = token::Client::new(&env, &usdc_token);
-        token_client.transfer(&env.current_contract_address(), &vault_address, &fee);
-
-        extend_instance_ttl(&env);
-
-        env.events().publish(
-            (Symbol::new(&env, "position_opened"),),
-            (position_id, trader, asset, direction, size, entry_price),
-        );
-
-        Ok(position)
+        Self::do_open(env, trader, asset, collateral, leverage, direction, true)
     }
 
     /// Close a cross-margin position. PnL returns to cross-margin pool, not trader wallet.
@@ -852,30 +780,32 @@ impl MarketContract {
         let current_price = Self::get_oracle_price(&env, &pos.asset, false)?;
         let pnl = calculate_pnl(&pos, current_price)?;
 
-        // Settle with vault
+        // Settle with vault (paid = profit actually covered by the pool)
         let vault_address = get_vault(&env);
-        Self::settle_with_vault(&env, &vault_address, pnl)?;
+        let paid = Self::settle_with_vault(&env, &vault_address, pnl);
 
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
 
-        // Transfer loss to vault if needed
+        // Loss + funding move to the vault in one transfer, credited on
+        // receipt. Cross collateral is pool-backed, so the full loss
+        // transfers here; account-level bad-debt capping happens in
+        // liquidate_cross_account.
+        let mut to_vault: i128 = 0;
         if pnl < 0 {
-            let loss = -pnl;
-            token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
+            to_vault += -pnl;
         }
-
-        // Transfer funding to vault if needed
         if funding > 0 {
-            token_client.transfer(
-                &env.current_contract_address(),
-                &vault_address,
-                &funding,
-            );
+            to_vault += funding;
+        }
+        if to_vault > 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &to_vault);
+            Self::credit_vault_receipt(&env, &vault_address, to_vault);
         }
 
         // Return remaining equity to cross-margin pool (NOT trader wallet)
-        let to_pool = pos.collateral.checked_add(pnl).unwrap_or(0)
+        let effective_pnl = if pnl > 0 { paid } else { pnl };
+        let to_pool = pos.collateral.checked_add(effective_pnl).unwrap_or(0)
             .checked_sub(funding).unwrap_or(0);
         if to_pool > 0 {
             let current_balance = get_cross_margin_balance(&env, &trader);
@@ -886,7 +816,7 @@ impl MarketContract {
         // Record volume
         record_volume_only(&env, &trader, pos.size);
 
-        Self::adjust_oi(&env, &pos.direction, pos.size, false);
+        Self::adjust_oi(&env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
 
         // Clean up (defensive: legacy cross positions may carry attached orders)
         Self::cancel_position_orders(&env, position_id, None);
@@ -980,7 +910,7 @@ impl MarketContract {
                     total_loss_to_vault += funding;
                 }
 
-                Self::adjust_oi(&env, &pos.direction, pos.size, false);
+                Self::adjust_oi(&env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
 
                 // Cancel any attached orders (defensive), then delete position
                 Self::cancel_position_orders(&env, pid, None);
@@ -998,6 +928,7 @@ impl MarketContract {
                 total_loss_to_vault
             };
             token_client.transfer(&market_addr, &vault_address, &actual_transfer);
+            Self::credit_vault_receipt(&env, &vault_address, actual_transfer);
         }
 
         // Calculate keeper reward from remaining equity (if any)
@@ -1031,6 +962,7 @@ impl MarketContract {
             let final_transfer = if actual_to_vault > market_balance { market_balance } else { actual_to_vault };
             if final_transfer > 0 {
                 token_client.transfer(&market_addr, &vault_address, &final_transfer);
+                Self::credit_vault_receipt(&env, &vault_address, final_transfer);
             }
         }
 
@@ -1569,28 +1501,17 @@ impl MarketContract {
             return Err(NoetherError::OrderNotPending);
         }
 
-        // Get current price
-        let current_price = Self::get_oracle_price(&env, &order.asset, false)?;
+        // Strict price for entry executions (deviation band + staleness);
+        // lenient for risk-reducing close-type orders — including
+        // reduce-only entries, which close an opposing position
+        let strict_price = order.time_in_force & 0x100 == 0
+            && matches!(
+                order.order_type,
+                OrderType::LimitEntry | OrderType::StopLimit
+            );
+        let current_price = Self::get_oracle_price(&env, &order.asset, strict_price)?;
 
-        // Determine reference price for trigger/slippage check
-        // TakeProfit with limit_price > 0 acts as "Take Limit": trigger at trigger_price,
-        // but slippage is checked against limit_price (the desired exit price)
-        let ref_price = match order.order_type {
-            OrderType::StopLimit if order.stop_limit_phase == 1 => order.limit_price,
-            OrderType::TakeProfit if order.limit_price > 0 => order.limit_price,
-            OrderType::TrailingStop => {
-                // Calculate dynamic trigger from peak
-                if let Some(peak) = get_trailing_stop_peak(&env, order_id) {
-                    match order.direction {
-                        Direction::Long => peak - peak * (order.trailing_percent_bps as i128) / 10000,
-                        Direction::Short => peak + peak * (order.trailing_percent_bps as i128) / 10000,
-                    }
-                } else {
-                    order.trigger_price
-                }
-            }
-            _ => order.trigger_price,
-        };
+        let ref_price = Self::order_ref_price(&env, &order);
 
         // Check if trigger condition is met
         let triggered = match order.trigger_condition {
@@ -1705,67 +1626,28 @@ impl MarketContract {
         }
     }
 
-    /// Check if an order should be executed at current price.
-    pub fn should_execute_order(env: Env, order_id: u64) -> Result<bool, NoetherError> {
-        let order = get_order(&env, order_id)
-            .ok_or(NoetherError::OrderNotFound)?;
+    // should_execute_order removed for WASM size — the keeper previews
+    // executions by SIMULATING execute_order (P2-9/K-5), which also
+    // kills the double price read per scan.
 
-        if order.status != OrderStatus::Pending {
-            return Ok(false);
-        }
-
-        let strict_price = matches!(
-            order.order_type,
-            OrderType::LimitEntry | OrderType::StopLimit
-        );
-        let current_price = Self::get_oracle_price(&env, &order.asset, strict_price)?;
-
+    /// Reference price an order triggers (and slippage-checks) against.
+    /// TakeProfit with limit_price > 0 is a Take Limit: both the trigger
+    /// and slippage compare to limit_price (the desired exit).
+    fn order_ref_price(env: &Env, order: &Order) -> i128 {
         match order.order_type {
+            OrderType::StopLimit if order.stop_limit_phase == 1 => order.limit_price,
+            OrderType::TakeProfit if order.limit_price > 0 => order.limit_price,
             OrderType::TrailingStop => {
-                // Check if price has dropped trailing_percent from peak
-                if let Some(peak) = get_trailing_stop_peak(&env, order_id) {
-                    let trigger = match order.direction {
-                        Direction::Long => {
-                            // Trigger when price drops below peak * (1 - trailing%)
-                            let threshold = peak - peak * (order.trailing_percent_bps as i128) / 10000;
-                            current_price <= threshold
-                        }
-                        Direction::Short => {
-                            // Trigger when price rises above peak * (1 + trailing%)
-                            let threshold = peak + peak * (order.trailing_percent_bps as i128) / 10000;
-                            current_price >= threshold
-                        }
-                    };
-                    Ok(trigger)
+                if let Some(peak) = get_trailing_stop_peak(env, order.id) {
+                    match order.direction {
+                        Direction::Long => peak - peak * (order.trailing_percent_bps as i128) / 10000,
+                        Direction::Short => peak + peak * (order.trailing_percent_bps as i128) / 10000,
+                    }
                 } else {
-                    Ok(false)
+                    order.trigger_price
                 }
             }
-            OrderType::StopLimit => {
-                if order.stop_limit_phase == 0 {
-                    // Phase 0: check if stop price is hit
-                    let stop_triggered = match order.trigger_condition {
-                        TriggerCondition::Above => current_price >= order.trigger_price,
-                        TriggerCondition::Below => current_price <= order.trigger_price,
-                    };
-                    Ok(stop_triggered)
-                } else {
-                    // Phase 1: check if limit price is reached
-                    let limit_triggered = match order.trigger_condition {
-                        TriggerCondition::Above => current_price >= order.limit_price,
-                        TriggerCondition::Below => current_price <= order.limit_price,
-                    };
-                    Ok(limit_triggered)
-                }
-            }
-            _ => {
-                // Standard trigger check for LimitEntry, StopLoss, TakeProfit
-                let triggered = match order.trigger_condition {
-                    TriggerCondition::Above => current_price >= order.trigger_price,
-                    TriggerCondition::Below => current_price <= order.trigger_price,
-                };
-                Ok(triggered)
-            }
+            _ => order.trigger_price,
         }
     }
 
@@ -2053,6 +1935,56 @@ impl MarketContract {
         Ok(price)
     }
 
+    /// Shared open finalisation: persist the position (indexing it under
+    /// the cross account when applicable), update OI/exposure aggregates,
+    /// move the trading fee to the vault and emit position_opened.
+    fn finalize_open(env: &Env, position: &Position, fee: i128) {
+        save_position(env, position);
+        if position.margin_mode == 1 {
+            add_cross_margin_position(env, &position.trader, position.id);
+        }
+        Self::adjust_oi(
+            env,
+            &position.asset,
+            &position.direction,
+            position.size,
+            position.entry_price,
+            position.entry_price,
+            true,
+        );
+        if fee > 0 {
+            let vault = get_vault(env);
+            let usdc = get_usdc_token(env);
+            let client = token::Client::new(env, &usdc);
+            // Protocol fee share (P1-10): a slice of every trading fee goes
+            // to the treasury (insurance/ops funding); inactive until
+            // set_fee_split wires a treasury address
+            let mut cut = fee * (get_protocol_fee_bps(env) as i128) / (BASIS_POINTS as i128);
+            match get_treasury(env) {
+                Some(t) if cut > 0 => {
+                    client.transfer(&env.current_contract_address(), &t, &cut);
+                }
+                _ => cut = 0,
+            }
+            let vault_share = fee - cut;
+            if vault_share > 0 {
+                client.transfer(&env.current_contract_address(), &vault, &vault_share);
+                Self::credit_vault_receipt(env, &vault, vault_share);
+            }
+        }
+        env.events().publish(
+            (Symbol::new(env, "position_opened"),),
+            (
+                position.id,
+                position.trader.clone(),
+                position.asset.clone(),
+                position.direction,
+                position.size,
+                position.entry_price,
+            ),
+        );
+    }
+
     /// Shared isolated-close settlement used by close_position and keeper
     /// order execution: settles PnL and funding with the vault, pays the
     /// trader (and optional keeper fee), cancels attached orders, deletes
@@ -2071,29 +2003,48 @@ impl MarketContract {
             position.entry_cumulative_funding, cumulative,
         );
         let pnl = calculate_pnl(position, current_price)?;
-        let to_trader = position.collateral + pnl - funding - keeper_fee;
 
         let vault_address = get_vault(env);
-        Self::settle_with_vault(env, &vault_address, pnl)?;
+        let paid = Self::settle_with_vault(env, &vault_address, pnl);
 
         let usdc_token = get_usdc_token(env);
         let token_client = token::Client::new(env, &usdc_token);
+
+        // Outflows are capped by this position's own collateral — a
+        // leveraged loss can never dip into other positions' margin;
+        // the vault is credited only for USDC that actually arrives.
+        let mut available = position.collateral;
+        let mut to_vault: i128 = 0;
         if pnl < 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &(-pnl));
+            let loss = if -pnl > available { available } else { -pnl };
+            to_vault += loss;
+            available -= loss;
         }
         if funding > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &funding);
+            let f = if funding > available { available } else { funding };
+            to_vault += f;
+            available -= f;
         }
-        if keeper_fee > 0 {
+        let fee_paid = if keeper_fee > available { available } else { keeper_fee };
+        available -= fee_paid;
+
+        if to_vault > 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &to_vault);
+            Self::credit_vault_receipt(env, &vault_address, to_vault);
+        }
+        if fee_paid > 0 {
             if let Some(k) = keeper {
-                token_client.transfer(&env.current_contract_address(), k, &keeper_fee);
+                token_client.transfer(&env.current_contract_address(), k, &fee_paid);
             }
         }
+        // Negative funding = trader earned it; pays out on top as before
+        let earned_funding = if funding < 0 { -funding } else { 0 };
+        let to_trader = available + paid + earned_funding;
         if to_trader > 0 {
             token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
         }
 
-        Self::adjust_oi(env, &position.direction, position.size, false);
+        Self::adjust_oi(env, &position.asset, &position.direction, position.size, position.entry_price, current_price, false);
         record_volume_only(env, &position.trader, position.size);
         Self::cancel_position_orders(env, position.id, skip_order);
         delete_position(env, position.id, &position.trader);
@@ -2105,8 +2056,20 @@ impl MarketContract {
         Ok(pnl)
     }
 
-    /// Adjust the per-side open-interest totals; decreases saturate at zero.
-    fn adjust_oi(env: &Env, direction: &Direction, size: i128, increase: bool) {
+    /// One choke point for every open/close/liquidation: adjusts the
+    /// global per-side OI totals AND the per-asset exposure aggregates,
+    /// then pushes the asset's fresh unrealized PnL to the vault —
+    /// releasing the position's payout reservation in the same call on
+    /// closes. Decreases saturate at zero.
+    fn adjust_oi(
+        env: &Env,
+        asset: &Symbol,
+        direction: &Direction,
+        size: i128,
+        entry_price: i128,
+        mark_price: i128,
+        increase: bool,
+    ) {
         let total = match direction {
             Direction::Long => get_total_long_size(env),
             Direction::Short => get_total_short_size(env),
@@ -2122,6 +2085,47 @@ impl MarketContract {
             Direction::Long => set_total_long_size(env, new_total),
             Direction::Short => set_total_short_size(env, new_total),
         }
+
+        let (mut lk, mut ls, mut sk, mut ss) = get_asset_exposure(env, asset);
+        let k_delta = if entry_price > 0 { size * PRECISION / entry_price } else { 0 };
+        let sat = |cur: i128, d: i128| if cur > d { cur - d } else { 0 };
+        match direction {
+            Direction::Long => {
+                if increase {
+                    lk += k_delta;
+                    ls += size;
+                } else {
+                    lk = sat(lk, k_delta);
+                    ls = sat(ls, size);
+                }
+            }
+            Direction::Short => {
+                if increase {
+                    sk += k_delta;
+                    ss += size;
+                } else {
+                    sk = sat(sk, k_delta);
+                    ss = sat(ss, size);
+                }
+            }
+        }
+        set_asset_exposure(env, asset, &(lk, ls, sk, ss));
+
+        let upnl = Self::exposure_upnl(lk, ls, sk, ss, mark_price);
+        Self::push_exposure(env, asset, upnl, if increase { 0 } else { size });
+    }
+
+    /// Push one asset's unrealized PnL (+ optional reservation release)
+    /// to the vault.
+    fn push_exposure(env: &Env, asset: &Symbol, upnl: i128, release: i128) {
+        let vault = get_vault(env);
+        let args: Vec<soroban_sdk::Val> = (asset.clone(), upnl, release).into_val(env);
+        let _: () = env.invoke_contract(&vault, &Symbol::new(env, "sync_exposure"), args);
+    }
+
+    /// Aggregate unrealized trader PnL for one asset at the given mark.
+    fn exposure_upnl(lk: i128, ls: i128, sk: i128, ss: i128, mark: i128) -> i128 {
+        (mark * lk) / PRECISION - ls + ss - (mark * sk) / PRECISION
     }
 
     /// Cancel any SL/TP/trailing orders still attached to a position that is
@@ -2150,33 +2154,41 @@ impl MarketContract {
         remove_position_trailing_stop(env, position_id);
     }
 
-    /// Check if Vault has enough liquidity for a potential payout.
-    fn check_vault_liquidity(env: &Env, vault: &Address, amount: i128) -> Result<(), NoetherError> {
-        // Call vault's reserve_for_position function
-        // This checks liquidity without moving funds
-        let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
-        let _: () = env.invoke_contract(
-            vault,
-            &Symbol::new(env, "reserve_for_position"),
-            args,
-        );
-
+    /// Reserve the position's max payout in the vault (real reservation —
+    /// rejects past the aggregate or per-asset-side OI caps, #82).
+    fn reserve_with_vault(
+        env: &Env,
+        vault: &Address,
+        asset: &Symbol,
+        direction: &Direction,
+        size: i128,
+    ) -> Result<(), NoetherError> {
+        let (_, ls, _, ss) = get_asset_exposure(env, asset);
+        let side_after = match direction {
+            Direction::Long => ls + size,
+            Direction::Short => ss + size,
+        };
+        let args: Vec<soroban_sdk::Val> = (asset.clone(), size, side_after).into_val(env);
+        let _: () = env.invoke_contract(vault, &Symbol::new(env, "reserve_for_position"), args);
         Ok(())
     }
 
-    /// Settle PnL with vault contract.
-    fn settle_with_vault(env: &Env, vault: &Address, pnl: i128) -> Result<(), NoetherError> {
-        // Call vault's settle_pnl function
-        // - If pnl > 0: Vault transfers profit to Market
-        // - If pnl < 0: Vault updates accounting (Market transfers loss separately)
+    /// Settle PnL with the vault. Returns the profit actually paid out
+    /// (capped at what the pool holds; the vault records any shortfall).
+    /// Losses return 0 — the vault is credited via receive_funds_credit
+    /// only when USDC actually moves.
+    fn settle_with_vault(env: &Env, vault: &Address, pnl: i128) -> i128 {
         let args: Vec<soroban_sdk::Val> = (pnl,).into_val(env);
-        let _: () = env.invoke_contract(
-            vault,
-            &Symbol::new(env, "settle_pnl"),
-            args,
-        );
+        env.invoke_contract(vault, &Symbol::new(env, "settle_pnl"), args)
+    }
 
-        Ok(())
+    /// Tell the vault to credit USDC the market just transferred in
+    /// (losses, funding) — accounting follows real receipts (V-3 tail).
+    fn credit_vault_receipt(env: &Env, vault: &Address, amount: i128) {
+        if amount > 0 {
+            let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
+            let _: () = env.invoke_contract(vault, &Symbol::new(env, "receive_loss"), args);
+        }
     }
 
     // apply_funding_to_position removed — replaced by cumulative funding model.
@@ -2218,32 +2230,49 @@ impl MarketContract {
     ) -> Result<i128, NoetherError> {
         let config = get_config(env);
 
-        // Reduce Only check: bit 8 of time_in_force
-        // A reduce-only entry order is only valid if the trader has an existing
-        // position in the OPPOSITE direction that it would offset.
+        // Reduce Only (bit 8 of time_in_force): actually REDUCES — closes
+        // the trader's largest opposing isolated position in this asset
+        // that fits inside the order size, instead of opening an opposite
+        // position (M-6). The order's locked collateral is refunded either
+        // way; with no suitable opposing position the order cancels.
         if order.time_in_force & 0x100 != 0 {
-            let all_ids = get_all_position_ids(env);
-            let has_opposing = all_ids.iter().any(|pid| {
+            let intended_size = calculate_position_size(order.collateral, order.leverage);
+            let mut target: Option<Position> = None;
+            for pid in get_trader_position_ids(env, &order.trader).iter() {
                 if let Some(pos) = get_position(env, pid) {
-                    pos.trader == order.trader
-                        && pos.asset == order.asset
+                    if pos.asset == order.asset
                         && pos.direction != order.direction
-                } else {
-                    false
+                        && pos.margin_mode == 0
+                        && pos.size <= intended_size
+                        && target.as_ref().is_none_or(|t| pos.size > t.size)
+                    {
+                        target = Some(pos);
+                    }
                 }
-            });
-            if !has_opposing {
-                // No opposing position — cancel and refund
-                let usdc_token = get_usdc_token(env);
-                let token_client = token::Client::new(env, &usdc_token);
-                token_client.transfer(&env.current_contract_address(), &order.trader, &order.collateral);
-                update_order_status(env, order.id, OrderStatus::Cancelled);
-                env.events().publish(
-                    (Symbol::new(env, "order_cancelled"),),
-                    (order.id, Symbol::new(env, "reduce_only_no_position")),
-                );
-                return Ok(0);
             }
+
+            let usdc_token = get_usdc_token(env);
+            let token_client = token::Client::new(env, &usdc_token);
+            if order.collateral > 0 {
+                token_client.transfer(&env.current_contract_address(), &order.trader, &order.collateral);
+            }
+
+            return match target {
+                Some(pos) => {
+                    Self::settle_isolated_close(
+                        env, &pos, current_price, keeper_fee, Some(keeper), Some(order.id),
+                    )?;
+                    Ok(keeper_fee)
+                }
+                None => {
+                    update_order_status(env, order.id, OrderStatus::Cancelled);
+                    env.events().publish(
+                        (Symbol::new(env, "order_cancelled"),),
+                        (order.id, Symbol::new(env, "reduce_only_no_position")),
+                    );
+                    Ok(0)
+                }
+            };
         }
 
         // Calculate position size
@@ -2251,7 +2280,7 @@ impl MarketContract {
 
         // Check Vault has enough liquidity
         let vault_address = get_vault(env);
-        Self::check_vault_liquidity(env, &vault_address, size)?;
+        Self::reserve_with_vault(env, &vault_address, &order.asset, &order.direction, size)?;
 
         // Calculate liquidation price using current price as entry
         let liquidation_price = calculate_liquidation_price(
@@ -2291,25 +2320,17 @@ impl MarketContract {
             margin_mode: 0, // Isolated
         };
 
-        // Store position
-        save_position(env, &position);
-
-        Self::adjust_oi(env, &order.direction, size, true);
-
-        // Transfer trading fee to vault
-        let usdc_token = get_usdc_token(env);
-        let token_client = token::Client::new(env, &usdc_token);
-        token_client.transfer(&env.current_contract_address(), &vault_address, &trading_fee);
+        Self::finalize_open(env, &position, trading_fee);
 
         // Pay keeper fee
         if keeper_fee > 0 {
-            token_client.transfer(&env.current_contract_address(), keeper, &keeper_fee);
+            let usdc_token = get_usdc_token(env);
+            token::Client::new(env, &usdc_token).transfer(
+                &env.current_contract_address(),
+                keeper,
+                &keeper_fee,
+            );
         }
-
-        env.events().publish(
-            (Symbol::new(env, "position_opened"),),
-            (position.id, order.trader.clone(), position.asset.clone(), position.direction, size, current_price),
-        );
 
         Ok(keeper_fee)
     }
@@ -2367,6 +2388,10 @@ mod tests {
     }
 
     fn setup() -> TestEnv {
+        setup_with_vault_deposit(10_000_000 * PRECISION)
+    }
+
+    fn setup_with_vault_deposit(vault_deposit: i128) -> TestEnv {
         let env = Env::default();
         env.mock_all_auths();
         env.budget().reset_unlimited(); // Allow complex cross-contract tests
@@ -2419,8 +2444,8 @@ mod tests {
 
         // Deposit USDC into vault for liquidity
         let usdc_admin = StellarAssetClient::new(&env, &usdc_token);
-        usdc_admin.mint(&admin, &(10_000_000 * PRECISION)); // $10M
-        vault_client.deposit(&admin, &(10_000_000 * PRECISION));
+        usdc_admin.mint(&admin, &(vault_deposit + 10 * PRECISION));
+        vault_client.deposit(&admin, &vault_deposit);
 
         // Initialize market with config
         let config = MarketConfig::default();
@@ -3239,5 +3264,258 @@ mod tests {
         // Stale feed must not strand an exiting trader
         let pnl = test.market.close_position(&trader, &pos.id);
         assert!(pnl <= 0); // flat price, small funding — just must not revert
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // OI Caps + Real Reservation + NAV Wiring (M-4/V-2/V-3 / P1-3, P1-4, P1-8)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_open_beyond_asset_oi_cap_rejected() {
+        let test = setup();
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        // 1 bp of $10M AUM = $1,000 per-side cap on XLM
+        vault_client.set_asset_cap(&Symbol::new(&test.env, "XLM"), &1);
+
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let blocked = test.market.try_open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(500 * PRECISION),
+            &5, // size $2,500 > $1,000 cap
+            &Direction::Long,
+        );
+        assert!(matches!(blocked, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+
+        // Under the cap the open goes through
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5, // size $500
+            &Direction::Long,
+        );
+        assert!(pos.id > 0);
+    }
+
+    #[test]
+    fn test_winner_close_never_freezes_and_records_shortfall() {
+        // Tiny pool: the win far exceeds what the vault can pay
+        let test = setup_with_vault_deposit(200 * PRECISION);
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        let trader = fund_trader(&test, 100 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+
+        // size $50 fits the 25% asset cap of a ~$200 pool
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(10 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // 100x pump — theoretical PnL ~$4,950 against a ~$200 pool
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 10));
+
+        // The close MUST NOT revert (old settle_pnl hard-reverted here,
+        // freezing the winner forever)
+        let wallet_before = usdc.balance(&trader);
+        test.market.close_position(&trader, &pos.id);
+        let received = usdc.balance(&trader) - wallet_before;
+
+        assert!(received > 0); // paid everything the pool could cover
+        assert!(vault_client.get_shortfall() > 0); // remainder recorded
+    }
+
+    #[test]
+    fn test_reservation_lifecycle_and_noe_price_tracks_open_pnl() {
+        let test = setup();
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let p0 = vault_client.get_noe_price();
+        assert_eq!(vault_client.get_reserved_payout(), 0);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long,
+        );
+        // Open reserved its full max payout (= size)
+        assert_eq!(vault_client.get_reserved_payout(), 500 * PRECISION);
+
+        // +20% mark move, pushed by the permissionless NAV freshener:
+        // traders are winning, so AUM and the NOE price must drop
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 12 / 100));
+        let upnl = test.market.sync_asset_pnl(&xlm);
+        assert!(upnl > 0);
+        let p1 = vault_client.get_noe_price();
+        assert!(p1 < p0);
+
+        // Close releases the reservation and zeroes the asset's uPnL
+        test.market.close_position(&trader, &pos.id);
+        assert_eq!(vault_client.get_reserved_payout(), 0);
+        assert_eq!(vault_client.get_asset_unrealized_pnl(&xlm), 0);
+    }
+
+    #[test]
+    fn test_loss_transfer_capped_at_position_collateral() {
+        let test = setup();
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let vault_acct_before = vault_client.get_total_usdc();
+        let wallet_before = usdc.balance(&trader);
+
+        // 10x long, then -30%: raw loss $300 on ~$100 collateral
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long,
+        );
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 7 / 100));
+        let pnl = test.market.close_position(&trader, &pos.id);
+        assert!(pnl < -(100 * PRECISION)); // raw PnL far beyond collateral
+
+        // The trader can lose at most their collateral...
+        assert_eq!(usdc.balance(&trader), wallet_before - 100 * PRECISION);
+        // ...and the vault is credited only what actually arrived
+        // (net collateral after the open fee), never the raw loss
+        let credited = vault_client.get_total_usdc() - vault_acct_before;
+        assert!(credited > 0 && credited <= 100 * PRECISION);
+    }
+
+    #[test]
+    fn test_reduce_only_closes_opposing_position() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+
+        // Existing long $500
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long,
+        );
+
+        // Reduce-only short sized to cover it ($500)
+        let order = test.market.place_limit_order(
+            &trader,
+            &xlm,
+            &Direction::Short,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION * 11 / 100), // trigger above spot
+            &true,
+            &9_000,
+            &0x100, // reduce-only + GTC
+        );
+
+        // Trigger and execute
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 12 / 100));
+        let wallet_before = usdc.balance(&trader);
+        test.market.execute_order(&keeper, &order.id);
+
+        // The opposing long is CLOSED — and no opposite short was opened
+        assert!(test.market.get_position(&pos.id).is_none());
+        assert_eq!(test.market.get_all_position_ids().len(), 0);
+        // Trader got the order's locked collateral back plus the close payout
+        assert!(usdc.balance(&trader) > wallet_before + 100 * PRECISION);
+    }
+
+    #[test]
+    fn test_protocol_fee_split_routes_to_treasury() {
+        let test = setup();
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        let treasury = Address::generate(&test.env);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+
+        test.market.set_fee_split(&treasury, &2_000); // 20%
+
+        let vault_acct_before = vault_client.get_total_usdc();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Taker fee on $500 at 0.05% = $0.25 → 20% = $0.05 to treasury
+        let treasury_got = usdc.balance(&treasury);
+        assert!(treasury_got > 0);
+        // The vault's share is CREDITED to accounting (fees now count
+        // toward AUM instead of arriving as invisible balance)
+        let credited = vault_client.get_total_usdc() - vault_acct_before;
+        assert_eq!(credited * 2_000 / 8_000, treasury_got); // 80/20 split
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Funding Settlement + Liquidation Reward Cap (P1-9)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_funding_accrues_and_settles_on_close() {
+        let test = setup();
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        // Long-only market: longs pay funding
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long,
+        );
+        let fee = 100 * PRECISION - pos.collateral; // taker fee charged at open
+
+        // One hour passes; refresh the oracle so the close isn't stale-flagged
+        test.env.ledger().with_mut(|li| li.timestamp += 3_600);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION / 10));
+        test.market.apply_funding();
+
+        let vault_before = vault_client.get_total_usdc();
+        let wallet_before = usdc.balance(&trader);
+        let pnl = test.market.close_position(&trader, &pos.id);
+        assert_eq!(pnl, 0); // flat price
+
+        // Trader got collateral back MINUS accrued funding
+        let received = usdc.balance(&trader) - wallet_before;
+        assert!(received > 0);
+        assert!(received < 100 * PRECISION - fee);
+        // ...and that funding landed in the vault's accounting
+        let funding_credited = vault_client.get_total_usdc() - vault_before;
+        assert_eq!(funding_credited, (100 * PRECISION - fee) - received);
+        assert!(funding_credited > 0);
+    }
+
+    #[test]
+    fn test_liquidation_reward_capped() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long,
+        );
+
+        // Just past the liquidation threshold (10x → ~9% adverse move)
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
+
+        let keeper_before = usdc.balance(&keeper);
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(reward > 0);
+        // Reward is 5% of remaining equity, hard-capped at 10% of collateral
+        assert!(reward <= pos.collateral / 10);
+        assert_eq!(usdc.balance(&keeper) - keeper_before, reward);
+        assert!(test.market.get_position(&pos.id).is_none());
     }
 }

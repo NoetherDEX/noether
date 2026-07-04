@@ -29,7 +29,7 @@
 
 use noether_common::NoetherError;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, Address, BytesN, Env, IntoVal, Symbol,
+    contract, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal, Symbol,
     Vec,
 };
 

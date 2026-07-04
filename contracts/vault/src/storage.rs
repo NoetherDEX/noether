@@ -3,7 +3,7 @@
 //! Storage keys and helper functions for the Vault contract.
 
 use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address, Env, Symbol};
 use noether_common::NoetherError;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -37,7 +37,21 @@ pub enum DataKey {
     Initialized,
     /// Whether contract is paused
     Paused,
+    /// Sum of committed max payouts for open positions (7 decimals)
+    ReservedPayout,
+    /// Cumulative winner profit the pool could not pay at close (7 decimals);
+    /// owed against the future insurance buffer
+    Shortfall,
+    /// Max total reservation as bps of AUM (default 7000 = 70%)
+    ReserveCapBps,
+    /// Per-asset-side OI cap as bps of AUM (default 2500 = 25%)
+    AssetCapBps(Symbol),
+    /// Unrealized trader PnL per asset (7 decimals)
+    AssetUnrealizedPnl(Symbol),
 }
+
+pub const RESERVE_CAP_BPS_DEFAULT: u32 = 7_000;
+pub const ASSET_CAP_BPS_DEFAULT: u32 = 2_500;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Instance Storage (Contract State)
@@ -138,6 +152,58 @@ pub fn set_unrealized_pnl(env: &Env, amount: i128) {
     env.storage().persistent().extend_ttl(&DataKey::UnrealizedPnl, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
+pub fn get_reserved_payout(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::ReservedPayout).unwrap_or(0)
+}
+
+pub fn set_reserved_payout(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::ReservedPayout, &amount);
+    extend_ttl(env, &DataKey::ReservedPayout);
+}
+
+pub fn get_shortfall(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::Shortfall).unwrap_or(0)
+}
+
+pub fn set_shortfall(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::Shortfall, &amount);
+    extend_ttl(env, &DataKey::Shortfall);
+}
+
+pub fn get_reserve_cap_bps(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::ReserveCapBps).unwrap_or(RESERVE_CAP_BPS_DEFAULT)
+}
+
+pub fn set_reserve_cap_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&DataKey::ReserveCapBps, &bps);
+}
+
+pub fn get_asset_cap_bps(env: &Env, asset: &Symbol) -> u32 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AssetCapBps(asset.clone()))
+        .unwrap_or(ASSET_CAP_BPS_DEFAULT)
+}
+
+pub fn set_asset_cap_bps(env: &Env, asset: &Symbol, bps: u32) {
+    let key = DataKey::AssetCapBps(asset.clone());
+    env.storage().persistent().set(&key, &bps);
+    extend_ttl(env, &key);
+}
+
+pub fn get_asset_unrealized_pnl(env: &Env, asset: &Symbol) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AssetUnrealizedPnl(asset.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_asset_unrealized_pnl(env: &Env, asset: &Symbol, pnl: i128) {
+    let key = DataKey::AssetUnrealizedPnl(asset.clone());
+    env.storage().persistent().set(&key, &pnl);
+    extend_ttl(env, &key);
+}
+
 pub fn get_total_fees(env: &Env) -> i128 {
     env.storage().persistent().get(&DataKey::TotalFees).unwrap_or(0)
 }
@@ -179,4 +245,8 @@ pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
 /// Extend TTL for instance storage (30 days).
 pub fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+fn extend_ttl(env: &Env, key: &DataKey) {
+    env.storage().persistent().extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }

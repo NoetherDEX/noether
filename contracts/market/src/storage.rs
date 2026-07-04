@@ -72,6 +72,14 @@ pub enum DataKey {
     PositionTrailingStop(u64),
     /// Last accepted fresh oracle price + timestamp per asset (deviation guard)
     LastGoodPrice(Symbol),
+    /// Treasury address receiving the protocol's share of trading fees
+    Treasury,
+    /// Protocol share of trading fees in bps (default 2000 = 20%)
+    ProtocolFeeBps,
+    /// Per-asset aggregate exposure (long_k, long_size, short_k, short_size)
+    /// where k = sum of size*PRECISION/entry — lets unrealized PnL at mark P
+    /// be computed incrementally without iterating positions
+    AssetExposure(Symbol),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -186,6 +194,35 @@ pub fn set_current_funding_rate(env: &Env, rate: i128) {
     extend_persistent_ttl(env, &DataKey::CurrentFundingRate);
 }
 
+pub fn get_treasury(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Treasury)
+}
+
+pub fn set_treasury(env: &Env, treasury: &Address) {
+    env.storage().instance().set(&DataKey::Treasury, treasury);
+}
+
+pub fn get_protocol_fee_bps(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::ProtocolFeeBps).unwrap_or(2_000)
+}
+
+pub fn set_protocol_fee_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&DataKey::ProtocolFeeBps, &bps);
+}
+
+pub fn get_asset_exposure(env: &Env, asset: &Symbol) -> (i128, i128, i128, i128) {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AssetExposure(asset.clone()))
+        .unwrap_or((0, 0, 0, 0))
+}
+
+pub fn set_asset_exposure(env: &Env, asset: &Symbol, exposure: &(i128, i128, i128, i128)) {
+    let key = DataKey::AssetExposure(asset.clone());
+    env.storage().persistent().set(&key, exposure);
+    extend_persistent_ttl(env, &key);
+}
+
 pub fn get_last_good_price(env: &Env, asset: &Symbol) -> Option<(i128, u64)> {
     env.storage().persistent().get(&DataKey::LastGoodPrice(asset.clone()))
 }
@@ -294,6 +331,13 @@ pub fn delete_position(env: &Env, id: u64, trader: &Address) {
 pub fn init_position_index(env: &Env) {
     let empty: Vec<u64> = Vec::new(env);
     env.storage().persistent().set(&DataKey::AllPositions, &empty);
+}
+
+pub fn get_trader_position_ids(env: &Env, trader: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TraderPositions(trader.clone()))
+        .unwrap_or(Vec::new(env))
 }
 
 pub fn get_all_position_ids(env: &Env) -> Vec<u64> {

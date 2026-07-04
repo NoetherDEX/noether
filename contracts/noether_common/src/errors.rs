@@ -130,4 +130,7 @@ pub enum NoetherError {
     /// Oracle price moved beyond max_oracle_deviation_bps vs the stored
     /// last-good price (opens halt; closes/liquidations stay allowed)
     PriceDeviationTooHigh = 81,
+    /// Open would exceed the per-asset-side OI cap or the aggregate
+    /// payout-reservation cap (both sized against vault AUM)
+    OpenInterestCapExceeded = 82,
 }
