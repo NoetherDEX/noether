@@ -121,9 +121,9 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 
 ### API
 
-- [ ] **P4-1** [medium/d] WS hardening: global + per-IP connection caps, 30s ping/idle-close, per-conn token bucket, stringify-once broadcast, bufferedAmount backpressure (A-5).
+- [x] **P4-1** [medium/d] WS hardening (A-5) — DONE 2026-07-04 (commit `d9faf18`). Global+per-IP caps (1013), 30s ping/idle-close, per-conn token bucket, stringify-once broadcast, bufferedAmount eviction. 8 tests. Env-tunable.
 - [x] **P4-2** [medium/d] `/v1/tx/submit` taxonomy (A-6) — DONE 2026-07-04 (commit `fd374dc`). DUPLICATE→idempotent poll; TRY_AGAIN_LATER→503+Retry-After; FAILED→contract error #+name from diagnostic events. FAILED stays HTTP 200 for SDK compat. NOTE: tx-builders submitSignedTx still bare-polls for direct SDK users (single-source unify pending).
-- [ ] **P4-3** [low/d] Cursor pagination (`before_ts`) on the six history endpoints; LIMIT on `/v1/positions/open?trader=`; cache or precompute `/v1/vaults` aggregates (A-7).
+- [x] **P4-3** [low/d] Cursor pagination + read bounds (A-7) — DONE 2026-07-04 (commit `d9faf18`). before_ts on 8 endpoints, LIMIT on /v1/positions/open, 10s TtlCache over /v1/vaults. NOTE: /v1/referral/me/* history still limit-only (service ownership split — quick follow-up).
 - [x] **P4-4** [low/d] Observability (A-8) — DONE 2026-07-04 (commit `fd374dc`). x-request-id echo; response schemas on 8 route files (health.ts/account.ts owned elsewhere, skipped); version from package.json (0.1.0); servers URL from API_PUBLIC_URL.
 - [x] **P4-5** [medium/h] `GET /v1/account/volume?address=` (R-6) — DONE 2026-07-04 (commit `fd374dc`). 14d notional from events_raw. ⚠️ web OrderPanel still needs to CALL it (web pass).
 - [x] **P4-6** [medium/h] `/v1/markets/stats` + `/v1/trades?trader=` (W-3, W-6, I-8) — DONE 2026-07-04 (commit `fd374dc`). Per-asset OI + 24h volume + realized trades from projections/events. ⚠️ web trade page still needs to consume these instead of the hardcoded values.
@@ -135,7 +135,7 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 - [x] **P4-9** [medium/d] `/healthz` + CAS cursor (I-4) — DONE 2026-07-04 (commit `f8ae46a`). ⚠️ OPERATOR: set Railway indexer healthcheck path to /healthz.
 - [x] **P4-10** [medium/d] Raw XDR archive + close/liq decoder fields (I-6) — DONE 2026-07-04 (commit `f8ae46a`). Migration 015 topic/value XDR; close/liq carry asset/direction/size/entry.
 - [x] **P4-11** [medium/d] `npm run reindex` + contract_id stamping (I-7) — DONE 2026-07-04 (commit `f8ae46a`). Migration 016 + reindex.ts (bus suppressed). ⚠️ OPERATOR: run once post-deploy with indexer STOPPED to backfill + rebuild.
-- [ ] **P4-12** [low/d] Implement the trades projection (or drop dead tables); add LP vault events if T3 wants TVL/APY history (I-8).
+- [x] **P4-12** [low/d] Trades projection (I-8) — DONE 2026-07-04 (commit `c1d2abc`). Migration 017 real realized-trade projection; close/liquidation writers (idempotent, contract_id-stamped). Backs /v1/trades + close-side volume + markets/stats with a real table. LP-vault-event TVL/APY history (for real APY, P4-15) still TODO. OPERATOR: reindex to backfill.
 
 ### Web
 
@@ -149,15 +149,15 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 
 ### SDKs + tx-builders
 
-- [ ] **P4-18** [high/d] Router builders in tx-builders (`openWithPrice`/`closeWithPrice`); gateway fetches fresh attestation and routes via router when configured (S-1).
+- [~] **P4-18** [high/d] Router builders (S-1) — TX-BUILDERS HALF DONE 2026-07-04 (commit `faa3365`). openWithPrice/closeWithPrice/liquidateWithPrice/executeWithPrice + PriceAttestation type + 16 tests. GATEWAY HALF pending: wire api/routes/orders.ts to build via the router when NEXT_PUBLIC_NOETHER_ROUTER_ID set.
 - [x] **P4-19** [high/h] sdk-py key issuance (S-2) — DONE 2026-07-04 (commit `206f07c`). manageData challenge tx + signed XDR, verified vs walletAuth. ⚠️ OPERATOR: publish 0.1.2 to PyPI. (Optional raw-hex gateway fallback not done — the manageData fix is the real fix.)
 - [~] **P4-20** [high/h] WS robustness (S-3/S-4) — CLIENT HALF DONE 2026-07-04 (commit `206f07c`): both SDKs surface rejected/failed-login, re-send account.* after login-ack, connect() no longer hangs (readyPromise + timeout). ⚠️ SERVER half (serialize per-conn handling in api/plugins/ws.ts) still pending — fold into P4-1.
 - [x] **P4-21** [medium/h] Missing SDK endpoints + type re-sync (S-5) — DONE 2026-07-04 (commit `206f07c`). Four endpoints in both SDKs; sdk-ts vendored types re-synced + drift guard test.
 - [x] **P4-22** [medium/h] SDK package hygiene (S-6, S-8) — DONE 2026-07-04 (commit `206f07c`). README install name (noether-sdk), faucet step, websockets<14 cap, __version__ single-sourced, CHANGELOGs.
-- [ ] **P4-23** [medium/d] tx-builders XDR snapshot tests (pure buildArgs + fixtures) wired into root npm test (S-7).
+- [x] **P4-23** [medium/d] tx-builders XDR snapshot tests (S-7) — DONE 2026-07-04 (commit `faa3365`). 16 tests pinning Direction=u32/TriggerCondition=bool/i128 parts/arg order (was ZERO). Add packages/tx-builders to root npm test list if not auto-picked.
 - [ ] **P4-24** [medium/w] E2E harness (critic #8): one scripted trade through web-path tx assembly → router → market → vault → indexer → API read-back against an ephemeral stack; doubles as the audit-readiness integration test.
 - [x] **P4-25** [high/d] **Leaderboard cron data-loss fix (Tier A)** — DONE 2026-06-09 (commit `ef054cd`). The `web/app/api/cron/sync-leaderboard` cron marked txs processed before fetching their events, so RPC failures silently dropped traders' closed PnL forever (tester report). Fixed: mark-processed-only-on-definitive-fetch + retry/backoff + age-out, single-account open-position scan, composite trades key for cross closes, board defaults to PnL. **Follow-ups:** (a) one-time `processed_txs` reset (DELETE the `sync_state` row where key='processed_txs') to recover any wrongly-dropped trades still within Soroban RPC retention; (b) the public-RPC rate-limiting that causes the drops is the real lever — see paid-RPC note below.
-- [ ] **P4-26** [medium/w] **Leaderboard durable fix (Tier B)** — drive the leaderboard from the indexer projections (a `/v1/leaderboard` gateway route or SQL aggregate over the indexer `trades`/positions tables) instead of the web cron re-scanning Horizon + fetching events from the rate-limited public RPC. Deletes the entire fragile BFS+getTransaction path and the unbounded `processed_txs` blob. Depends on indexer hardening (P4-7/P4-8) and a public market-stats/leaderboard read endpoint (P4-6).
+- [~] **P4-26** [medium/w] **Leaderboard durable fix (Tier B)** — GATEWAY ROUTE DONE 2026-07-04 (commit `d9faf18`). GET /v1/leaderboard (top by realized PnL / volume from indexer projections, 5s cache). Depends-on (P4-7/8/12) all landed. WEB CUTOVER pending: point the web leaderboard at /v1/leaderboard + delete the web cron BFS/processed_txs path.
 
 ---
 
