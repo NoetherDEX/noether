@@ -110,8 +110,8 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 - [ ] **P3-6** [medium/h] **Turso backups + restore runbook** (D-8): PITR or nightly dump cron; document restore; plan to split api_keys into its own DB.
 - [x] **P3-7** [medium/h] Incident runbook — DONE 2026-07-04 (commit `0df9816`). docs/INCIDENT_RUNBOOK.md: triage table, oracle-stale, keeper-down, exploit→pause (P1-1), key compromise (SEC-3), RPC failover, on-call + SEAL 911.
 - [ ] **P3-8** [critical/d] **Admin key ceremony** (SEC-3): 2-of-3 classic multisig on `noether_admin` (SetOptions, med/high thresholds = 2; Yahya + Mert + offline backup); dedicated low-privilege faucet key (get ADMIN_SECRET_KEY out of Vercel); dedicated keeper key enforced. Rotate `G...LOLN` before mainnet value.
-- [ ] **P3-9** [medium/d] Keeper TTL job: proactively extend market/vault/router/shim instance+code TTLs (archived instance = dead exchange).
-- [ ] **P3-10** [low/d] Keeper XLM burn model + wallet-funding alarm (critic #7): estimate tx/day at mainnet cadence, alert below balance threshold.
+- [ ] **P3-9** [medium/d] Keeper TTL job — DESIGNED, deferred (needs on-chain verification I can't do here). Approach: a periodic (6h) job submitting `Operation.extendFootprintTtl` for each of vault/router/shim instance + code ledger keys (market self-extends via the keeper's price pushes). Must be built + tested against a live testnet ledger to get the footprint right — don't ship simulate-only (simulation doesn't persist TTL).
+- [ ] **P3-10** [low/d] Keeper XLM-funding alarm — DESIGNED, deferred (needs live balance read to verify XDR parsing). Approach: read the keeper account balance via `getLedgerEntries(LedgerKey.account)` each TTL cycle, `sendAlert('warn', …)` below `MIN_KEEPER_XLM` (default 20). Burn model: ~17k txs/day per trailing stop at mainnet cadence. Build + verify against a live account before shipping.
 
 ---
 
