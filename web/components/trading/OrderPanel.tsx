@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore, useLeaderModeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
-import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo } from '@/lib/stellar/market';
+import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo, setStopLoss, setTakeProfit } from '@/lib/stellar/market';
 import { leaderOpenPosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
 import { VAULT_PRECISION } from '@/types/vault';
@@ -89,6 +89,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const [triggerPrice, setTriggerPrice] = useState<string>('');
   const [slippageTolerance, setSlippageTolerance] = useState<number>(50);
   const [customSlippage, setCustomSlippage] = useState<string>('');
+
+  // Optional TP/SL attached at open (P4-17). Isolated + Market only — the
+  // contract rejects SL/TP on cross-margin (#80). Pipelined as follow-up
+  // signatures after the open confirms (interim; a single-signature
+  // router path is a later contract change).
+  const [attachSl, setAttachSl] = useState<string>('');
+  const [attachTp, setAttachTp] = useState<string>('');
+  const canAttachTpSl = orderType === 'Market' && marginMode === 'Isolated' && !isLeader;
 
   // Stop Limit states
   const [stopPrice, setStopPrice] = useState<string>('');
@@ -236,6 +244,53 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
   const canSubmit = isConnected && errors.length === 0 &&
     (orderType === 'TrailingStop' ? !!trailingPositionId : collateralNum >= 10);
+
+  // Attach optional TP/SL to a freshly-opened isolated position as separate
+  // follow-up signatures (P4-17). Best-effort: the position is already open,
+  // so a rejected/cancelled attach just surfaces a toast and leaves the
+  // position without that order — it never unwinds the open.
+  const attachTpSlAfterOpen = async (positionId: number | undefined) => {
+    if (!positionId || !publicKey || !canAttachTpSl) return;
+    const slNum = parseFloat(attachSl) || 0;
+    const tpNum = parseFloat(attachTp) || 0;
+
+    if (slNum > 0) {
+      try {
+        await toast.promise(
+          setStopLoss(publicKey, sign, {
+            positionId,
+            triggerPrice: toPrecision(slNum),
+            slippageToleranceBps: slippageTolerance,
+          }),
+          {
+            loading: 'Attaching stop-loss…',
+            success: 'Stop-loss attached',
+            error: (err) => decodeContractError(err) || 'Stop-loss not attached',
+          },
+        );
+      } catch { /* toast surfaced it; position stays open */ }
+    }
+
+    if (tpNum > 0) {
+      try {
+        await toast.promise(
+          setTakeProfit(publicKey, sign, {
+            positionId,
+            triggerPrice: toPrecision(tpNum),
+            slippageToleranceBps: slippageTolerance,
+          }),
+          {
+            loading: 'Attaching take-profit…',
+            success: 'Take-profit attached',
+            error: (err) => decodeContractError(err) || 'Take-profit not attached',
+          },
+        );
+      } catch { /* toast surfaced it; position stays open */ }
+    }
+
+    setAttachSl('');
+    setAttachTp('');
+  };
 
   // Handle position submission (market or limit)
   const handleSubmit = async () => {
@@ -390,7 +445,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         });
 
         try {
-          await openPositionPromise;
+          const opened = await openPositionPromise;
+          // Pipeline optional TP/SL as follow-up signatures once the open
+          // has confirmed and we know the position id (P4-17).
+          await attachTpSlAfterOpen(opened?.id);
         } catch {
           // Error handled by toast
         }
@@ -1034,6 +1092,45 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             </div>
             <p className="text-xs text-muted-foreground">
               Stop follows peak price. Triggers when price drops {trailingPercent || '?'}% from peak.
+            </p>
+          </div>
+        )}
+
+        {/* Optional TP/SL at open (P4-17) — isolated Market orders only */}
+        {canAttachTpSl && (
+          <div className="space-y-2.5 p-3 bg-secondary/20 rounded-lg border border-white/5">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Take Profit / Stop Loss
+              </h4>
+              <span className="text-[10px] text-muted-foreground">optional</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[10px] text-emerald-400/70">Take Profit</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={attachTp}
+                  onChange={(e) => setAttachTp(e.target.value.replace(/[^0-9.]/g, ''))}
+                  placeholder={assetPrice > 0 ? (assetPrice * (direction === 'Long' ? 1.1 : 0.9)).toFixed(2) : '0'}
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] text-red-400/70">Stop Loss</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={attachSl}
+                  onChange={(e) => setAttachSl(e.target.value.replace(/[^0-9.]/g, ''))}
+                  placeholder={assetPrice > 0 ? (assetPrice * (direction === 'Long' ? 0.95 : 1.05)).toFixed(2) : '0'}
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Attached as separate signatures right after the position opens.
             </p>
           </div>
         )}
