@@ -1,5 +1,5 @@
 /**
- * @noether/sdk — place-order example.
+ * noether-sdk — place-order example.
  *
  * End-to-end:
  *   1. Generate a fresh Stellar keypair and fund it via Friendbot.
@@ -7,6 +7,10 @@
  *   3. Prepare an open_position transaction through the SDK.
  *   4. Sign the prepared XDR locally with the keypair.
  *   5. Submit the signed XDR and poll until SUCCESS / FAILED.
+ *
+ * NOTE: Friendbot only provides XLM. The open_position step needs testnet
+ * USDC collateral — fund the wallet at https://testnet.noether.exchange/faucet
+ * before step 3, or it will fail.
  *
  * Run:
  *   npx tsx sdk-ts/examples/place-order.ts http://127.0.0.1:4000

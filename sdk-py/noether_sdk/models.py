@@ -81,6 +81,11 @@ class ApiKeyRecord(_Base):
     revoked_at: int | None = None
 
 
+class BetaStatus(_Base):
+    gated: bool
+    allowed: bool
+
+
 class AccountIdentity(_Base):
     owner: str
     tier: Literal["standard", "market_maker"]
@@ -101,6 +106,20 @@ class SubmittedTx(_Base):
     hash: str
     status: Literal["SUCCESS", "FAILED", "PENDING", "NOT_FOUND"]
     ledger: int | None = None
+
+
+# ─── positions ─────────────────────────────────────────────────────────────
+
+
+class OpenPositionRow(_Base):
+    position_id: int
+    trader: str
+    asset: str
+    direction: int
+    size: str
+    entry_price: str
+    opened_at: int
+    opened_tx_hash: str
 
 
 # ─── vaults ────────────────────────────────────────────────────────────────
@@ -127,6 +146,19 @@ class VaultActivityRow(_Base):
     principal: str
     amount: str
     shares: str | None = None
+    ledger: int
+    ts: int
+    tx_hash: str
+
+
+class VaultTradeRow(_Base):
+    id: int
+    vault_id: int
+    position_id: str
+    action: Literal["open", "close"]
+    leader: str
+    collateral: str
+    pnl: str | None = None
     ledger: int
     ts: int
     tx_hash: str

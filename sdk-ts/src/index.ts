@@ -1,9 +1,8 @@
 /**
- * @noether/sdk — public surface.
+ * noether-sdk — public surface.
  *
- * Stable starting point: the NoetherClient root + sub-clients for every
- * REST endpoint shipped through phase 5. WebSocket sub-client lands in
- * phase 8.
+ * The NoetherClient root + sub-clients for every REST endpoint on the
+ * gateway, plus the WsClient WebSocket sub-client at `client.ws()`.
  */
 
 export { NoetherClient, type NoetherClientOptions, type XdrSigner, type ExecuteTradeOptions, type ExecuteTradeResult } from './client.js';
@@ -18,6 +17,7 @@ export {
   type IssuedChallenge,
   type IssuedApiKey,
   type ApiKeyRecord,
+  type BetaStatus,
   type ChallengeSigner,
 } from './sub/keys.js';
 export { type AccountIdentity } from './sub/account.js';
@@ -33,9 +33,11 @@ export {
   type PreparedTransaction,
 } from './sub/orders.js';
 export { type SubmitRequest, type SubmittedTx } from './sub/tx.js';
+export { type OpenPositionRow, type OpenPositionsQuery } from './sub/positions.js';
 export {
   type VaultRow,
   type VaultActivityRow,
+  type VaultTradeRow,
   type VaultListQuery,
   type VaultActivityQuery,
 } from './sub/vaults.js';
@@ -91,6 +93,8 @@ export type {
   VaultEventEnvelope,
   VaultFeesClaimedEvent,
   VaultInfo,
+  VaultLeaderCloseEvent,
+  VaultLeaderOpenEvent,
   VaultPausedEvent,
   VaultSnapshot,
   VaultWithdrawEvent,

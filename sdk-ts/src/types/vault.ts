@@ -46,7 +46,9 @@ export type VaultEvent =
   | VaultDepositEvent
   | VaultWithdrawEvent
   | VaultFeesClaimedEvent
-  | VaultPausedEvent;
+  | VaultPausedEvent
+  | VaultLeaderOpenEvent
+  | VaultLeaderCloseEvent;
 
 export interface VaultEventEnvelope {
   topic: string;
@@ -85,4 +87,17 @@ export interface VaultFeesClaimedEvent extends VaultEventEnvelope {
 
 export interface VaultPausedEvent extends VaultEventEnvelope {
   topic: 'paused' | 'unpaused' | 'admin_paused' | 'admin_unpaused';
+}
+
+export interface VaultLeaderOpenEvent extends VaultEventEnvelope {
+  topic: 'leader_open';
+  leader: StellarAddress;
+  positionId: bigint;
+  collateral: bigint;
+}
+
+export interface VaultLeaderCloseEvent extends VaultEventEnvelope {
+  topic: 'leader_close';
+  leader: StellarAddress;
+  positionId: bigint;
 }

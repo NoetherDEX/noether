@@ -30,6 +30,13 @@ export interface ApiKeyRecord {
   revokedAt: number | null;
 }
 
+export interface BetaStatus {
+  /** True when key issuance is gated to a closed-beta allowlist. */
+  gated: boolean;
+  /** True when issuance is open, or the supplied address is on the allowlist. */
+  allowed: boolean;
+}
+
 /**
  * Function the caller provides to sign 32 bytes (a transaction hash) with
  * the Stellar private key. The SDK never sees the secret. Examples:
@@ -55,6 +62,14 @@ export interface KeysCreateOptions {
 
 export class KeysApi {
   constructor(private readonly transport: Transport, private readonly credentials: Credentials | null) {}
+
+  /** Public — whether key issuance is closed-beta gated (and if `address` is allowed). */
+  async betaStatus(address?: string): Promise<BetaStatus> {
+    return this.transport.request<BetaStatus>({
+      path: '/v1/keys/beta-status',
+      query: { address },
+    });
+  }
 
   async requestChallenge(address: string): Promise<IssuedChallenge> {
     return this.transport.request<IssuedChallenge>({

@@ -1,5 +1,5 @@
 /**
- * @noether/sdk — WebSocket ticker example.
+ * noether-sdk — WebSocket ticker example.
  *
  * Subscribes to ticker.BTC and prints every price update for 60 seconds.
  *

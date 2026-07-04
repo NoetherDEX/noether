@@ -6,8 +6,12 @@
 4. Sign the prepared XDR with the keypair.
 5. Submit and wait for confirmation.
 
+NOTE: Friendbot only provides XLM. The open_position step needs testnet
+USDC collateral — fund the wallet at https://testnet.noether.exchange/faucet
+before step 3, or it will fail.
+
 Run:
-    pip install noether-sdk stellar-sdk
+    pip install 'noether-sdk[stellar]'
     python sdk-py/examples/place_order.py http://127.0.0.1:4000
 """
 

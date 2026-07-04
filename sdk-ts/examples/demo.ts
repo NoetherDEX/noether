@@ -1,5 +1,5 @@
 /**
- * @noether/sdk — demo script.
+ * noether-sdk — demo script.
  *
  * Shows the public + authed surface against a running gateway using an
  * existing API key (env vars NK + NS). No keypair generation, no

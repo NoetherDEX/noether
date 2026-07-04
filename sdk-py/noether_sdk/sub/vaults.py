@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..errors import NotFoundError
-from ..models import VaultActivityRow, VaultRow
+from ..models import VaultActivityRow, VaultRow, VaultTradeRow
 from ..transport import Transport
 
 
@@ -23,6 +23,12 @@ class VaultsApi:
         except NotFoundError:
             return None
         return VaultRow.model_validate(body)
+
+    async def trades(self, vault_id: int, *, limit: int | None = None) -> list[VaultTradeRow]:
+        body = await self._transport.request(
+            "GET", f"/v1/vaults/{vault_id}/trades", params={"limit": limit}
+        )
+        return [VaultTradeRow.model_validate(r) for r in body.get("trades", [])]
 
     async def deposits(self, vault_id: int, *, limit: int | None = None) -> list[VaultActivityRow]:
         body = await self._transport.request(

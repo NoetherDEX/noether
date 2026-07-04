@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "noether-sdk"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Official Python SDK for the Noether decentralized perpetual exchange on Stellar / Soroban."
 readme = "README.md"
 license = { text = "MIT" }
@@ -14,7 +14,7 @@ keywords = ["stellar", "soroban", "noether", "perp-dex", "trading"]
 dependencies = [
     "httpx>=0.27.0",
     "pydantic>=2.5.0",
-    "websockets>=12.0",
+    "websockets>=12,<14",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +29,9 @@ dev = [
 [project.urls]
 Homepage = "https://noether.exchange"
 Repository = "https://github.com/NoetherDEX/noether"
+
+[tool.hatch.version]
+path = "noether_sdk/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["noether_sdk"]
