@@ -17,6 +17,7 @@ import {
   RecentTrades,
   OrderBook,
   CrossMarginBanner,
+  MobileTradeBar,
 } from '@/components/trading';
 import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
 import { useLeaderModeStore } from '@/lib/store';
@@ -635,19 +636,22 @@ function TradePage() {
               </Card>
             </div>
 
-            {/* Right Sidebar - Order Panel */}
+            {/* Right Sidebar - Order Panel (desktop; mobile uses the fixed bottom bar) */}
             <div className="lg:col-span-4 xl:col-span-3">
               <div className="sticky top-20 space-y-4">
-                <LeaderModeSelector />
-                <OrderPanel
-                  asset={selectedAsset}
-                  markPrice={currentPrices[selectedAsset] || 0}
-                  positions={positions}
-                  onPositionOpened={() => {
-                    refreshPositionsAfterTrade();
-                    refreshBalances();
-                  }}
-                />
+                {/* OrderPanel is replaced by the fixed bottom bar below lg */}
+                <div className="hidden lg:block space-y-4">
+                  <LeaderModeSelector />
+                  <OrderPanel
+                    asset={selectedAsset}
+                    markPrice={currentPrices[selectedAsset] || 0}
+                    positions={positions}
+                    onPositionOpened={() => {
+                      refreshPositionsAfterTrade();
+                      refreshBalances();
+                    }}
+                  />
+                </div>
 
                 {/* Market Stats */}
                 <Card>
@@ -686,6 +690,17 @@ function TradePage() {
             </div>
           </div>
         </div>
+
+        {/* Mobile-only trade access (fixed bottom Long/Short → bottom-sheet OrderPanel) */}
+        <MobileTradeBar
+          asset={selectedAsset}
+          markPrice={currentPrices[selectedAsset] || 0}
+          positions={positions}
+          onPositionOpened={() => {
+            refreshPositionsAfterTrade();
+            refreshBalances();
+          }}
+        />
       </main>
     </div>
   );
