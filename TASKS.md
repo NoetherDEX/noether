@@ -83,9 +83,9 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 
 ### This repo — router + shim
 
-- [ ] **P2-4** [critical/d] **Router publisher allowlist** (O-2): store allowed publisher pubkeys at `initialize` (+ admin setter); `refresh_price` rejects foreign keys. Redeploy + re-init router. (Defense-in-depth — does not replace P2-1.)
-- [ ] **P2-5** [high/d] **Router `liquidate_with_price` + `execute_with_price`** (O-3, K-3): mirror `close_with_price` (refresh then invoke market liquidate/execute_order); switch the keeper to them. Done when: a liquidation succeeds with a >60s-stale heartbeat slot.
-- [ ] **P2-6** [medium/h] Coarse min/max price sanity bounds in router/shim as a backstop (O-7 tail).
+- [x] **P2-4** [critical/d] **Router publisher allowlist** (O-2) — DONE 2026-07-04 (commit `3825396`). initialize takes publisher key set + admin set_publishers; refresh_price rejects foreign/empty keys (#3). ⚠️ OPERATOR: redeploy + re-init router with the keeper's publisher pubkey. Does NOT replace P2-1 (Noeracle O-1 hardening).
+- [x] **P2-5** [high/d] **Router liquidate_with_price + execute_with_price** (O-3, K-3) — DONE 2026-07-04 (commit `3825396`). Plus liquidate_cross_with_prices(Vec<PriceAttestation>) for multi-asset cross accounts. Keeper switch is part of the P2-7..P2-12 keeper update (in progress). Contract side proven by mock tests; live >60s-stale liquidation verified at redeploy.
+- [x] **P2-6** [medium/h] Coarse price sanity bounds (O-7 tail) — DONE 2026-07-04 (commit `3825396`). Per-asset bands in router refresh_price (BTC 1k-1M / ETH 50-100k / XLM 0.01-100); reject #31 regardless of signature.
 
 ### Keeper (`scripts/keeper` + Railway `noetherkeeperbotv2`)
 
