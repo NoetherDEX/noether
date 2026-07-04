@@ -29,8 +29,8 @@
 
 use noether_common::NoetherError;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal, Symbol,
-    Vec,
+    contract, contractimpl, contracttype, panic_with_error, Address, BytesN, Env, IntoVal,
+    Symbol, Vec,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -140,6 +140,16 @@ impl NoeracleShimContract {
         Self::require_admin(&env)?;
         new_admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        Ok(())
+    }
+
+    /// Swap the running WASM in place (admin-gated). Future pair additions
+    /// (new rows in noether_common::assets::PAIR_TAGS) then ship as an
+    /// in-place upgrade — the shim keeps its address, so the market's
+    /// oracle wiring never has to change.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 
@@ -280,7 +290,7 @@ mod tests {
     #[should_panic(expected = "Error(Contract, #31)")] // InvalidPrice (unknown asset)
     fn lastprice_unknown_symbol_panics() {
         let (env, _, _, client) = setup();
-        let _ = client.lastprice(&Symbol::new(&env, "DOGE"));
+        let _ = client.lastprice(&Symbol::new(&env, "PEPE"));
     }
 
     #[test]

@@ -19,6 +19,18 @@ const DEFAULT_ASSETS: AssetConfig[] = [
   { symbol: 'BTC', decimals: 8, maxMovePct: 10, minPrice: 1_000, maxPrice: 1_000_000 },
   { symbol: 'ETH', decimals: 8, maxMovePct: 10, minPrice: 50, maxPrice: 100_000 },
   { symbol: 'XLM', decimals: 7, maxMovePct: 20, minPrice: 0.01, maxPrice: 100 },
+  // Bands mirror noether_router::price_bounds — keep the two in lockstep.
+  { symbol: 'SOL', decimals: 7, maxMovePct: 20, minPrice: 1, maxPrice: 100_000 },
+  { symbol: 'XRP', decimals: 7, maxMovePct: 20, minPrice: 0.01, maxPrice: 1_000 },
+  { symbol: 'ADA', decimals: 7, maxMovePct: 20, minPrice: 0.01, maxPrice: 1_000 },
+  { symbol: 'BNB', decimals: 7, maxMovePct: 20, minPrice: 10, maxPrice: 100_000 },
+  { symbol: 'TRX', decimals: 7, maxMovePct: 20, minPrice: 0.01, maxPrice: 1_000 },
+  { symbol: 'HYPE', decimals: 7, maxMovePct: 20, minPrice: 0.1, maxPrice: 100_000 },
+  { symbol: 'DOGE', decimals: 7, maxMovePct: 20, minPrice: 0.001, maxPrice: 100 },
+  { symbol: 'ZEC', decimals: 7, maxMovePct: 20, minPrice: 1, maxPrice: 100_000 },
+  { symbol: 'LINK', decimals: 7, maxMovePct: 20, minPrice: 0.1, maxPrice: 10_000 },
+  { symbol: 'BCH', decimals: 7, maxMovePct: 20, minPrice: 1, maxPrice: 100_000 },
+  { symbol: 'LTC', decimals: 7, maxMovePct: 20, minPrice: 1, maxPrice: 100_000 },
 ];
 
 function envInt(name: string, fallback: number): number {
