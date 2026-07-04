@@ -179,16 +179,18 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 ## Phase 6 — Audit + guarded mainnet launch
 
 - [ ] **P6-1** [—/h] **Apply to SCF Audit Bank** (`sorobanaudits@stellar.org`) — trigger: Phases 1-2 complete. ~5% refundable co-pay; 2-4 month total lead; scope: market, vault, vault_factory, referral, router, shim, noether_common + Noeracle itself.
-- [ ] **P6-2** [—/d] Pre-audit artifacts: `cargo scout-audit` across contracts/ + remediation plan; threat model + data-flow diagram (STRIDE per the Audit Bank checklist); integration tests in repo (P4-24).
-- [ ] **P6-3** [—/d] Testnet→mainnet config-parity inventory (critic #5): every demo constant (fee tiers $20K/50K/100K → $1M/5M/25M, leverage, faucet, fake stats) catalogued with its mainnet value + a verify script gate.
+- [~] **P6-2** [—/d] Pre-audit artifacts — THREAT MODEL DONE 2026-07-04 (commit `6477bdb`, docs/THREAT_MODEL.md, STRIDE + data-flow). ⚠️ still: `cargo scout-audit` (not installed locally — operator) + remediation plan; integration tests (P4-24).
+- [x] **P6-3** [—/d] Config-parity inventory + gate (critic #5) — DONE 2026-07-04 (commit `972540d`). scripts/check_mainnet_parity.sh catalogs every demo constant with its mainnet target; MAINNET=1 exits 1 if any testnet value remains (launch gate).
 - [ ] **P6-4** [—/d] Geo-block + ToS (research 2.4 #8): Vercel edge middleware (US, Ontario, OFAC) on trade/vault routes; ToS with restricted-persons + no-VPN warranties; same restrictions at the API gateway; one legal consult on entity domicile + NOE token treatment (critic #6).
-- [ ] **P6-5** [—/h] SECURITY.md bug-bounty policy (critical = 10% of affected funds, cap $10-25k); upgrade to Immunefi at TVL.
+- [x] **P6-5** [—/h] SECURITY.md bug-bounty policy — DONE 2026-07-04 (commit `972540d`). Coordinated disclosure, reward tiers (critical 10% cap $10-25k), scope, SEAL 911, commitments.
 - [ ] **P6-6** [—/d] Guarded-launch config: mainnet allowlist (reuse closed-beta plumbing), per-account deposit caps ($5-25k), per-market OI caps, 3 pairs at 10x; published cap-raise criteria; ramp to 25x/more pairs only after weeks of clean liquidation/funding/keeper metrics.
 - [ ] **P6-7** [—/h] DefiLlama listing at mainnet (own the "Stellar perps" category); stake the "first perp DEX on Stellar" claim publicly (two funded competitors exist, neither live — Stellars Finance SCF #40, Hermes SCF #32).
 
 ---
 
 ## v1.1 — Deferred features (gate: their critical fixes land + audit coverage)
+
+> **SCOPE NOTE:** per the founders' 2026-06-09 lean-v1 decision, vault_factory and on-chain referral payouts are OUT of v1 — these V1.1-* items are intentionally NOT part of the current "finish the codical tasks" sweep. Their critical fixes (V-1, R-1) gate v1.1, not v1.
 
 - [ ] **V1.1-1** [critical/w] vault_factory per-vault delta accounting (kill `sync_total_usdc` whole-balance read); vault→position ownership map; fix + re-enable the two failing `leader_*` tests (V-1).
 - [ ] **V1.1-2** [high/d] Open-position value in factory vault NAV; block deposits while positions open as interim (V-4).
