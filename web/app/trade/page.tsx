@@ -576,6 +576,7 @@ function TradePage() {
                       <AssetSelectorDropdown
                         selectedAsset={selectedAsset}
                         onSelect={setSelectedAsset}
+                        markPrices={currentPrices}
                       />
                       {pricesStale && (
                         <span className="px-2 py-0.5 text-[10px] font-medium rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 whitespace-nowrap">
@@ -585,7 +586,7 @@ function TradePage() {
                     </div>
                     {/* Chart Header Stats (price, change, etc.) */}
                     <div className="hidden sm:block">
-                      <ChartHeader asset={selectedAsset} compact />
+                      <ChartHeader asset={selectedAsset} compact markPrice={currentPrices[selectedAsset] || 0} />
                     </div>
                   </div>
                 </div>

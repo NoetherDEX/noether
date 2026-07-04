@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { fetchTicker, subscribeToPriceUpdates } from '@/lib/hooks/usePriceData';
 import { formatUSD, formatNumber, formatPercent } from '@/lib/utils';
@@ -11,14 +11,20 @@ interface ChartHeaderProps {
   asset: string;
   className?: string;
   compact?: boolean;
+  /**
+   * Live Noeracle mark price (the source the protocol executes against).
+   * When > 0 it drives the displayed price; the Binance ticker below is
+   * kept only for 24h high/low/volume reference (W-1/P4-13).
+   */
+  markPrice?: number;
 }
 
-export function ChartHeader({ asset, className, compact = false }: ChartHeaderProps) {
+export function ChartHeader({ asset, className, compact = false, markPrice = 0 }: ChartHeaderProps) {
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
 
-  // Fetch initial ticker data
+  // Fetch initial ticker data (Binance — reference for 24h stats)
   useEffect(() => {
     const loadTicker = async () => {
       try {
@@ -34,33 +40,30 @@ export function ChartHeader({ asset, className, compact = false }: ChartHeaderPr
     loadTicker();
   }, [asset]);
 
-  // Subscribe to real-time updates
+  // Keep the Binance ticker's price fresh (drives 24h reference stats only
+  // when the Noeracle mark isn't streaming yet).
   useEffect(() => {
     if (!ticker) return;
-
-    let lastPrice = ticker.price;
-
     const unsubscribe = subscribeToPriceUpdates(asset, (newPrice) => {
-      setTicker((prev) => {
-        if (!prev) return prev;
-
-        // Determine price direction for flash effect
-        if (newPrice > lastPrice) {
-          setPriceFlash('up');
-        } else if (newPrice < lastPrice) {
-          setPriceFlash('down');
-        }
-        lastPrice = newPrice;
-
-        // Clear flash after animation
-        setTimeout(() => setPriceFlash(null), 200);
-
-        return { ...prev, price: newPrice };
-      });
+      setTicker((prev) => (prev ? { ...prev, price: newPrice } : prev));
     });
-
     return unsubscribe;
   }, [asset, ticker]);
+
+  // The displayed price prefers the live Noeracle mark (execution source);
+  // fall back to the Binance ticker until the first SSE frame arrives.
+  const displayPrice = markPrice > 0 ? markPrice : ticker?.price ?? 0;
+
+  // Flash on the DISPLAYED price's movement (so the flash matches the number).
+  const lastDisplayRef = useRef(displayPrice);
+  useEffect(() => {
+    const prev = lastDisplayRef.current;
+    if (displayPrice > prev) setPriceFlash('up');
+    else if (displayPrice < prev) setPriceFlash('down');
+    lastDisplayRef.current = displayPrice;
+    const t = setTimeout(() => setPriceFlash(null), 200);
+    return () => clearTimeout(t);
+  }, [displayPrice]);
 
   const isPositive = ticker ? ticker.changePercent24h >= 0 : true;
 
@@ -123,7 +126,7 @@ export function ChartHeader({ asset, className, compact = false }: ChartHeaderPr
               !priceFlash && 'text-white'
             )}
           >
-            {ticker ? formatUSD(ticker.price, asset === 'XLM' ? 4 : 2) : '--'}
+            {displayPrice > 0 ? formatUSD(displayPrice, asset === 'XLM' ? 4 : 2) : '--'}
           </span>
           {ticker && (
             <div
