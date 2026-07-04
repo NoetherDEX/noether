@@ -308,17 +308,7 @@ impl MarketContract {
         // Store position
         save_position(&env, &position);
 
-        // Update market stats
-        match direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, total + size);
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, total + size);
-            }
-        }
+        Self::adjust_oi(&env, &direction, size, true);
 
         // Transfer fee to vault
         token_client.transfer(&env.current_contract_address(), &vault_address, &fee);
@@ -369,73 +359,9 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
-        // Calculate funding from cumulative rate
-        let cumulative = get_cumulative_funding_rate(&env);
-        let funding = calculate_cumulative_funding(
-            position.size, position.direction,
-            position.entry_cumulative_funding, cumulative,
-        );
-
-        // Get current price
+        // Get current price and run the shared close settlement
         let current_price = Self::get_oracle_price(&env, &position.asset)?;
-
-        // Calculate PnL
-        let pnl = calculate_pnl(&position, current_price)?;
-
-        // Calculate amount to return to trader
-        let to_trader = position.collateral + pnl - funding;
-
-        // Settle with vault
-        let vault_address = get_vault(&env);
-        Self::settle_with_vault(&env, &vault_address, pnl)?;
-
-        // Get token client for transfers
-        let usdc_token = get_usdc_token(&env);
-        let token_client = token::Client::new(&env, &usdc_token);
-
-        // If trader lost, transfer the loss amount to Vault
-        if pnl < 0 {
-            let loss = -pnl;
-            token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
-        }
-
-        // Transfer funding to vault (if trader owes funding)
-        if funding > 0 {
-            token_client.transfer(
-                &env.current_contract_address(),
-                &vault_address,
-                &funding,
-            );
-        }
-
-        // Transfer to trader (if positive)
-        if to_trader > 0 {
-            token_client.transfer(&env.current_contract_address(), &trader, &to_trader);
-        }
-
-        // Update market stats
-        match position.direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, if total > position.size { total - position.size } else { 0 });
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, if total > position.size { total - position.size } else { 0 });
-            }
-        }
-
-        // Record volume for fee tier tracking
-        record_volume_only(&env, &trader, position.size);
-
-        // Cancel any attached SL/TP/trailing orders, then delete position
-        Self::cancel_position_orders(&env, position_id, None);
-        delete_position(&env, position_id, &trader);
-
-        env.events().publish(
-            (Symbol::new(&env, "position_closed"),),
-            (position_id, trader, position.asset, position.direction, position.size, position.entry_price, current_price, pnl),
-        );
+        let pnl = Self::settle_isolated_close(&env, &position, current_price, 0, None, None)?;
 
         extend_instance_ttl(&env);
 
@@ -542,17 +468,7 @@ impl MarketContract {
             token_client.transfer(&env.current_contract_address(), &keeper, &actual_keeper_reward);
         }
 
-        // Update market stats
-        match position.direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, if total > position.size { total - position.size } else { 0 });
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, if total > position.size { total - position.size } else { 0 });
-            }
-        }
+        Self::adjust_oi(&env, &position.direction, position.size, false);
 
         // Cancel any attached SL/TP/trailing orders, then delete position
         Self::cancel_position_orders(&env, position_id, None);
@@ -888,17 +804,7 @@ impl MarketContract {
         save_position(&env, &position);
         add_cross_margin_position(&env, &trader, position_id);
 
-        // Update market stats
-        match direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, total + size);
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, total + size);
-            }
-        }
+        Self::adjust_oi(&env, &direction, size, true);
 
         // Transfer fee to vault
         let usdc_token = get_usdc_token(&env);
@@ -980,17 +886,7 @@ impl MarketContract {
         // Record volume
         record_volume_only(&env, &trader, pos.size);
 
-        // Update market stats (saturating to prevent underflow)
-        match pos.direction {
-            Direction::Long => {
-                let total = get_total_long_size(&env);
-                set_total_long_size(&env, if total > pos.size { total - pos.size } else { 0 });
-            }
-            Direction::Short => {
-                let total = get_total_short_size(&env);
-                set_total_short_size(&env, if total > pos.size { total - pos.size } else { 0 });
-            }
-        }
+        Self::adjust_oi(&env, &pos.direction, pos.size, false);
 
         // Clean up (defensive: legacy cross positions may carry attached orders)
         Self::cancel_position_orders(&env, position_id, None);
@@ -1084,17 +980,7 @@ impl MarketContract {
                     total_loss_to_vault += funding;
                 }
 
-                // Update market stats (saturating to prevent underflow)
-                match pos.direction {
-                    Direction::Long => {
-                        let total = get_total_long_size(&env);
-                        set_total_long_size(&env, if total > pos.size { total - pos.size } else { 0 });
-                    }
-                    Direction::Short => {
-                        let total = get_total_short_size(&env);
-                        set_total_short_size(&env, if total > pos.size { total - pos.size } else { 0 });
-                    }
-                }
+                Self::adjust_oi(&env, &pos.direction, pos.size, false);
 
                 // Cancel any attached orders (defensive), then delete position
                 Self::cancel_position_orders(&env, pid, None);
@@ -2139,6 +2025,77 @@ impl MarketContract {
         Ok(price)
     }
 
+    /// Shared isolated-close settlement used by close_position and keeper
+    /// order execution: settles PnL and funding with the vault, pays the
+    /// trader (and optional keeper fee), cancels attached orders, deletes
+    /// the position and emits position_closed. Returns the realised PnL.
+    fn settle_isolated_close(
+        env: &Env,
+        position: &Position,
+        current_price: i128,
+        keeper_fee: i128,
+        keeper: Option<&Address>,
+        skip_order: Option<u64>,
+    ) -> Result<i128, NoetherError> {
+        let cumulative = get_cumulative_funding_rate(env);
+        let funding = calculate_cumulative_funding(
+            position.size, position.direction,
+            position.entry_cumulative_funding, cumulative,
+        );
+        let pnl = calculate_pnl(position, current_price)?;
+        let to_trader = position.collateral + pnl - funding - keeper_fee;
+
+        let vault_address = get_vault(env);
+        Self::settle_with_vault(env, &vault_address, pnl)?;
+
+        let usdc_token = get_usdc_token(env);
+        let token_client = token::Client::new(env, &usdc_token);
+        if pnl < 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &(-pnl));
+        }
+        if funding > 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &funding);
+        }
+        if keeper_fee > 0 {
+            if let Some(k) = keeper {
+                token_client.transfer(&env.current_contract_address(), k, &keeper_fee);
+            }
+        }
+        if to_trader > 0 {
+            token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
+        }
+
+        Self::adjust_oi(env, &position.direction, position.size, false);
+        record_volume_only(env, &position.trader, position.size);
+        Self::cancel_position_orders(env, position.id, skip_order);
+        delete_position(env, position.id, &position.trader);
+
+        env.events().publish(
+            (Symbol::new(env, "position_closed"),),
+            (position.id, position.trader.clone(), position.asset.clone(), position.direction, position.size, position.entry_price, current_price, pnl),
+        );
+        Ok(pnl)
+    }
+
+    /// Adjust the per-side open-interest totals; decreases saturate at zero.
+    fn adjust_oi(env: &Env, direction: &Direction, size: i128, increase: bool) {
+        let total = match direction {
+            Direction::Long => get_total_long_size(env),
+            Direction::Short => get_total_short_size(env),
+        };
+        let new_total = if increase {
+            total + size
+        } else if total > size {
+            total - size
+        } else {
+            0
+        };
+        match direction {
+            Direction::Long => set_total_long_size(env, new_total),
+            Direction::Short => set_total_short_size(env, new_total),
+        }
+    }
+
     /// Cancel any SL/TP/trailing orders still attached to a position that is
     /// being closed or liquidated, so no zombie Pending orders survive it.
     /// `skip` is the order currently being executed (its status transition is
@@ -2309,17 +2266,7 @@ impl MarketContract {
         // Store position
         save_position(env, &position);
 
-        // Update market stats
-        match order.direction {
-            Direction::Long => {
-                let total = get_total_long_size(env);
-                set_total_long_size(env, total + size);
-            }
-            Direction::Short => {
-                let total = get_total_short_size(env);
-                set_total_short_size(env, total + size);
-            }
-        }
+        Self::adjust_oi(env, &order.direction, size, true);
 
         // Transfer trading fee to vault
         let usdc_token = get_usdc_token(env);
@@ -2351,78 +2298,9 @@ impl MarketContract {
         let position = get_position(env, order.position_id)
             .ok_or(NoetherError::PositionNotFound)?;
 
-        // Calculate funding from cumulative rate
-        let cumulative = get_cumulative_funding_rate(env);
-        let funding = calculate_cumulative_funding(
-            position.size, position.direction,
-            position.entry_cumulative_funding, cumulative,
-        );
-
-        // Calculate PnL
-        let pnl = calculate_pnl(&position, current_price)?;
-
-        // Calculate amount to return to trader
-        let to_trader = position.collateral + pnl - funding - keeper_fee;
-
-        // Settle with vault
-        let vault_address = get_vault(env);
-        Self::settle_with_vault(env, &vault_address, pnl)?;
-
-        // Get token client for transfers
-        let usdc_token = get_usdc_token(env);
-        let token_client = token::Client::new(env, &usdc_token);
-
-        // If trader lost, transfer the loss amount to Vault
-        if pnl < 0 {
-            let loss = -pnl;
-            token_client.transfer(&env.current_contract_address(), &vault_address, &loss);
-        }
-
-        // Transfer funding to vault if trader owes funding
-        if funding > 0 {
-            token_client.transfer(
-                &env.current_contract_address(),
-                &vault_address,
-                &funding,
-            );
-        }
-
-        // Pay keeper fee
-        if keeper_fee > 0 {
-            token_client.transfer(&env.current_contract_address(), keeper, &keeper_fee);
-        }
-
-        // Transfer to trader (if positive)
-        if to_trader > 0 {
-            token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
-        }
-
-        // Update market stats
-        match position.direction {
-            Direction::Long => {
-                let total = get_total_long_size(env);
-                set_total_long_size(env, if total > position.size { total - position.size } else { 0 });
-            }
-            Direction::Short => {
-                let total = get_total_short_size(env);
-                set_total_short_size(env, if total > position.size { total - position.size } else { 0 });
-            }
-        }
-
-        // Record volume for fee tier tracking
-        record_volume_only(env, &position.trader, position.size);
-
-        // Cancel sibling SL/TP/trailing orders and remove all links; the
-        // executing order's own status transition is handled by execute_order
-        Self::cancel_position_orders(env, position.id, Some(order.id));
-
-        // Delete position
-        delete_position(env, position.id, &position.trader);
-
-        env.events().publish(
-            (Symbol::new(env, "position_closed"),),
-            (position.id, position.trader.clone(), position.asset.clone(), position.direction, position.size, position.entry_price, current_price, pnl),
-        );
+        Self::settle_isolated_close(
+            env, &position, current_price, keeper_fee, Some(keeper), Some(order.id),
+        )?;
 
         Ok(keeper_fee)
     }
