@@ -65,8 +65,37 @@ describe('decodeMarketEvent', () => {
     expect(decoded?.topic).toBe('position_closed');
     if (decoded?.topic !== 'position_closed') throw new Error('wrong topic');
     expect(decoded.positionId).toBe(7);
+    // Closes carry their asset/direction/size/entry now (I-6) — this is
+    // what unlocks close-side volume and kills trades.UNKNOWN.
+    expect(decoded.asset).toBe('BTC');
+    expect(decoded.direction).toBe(0);
+    expect(decoded.size).toBe(500_0000000n);
+    expect(decoded.entryPrice).toBe(60_000_0000000n);
     expect(decoded.pnl).toBe(-100_0000000n);
     expect(decoded.closePrice).toBe(58_500_0000000n);
+  });
+
+  it('decodes position_liquidated with asset, direction and size', () => {
+    // Contract emits 7-tuple:
+    //   (id, trader, asset, direction, size, keeper_reward, current_price)
+    const value = vec(
+      nativeToScVal(8n, { type: 'u64' }),
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal('ETH', { type: 'symbol' }),
+      nativeToScVal(1n, { type: 'u32' }),
+      nativeToScVal(300_0000000n, { type: 'i128' }),   // size
+      nativeToScVal(15_0000000n, { type: 'i128' }),    // keeper_reward
+      nativeToScVal(3_100_0000000n, { type: 'i128' }), // current_price
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('position_liquidated', value));
+    expect(decoded?.topic).toBe('position_liquidated');
+    if (decoded?.topic !== 'position_liquidated') throw new Error('wrong topic');
+    expect(decoded.positionId).toBe(8);
+    expect(decoded.asset).toBe('ETH');
+    expect(decoded.direction).toBe(1);
+    expect(decoded.size).toBe(300_0000000n);
+    expect(decoded.keeperReward).toBe(15_0000000n);
+    expect(decoded.closePrice).toBe(3_100_0000000n);
   });
 
   it('decodes order_cancelled with reason symbol', () => {

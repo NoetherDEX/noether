@@ -7,18 +7,23 @@
  *   3. An UPSERT into the `vaults` projection — the marketplace UI
  *      reads from this.
  *
+ * All three run inside one libsql transaction so a mid-event crash
+ * can never half-apply (I-2). The on-chain resync after leader trades
+ * is RPC-driven and runs after commit.
+ *
  * Handlers register against the vault_factory contract address via
  * `buildVaultRegistrations(...)` in the same way as market handlers,
  * so the router treats them identically.
  */
 
-import type { Client } from '@libsql/client';
+import type { Client, Transaction } from '@libsql/client';
 import type { VaultEvent } from '@noether/types';
 import type { Handler, HandlerContext } from '../router.js';
 import type { DecodedMarketEvent } from '../types/events.js';
 import { syncVaultRow } from '../vaultSync.js';
 
 type AnyEvent = DecodedMarketEvent;
+type DbConn = Client | Transaction;
 
 interface RawShape {
   id: string;
@@ -40,12 +45,14 @@ function envelopeFor(event: VaultEvent, fallbackId: string, contractId: string):
   };
 }
 
-async function persistRaw(db: Client, raw: RawShape, payload: object): Promise<boolean> {
+async function persistRaw(db: DbConn, raw: RawShape, event: VaultEvent): Promise<boolean> {
+  const { topicXdr, valueXdr, ...payload } =
+    event as VaultEvent & { topicXdr?: string[]; valueXdr?: string };
   const result = await db.execute({
     sql: `
       INSERT OR IGNORE INTO events_raw (
-        event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, topic_xdr, value_xdr, inserted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       raw.id,
@@ -55,27 +62,25 @@ async function persistRaw(db: Client, raw: RawShape, payload: object): Promise<b
       raw.ledgerCloseTs,
       raw.txHash,
       JSON.stringify(payload, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+      topicXdr ? JSON.stringify(topicXdr) : null,
+      valueXdr ?? null,
       Date.now(),
     ],
   });
   return result.rowsAffected > 0;
 }
 
-async function upsertVault(
-  db: Client,
-  event: VaultEvent,
-  ctx?: { rpc: HandlerContext['rpc']; log: HandlerContext['log']; contractId: string },
-): Promise<void> {
+async function upsertVault(db: DbConn, event: VaultEvent, contractId: string): Promise<void> {
   switch (event.topic) {
     case 'vault_created':
       await db.execute({
         sql: `
           INSERT OR REPLACE INTO vaults (
             id, leader, name, created_at, total_usdc, circulating_shares,
-            hwm_nav, realized_pnl, leader_shares, profit_share_bps, paused, updated_at
-          ) VALUES (?, ?, ?, ?, 0, 0, 10000000, 0, 0, 1000, 0, ?)
+            hwm_nav, realized_pnl, leader_shares, profit_share_bps, paused, contract_id, updated_at
+          ) VALUES (?, ?, ?, ?, 0, 0, 10000000, 0, 0, 1000, 0, ?, ?)
         `,
-        args: [event.vaultId, event.leader, event.name, event.ledgerCloseTs, Date.now()],
+        args: [event.vaultId, event.leader, event.name, event.ledgerCloseTs, contractId, Date.now()],
       });
       return;
     case 'deposit': {
@@ -169,38 +174,21 @@ async function upsertVault(
       });
       return;
     case 'leader_open':
-    case 'leader_close': {
-      // Re-read the canonical VaultInfo struct from the factory.
-      // We can't rely on event payloads for leader trades:
-      //  - leader_open carries `collateral` but doesn't reflect the
-      //    fee deducted by the market.
-      //  - leader_close carries no settled amount at all (PnL depends
-      //    on live oracle price at settlement time).
-      // The contract calls sync_total_usdc(...) before publishing
-      // either event, so simulating view_vault gives us the truth.
-      if (ctx) {
-        const passphrase = process.env.NETWORK_PASSPHRASE
-          ?? 'Test SDF Network ; September 2015';
-        await syncVaultRow(db, ctx.rpc, ctx.contractId, event.vaultId, passphrase)
-          .catch((err) => {
-            ctx.log.warn(
-              { vaultId: event.vaultId, err: (err as Error).message },
-              'on-chain vault resync failed',
-            );
-          });
-      }
+    case 'leader_close':
+      // Handled after commit: the truthful numbers come from an
+      // on-chain view_vault simulation (see makeHandler), which must
+      // not run inside the write transaction.
       return;
-    }
   }
 }
 
-async function logActivity(db: Client, event: VaultEvent): Promise<void> {
+async function logActivity(db: DbConn, event: VaultEvent, eventId: string, contractId: string): Promise<void> {
   switch (event.topic) {
     case 'deposit':
       await db.execute({
         sql: `
-          INSERT INTO vault_deposits (vault_id, depositor, amount, shares, ledger, ts, tx_hash)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT OR IGNORE INTO vault_deposits (vault_id, depositor, amount, shares, ledger, ts, tx_hash, event_id, contract_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         args: [
           event.vaultId,
@@ -210,14 +198,16 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
           event.ledger,
           event.ledgerCloseTs,
           event.txHash,
+          eventId,
+          contractId,
         ],
       });
       return;
     case 'withdraw':
       await db.execute({
         sql: `
-          INSERT INTO vault_withdraws (vault_id, depositor, shares, usdc_out, ledger, ts, tx_hash)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT OR IGNORE INTO vault_withdraws (vault_id, depositor, shares, usdc_out, ledger, ts, tx_hash, event_id, contract_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         args: [
           event.vaultId,
@@ -227,14 +217,16 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
           event.ledger,
           event.ledgerCloseTs,
           event.txHash,
+          eventId,
+          contractId,
         ],
       });
       return;
     case 'fees_claimed':
       await db.execute({
         sql: `
-          INSERT INTO vault_fee_claims (vault_id, leader, amount, new_nav, ledger, ts, tx_hash)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT OR IGNORE INTO vault_fee_claims (vault_id, leader, amount, new_nav, ledger, ts, tx_hash, event_id, contract_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         args: [
           event.vaultId,
@@ -244,6 +236,8 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
           event.ledger,
           event.ledgerCloseTs,
           event.txHash,
+          eventId,
+          contractId,
         ],
       });
       return;
@@ -251,8 +245,8 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
       await db.execute({
         sql: `
           INSERT OR IGNORE INTO vault_trades
-            (vault_id, position_id, action, leader, collateral, ledger, ts, tx_hash)
-          VALUES (?, ?, 'open', ?, ?, ?, ?, ?)
+            (vault_id, position_id, action, leader, collateral, ledger, ts, tx_hash, contract_id)
+          VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?)
         `,
         args: [
           event.vaultId,
@@ -262,6 +256,7 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
           event.ledger,
           event.ledgerCloseTs,
           event.txHash,
+          contractId,
         ],
       });
       return;
@@ -288,8 +283,8 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
       await db.execute({
         sql: `
           INSERT OR IGNORE INTO vault_trades
-            (vault_id, position_id, action, leader, collateral, pnl, ledger, ts, tx_hash)
-          VALUES (?, ?, 'close', ?, 0, ?, ?, ?, ?)
+            (vault_id, position_id, action, leader, collateral, pnl, ledger, ts, tx_hash, contract_id)
+          VALUES (?, ?, 'close', ?, 0, ?, ?, ?, ?, ?)
         `,
         args: [
           event.vaultId,
@@ -299,12 +294,21 @@ async function logActivity(db: Client, event: VaultEvent): Promise<void> {
           event.ledger,
           event.ledgerCloseTs,
           event.txHash,
+          contractId,
         ],
       });
       return;
     }
     default:
       return;
+  }
+}
+
+async function rollbackQuietly(tx: Transaction): Promise<void> {
+  try {
+    await tx.rollback();
+  } catch {
+    /* transaction already closed */
   }
 }
 
@@ -345,15 +349,49 @@ function makeHandler(topic: VaultEvent['topic'], contractId: string): Handler {
     // fields we re-cast through a structural check.
     const v = event as unknown as VaultEvent;
     if (v.topic !== topic) return;
-    const raw = envelopeFor(v, (event as unknown as { id: string }).id, contractId);
-    const inserted = await persistRaw(ctx.db, raw, v);
-    if (!inserted) {
-      ctx.log.debug({ topic, vaultId: v.vaultId }, 'Duplicate vault event — projection and bus emit skipped');
-      return;
+    const eventId = (event as unknown as { id: string }).id;
+    const raw = envelopeFor(v, eventId, contractId);
+
+    const tx = await ctx.db.transaction('write');
+    try {
+      const inserted = await persistRaw(tx, raw, v);
+      if (!inserted && !ctx.replay) {
+        await rollbackQuietly(tx);
+        ctx.log.debug({ topic, vaultId: v.vaultId }, 'Duplicate vault event — projection and bus emit skipped');
+        return;
+      }
+      await upsertVault(tx, v, contractId);
+      await logActivity(tx, v, eventId, contractId);
+      await tx.commit();
+    } catch (err) {
+      await rollbackQuietly(tx);
+      // Keep the archive row so the retry pass hits the idempotency
+      // guard and the cursor can advance past the dead-lettered event.
+      await persistRaw(ctx.db, raw, v).catch(() => {});
+      throw err;
     }
-    await upsertVault(ctx.db, v, { rpc: ctx.rpc, log: ctx.log, contractId });
-    await logActivity(ctx.db, v);
-    ctx.bus.emit('event', event);
+
+    if (v.topic === 'leader_open' || v.topic === 'leader_close') {
+      // Re-read the canonical VaultInfo struct from the factory.
+      // We can't rely on event payloads for leader trades:
+      //  - leader_open carries `collateral` but doesn't reflect the
+      //    fee deducted by the market.
+      //  - leader_close carries no settled amount at all (PnL depends
+      //    on live oracle price at settlement time).
+      // The contract calls sync_total_usdc(...) before publishing
+      // either event, so simulating view_vault gives us the truth.
+      const passphrase = process.env.NETWORK_PASSPHRASE
+        ?? 'Test SDF Network ; September 2015';
+      await syncVaultRow(ctx.db, ctx.rpc, contractId, v.vaultId, passphrase)
+        .catch((err) => {
+          ctx.log.warn(
+            { vaultId: v.vaultId, err: (err as Error).message },
+            'on-chain vault resync failed',
+          );
+        });
+    }
+
+    if (!ctx.replay) ctx.bus.emit('event', event);
     ctx.log.debug({ topic, vaultId: v.vaultId }, 'vault event processed');
   };
 }

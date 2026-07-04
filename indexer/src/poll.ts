@@ -1,9 +1,13 @@
 /**
  * Main polling loop.
  *
- * Pulls Soroban contract events from the configured RPC, decodes them,
- * and dispatches through the router. Cursor is persisted after each
- * successful batch so restarts resume cleanly.
+ * Pulls Soroban contract events from the configured RPC pool, decodes
+ * them, and dispatches through the router. Cursor is persisted after
+ * each successful batch via a compare-and-swap write so two pollers
+ * can never double-apply (I-4). When the RPC retention window moves
+ * past the cursor, the skipped range is recorded in ledger_gaps and
+ * the cursor clamps to the oldest retained ledger instead of wedging
+ * or silently resuming (I-3).
  */
 
 import type { Logger } from 'pino';
@@ -14,12 +18,12 @@ import type { EventRouter, HandlerContext } from './router.js';
 import { decodeMarketEvent, type RawEvent } from './decoders/market.js';
 import { decodeVaultEvent } from './decoders/vault.js';
 import { decodeReferralEvent } from './decoders/referral.js';
-import { fetchEvents, getLatestLedger } from './rpc.js';
-import { readCursor, writeCursor } from './cursor.js';
+import { fetchEvents, getLatestLedger, getOldestLedger, parseRetentionError, type RpcPool } from './rpc.js';
+import { readCursor, writeCursor, type PollCursor } from './cursor.js';
 
 export interface PollDeps {
   db: Client;
-  rpc: RpcNs.Server;
+  rpcPool: RpcPool;
   bus: IndexerBus;
   router: EventRouter;
   log: Logger;
@@ -30,17 +34,39 @@ export interface PollDeps {
   referralContract?: string;
   pollIntervalMs: number;
   coldStartLedgers: number;
+  /** Warn when the cursor is within this many ledgers of the retention edge. */
+  retentionWarnLedgers?: number;
+  retentionCheckEveryMs?: number;
 }
+
+export interface PollerHealth {
+  running: boolean;
+  fatal: string | null;
+  startedAt: number | null;
+  lastPollOkAt: number | null;
+  lastLedger: number | null;
+  lastEventCloseTs: number | null;
+}
+
+const DEFAULT_RETENTION_WARN_LEDGERS = 10_000;
+const DEFAULT_RETENTION_CHECK_EVERY_MS = 600_000;
 
 export class IndexerPoller {
   private running = false;
   private stopped = false;
+  private fatal: string | null = null;
+  private startedAt: number | null = null;
+  private lastPollOkAt: number | null = null;
+  private lastLedger: number | null = null;
+  private lastEventCloseTs: number | null = null;
+  private lastRetentionCheckAt = Date.now();
 
   constructor(private readonly deps: PollDeps) {}
 
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    this.startedAt = Date.now();
     this.deps.log.info({ contractIds: this.deps.contractIds }, 'Poller starting');
     void this.loop();
   }
@@ -49,17 +75,29 @@ export class IndexerPoller {
     this.stopped = true;
   }
 
+  health(): PollerHealth {
+    return {
+      running: this.running && !this.stopped,
+      fatal: this.fatal,
+      startedAt: this.startedAt,
+      lastPollOkAt: this.lastPollOkAt,
+      lastLedger: this.lastLedger,
+      lastEventCloseTs: this.lastEventCloseTs,
+    };
+  }
+
   private async loop(): Promise<void> {
     while (!this.stopped) {
       try {
         const inserted = await this.pollOnce();
+        this.lastPollOkAt = Date.now();
         if (inserted > 0) {
           this.deps.log.info({ inserted }, 'Batch processed');
         } else {
           this.deps.log.debug('No new events');
         }
       } catch (err) {
-        this.deps.log.error({ err }, 'Poll iteration failed');
+        this.deps.log.error({ err, rpcUrl: this.deps.rpcPool.currentUrl() }, 'Poll iteration failed');
       }
       await sleep(this.deps.pollIntervalMs, () => this.stopped);
     }
@@ -70,24 +108,38 @@ export class IndexerPoller {
     const cursor = await readCursor(this.deps.db);
     const startLedger = cursor?.lastLedger ?? (await this.coldStartLedger());
 
-    const response = await fetchEvents(this.deps.rpc, {
-      startLedger,
-      contractIds: this.deps.contractIds,
-      cursor: cursor?.lastPagingToken ?? undefined,
-    });
+    let response: RpcNs.Api.GetEventsResponse;
+    try {
+      response = await fetchEvents(this.deps.rpcPool, {
+        startLedger,
+        contractIds: this.deps.contractIds,
+        cursor: cursor?.lastPagingToken ?? undefined,
+      });
+    } catch (err) {
+      const retention = parseRetentionError(err);
+      if (!retention) throw err;
+      await this.clampToRetention(cursor, startLedger, retention.oldestLedger);
+      return 0;
+    }
+
+    await this.maybeWarnRetentionEdge(cursor?.lastLedger ?? startLedger);
 
     const ctx: HandlerContext = {
       db: this.deps.db,
-      rpc: this.deps.rpc,
+      rpc: this.deps.rpcPool.current(),
       bus: this.deps.bus,
       log: this.deps.log,
     };
 
     let processed = 0;
     let highestLedger = cursor?.lastLedger ?? 0;
+    let highestCloseTs: number | null = null;
 
     for (const raw of response.events) {
       const contractId = raw.contractId?.toString() ?? '';
+      // Capture the raw XDR BEFORE decoding so a decoder bug is always
+      // recoverable from the archive (events_raw or dead_letter) (I-6).
+      const rawXdr = extractRawXdr(raw as unknown as RawEvent);
       let decoded: ReturnType<typeof decodeMarketEvent> | null = null;
       try {
         if (contractId === this.deps.vaultFactoryContract) {
@@ -99,13 +151,18 @@ export class IndexerPoller {
         }
       } catch (err) {
         this.deps.log.error({ err, id: raw.id }, 'Event decode failed — dead-lettered');
-        await this.deadLetter(raw.id, contractId, raw.ledger, 'decode', err, rawEventPayload(raw as unknown as RawEvent));
+        await this.deadLetter(raw.id, contractId, raw.ledger, 'decode', err, rawXdrPayload(raw.txHash, rawXdr));
         highestLedger = Math.max(highestLedger, raw.ledger);
         continue;
       }
       if (!decoded) {
         this.deps.log.debug({ id: raw.id, topics: raw.topic.length }, 'Unrecognised event topic — skipped');
         continue;
+      }
+      if (rawXdr) {
+        const target = decoded as { topicXdr?: string[]; valueXdr?: string };
+        target.topicXdr = rawXdr.topicXdr;
+        target.valueXdr = rawXdr.valueXdr;
       }
       try {
         await this.deps.router.dispatch(decoded as any, ctx);
@@ -115,21 +172,90 @@ export class IndexerPoller {
       }
       processed++;
       highestLedger = Math.max(highestLedger, decoded.ledger);
+      highestCloseTs = Math.max(highestCloseTs ?? 0, decoded.ledgerCloseTs);
     }
 
     if (response.events.length > 0 || cursor === null) {
-      await writeCursor(this.deps.db, {
+      const next: PollCursor = {
         lastLedger: highestLedger || startLedger,
         lastPagingToken: response.cursor ?? cursor?.lastPagingToken ?? null,
         updatedAt: Date.now(),
-      });
+      };
+      if (!(await this.commitCursor(next, cursor?.lastLedger ?? null))) return processed;
     }
+    if (highestCloseTs !== null) this.lastEventCloseTs = highestCloseTs;
 
     return processed;
   }
 
+  /**
+   * CAS cursor write. A miss means another poller owns this database
+   * (Railway deploy overlap, mis-pointed env) — stop instead of
+   * double-applying relative projection updates.
+   */
+  private async commitCursor(next: PollCursor, expected: number | null): Promise<boolean> {
+    const ok = await writeCursor(this.deps.db, next, expected);
+    if (!ok) {
+      this.fatal = 'cursor_cas_miss';
+      this.deps.log.fatal(
+        { expected, attempted: next.lastLedger },
+        'Cursor CAS miss — another poller is writing this database; stopping to avoid double-apply',
+      );
+      this.stop();
+      return false;
+    }
+    this.lastLedger = next.lastLedger;
+    return true;
+  }
+
+  private async clampToRetention(
+    cursor: PollCursor | null,
+    startLedger: number,
+    parsedOldest: number | null,
+  ): Promise<void> {
+    const oldest = parsedOldest ?? (await getOldestLedger(this.deps.rpcPool.current()));
+    if (oldest === null) {
+      this.deps.log.error(
+        { startLedger },
+        'Cursor is outside the RPC retention window and the oldest retained ledger could not be resolved — will retry',
+      );
+      return;
+    }
+    const from = cursor?.lastLedger ?? startLedger;
+    const to = oldest - 1;
+    if (to >= from) {
+      await this.deps.db.execute({
+        sql: 'INSERT INTO ledger_gaps (from_ledger, to_ledger, reason, recorded_at) VALUES (?, ?, ?, ?)',
+        args: [from, to, 'rpc_retention', Date.now()],
+      });
+    }
+    this.deps.log.error(
+      { from, to, resumeAt: oldest },
+      'RPC retention window moved past the cursor — recorded ledger gap and clamped; events in the gap are lost unless backfilled',
+    );
+    await this.commitCursor(
+      { lastLedger: oldest, lastPagingToken: null, updatedAt: Date.now() },
+      cursor?.lastLedger ?? null,
+    );
+  }
+
+  private async maybeWarnRetentionEdge(cursorLedger: number): Promise<void> {
+    const every = this.deps.retentionCheckEveryMs ?? DEFAULT_RETENTION_CHECK_EVERY_MS;
+    if (Date.now() - this.lastRetentionCheckAt < every) return;
+    this.lastRetentionCheckAt = Date.now();
+    const oldest = await getOldestLedger(this.deps.rpcPool.current());
+    if (oldest === null) return;
+    const margin = this.deps.retentionWarnLedgers ?? DEFAULT_RETENTION_WARN_LEDGERS;
+    if (cursorLedger - oldest < margin) {
+      this.deps.log.warn(
+        { cursorLedger, oldestLedger: oldest, margin },
+        'Cursor is close to the RPC retention edge — prolonged downtime will lose events',
+      );
+    }
+  }
+
   private async coldStartLedger(): Promise<number> {
-    const latest = await getLatestLedger(this.deps.rpc);
+    const latest = await getLatestLedger(this.deps.rpcPool.current());
     return Math.max(1, latest - this.deps.coldStartLedgers);
   }
 
@@ -159,16 +285,19 @@ export class IndexerPoller {
   }
 }
 
-function rawEventPayload(raw: RawEvent): unknown {
+function extractRawXdr(raw: RawEvent): { topicXdr: string[]; valueXdr: string } | null {
   try {
     return {
-      txHash: raw.txHash,
       topicXdr: (raw.topic as xdr.ScVal[]).map((t) => t.toXDR('base64')),
       valueXdr: (raw.value as unknown as xdr.ScVal).toXDR('base64'),
     };
   } catch {
-    return { txHash: raw.txHash };
+    return null;
   }
+}
+
+function rawXdrPayload(txHash: string, rawXdr: { topicXdr: string[]; valueXdr: string } | null): unknown {
+  return rawXdr ? { txHash, ...rawXdr } : { txHash };
 }
 
 function safeStringify(value: unknown): string {

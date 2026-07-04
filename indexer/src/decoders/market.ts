@@ -75,9 +75,10 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
 //   position_opened     : (id, trader, asset, direction, size, entry_price)
 //   position_closed     : (id, trader, asset, direction, size, entry_price, current_price, pnl)
 //   position_liquidated : (id, trader, asset, direction, size, keeper_reward, current_price)
-// asset/direction were originally skipped as "analytics only"; they're
-// now needed by the positions projection so the leader-mode positions
-// tab can render without a second on-chain hop.
+// asset/direction/size were originally skipped as "analytics only" on
+// closes; they're now decoded on all three so the positions projection
+// renders without an on-chain hop and close-side volume is derivable
+// from the archive (I-6 — fixes the api's `trades.UNKNOWN` fan-out).
 
 function decodePositionOpened(raw: RawEvent, v: unknown[]): PositionOpenedEvent {
   return {
@@ -98,8 +99,12 @@ function decodePositionClosed(raw: RawEvent, v: unknown[]): PositionClosedEvent 
     topic: 'position_closed',
     positionId: asNumber(v[0], 'position_closed.position_id'),
     trader: asString(v[1], 'position_closed.trader'),
-    pnl: asBigInt(v[7], 'position_closed.pnl'),
+    asset: asString(v[2], 'position_closed.asset'),
+    direction: asNumber(v[3], 'position_closed.direction'),
+    size: asBigInt(v[4], 'position_closed.size'),
+    entryPrice: asBigInt(v[5], 'position_closed.entry_price'),
     closePrice: asBigInt(v[6], 'position_closed.close_price'),
+    pnl: asBigInt(v[7], 'position_closed.pnl'),
   };
 }
 
@@ -109,6 +114,9 @@ function decodePositionLiquidated(raw: RawEvent, v: unknown[]): PositionLiquidat
     topic: 'position_liquidated',
     positionId: asNumber(v[0], 'position_liquidated.position_id'),
     trader: asString(v[1], 'position_liquidated.trader'),
+    asset: asString(v[2], 'position_liquidated.asset'),
+    direction: asNumber(v[3], 'position_liquidated.direction'),
+    size: asBigInt(v[4], 'position_liquidated.size'),
     keeperReward: asBigInt(v[5], 'position_liquidated.keeper_reward'),
     closePrice: asBigInt(v[6], 'position_liquidated.close_price'),
   };

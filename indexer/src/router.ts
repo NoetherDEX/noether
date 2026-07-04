@@ -17,6 +17,12 @@ export interface HandlerContext {
   rpc: RpcNs.Server;
   bus: IndexerBus;
   log: Logger;
+  /**
+   * Set by the reindex script: bypass the events_raw duplicate guard
+   * (the archive already holds every event being replayed) and
+   * suppress bus emissions so a rebuild doesn't spam WS consumers.
+   */
+  replay?: boolean;
 }
 
 export type Handler<E = DecodedMarketEvent> = (event: E, ctx: HandlerContext) => Promise<void>;

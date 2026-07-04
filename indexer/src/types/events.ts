@@ -21,6 +21,10 @@ export interface EventEnvelope {
   ledgerCloseTs: number;
   /** Containing transaction hash. */
   txHash: string;
+  /** Raw topic ScVals (base64 XDR), captured before decoding (I-6). */
+  topicXdr?: string[];
+  /** Raw value ScVal (base64 XDR), captured before decoding (I-6). */
+  valueXdr?: string;
 }
 
 export interface PositionOpenedEvent extends EventEnvelope {
@@ -37,6 +41,10 @@ export interface PositionClosedEvent extends EventEnvelope {
   topic: 'position_closed';
   positionId: number;
   trader: StellarAddress;
+  asset: string;
+  direction: number;
+  size: bigint;
+  entryPrice: bigint;
   pnl: bigint;
   closePrice: bigint;
 }
@@ -45,6 +53,9 @@ export interface PositionLiquidatedEvent extends EventEnvelope {
   topic: 'position_liquidated';
   positionId: number;
   trader: StellarAddress;
+  asset: string;
+  direction: number;
+  size: bigint;
   keeperReward: bigint;
   closePrice: bigint;
 }

@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createClient } from '@libsql/client';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Account, Address, Keypair, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { IndexerBus } from '../src/bus.js';
 import { EventRouter, type HandlerContext } from '../src/router.js';
 import { buildMarketRegistrations } from '../src/handlers/market.js';
 import { buildReferralRegistrations } from '../src/handlers/referral.js';
+import { buildVaultRegistrations } from '../src/handlers/vault.js';
 import { runMigrations } from '../src/migrations.js';
 import type { CrossLiquidatedEvent, DecodedMarketEvent, PositionOpenedEvent } from '../src/types/events.js';
 import type { Logger } from 'pino';
@@ -12,6 +16,7 @@ import type { Logger } from 'pino';
 const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
 const FAKE_TRADER = 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
 const FAKE_REFERRAL = 'CAGZXABWTJN6FU7TMCIWL3RH7EC6K4CQLLZJWUFN3CD7YHVDYWJCIG3O';
+const FAKE_FACTORY = 'CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA';
 
 const noopLogger: Logger = {
   level: 'silent',
@@ -19,8 +24,18 @@ const noopLogger: Logger = {
   silent: vi.fn(), child: () => noopLogger as Logger,
 } as unknown as Logger;
 
+// Interactive transactions make the local libsql client hand its
+// connection to the transaction and lazily reconnect — for ':memory:'
+// that reconnect is a fresh empty database, so tests use a temp file.
+const tmpDirs: string[] = [];
+afterAll(() => {
+  for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
+});
+
 async function setupDb() {
-  const db = createClient({ url: ':memory:' });
+  const dir = mkdtempSync(join(tmpdir(), 'noether-indexer-test-'));
+  tmpDirs.push(dir);
+  const db = createClient({ url: `file:${join(dir, 'test.db')}` });
   await runMigrations(db);
   return db;
 }
@@ -213,6 +228,88 @@ describe('referral handler', () => {
     expect(Number(after.rows[0]!.referred_count)).toBe(1);
     expect(Number(after.rows[0]!.total_earned)).toBe(100);
     expect(Number(after.rows[0]!.claimable)).toBe(100);
+
+    db.close();
+  });
+});
+
+describe('vault handler idempotency + atomicity', () => {
+  function vaultEvent(id: string, topic: string, vaultId: number, fields: Record<string, unknown>): DecodedMarketEvent {
+    return {
+      id,
+      contractId: FAKE_FACTORY,
+      topic,
+      vaultId,
+      ledger: 300,
+      ledgerCloseTs: 1745923500,
+      txHash: 'd'.repeat(64),
+      ...fields,
+    } as unknown as DecodedMarketEvent;
+  }
+
+  function makeVaultRouter() {
+    const router = new EventRouter();
+    for (const reg of buildVaultRegistrations(FAKE_FACTORY)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    return router;
+  }
+
+  it('replayed deposits do not double-apply totals or duplicate activity rows', async () => {
+    const db = await setupDb();
+    const router = makeVaultRouter();
+    const ctx: HandlerContext = { db, rpc: {} as never, bus: new IndexerBus(), log: noopLogger };
+
+    await router.dispatch(vaultEvent('evt-v1', 'vault_created', 1, { leader: FAKE_TRADER, name: 'Alpha' }), ctx);
+    const deposit = vaultEvent('evt-v2', 'deposit', 1, { depositor: FAKE_TRADER, amount: 1000n, shares: 1000n });
+    await router.dispatch(deposit, ctx);
+    await router.dispatch(deposit, ctx);
+
+    const vault = await db.execute('SELECT total_usdc, circulating_shares, leader_shares, contract_id FROM vaults WHERE id = 1');
+    expect(Number(vault.rows[0]!.total_usdc)).toBe(1000);
+    expect(Number(vault.rows[0]!.circulating_shares)).toBe(1000);
+    expect(Number(vault.rows[0]!.leader_shares)).toBe(1000);
+    expect(vault.rows[0]!.contract_id).toBe(FAKE_FACTORY);
+
+    const deposits = await db.execute('SELECT event_id, contract_id FROM vault_deposits');
+    expect(deposits.rows).toHaveLength(1);
+    expect(deposits.rows[0]!.event_id).toBe('evt-v2');
+    expect(deposits.rows[0]!.contract_id).toBe(FAKE_FACTORY);
+
+    db.close();
+  });
+
+  it('rolls back every projection write when one statement in the event fails', async () => {
+    const db = await setupDb();
+    const router = makeVaultRouter();
+    const ctx: HandlerContext = { db, rpc: {} as never, bus: new IndexerBus(), log: noopLogger };
+
+    await router.dispatch(vaultEvent('evt-v3', 'vault_created', 2, { leader: FAKE_TRADER, name: 'Beta' }), ctx);
+
+    // depositor is missing → the vaults UPDATE succeeds inside the tx,
+    // then the vault_deposits INSERT violates NOT NULL. Without the
+    // transaction this would leave total_usdc bumped with no activity row.
+    const poisoned = vaultEvent('evt-v4', 'deposit', 2, { depositor: undefined, amount: 500n, shares: 500n });
+    await expect(router.dispatch(poisoned, ctx)).rejects.toThrow();
+
+    const vault = await db.execute('SELECT total_usdc, circulating_shares FROM vaults WHERE id = 2');
+    expect(Number(vault.rows[0]!.total_usdc)).toBe(0);
+    expect(Number(vault.rows[0]!.circulating_shares)).toBe(0);
+
+    const deposits = await db.execute('SELECT COUNT(*) AS n FROM vault_deposits');
+    expect(Number(deposits.rows[0]!.n)).toBe(0);
+
+    // The event is still archived so the retry pass hits the
+    // idempotency guard and the cursor can advance past it.
+    const raw = await db.execute("SELECT event_id FROM events_raw WHERE event_id = 'evt-v4'");
+    expect(raw.rows).toHaveLength(1);
+
+    // Redelivery (same event id, now well-formed) is a no-op: fail-loud
+    // once, recorded in dead_letter by the poller, never half-applied.
+    const redelivered = vaultEvent('evt-v4', 'deposit', 2, { depositor: FAKE_TRADER, amount: 500n, shares: 500n });
+    await router.dispatch(redelivered, ctx);
+    const after = await db.execute('SELECT total_usdc FROM vaults WHERE id = 2');
+    expect(Number(after.rows[0]!.total_usdc)).toBe(0);
 
     db.close();
   });

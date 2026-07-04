@@ -11,7 +11,8 @@ import pino from 'pino';
 import { loadConfig } from './config.js';
 import { createDb } from './db.js';
 import { runMigrations } from './migrations.js';
-import { createRpc } from './rpc.js';
+import { createRpcPool } from './rpc.js';
+import { startHealthServer } from './health.js';
 import { IndexerBus } from './bus.js';
 import { EventRouter } from './router.js';
 import { buildMarketRegistrations } from './handlers/market.js';
@@ -50,7 +51,7 @@ async function main(): Promise<void> {
   log.info(
     {
       network: config.network,
-      rpcUrl: config.rpcUrl,
+      rpcUrls: config.rpcUrls,
       pollIntervalMs: config.pollIntervalMs,
       market,
       vaultFactory: vaultFactory ?? '(not deployed)',
@@ -67,7 +68,8 @@ async function main(): Promise<void> {
     log.info('Schema up to date');
   }
 
-  const rpc = createRpc(config.rpcUrl);
+  const rpcPool = createRpcPool(config.rpcUrls);
+  const rpc = rpcPool.current();
   const bus = new IndexerBus();
   const router = new EventRouter();
 
@@ -98,7 +100,7 @@ async function main(): Promise<void> {
 
   const poller = new IndexerPoller({
     db,
-    rpc,
+    rpcPool,
     bus,
     router,
     log,
@@ -108,11 +110,21 @@ async function main(): Promise<void> {
     referralContract: referral,
     pollIntervalMs: config.pollIntervalMs,
     coldStartLedgers: config.coldStartLedgers,
+    retentionWarnLedgers: config.retentionWarnLedgers,
+  });
+
+  const healthServer = startHealthServer({
+    port: config.healthPort,
+    db,
+    log,
+    maxPollAgeMs: Math.max(60_000, config.pollIntervalMs * 10),
+    source: poller,
   });
 
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, 'Shutting down');
     poller.stop();
+    healthServer.close();
     db.close();
     process.exit(0);
   };

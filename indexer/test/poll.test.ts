@@ -1,12 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createClient, type Client } from '@libsql/client';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Address, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import type { Logger } from 'pino';
 import { IndexerBus } from '../src/bus.js';
 import { EventRouter } from '../src/router.js';
 import { buildMarketRegistrations } from '../src/handlers/market.js';
 import { runMigrations } from '../src/migrations.js';
-import { IndexerPoller } from '../src/poll.js';
+import { IndexerPoller, type PollerHealth } from '../src/poll.js';
+import { RpcPool } from '../src/rpc.js';
+import { writeCursor } from '../src/cursor.js';
 import type { RawEvent } from '../src/decoders/market.js';
 
 const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
@@ -19,8 +24,18 @@ const noopLogger: Logger = {
   silent: vi.fn(), child: () => noopLogger as Logger,
 } as unknown as Logger;
 
+// Interactive transactions make the local libsql client hand its
+// connection to the transaction and lazily reconnect — for ':memory:'
+// that reconnect is a fresh empty database, so tests use a temp file.
+const tmpDirs: string[] = [];
+afterAll(() => {
+  for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
+});
+
 async function setupDb() {
-  const db = createClient({ url: ':memory:' });
+  const dir = mkdtempSync(join(tmpdir(), 'noether-indexer-test-'));
+  tmpDirs.push(dir);
+  const db = createClient({ url: `file:${join(dir, 'test.db')}` });
   await runMigrations(db);
   return db;
 }
@@ -50,10 +65,16 @@ function openedValue(positionId: bigint): xdr.ScVal {
     nativeToScVal(positionId, { type: 'u64' }),
     Address.fromString(FAKE_TRADER).toScVal(),
     nativeToScVal('BTC', { type: 'symbol' }),
-    nativeToScVal(0n, { type: 'u32' }),
+    // u32 must be a plain number or the XDR writer refuses to serialize
+    nativeToScVal(0, { type: 'u32' }),
     nativeToScVal(1_500_0000000n, { type: 'i128' }),
     nativeToScVal(60_000_0000000n, { type: 'i128' }),
   );
+}
+
+interface PollerHandle {
+  pollOnce(): Promise<number>;
+  health(): PollerHealth;
 }
 
 function makePoller(db: Client, router: EventRouter, events: RawEvent[]) {
@@ -63,7 +84,7 @@ function makePoller(db: Client, router: EventRouter, events: RawEvent[]) {
   };
   const poller = new IndexerPoller({
     db,
-    rpc: rpc as never,
+    rpcPool: new RpcPool([rpc as never], ['fake://rpc']),
     bus: new IndexerBus(),
     router,
     log: noopLogger,
@@ -72,7 +93,7 @@ function makePoller(db: Client, router: EventRouter, events: RawEvent[]) {
     pollIntervalMs: 10,
     coldStartLedgers: 100,
   });
-  return poller as unknown as { pollOnce(): Promise<number> };
+  return poller as unknown as PollerHandle;
 }
 
 describe('poller dead-letter handling', () => {
@@ -117,6 +138,31 @@ describe('poller dead-letter handling', () => {
     db.close();
   });
 
+  it('archives the raw XDR on events_raw before decoding touches it', async () => {
+    const db = await setupDb();
+    const router = new EventRouter();
+    for (const reg of buildMarketRegistrations(FAKE_CONTRACT)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    const raw = makeRawEvent('evt-xdr', 'position_opened', openedValue(7n), 100);
+    const poller = makePoller(db, router, [raw]);
+    await poller.pollOnce();
+
+    const rows = await db.execute("SELECT topic_xdr, value_xdr, payload_json FROM events_raw WHERE event_id = 'evt-xdr'");
+    expect(rows.rows).toHaveLength(1);
+    const row = rows.rows[0]!;
+    const topicXdr = JSON.parse(String(row.topic_xdr)) as string[];
+    expect(topicXdr).toHaveLength(1);
+    expect(String(row.value_xdr).length).toBeGreaterThan(0);
+    // The archive is the recovery path — it must decode back to the original ScVal.
+    const revived = xdr.ScVal.fromXDR(String(row.value_xdr), 'base64');
+    expect(revived.switch().name).toBe('scvVec');
+    // And the XDR must not leak into the decoded payload column.
+    expect(String(row.payload_json)).not.toContain('valueXdr');
+
+    db.close();
+  });
+
   it('dead-letters handler failures and rethrows so the cursor does not advance', async () => {
     const db = await setupDb();
     const router = new EventRouter();
@@ -137,6 +183,81 @@ describe('poller dead-letter handling', () => {
 
     const cur = await db.execute('SELECT * FROM poll_cursor');
     expect(cur.rows).toHaveLength(0);
+
+    db.close();
+  });
+});
+
+describe('poller retention-gap handling', () => {
+  it('records a ledger gap and clamps the cursor when the retention window passed it', async () => {
+    const db = await setupDb();
+    const router = new EventRouter();
+    await writeCursor(db, { lastLedger: 100, lastPagingToken: 'stale-tok', updatedAt: Date.now() }, null);
+
+    const rpc = {
+      getEvents: vi.fn(async () => {
+        throw new Error('startLedger must be within the ledger range: 500 - 900');
+      }),
+      getLatestLedger: vi.fn(async () => ({ sequence: 900 })),
+    };
+    const poller = new IndexerPoller({
+      db,
+      rpcPool: new RpcPool([rpc as never], ['fake://rpc']),
+      bus: new IndexerBus(),
+      router,
+      log: noopLogger,
+      contractIds: [FAKE_CONTRACT],
+      marketContract: FAKE_CONTRACT,
+      pollIntervalMs: 10,
+      coldStartLedgers: 100,
+    }) as unknown as PollerHandle;
+
+    const processed = await poller.pollOnce();
+    expect(processed).toBe(0);
+
+    const gaps = await db.execute('SELECT from_ledger, to_ledger, reason FROM ledger_gaps');
+    expect(gaps.rows).toHaveLength(1);
+    expect(Number(gaps.rows[0]!.from_ledger)).toBe(100);
+    expect(Number(gaps.rows[0]!.to_ledger)).toBe(499);
+    expect(gaps.rows[0]!.reason).toBe('rpc_retention');
+
+    const cur = await db.execute('SELECT last_ledger, last_pagination_token FROM poll_cursor WHERE id = 1');
+    expect(Number(cur.rows[0]!.last_ledger)).toBe(500);
+    expect(cur.rows[0]!.last_pagination_token).toBeNull();
+
+    // The poller carries on — no fatal state, next poll starts at 500.
+    expect(poller.health().fatal).toBeNull();
+    expect(poller.health().running).toBe(false); // never started — but not stopped by the gap
+
+    db.close();
+  });
+});
+
+describe('poller cursor CAS', () => {
+  it('stops on a CAS miss instead of clobbering a second writer', async () => {
+    const db = await setupDb();
+    await writeCursor(db, { lastLedger: 100, lastPagingToken: null, updatedAt: Date.now() }, null);
+
+    const router = new EventRouter();
+    for (const reg of buildMarketRegistrations(FAKE_CONTRACT)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    // Simulate a concurrent poller: mid-batch, someone else moves the cursor.
+    router.register(FAKE_CONTRACT, 'position_opened', async (_event, c) => {
+      await c.db.execute('UPDATE poll_cursor SET last_ledger = 999 WHERE id = 1');
+    });
+
+    const events = [makeRawEvent('evt-cas', 'position_opened', openedValue(9n), 150)];
+    const poller = makePoller(db, router, events);
+
+    await poller.pollOnce();
+
+    expect(poller.health().fatal).toBe('cursor_cas_miss');
+    expect(poller.health().running).toBe(false);
+
+    // The foreign write is preserved, not clobbered.
+    const cur = await db.execute('SELECT last_ledger FROM poll_cursor WHERE id = 1');
+    expect(Number(cur.rows[0]!.last_ledger)).toBe(999);
 
     db.close();
   });
