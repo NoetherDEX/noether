@@ -6,6 +6,17 @@ interface AssetParam {
   asset: string;
 }
 
+const PRICE_SCHEMA = {
+  type: 'object',
+  properties: {
+    asset: { type: 'string' },
+    price: { type: 'string' },
+    priceFloat: { type: 'number' },
+    timestamp: { type: 'integer' },
+  },
+  required: ['asset', 'price', 'priceFloat', 'timestamp'],
+} as const;
+
 export async function registerOracleRoutes(
   app: FastifyInstance,
   oracle: OracleService,
@@ -16,6 +27,15 @@ export async function registerOracleRoutes(
       schema: {
         description: 'All supported asset prices read live from the Noeracle shim contract.',
         tags: ['oracle'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              prices: { type: 'array', items: PRICE_SCHEMA },
+            },
+            required: ['prices'],
+          },
+        },
       },
     },
     async (_req, reply) => {
@@ -41,6 +61,18 @@ export async function registerOracleRoutes(
           type: 'object',
           properties: { asset: { type: 'string' } },
           required: ['asset'],
+        },
+        response: {
+          200: PRICE_SCHEMA,
+          404: {
+            type: 'object',
+            additionalProperties: true,
+            properties: {
+              error: { type: 'string' },
+              asset: { type: 'string' },
+            },
+            required: ['error'],
+          },
         },
       },
     },

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
@@ -15,6 +16,8 @@ import { registerTxRoutes, type TxRoutesDeps } from './routes/tx.js';
 import { registerVaultRoutes } from './routes/vaults.js';
 import { registerReferralRoutes } from './routes/referral.js';
 import { registerPositionsRoutes } from './routes/positions.js';
+import { registerVolumeRoutes } from './routes/volume.js';
+import { registerTradesRoutes } from './routes/trades.js';
 import { VaultsService } from './services/vaults.js';
 import { ReferralReadService } from './services/referral.js';
 import { ContractReader } from './services/contractReader.js';
@@ -28,6 +31,7 @@ import { WsBus } from './services/wsBus.js';
 import { WsManager } from './services/wsManager.js';
 import { OracleTicker } from './services/oracleTicker.js';
 import { LiveTailer } from './services/liveTailer.js';
+import { StatsService } from './services/stats.js';
 import { createIndexerDb } from './services/indexerDb.js';
 import { getNetworkPassphrase } from '@noether/shared';
 import { authPlugin } from './plugins/auth.js';
@@ -50,15 +54,25 @@ export interface ServerDeps {
   liveTailer: LiveTailer;
   vaults: VaultsService;
   referral: ReferralReadService;
+  stats: StatsService;
 }
+
+const PKG = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as { version?: string };
 
 export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: config.logLevel },
     trustProxy: 1,
+    requestIdHeader: 'x-request-id',
   });
 
   await app.register(cors, { origin: config.corsOrigin });
+
+  app.addHook('onSend', async (request, reply) => {
+    reply.header('x-request-id', request.id);
+  });
 
   await app.register(swagger, {
     openapi: {
@@ -66,9 +80,9 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
         title: 'Noether API',
         description:
           'Public REST + WebSocket gateway for the Noether decentralized perpetual exchange on Stellar / Soroban.',
-        version: '0.0.0-dev',
+        version: PKG.version ?? '0.0.0',
       },
-      servers: [{ url: `http://${config.host}:${config.port}` }],
+      servers: [{ url: process.env.API_PUBLIC_URL ?? `http://localhost:${config.port}` }],
     },
   });
 
@@ -83,7 +97,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) =>
     registerHealthRoutes(instance, { db: deps.db, contracts: config.contracts }),
   );
-  await app.register((instance) => registerMarketsRoutes(instance, deps.markets));
+  await app.register((instance) => registerMarketsRoutes(instance, deps.markets, deps.stats));
   await app.register((instance) => registerOracleRoutes(instance, deps.oracle));
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
   await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth));
@@ -93,6 +107,8 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerVaultRoutes(instance, deps.vaults));
   await app.register((instance) => registerReferralRoutes(instance, deps.referral));
   await app.register((instance) => registerPositionsRoutes(instance, deps.db));
+  await app.register((instance) => registerVolumeRoutes(instance, deps.stats));
+  await app.register((instance) => registerTradesRoutes(instance, deps.stats));
 
   deps.wsManager.attachBus();
   app.addHook('onReady', async () => {
@@ -132,5 +148,6 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const liveTailer = new LiveTailer({ db, bus: wsBus, log });
   const vaults = new VaultsService(db);
   const referral = new ReferralReadService(db);
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral };
+  const stats = new StatsService(db);
+  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats };
 }

@@ -232,10 +232,12 @@ describe('POST /v1/tx/submit', () => {
     const setup = await setupTestServer({
       txOverride: {
         txCtx: { rpcUrl: 'http://stub', network: 'testnet' },
-        submit: (async (_ctx: unknown, signedXdr: string) => {
-          receivedXdr = signedXdr;
-          return { hash: 'tx-hash-abc', status: 'SUCCESS' as const, result: undefined };
-        }) as never,
+        submitService: {
+          submit: async (signedXdr: string) => {
+            receivedXdr = signedXdr;
+            return { kind: 'success' as const, hash: 'tx-hash-abc', ledger: 123 };
+          },
+        },
       },
     });
     app = setup.app;

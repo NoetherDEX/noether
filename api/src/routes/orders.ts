@@ -217,6 +217,36 @@ export async function registerOrderRoutes(app: FastifyInstance, deps: OrdersRout
           'Build an unsigned, simulated, prepared Soroban transaction for the requested trading op. The trader is fixed to the authenticated key owner.',
         tags: ['orders', 'trading'],
         body: PREPARE_BODY_SCHEMA,
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              op: { type: 'string' },
+              trader: { type: 'string' },
+              xdr: { type: 'string' },
+              minResourceFee: { type: 'string' },
+            },
+            required: ['op', 'trader', 'xdr'],
+          },
+          400: {
+            type: 'object',
+            additionalProperties: true,
+            properties: {
+              error: { type: 'string' },
+              message: { type: 'string' },
+            },
+            required: ['error'],
+          },
+          502: {
+            type: 'object',
+            additionalProperties: true,
+            properties: {
+              error: { type: 'string' },
+              message: { type: 'string' },
+            },
+            required: ['error'],
+          },
+        },
       },
     },
     async (req, reply) => {

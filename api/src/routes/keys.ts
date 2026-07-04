@@ -36,6 +36,31 @@ interface KeyIdParam {
   keyId: string;
 }
 
+const KEY_RECORD_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    keyId: { type: 'string' },
+    owner: { type: 'string' },
+    tier: { type: 'string' },
+    label: { type: ['string', 'null'] },
+    createdAt: { type: 'integer' },
+    lastUsedAt: { type: ['integer', 'null'] },
+    revokedAt: { type: ['integer', 'null'] },
+  },
+  required: ['keyId', 'owner', 'tier', 'createdAt'],
+} as const;
+
+const ERROR_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    error: { type: 'string' },
+    message: { type: 'string' },
+  },
+  required: ['error'],
+} as const;
+
 export async function registerKeyRoutes(
   app: FastifyInstance,
   apiKeys: ApiKeyStore,
@@ -51,6 +76,16 @@ export async function registerKeyRoutes(
         querystring: {
           type: 'object',
           properties: { address: { type: 'string', minLength: 56, maxLength: 56 } },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              gated: { type: 'boolean' },
+              allowed: { type: 'boolean' },
+            },
+            required: ['gated', 'allowed'],
+          },
         },
       },
     },
@@ -72,6 +107,16 @@ export async function registerKeyRoutes(
           type: 'object',
           properties: { address: { type: 'string', minLength: 56, maxLength: 56 } },
           required: ['address'],
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              challengeHex: { type: 'string' },
+              expiresAt: { type: 'integer' },
+            },
+            required: ['challengeHex', 'expiresAt'],
+          },
         },
       },
     },
@@ -96,6 +141,21 @@ export async function registerKeyRoutes(
             label: { type: 'string', maxLength: 64 },
           },
           required: ['address', 'challenge', 'signature'],
+        },
+        response: {
+          201: {
+            type: 'object',
+            properties: {
+              keyId: { type: 'string' },
+              secret: { type: 'string' },
+              tier: { type: 'string' },
+              owner: { type: 'string' },
+              createdAt: { type: 'integer' },
+            },
+            required: ['keyId', 'secret', 'tier', 'owner', 'createdAt'],
+          },
+          401: ERROR_SCHEMA,
+          403: ERROR_SCHEMA,
         },
       },
     },
@@ -127,6 +187,13 @@ export async function registerKeyRoutes(
       schema: {
         description: 'List all API keys owned by the authenticated key holder.',
         tags: ['keys'],
+        response: {
+          200: {
+            type: 'object',
+            properties: { keys: { type: 'array', items: KEY_RECORD_SCHEMA } },
+            required: ['keys'],
+          },
+        },
       },
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
@@ -147,6 +214,14 @@ export async function registerKeyRoutes(
           type: 'object',
           properties: { keyId: { type: 'string' } },
           required: ['keyId'],
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { revoked: { type: 'boolean' } },
+            required: ['revoked'],
+          },
+          404: ERROR_SCHEMA,
         },
       },
     },

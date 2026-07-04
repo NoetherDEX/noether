@@ -30,6 +30,31 @@ export async function registerEventsRoutes(
             limit: { type: 'integer', minimum: 1, maximum: 500 },
           },
         },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              events: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    eventId: { type: 'string' },
+                    contractId: { type: 'string' },
+                    topic: { type: 'string' },
+                    ledger: { type: 'integer' },
+                    ledgerCloseTs: { type: 'integer' },
+                    txHash: { type: 'string' },
+                    payload: {},
+                    insertedAt: { type: 'integer' },
+                  },
+                  required: ['eventId', 'contractId', 'topic', 'ledger', 'ledgerCloseTs', 'txHash'],
+                },
+              },
+            },
+            required: ['events'],
+          },
+        },
       },
     },
     async (req, reply) => {
