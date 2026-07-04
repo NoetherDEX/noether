@@ -139,7 +139,7 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 
 ### Web
 
-- [ ] **P4-13** [high/d] **Single price source on the trade page** (W-1): OrderPanel/ChartHeader/AssetSelector fed from `subscribeLivePrices` (shared hook/store slice); Binance only for candles + 24h high/low, labeled "reference".
+- [x] **P4-13** [high/d] **Single price source on the trade page** (W-1) — DONE 2026-07-04 (commit `129a4a9`). OrderPanel (markPrice, was pre-session), AssetSelectorDropdown + ChartHeader now quote the Noeracle SSE mark from currentPrices; Binance kept only for 24h change/high/low + bootstrap fallback.
 - [~] **P4-14** [medium/d] Personal-mode positions/orders via the indexer API with chain-scan fallback; shared getAccount per batch; OrderBook off the global scan (W-2).
   - [x] **Positions DONE** 2026-06-10 (commit `4c5788d`, staging). Personal mode now loads from `/v1/positions/open?trader=` + `getPositionsByIds` (was a whole-market `get_all_position_ids` + per-id scan on the public RPC); chain scan kept as fallback only on API error; staggered post-trade refetch (now+2.5s+6s) for read-your-writes. Prod API verified live + on current stack. **Still needs to reach `main` to help production.**
   - [ ] Orders list (`getOrders`) + OrderBook still do the whole-market RPC scan → move to a `/v1/orders?trader=` endpoint (table exists, needs an api route).
