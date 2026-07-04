@@ -44,7 +44,7 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol};
 use noether_common::{
     NoetherError, PoolInfo, BASIS_POINTS,
     calculate_glp_for_deposit, calculate_usdc_for_withdrawal, calculate_glp_price,
@@ -152,6 +152,13 @@ impl VaultContract {
         // Require depositor authorization
         depositor.require_auth();
 
+        // Guarded-launch per-account deposit cap (P6-6). 0 = unlimited.
+        let cap = get_deposit_cap(&env);
+        let already = get_deposited(&env, &depositor);
+        if cap > 0 && already + usdc_amount > cap {
+            return Err(NoetherError::DepositCapExceeded);
+        }
+
         // Calculate fee
         let fee_bps = get_deposit_fee_bps(&env);
         let fee = usdc_amount * (fee_bps as i128) / (BASIS_POINTS as i128);
@@ -181,6 +188,7 @@ impl VaultContract {
 
         // Update pool state
         set_total_usdc(&env, get_total_usdc(&env) + usdc_amount);
+        set_deposited(&env, &depositor, already + usdc_amount);
         set_total_fees(&env, get_total_fees(&env) + fee);
 
         // Transfer NOE to depositor
@@ -254,6 +262,12 @@ impl VaultContract {
             return Err(NoetherError::InsufficientLiquidity);
         }
 
+        // LP exits cannot pull liquidity out from under open positions:
+        // what remains must still cover every committed payout (M-4)
+        if vault_balance - net_usdc < get_reserved_payout(&env) {
+            return Err(NoetherError::InsufficientLiquidity);
+        }
+
         // Transfer NOE from withdrawer back to vault
         noe::transfer_from_user(&env, &withdrawer, noe_amount);
 
@@ -299,48 +313,66 @@ impl VaultContract {
     ///
     /// **Break-even (pnl = 0):**
     /// - No transfers needed, just emit event
-    pub fn settle_pnl(env: Env, pnl: i128) -> Result<(), NoetherError> {
+    /// Returns the profit actually paid out. A winner's close can never
+    /// hard-revert here: the payout is capped at what the pool holds and
+    /// any unpaid remainder is recorded as shortfall (owed against the
+    /// future insurance buffer). Losses are credited ONLY when the USDC
+    /// actually arrives, via receive_loss.
+    pub fn settle_pnl(env: Env, pnl: i128) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
 
         // Only market contract can call this
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
+        let mut paid: i128 = 0;
         if pnl > 0 {
-            // Trader WON - Vault must pay profit to Market
+            // Trader WON. Waterfall (P5-6): the insurance BUFFER pays first,
+            // LP value (total_usdc) only for the remainder — this shields the
+            // NOE price from winner payouts. Everything is still capped at the
+            // vault's real USDC balance so a close can never hard-revert.
             let total_usdc = get_total_usdc(&env);
-
-            // Check we have enough liquidity
-            if pnl > total_usdc {
-                return Err(NoetherError::InsufficientLiquidity);
-            }
-
-            // Verify actual token balance
+            let buffer = get_buffer_balance(&env);
             let usdc_token = get_usdc_token(&env);
             let token_client = token::Client::new(&env, &usdc_token);
             let vault_balance = token_client.balance(&env.current_contract_address());
 
-            if pnl > vault_balance {
-                return Err(NoetherError::InsufficientLiquidity);
+            paid = pnl;
+            let coverable = buffer + total_usdc;
+            if paid > coverable {
+                paid = coverable;
+            }
+            if paid > vault_balance {
+                paid = vault_balance;
+            }
+            if paid < 0 {
+                paid = 0;
             }
 
-            // Transfer profit from Vault to Market
-            token_client.transfer(&env.current_contract_address(), &market_contract, &pnl);
-
-            // Update accounting
-            set_total_usdc(&env, total_usdc - pnl);
-
-        } else if pnl < 0 {
-            // Trader LOST - Just update accounting
-            // The Market will call receive_loss() to transfer the actual funds
-            // We don't transfer here because Vault cannot pull tokens from Market
-            let loss = -pnl;
-            let total_usdc = get_total_usdc(&env);
-            set_total_usdc(&env, total_usdc + loss);
+            if paid > 0 {
+                token_client.transfer(&env.current_contract_address(), &market_contract, &paid);
+                // Draw from the buffer first, then LP value.
+                let from_buffer = if paid > buffer { buffer } else { paid };
+                if from_buffer > 0 {
+                    set_buffer_balance(&env, buffer - from_buffer);
+                }
+                let from_lp = paid - from_buffer;
+                if from_lp > 0 {
+                    set_total_usdc(&env, total_usdc - from_lp);
+                }
+            }
+            if paid < pnl {
+                let short = pnl - paid;
+                set_shortfall(&env, get_shortfall(&env) + short);
+                env.events().publish(
+                    (Symbol::new(&env, "payout_shortfall"),),
+                    (pnl, paid, short),
+                );
+            }
         }
-        // If pnl == 0, no action needed
+        // pnl < 0: accounting credit happens in receive_loss when the
+        // market's transfer actually lands (never credit unreceived funds)
 
-        // Emit event
         env.events().publish(
             (Symbol::new(&env, "pnl_settled"),),
             (pnl,),
@@ -348,7 +380,7 @@ impl VaultContract {
 
         extend_instance_ttl(&env);
 
-        Ok(())
+        Ok(paid)
     }
 
     /// Receive loss payment from Market contract.
@@ -375,7 +407,11 @@ impl VaultContract {
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
-        // Emit event for tracking (accounting already updated in settle_pnl)
+        // Credit exactly what was transferred — the market calls this
+        // right after moving USDC (losses, funding) into the vault, so
+        // accounting can never exceed real assets (V-3 tail)
+        set_total_usdc(&env, get_total_usdc(&env) + amount);
+
         env.events().publish(
             (Symbol::new(&env, "loss_received"),),
             (amount,),
@@ -384,37 +420,52 @@ impl VaultContract {
         Ok(())
     }
 
-    /// Update unrealized PnL tracking.
-    /// Called by Market contract to keep track of open position PnL.
-    ///
-    /// This affects AUM calculation and thus GLP price.
-    /// Positive unrealized PnL = traders are winning = lower AUM
-    /// Negative unrealized PnL = traders are losing = higher AUM
-    pub fn update_unrealized_pnl(env: Env, new_pnl: i128) -> Result<(), NoetherError> {
+    /// Market-pushed exposure sync: sets one asset's unrealized trader
+    /// PnL (folded into total UnrealizedPnl, which prices NOE via AUM)
+    /// and releases reservation for closed positions in the same call.
+    /// Positive unrealized PnL = traders winning = lower AUM.
+    pub fn sync_exposure(
+        env: Env,
+        asset: Symbol,
+        asset_unrealized_pnl: i128,
+        release: i128,
+    ) -> Result<(), NoetherError> {
         require_initialized(&env)?;
 
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
-        let old_pnl = get_unrealized_pnl(&env);
-        set_unrealized_pnl(&env, new_pnl);
+        let old_asset = get_asset_unrealized_pnl(&env, &asset);
+        set_asset_unrealized_pnl(&env, &asset, asset_unrealized_pnl);
+        let total = get_unrealized_pnl(&env) - old_asset + asset_unrealized_pnl;
+        set_unrealized_pnl(&env, total);
+
+        if release > 0 {
+            let reserved = get_reserved_payout(&env);
+            set_reserved_payout(&env, if reserved > release { reserved - release } else { 0 });
+        }
 
         env.events().publish(
-            (Symbol::new(&env, "unrealized_pnl_updated"),),
-            (old_pnl, new_pnl),
+            (Symbol::new(&env, "exposure_synced"), asset),
+            (asset_unrealized_pnl, total, release),
         );
 
         Ok(())
     }
 
-    /// Reserve USDC for a position being opened.
-    /// Called when a trader opens a position to ensure liquidity exists.
-    ///
-    /// # Arguments
-    /// * `amount` - Maximum potential payout needed for this position
-    ///
-    /// This is a check-only function - no actual fund movement.
-    pub fn reserve_for_position(env: Env, amount: i128) -> Result<(), NoetherError> {
+    /// Reserve the max potential payout for a position being opened.
+    /// REAL reservation (M-4/V-3): committed payouts accumulate in
+    /// ReservedPayout and are released on close/liquidation via
+    /// sync_exposure. Rejects when the aggregate reservation would
+    /// exceed reserve_cap_bps of AUM, or when the asset's per-side OI
+    /// (passed by the market, which tracks it) would exceed that
+    /// asset's cap — both #82 OpenInterestCapExceeded.
+    pub fn reserve_for_position(
+        env: Env,
+        asset: Symbol,
+        amount: i128,
+        asset_side_oi_after: i128,
+    ) -> Result<(), NoetherError> {
         require_initialized(&env)?;
 
         if amount <= 0 {
@@ -424,20 +475,28 @@ impl VaultContract {
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
-        // Check we have enough liquidity to potentially pay out
-        let total_usdc = get_total_usdc(&env);
-        if amount > total_usdc {
-            return Err(NoetherError::InsufficientLiquidity);
+        let aum = Self::calculate_aum_internal(&env);
+        let reserved = get_reserved_payout(&env);
+
+        let reserve_cap = aum * (get_reserve_cap_bps(&env) as i128) / (BASIS_POINTS as i128);
+        if reserved + amount > reserve_cap {
+            return Err(NoetherError::OpenInterestCapExceeded);
         }
 
-        // Verify actual token balance
+        let asset_cap = aum * (get_asset_cap_bps(&env, &asset) as i128) / (BASIS_POINTS as i128);
+        if asset_side_oi_after > asset_cap {
+            return Err(NoetherError::OpenInterestCapExceeded);
+        }
+
+        // The pool must also physically hold what it already promised
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
         let vault_balance = token_client.balance(&env.current_contract_address());
-
-        if amount > vault_balance {
+        if reserved + amount > vault_balance {
             return Err(NoetherError::InsufficientLiquidity);
         }
+
+        set_reserved_payout(&env, reserved + amount);
 
         Ok(())
     }
@@ -581,6 +640,102 @@ impl VaultContract {
         Ok(())
     }
 
+    /// Set the per-account cumulative-deposit cap (7 decimals; 0 = unlimited).
+    /// The guarded-launch lever (P6-6) — start low, raise on clean metrics.
+    /// Admin only.
+    pub fn set_deposit_cap(env: Env, cap: i128) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if cap < 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        storage::set_deposit_cap(&env, cap);
+        env.events().publish((Symbol::new(&env, "deposit_cap_set"),), (cap,));
+        Ok(())
+    }
+
+    /// Current per-account deposit cap (0 = unlimited).
+    pub fn get_deposit_cap(env: Env) -> i128 {
+        storage::get_deposit_cap(&env)
+    }
+
+    /// Cumulative USDC an account has deposited (against the cap).
+    pub fn get_deposited(env: Env, who: Address) -> i128 {
+        storage::get_deposited(&env, &who)
+    }
+
+    /// Seed the insurance buffer from an admin-funded USDC transfer (P5-6).
+    /// The admin must have approved / holds the USDC; it is pulled in and
+    /// credited to the protocol-owned buffer (NOT LP value).
+    pub fn seed_buffer(env: Env, from: Address, amount: i128) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        require_admin(&env)?;
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        from.require_auth();
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        token_client.transfer(&from, &env.current_contract_address(), &amount);
+        set_buffer_balance(&env, get_buffer_balance(&env) + amount);
+        env.events().publish((Symbol::new(&env, "buffer_seeded"),), (amount,));
+        Ok(())
+    }
+
+    /// Credit USDC the market just transferred into the buffer — liquidation
+    /// penalties, protocol fee share, net trader losses (P5-6). Market-only,
+    /// credited on receipt (the market transfers, then calls this).
+    pub fn fund_buffer(env: Env, amount: i128) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        let market_contract = get_market_contract(&env);
+        market_contract.require_auth();
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        set_buffer_balance(&env, get_buffer_balance(&env) + amount);
+        env.events().publish((Symbol::new(&env, "buffer_funded"),), (amount,));
+        Ok(())
+    }
+
+    /// Current insurance buffer balance.
+    pub fn get_buffer_balance(env: Env) -> i128 {
+        storage::get_buffer_balance(&env)
+    }
+
+    /// Set the aggregate reservation cap (bps of AUM). Admin only.
+    pub fn set_reserve_cap(env: Env, bps: u32) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if bps == 0 || bps > BASIS_POINTS {
+            return Err(NoetherError::InvalidParameter);
+        }
+        storage::set_reserve_cap_bps(&env, bps);
+        Ok(())
+    }
+
+    /// Set one asset's per-side OI cap (bps of AUM). Admin only.
+    pub fn set_asset_cap(env: Env, asset: Symbol, bps: u32) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if bps == 0 || bps > BASIS_POINTS {
+            return Err(NoetherError::InvalidParameter);
+        }
+        storage::set_asset_cap_bps(&env, &asset, bps);
+        Ok(())
+    }
+
+    /// Total committed max payouts for open positions.
+    pub fn get_reserved_payout(env: Env) -> i128 {
+        storage::get_reserved_payout(&env)
+    }
+
+    /// Cumulative winner profit the pool could not pay at close.
+    pub fn get_shortfall(env: Env) -> i128 {
+        storage::get_shortfall(&env)
+    }
+
+    /// One asset's unrealized trader PnL as last pushed by the market.
+    pub fn get_asset_unrealized_pnl(env: Env, asset: Symbol) -> i128 {
+        storage::get_asset_unrealized_pnl(&env, &asset)
+    }
+
     /// Pause the vault (emergency).
     /// When paused: deposits and withdrawals are blocked.
     /// Settlements still work to allow position closures.
@@ -606,6 +761,14 @@ impl VaultContract {
             (),
         );
 
+        Ok(())
+    }
+
+    /// Swap the running WASM in place; LP balances and pool accounting
+    /// are preserved across the upgrade.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 
@@ -708,8 +871,252 @@ impl VaultContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, token::StellarAssetClient, Address, Env, Symbol};
+    use noether_common::PRECISION;
 
-    // Tests will be added in integration test file
-    // as they require token contract setup
+    struct VaultTest {
+        env: Env,
+        vault_id: Address,
+        vault: VaultContractClient<'static>,
+        usdc: Address,
+        noe: Address,
+        market: Address,
+        admin: Address,
+        lp: Address,
+    }
+
+    fn setup(initial_deposit: i128) -> VaultTest {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.budget().reset_unlimited();
+        env.ledger().set_timestamp(1_700_000_000);
+
+        let admin = Address::generate(&env);
+        let market = Address::generate(&env);
+        let lp = Address::generate(&env);
+
+        let usdc_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let usdc = usdc_sac.address();
+        let noe_sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let noe: Address = noe_sac.address();
+
+        let vault_id = env.register_contract(None, VaultContract);
+        let vault = VaultContractClient::new(&env, &vault_id);
+        vault.initialize(&admin, &usdc, &noe, &market, &30, &30);
+
+        StellarAssetClient::new(&env, &noe).mint(&vault_id, &(1_000_000_000 * PRECISION));
+        StellarAssetClient::new(&env, &usdc).mint(&lp, &(100_000_000 * PRECISION));
+
+        if initial_deposit > 0 {
+            vault.deposit(&lp, &initial_deposit);
+        }
+
+        VaultTest { env, vault_id, vault, usdc, noe, market, admin, lp }
+    }
+
+    /// NOE withdrawals use transfer_from — the LP must approve the vault.
+    fn approve_noe(t: &VaultTest, amount: i128) {
+        soroban_sdk::token::Client::new(&t.env, &t.noe).approve(
+            &t.lp,
+            &t.vault_id,
+            &amount,
+            &1_000_000,
+        );
+    }
+
+    fn btc(env: &Env) -> Symbol {
+        Symbol::new(env, "BTC")
+    }
+
+    #[test]
+    fn deposit_withdraw_round_trip_with_fees() {
+        let t = setup(0);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+        let start = usdc.balance(&t.lp);
+
+        let noe_minted = t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        assert!(noe_minted > 0);
+        // 0.3% deposit fee: strictly less than 1:1
+        assert!(noe_minted < 1_000 * PRECISION);
+        assert!(t.vault.get_noe_balance(&t.lp) == noe_minted);
+
+        approve_noe(&t, noe_minted);
+        let usdc_back = t.vault.withdraw(&t.lp, &noe_minted);
+        // Round trip pays both fees but can never mint value
+        assert!(usdc_back > 0 && usdc_back < 1_000 * PRECISION);
+        let end = usdc.balance(&t.lp);
+        assert!(end <= start);
+        // Vault keeps only the fee remainder
+        assert!(usdc.balance(&t.vault_id) < 10 * PRECISION);
+    }
+
+    #[test]
+    fn reserve_accumulates_and_enforces_caps() {
+        let t = setup(1_000 * PRECISION);
+
+        // Per-asset side cap: default 25% of AUM (~1000) = ~250
+        t.vault
+            .reserve_for_position(&btc(&t.env), &(200 * PRECISION), &(200 * PRECISION));
+        assert_eq!(t.vault.get_reserved_payout(), 200 * PRECISION);
+
+        let over_asset = t.vault.try_reserve_for_position(
+            &btc(&t.env),
+            &(100 * PRECISION),
+            &(300 * PRECISION),
+        );
+        assert!(matches!(over_asset, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+
+        // Aggregate reservation cap: lift the asset cap out of the way,
+        // then push reserved past 70% of AUM
+        t.vault.set_asset_cap(&btc(&t.env), &10_000);
+        t.vault
+            .reserve_for_position(&btc(&t.env), &(450 * PRECISION), &(650 * PRECISION));
+        assert_eq!(t.vault.get_reserved_payout(), 650 * PRECISION);
+        let over_total = t.vault.try_reserve_for_position(
+            &btc(&t.env),
+            &(100 * PRECISION),
+            &(750 * PRECISION),
+        );
+        assert!(matches!(over_total, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+    }
+
+    #[test]
+    fn sync_exposure_updates_upnl_and_releases_reservation() {
+        let t = setup(1_000 * PRECISION);
+        t.vault
+            .reserve_for_position(&btc(&t.env), &(150 * PRECISION), &(150 * PRECISION));
+
+        t.vault.sync_exposure(&btc(&t.env), &(50 * PRECISION), &0);
+        assert_eq!(t.vault.get_asset_unrealized_pnl(&btc(&t.env)), 50 * PRECISION);
+        let info = t.vault.get_pool_info();
+        assert_eq!(info.unrealized_pnl, 50 * PRECISION);
+
+        // Winning traders shrink AUM and the NOE price with it
+        let aum = t.vault.get_aum();
+        assert!(aum < 1_000 * PRECISION);
+
+        t.vault.sync_exposure(&btc(&t.env), &(20 * PRECISION), &(100 * PRECISION));
+        assert_eq!(t.vault.get_asset_unrealized_pnl(&btc(&t.env)), 20 * PRECISION);
+        assert_eq!(t.vault.get_pool_info().unrealized_pnl, 20 * PRECISION);
+        assert_eq!(t.vault.get_reserved_payout(), 50 * PRECISION);
+    }
+
+    #[test]
+    fn settle_pnl_caps_payout_and_records_shortfall() {
+        let t = setup(100 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+
+        let paid = t.vault.settle_pnl(&(150 * PRECISION));
+        // Winner is paid what the pool holds — never a revert
+        assert!(paid > 0 && paid <= 100 * PRECISION);
+        assert_eq!(t.vault.get_shortfall(), 150 * PRECISION - paid);
+        assert_eq!(usdc.balance(&t.market), paid);
+        assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION - paid);
+    }
+
+    #[test]
+    fn losses_credit_only_on_receipt() {
+        let t = setup(100 * PRECISION);
+
+        // settle_pnl with a loss no longer credits anything
+        let paid = t.vault.settle_pnl(&(-40 * PRECISION));
+        assert_eq!(paid, 0);
+        assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
+
+        // receive_loss credits exactly the transferred amount
+        t.vault.receive_loss(&(40 * PRECISION));
+        assert_eq!(t.vault.get_total_usdc(), 140 * PRECISION);
+    }
+
+    #[test]
+    fn withdraw_cannot_undercut_reserved_payouts() {
+        let t = setup(1_000 * PRECISION);
+        t.vault.set_asset_cap(&btc(&t.env), &10_000);
+        t.vault
+            .reserve_for_position(&btc(&t.env), &(600 * PRECISION), &(600 * PRECISION));
+
+        let noe = t.vault.get_noe_balance(&t.lp);
+        approve_noe(&t, noe);
+        // Withdrawing everything would leave less than the 600 reserved
+        let blocked = t.vault.try_withdraw(&t.lp, &noe);
+        assert!(matches!(blocked, Err(Ok(NoetherError::InsufficientLiquidity))));
+
+        // A small withdrawal that keeps the reservation covered is fine
+        let small = t.vault.withdraw(&t.lp, &(noe / 10));
+        assert!(small > 0);
+    }
+
+    #[test]
+    fn insurance_buffer_pays_winners_before_lp() {
+        let t = setup(100 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+
+        // Seed the buffer with 50 USDC (admin-funded).
+        t.vault.seed_buffer(&t.lp, &(50 * PRECISION));
+        assert_eq!(t.vault.get_buffer_balance(), 50 * PRECISION);
+        // Buffer is NOT LP value — total_usdc unchanged.
+        assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
+
+        // A 30 USDC win is paid entirely from the buffer; LP untouched.
+        let paid = t.vault.settle_pnl(&(30 * PRECISION));
+        assert_eq!(paid, 30 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 20 * PRECISION);
+        assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
+        assert_eq!(usdc.balance(&t.market), 30 * PRECISION);
+
+        // A 40 USDC win exhausts the remaining 20 buffer, then 20 from LP.
+        let paid2 = t.vault.settle_pnl(&(40 * PRECISION));
+        assert_eq!(paid2, 40 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert_eq!(t.vault.get_total_usdc(), 80 * PRECISION);
+    }
+
+    #[test]
+    fn deposit_cap_enforced_per_account() {
+        let t = setup(0);
+        // Cap each account at 500 USDC.
+        t.vault.set_deposit_cap(&(500 * PRECISION));
+        assert_eq!(t.vault.get_deposit_cap(), 500 * PRECISION);
+
+        // First deposit under the cap works and records cumulative.
+        t.vault.deposit(&t.lp, &(300 * PRECISION));
+        assert_eq!(t.vault.get_deposited(&t.lp), 300 * PRECISION);
+
+        // A second deposit crossing the cap is rejected.
+        let over = t.vault.try_deposit(&t.lp, &(300 * PRECISION));
+        assert_eq!(over, Err(Ok(NoetherError::DepositCapExceeded)));
+
+        // Exactly hitting the cap is allowed.
+        t.vault.deposit(&t.lp, &(200 * PRECISION));
+        assert_eq!(t.vault.get_deposited(&t.lp), 500 * PRECISION);
+
+        // Cap = 0 disables the limit.
+        t.vault.set_deposit_cap(&0);
+        let ok = t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        assert!(ok > 0);
+    }
+
+    #[test]
+    fn fund_buffer_is_market_only() {
+        let t = setup(100 * PRECISION);
+        // Market-authed (mock_all_auths) works.
+        t.vault.fund_buffer(&(10 * PRECISION));
+        assert_eq!(t.vault.get_buffer_balance(), 10 * PRECISION);
+        // Without auth, rejected.
+        t.env.set_auths(&[]);
+        assert!(t.vault.try_fund_buffer(&PRECISION).is_err());
+    }
+
+    #[test]
+    fn market_only_endpoints_reject_without_auth() {
+        let t = setup(100 * PRECISION);
+        t.env.set_auths(&[]);
+        assert!(t.vault.try_settle_pnl(&(10 * PRECISION)).is_err());
+        assert!(t.vault
+            .try_reserve_for_position(&btc(&t.env), &PRECISION, &PRECISION)
+            .is_err());
+        assert!(t.vault.try_sync_exposure(&btc(&t.env), &0, &0).is_err());
+        assert!(t.vault.try_receive_loss(&PRECISION).is_err());
+        let _ = (&t.admin, &t.vault_id);
+    }
 }

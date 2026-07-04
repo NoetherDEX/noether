@@ -19,16 +19,17 @@ export default function ReferralsPage() {
             </span>
             <h1 className="mt-3 text-3xl md:text-4xl font-bold">Referrals</h1>
             <p className="mt-3 text-sm md:text-base text-muted-foreground max-w-3xl">
-              Earn <span className="text-foreground font-medium">10%</span> of every
-              fee your referees pay. They get{' '}
-              <span className="text-foreground font-medium">4% off</span> every trade.
-              Codes are on-chain and bind referees to you on their first authed
-              call — no off-chain bookkeeping, no rugpulls.
+              Register your code and grow your network now — fee sharing goes
+              live in v1.1: <span className="text-foreground font-medium">10%</span> of
+              every fee your referees pay to you, and{' '}
+              <span className="text-foreground font-medium">4% off</span> every trade
+              for them. Codes are on-chain and bind referees to you on their first
+              authed call — no off-chain bookkeeping, no rugpulls.
             </p>
 
             <div className="mt-6 grid grid-cols-3 gap-4 md:gap-6 max-w-2xl">
-              <Pill label="Your cut" value="10%" />
-              <Pill label="Referee discount" value="4%" />
+              <Pill label="Your cut · from v1.1" value="10%" />
+              <Pill label="Referee discount · from v1.1" value="4%" />
               <Pill label="Settlement" value="On-chain" />
             </div>
           </div>
@@ -46,7 +47,7 @@ export default function ReferralsPage() {
                 <Step
                   num={1}
                   title="Register a code"
-                  body="Sign in with your wallet and pick a unique 3–16 character handle. The contract enforces a 14-day trading volume threshold."
+                  body="Sign in with your wallet and pick a unique 3–16 character handle. During the beta, code creation is invite-only (allowlist in the app, not enforced by the contract)."
                 />
                 <Step
                   num={2}
@@ -61,13 +62,13 @@ export default function ReferralsPage() {
                 />
                 <Step
                   num={3}
-                  title="Earn on every fee"
-                  body="Every time the market contract collects a fee from a referee, the referral contract credits 10% of it to your claimable balance."
+                  title="Earn on every fee — from v1.1"
+                  body="Fee accrual ships in v1.1: from then on, every time the market contract collects a fee from a referee, the referral contract credits 10% of it to your claimable balance."
                 />
                 <Step
                   num={4}
-                  title="Claim anytime"
-                  body="One transaction releases the accumulated USDC straight to your Stellar wallet. No vesting, no min-claim."
+                  title="Claim — from v1.1"
+                  body="Payouts go live together with fee accrual in v1.1. Your code and referee bindings are on-chain today and carry over unchanged."
                 />
               </ol>
             </div>

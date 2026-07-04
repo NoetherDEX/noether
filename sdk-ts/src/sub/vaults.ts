@@ -26,6 +26,20 @@ export interface VaultActivityRow {
   txHash: string;
 }
 
+export interface VaultTradeRow {
+  id: number;
+  vaultId: number;
+  positionId: string;
+  action: 'open' | 'close';
+  leader: string;
+  collateral: string;
+  /** Settled PnL on close rows (7-dec USDC, signed); null on open rows. */
+  pnl?: string | null;
+  ledger: number;
+  ts: number;
+  txHash: string;
+}
+
 export interface VaultListQuery {
   leader?: string;
   limit?: number;
@@ -48,6 +62,14 @@ export class VaultsApi {
 
   async get(id: number): Promise<VaultRow> {
     return this.transport.request<VaultRow>({ path: `/v1/vaults/${id}` });
+  }
+
+  async trades(id: number, query: VaultActivityQuery = {}): Promise<VaultTradeRow[]> {
+    const res = await this.transport.request<{ trades: VaultTradeRow[] }>({
+      path: `/v1/vaults/${id}/trades`,
+      query: { limit: query.limit },
+    });
+    return res.trades;
   }
 
   async deposits(id: number, query: VaultActivityQuery = {}): Promise<VaultActivityRow[]> {

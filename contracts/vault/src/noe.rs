@@ -72,17 +72,3 @@ pub fn vault_balance(env: &Env) -> i128 {
     token_client.balance(&env.current_contract_address())
 }
 
-/// Get total NOE supply by querying the token contract.
-pub fn total_supply(env: &Env) -> i128 {
-    // For classic assets, we track circulating supply (what users hold)
-    // plus vault's balance
-    let circulating = get_total_noe_circulating(env);
-    let vault_bal = vault_balance(env);
-    circulating + vault_bal
-}
-
-/// Get total circulating NOE (held by users, not in vault).
-/// This is used for NOE price calculation.
-pub fn circulating_supply(env: &Env) -> i128 {
-    get_total_noe_circulating(env)
-}

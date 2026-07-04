@@ -6,6 +6,7 @@ import { EventsApi } from './sub/events.js';
 import { KeysApi, type ChallengeSigner } from './sub/keys.js';
 import { AccountApi } from './sub/account.js';
 import { OrdersApi, type PrepareRequest, type PreparedTransaction } from './sub/orders.js';
+import { PositionsApi } from './sub/positions.js';
 import { TxApi, type SubmittedTx } from './sub/tx.js';
 import { VaultsApi } from './sub/vaults.js';
 import { ReferralApi } from './sub/referral.js';
@@ -47,6 +48,7 @@ export class NoetherClient {
   readonly keys: KeysApi;
   readonly account: AccountApi;
   readonly orders: OrdersApi;
+  readonly positions: PositionsApi;
   readonly tx: TxApi;
   readonly vaults: VaultsApi;
   readonly referral: ReferralApi;
@@ -67,6 +69,7 @@ export class NoetherClient {
     this.keys = new KeysApi(this.transport, this.credentials);
     this.account = new AccountApi(this.transport, this.credentials);
     this.orders = new OrdersApi(this.transport, this.credentials);
+    this.positions = new PositionsApi(this.transport);
     this.tx = new TxApi(this.transport, this.credentials);
     this.vaults = new VaultsApi(this.transport);
     this.referral = new ReferralApi(this.transport, this.credentials);

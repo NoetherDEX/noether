@@ -26,7 +26,8 @@ export function ReferralTradesTable({ rows }: { rows: ReferralTradeRow[] }) {
         </div>
         {rows.length === 0 ? (
           <div className="px-5 py-8 text-center text-sm text-zinc-500">
-            No trades yet. Share your code to start earning.
+            No trades yet. Fee accrual starts in v1.1 — share your code now so
+            your referees are already bound.
           </div>
         ) : (
           <div className="overflow-x-auto">

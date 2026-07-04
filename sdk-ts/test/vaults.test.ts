@@ -42,6 +42,38 @@ describe('vaults sub-client', () => {
     expect(fake.calls[0]!.url).toBe('http://api.test/v1/vaults/7');
   });
 
+  it('trades(id) hits the trades path and unwraps rows', async () => {
+    const { client, fake } = makeClient({
+      scripts: [
+        {
+          status: 200,
+          body: {
+            trades: [
+              {
+                id: 1,
+                vaultId: 3,
+                positionId: '9',
+                action: 'close',
+                leader: 'GLEAD',
+                collateral: '100000000',
+                pnl: '5000000',
+                ledger: 10,
+                ts: 100,
+                txHash: 'abc',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const rows = await client.vaults.trades(3, { limit: 25 });
+    const url = new URL(fake.calls[0]!.url);
+    expect(url.pathname).toBe('/v1/vaults/3/trades');
+    expect(url.searchParams.get('limit')).toBe('25');
+    expect(rows[0]!.action).toBe('close');
+    expect(rows[0]!.pnl).toBe('5000000');
+  });
+
   it('deposits / withdraws / feeClaims hit the right paths', async () => {
     const { client, fake } = makeClient({
       scripts: [

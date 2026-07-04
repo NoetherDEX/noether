@@ -12,7 +12,78 @@ interface ListQuery {
 
 interface ActivityQuery {
   limit?: number;
+  before_ts?: number;
 }
+
+const VAULT_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: { type: 'integer' },
+    leader: { type: 'string' },
+    name: { type: 'string' },
+    createdAt: { type: 'integer' },
+    totalUsdc: { type: 'string' },
+    circulatingShares: { type: 'string' },
+    hwmNav: { type: 'string' },
+    realizedPnl: { type: 'string' },
+    leaderShares: { type: 'string' },
+    profitShareBps: { type: 'integer' },
+    paused: { type: 'boolean' },
+    updatedAt: { type: 'integer' },
+    depositorCount: { type: 'integer' },
+    openPositions: { type: 'integer' },
+    tradeCount: { type: 'integer' },
+    drawdownBps: { type: 'integer' },
+    apyBps: { type: 'integer' },
+    closedTradePnl: { type: 'string' },
+  },
+  required: ['id', 'leader', 'name', 'createdAt', 'totalUsdc', 'circulatingShares'],
+} as const;
+
+const VAULT_TRADE_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: { type: 'integer' },
+    vaultId: { type: 'integer' },
+    positionId: { type: 'string' },
+    action: { type: 'string', enum: ['open', 'close'] },
+    leader: { type: 'string' },
+    collateral: { type: 'string' },
+    pnl: { type: ['string', 'null'] },
+    ledger: { type: 'integer' },
+    ts: { type: 'integer' },
+    txHash: { type: 'string' },
+  },
+  required: ['id', 'vaultId', 'positionId', 'action', 'leader', 'collateral', 'ledger', 'ts', 'txHash'],
+} as const;
+
+const VAULT_ACTIVITY_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: { type: 'integer' },
+    vaultId: { type: 'integer' },
+    principal: { type: 'string' },
+    amount: { type: 'string' },
+    shares: { type: 'string' },
+    ledger: { type: 'integer' },
+    ts: { type: 'integer' },
+    txHash: { type: 'string' },
+  },
+  required: ['id', 'vaultId', 'principal', 'amount', 'ledger', 'ts', 'txHash'],
+} as const;
+
+const VAULT_NOT_FOUND_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    error: { type: 'string' },
+    id: { type: 'integer' },
+  },
+  required: ['error'],
+} as const;
 
 export async function registerVaultRoutes(
   app: FastifyInstance,
@@ -29,6 +100,13 @@ export async function registerVaultRoutes(
           properties: {
             leader: { type: 'string', minLength: 56, maxLength: 56 },
             limit: { type: 'integer', minimum: 1, maximum: 200 },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { vaults: { type: 'array', items: VAULT_SCHEMA } },
+            required: ['vaults'],
           },
         },
       },
@@ -59,6 +137,10 @@ export async function registerVaultRoutes(
           properties: { id: { type: 'integer', minimum: 0 } },
           required: ['id'],
         },
+        response: {
+          200: VAULT_SCHEMA,
+          404: VAULT_NOT_FOUND_SCHEMA,
+        },
       },
     },
     async (req, reply) => {
@@ -83,12 +165,25 @@ export async function registerVaultRoutes(
         },
         querystring: {
           type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            before_ts: { type: 'integer', minimum: 0 },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { trades: { type: 'array', items: VAULT_TRADE_SCHEMA } },
+            required: ['trades'],
+          },
         },
       },
     },
     async (req, reply) => {
-      const rows = await vaults.trades(req.params.id, req.query.limit);
+      const rows = await vaults.trades(req.params.id, {
+        limit: req.query.limit,
+        beforeTs: req.query.before_ts,
+      });
       return reply.send({ trades: rows });
     },
   );
@@ -106,12 +201,25 @@ export async function registerVaultRoutes(
         },
         querystring: {
           type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            before_ts: { type: 'integer', minimum: 0 },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { deposits: { type: 'array', items: VAULT_ACTIVITY_SCHEMA } },
+            required: ['deposits'],
+          },
         },
       },
     },
     async (req, reply) => {
-      const rows = await vaults.deposits(req.params.id, req.query.limit);
+      const rows = await vaults.deposits(req.params.id, {
+        limit: req.query.limit,
+        beforeTs: req.query.before_ts,
+      });
       return reply.send({ deposits: rows });
     },
   );
@@ -129,12 +237,25 @@ export async function registerVaultRoutes(
         },
         querystring: {
           type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            before_ts: { type: 'integer', minimum: 0 },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { withdraws: { type: 'array', items: VAULT_ACTIVITY_SCHEMA } },
+            required: ['withdraws'],
+          },
         },
       },
     },
     async (req, reply) => {
-      const rows = await vaults.withdraws(req.params.id, req.query.limit);
+      const rows = await vaults.withdraws(req.params.id, {
+        limit: req.query.limit,
+        beforeTs: req.query.before_ts,
+      });
       return reply.send({ withdraws: rows });
     },
   );
@@ -152,12 +273,25 @@ export async function registerVaultRoutes(
         },
         querystring: {
           type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            before_ts: { type: 'integer', minimum: 0 },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { feeClaims: { type: 'array', items: VAULT_ACTIVITY_SCHEMA } },
+            required: ['feeClaims'],
+          },
         },
       },
     },
     async (req, reply) => {
-      const rows = await vaults.feeClaims(req.params.id, req.query.limit);
+      const rows = await vaults.feeClaims(req.params.id, {
+        limit: req.query.limit,
+        beforeTs: req.query.before_ts,
+      });
       return reply.send({ feeClaims: rows });
     },
   );

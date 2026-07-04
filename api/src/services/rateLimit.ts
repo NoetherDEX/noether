@@ -71,6 +71,17 @@ export class RateLimiter {
     };
   }
 
+  /** Delete counters from windows that have already elapsed. */
+  async sweepExpired(): Promise<void> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const windowStart = nowSec - (nowSec % WINDOW_SEC);
+    await this.ensureTable();
+    await this.db.execute({
+      sql: 'DELETE FROM rate_limit_buckets WHERE window_start < ?',
+      args: [windowStart],
+    });
+  }
+
   private tableEnsured = false;
 
   private async ensureTable(): Promise<void> {

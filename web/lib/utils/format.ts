@@ -13,6 +13,18 @@ export function formatUSD(value: number, decimals = 2): string {
 }
 
 /**
+ * Compact USD for stat tiles: $1.2M, $890.0K, $42.00. Under $1000 shows
+ * two decimals; K/M/B suffixes above.
+ */
+export function formatCompactUsd(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(2)}`;
+}
+
+/**
  * Format a price with appropriate decimals based on magnitude.
  * Prices < $0.01 get 6 decimals, < $1 get 4 decimals, otherwise 2.
  */

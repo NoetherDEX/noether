@@ -24,4 +24,7 @@ case "$branch" in
     fi
     echo "⚠  Override active — committing directly to '$branch'."
     ;;
+  staging)
+    echo "⚠  Committing directly to 'staging' — release branch; CI runs on push."
+    ;;
 esac

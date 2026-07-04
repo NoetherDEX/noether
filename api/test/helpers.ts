@@ -75,6 +75,13 @@ export const TEST_CONFIG: ApiConfig = {
     },
     noeAsset: { code: 'NOE', issuer: FAKE_CONTRACT },
   },
+  ws: {
+    maxConnections: 1000,
+    maxPerIp: 100,
+    pingIntervalMs: 1_000_000,
+    msgRate: 1000,
+    maxBufferedBytes: 1_048_576,
+  },
 };
 
 /**
@@ -115,13 +122,33 @@ export async function seedSchema(db: Client): Promise<void> {
       inserted_at INTEGER NOT NULL
     );
   `);
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS positions (
+      position_id INTEGER PRIMARY KEY,
+      trader TEXT NOT NULL,
+      asset TEXT NOT NULL,
+      direction INTEGER NOT NULL,
+      size TEXT NOT NULL,
+      entry_price TEXT NOT NULL,
+      opened_at INTEGER NOT NULL,
+      opened_tx_hash TEXT NOT NULL
+    );
+  `);
 }
 
 export async function setupTestServer(opts?: {
   oraclePrices?: Record<string, [bigint, bigint]>;
   db?: Client;
   /** Seed events_raw with these rows (only when db not provided manually). */
-  seedEvents?: { eventId: string; topic: string; ledger: number; payload: object; contractId?: string }[];
+  seedEvents?: {
+    eventId: string;
+    topic: string;
+    ledger: number;
+    payload: object;
+    contractId?: string;
+    ledgerCloseTs?: number;
+    txHash?: string;
+  }[];
   ordersOverride?: import('../src/routes/orders.js').OrdersRouteDeps;
   txOverride?: import('../src/routes/tx.js').TxRoutesDeps;
 }) {
@@ -148,8 +175,8 @@ export async function setupTestServer(opts?: {
           e.contractId ?? FAKE_CONTRACT,
           e.topic,
           e.ledger,
-          1745923200,
-          't',
+          e.ledgerCloseTs ?? 1745923200,
+          e.txHash ?? 't',
           JSON.stringify(e.payload),
           Date.now(),
         ],
@@ -174,7 +201,7 @@ export async function setupTestServer(opts?: {
     xdr: 'AAAAAg==',
     simulation: { minResourceFee: '1000', latestLedger: 0, transactionData: undefined } as never,
   });
-  const stubSubmit = async () => ({ hash: 'stub-hash', status: 'SUCCESS' as const, result: undefined });
+  const stubSubmit = async () => ({ kind: 'success' as const, hash: 'stub-hash' });
 
   const orders = opts?.ordersOverride ?? {
     txCtx: { rpcUrl: TEST_CONFIG.rpcUrl, network: TEST_CONFIG.network },
@@ -188,14 +215,15 @@ export async function setupTestServer(opts?: {
   };
   const tx = opts?.txOverride ?? {
     txCtx: { rpcUrl: TEST_CONFIG.rpcUrl, network: TEST_CONFIG.network },
-    submit: stubSubmit as never,
+    submitService: { submit: stubSubmit },
   };
 
   const vaults = new (await import('../src/services/vaults.js')).VaultsService(db);
   const referral = new (await import('../src/services/referral.js')).ReferralReadService(db);
+  const stats = new (await import('../src/services/stats.js')).StatsService(db);
   const deps: ServerDeps = {
     oracle, markets, events, apiKeys, walletAuth, rateLimiter, db,
-    orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral,
+    orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats,
   };
   const app = await buildServer(TEST_CONFIG, deps);
   return { app, db, deps };

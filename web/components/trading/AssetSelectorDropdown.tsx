@@ -17,6 +17,12 @@ interface AssetOption {
 interface AssetSelectorDropdownProps {
   selectedAsset: string;
   onSelect: (asset: string) => void;
+  /**
+   * Live Noeracle mark prices by symbol (execution source). When present
+   * they override the Binance price shown in the selector; the Binance
+   * fetch stays as the 24h-change source + fallback (W-1/P4-13).
+   */
+  markPrices?: Record<string, number>;
 }
 
 const ASSETS = [
@@ -25,11 +31,12 @@ const ASSETS = [
   { symbol: 'XLM', name: 'Stellar' },
 ];
 
-export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelectorDropdownProps) {
+export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: AssetSelectorDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [assets, setAssets] = useState<AssetOption[]>([]);
 
-  // Fetch prices for all assets
+  // Fetch Binance prices for the 24h change + as a fallback until the
+  // Noeracle marks stream in.
   useEffect(() => {
     const loadPrices = async () => {
       const assetPromises = ASSETS.map(async (asset) => {
@@ -58,10 +65,19 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
     return () => clearInterval(interval);
   }, []);
 
-  const selectedAssetData = assets.find(a => a.symbol === selectedAsset) || {
+  // Prefer the live Noeracle mark for the displayed price; keep the Binance
+  // change24h. Falls back to the Binance price before the first SSE frame.
+  const priceFor = (symbol: string, binancePrice: number): number => {
+    const mark = markPrices?.[symbol];
+    return mark && mark > 0 ? mark : binancePrice;
+  };
+
+  const displayAssets = assets.map((a) => ({ ...a, price: priceFor(a.symbol, a.price) }));
+
+  const selectedAssetData = displayAssets.find(a => a.symbol === selectedAsset) || {
     symbol: selectedAsset,
     name: selectedAsset,
-    price: 0,
+    price: markPrices?.[selectedAsset] ?? 0,
     change24h: 0,
   };
 
@@ -108,7 +124,7 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect }: AssetSelector
 
           {/* Menu */}
           <div className="absolute top-full left-0 mt-1 z-50 min-w-[220px] bg-card border border-white/10 rounded-lg shadow-xl overflow-hidden">
-            {assets.map((asset) => (
+            {displayAssets.map((asset) => (
               <button
                 key={asset.symbol}
                 onClick={() => {

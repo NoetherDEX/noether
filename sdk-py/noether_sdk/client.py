@@ -13,6 +13,7 @@ from .sub.keys import KeysApi
 from .sub.markets import MarketsApi
 from .sub.oracle import OracleApi
 from .sub.orders import OrdersApi
+from .sub.positions import PositionsApi
 from .sub.referral import ReferralApi
 from .sub.tx import TxApi
 from .sub.vaults import VaultsApi
@@ -23,7 +24,7 @@ XdrSigner = Callable[[str], str | Awaitable[str]]
 
 
 class NoetherClient:
-    """Async client; mirrors @noether/sdk's NoetherClient surface."""
+    """Async client; mirrors the TypeScript SDK's (noether-sdk) NoetherClient surface."""
 
     def __init__(
         self,
@@ -43,6 +44,7 @@ class NoetherClient:
         self.keys = KeysApi(self._transport, credentials)
         self.account = AccountApi(self._transport, credentials)
         self.orders = OrdersApi(self._transport, credentials)
+        self.positions = PositionsApi(self._transport)
         self.tx = TxApi(self._transport, credentials)
         self.vaults = VaultsApi(self._transport)
         self.referral = ReferralApi(self._transport, credentials)

@@ -31,6 +31,7 @@ export const DEPLOY_ENV = process.env.NEXT_PUBLIC_VERCEL_ENV || 'development';
 
 // Contract addresses that MUST be configured for the trading UI to function.
 const REQUIRED_CONTRACTS: ReadonlyArray<keyof typeof CONTRACTS> = [
+  'NOERACLE_SHIM',
   'VAULT',
   'MARKET',
   'USDC_TOKEN',

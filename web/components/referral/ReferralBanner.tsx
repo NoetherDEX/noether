@@ -20,7 +20,7 @@ import toast from 'react-hot-toast';
  *    localStorage, strips the query param so refreshes don't re-trigger.
  *  - Resolves the code to a referrer via the public API (best-effort —
  *    the on-chain bind doesn't need this to succeed).
- *  - When a wallet is connected, exposes a 'Claim 4% discount' CTA
+ *  - When a wallet is connected, exposes a 'Bind referral code' CTA
  *    that calls `referral.set_referrer(referee, code)` on-chain.
  *  - Animates in from the bottom, persists across page navigations,
  *    survives refresh — only goes away when the user dismisses it or
@@ -68,10 +68,10 @@ export function ReferralBanner() {
     try {
       // Lazy-load the on-chain referral binding so @stellar/stellar-sdk
       // (via lib/stellar/referral → client.ts) stays out of the initial
-      // bundle — it only loads when the user actually claims the discount.
+      // bundle — it only loads when the user actually binds the code.
       const { setReferrer } = await import('@/lib/stellar/referral');
       await setReferrer(wallet.address, code);
-      toast.success(`4% discount locked in via ${code}`);
+      toast.success(`Referral code ${code} bound on-chain`);
       setDone(true);
       // Slide out after a brief celebratory pause.
       setTimeout(() => {
@@ -116,9 +116,9 @@ export function ReferralBanner() {
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
-            <p className="text-sm font-medium">4% discount locked in</p>
+            <p className="text-sm font-medium">Referral code bound on-chain</p>
             <p className="text-xs text-muted-foreground">
-              You'll save 4% on every trade going forward.
+              Your 4% fee discount activates when fee accrual ships in v1.1.
             </p>
           </div>
         ) : (
@@ -172,12 +172,12 @@ export function ReferralBanner() {
             <div>
               <div className="flex items-baseline gap-2">
                 <span className="text-2xl font-bold font-mono text-amber-400">4%</span>
-                <span className="text-sm text-muted-foreground">off every trade, forever</span>
+                <span className="text-sm text-muted-foreground">off every trade — from v1.1</span>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
                 {wallet.address
-                  ? 'Sign one transaction to bind this code to your wallet on-chain.'
-                  : 'Connect your wallet to claim the discount.'}
+                  ? 'Sign one transaction to bind this code to your wallet on-chain. The fee discount activates in v1.1.'
+                  : 'Connect your wallet to bind the code.'}
               </p>
             </div>
 
@@ -189,8 +189,8 @@ export function ReferralBanner() {
               {busy
                 ? 'Signing…'
                 : wallet.address
-                ? 'Claim 4% discount'
-                : 'Connect wallet to claim'}
+                ? 'Bind referral code'
+                : 'Connect wallet to bind'}
             </Button>
           </div>
         )}

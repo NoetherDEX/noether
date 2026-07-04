@@ -1,0 +1,241 @@
+# TASKS.md — Noether Master Task List
+
+Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 87 findings with file:line evidence, 40 research insights, critic prioritization). Finding IDs below (M-1, V-2, O-1, …) reference that report.
+
+## Status — updated 2026-07-04
+
+**The audit blocker set is cleared.** In this sprint (on `staging`, CI green):
+- **Phase 0** (16), **Phase 1** (11 — the solvency core), **Phase 2** router + keeper (P2-4…12), **Phase 3** ops (P3-1…10), **Phase 4** off-chain + web (P4-1…26 minus the two below), **Phase 6** code artifacts (P6-2/3/4/5/6), and the **Phase 5 Tranche-3 risk engine** (P5-1/2/6 done; P5-3/4/5/7 math + `risk` contract done, market-wiring documented as WASM-budget-blocked). All tested: 167 contract tests, api 96, indexer 33, tx-builders 16, sdk-ts 39, sdk-py 21; clippy clean on a pinned 1.96.0 toolchain; keeper/e2e/web tsc clean.
+
+**What's left (the unchecked `[ ]` items) — none are blocker code in this repo:**
+- **Operator / ops:** the coupled contract redeploy (market + vault ship TOGETHER; the keeper's removed-view replacements ride the same rollout), then `market.set_fee_split`, router re-init with the publisher key, `risk.set_config` per asset, `vault.seed_buffer` + `set_deposit_cap`, `npm run reindex`, SDK npm/PyPI publish, monitoring hookup (`/v1/health` + `/healthz`), multisig ceremony (P3-8), env/Railway checks (P0-1/2), Audit-Bank application (P6-1), DefiLlama listing (P6-7). Each is tagged ⚠️ OPERATOR inline below.
+- **Noeracle repo (external):** P2-1/2/3 (write-path hardening, TWAP ring buffer) live in the separate Noeracle project; P5-8 (TWAP marks) depends on them.
+- **Founder-deferred to v1.1:** V1.1-1…6 (vault_factory + on-chain referral payouts) — OUT of v1 per the locked decision below.
+- **Growth backlog:** G-1…10 — post-blocker, research-backed features.
+
+Legend below: `[x]` done · `[~]` partially done (note says what remains) · `[ ]` not started.
+
+## Decisions locked 2026-06-09
+
+- **Mainnet date:** no date pressure. Apply to the SCF Audit Bank (`sorobanaudits@stellar.org`) once Phase 1–2 blockers are cleared; the audit then sets the launch date.
+- **Oracle:** **Noeracle-only**, hardened (S-1/P0-1 in the Noeracle repo). Chainlink and Pyth (via Wormhole) get added as cross-checks **when they ship on Stellar** — keep `noeracle_shim`'s SEP-40 interface as the abstraction boundary so they plug in without custom adapters.
+- **Mainnet v1 scope: LEAN.** 3 pairs (BTC/ETH/XLM) at 10x, allowlist + deposit caps + OI caps, insurance buffer. `vault_factory` (user vaults) and on-chain referral payouts are **deferred to v1.1** — their critical fixes (V-1, R-1) gate v1.1, not v1.
+- Work is multi-session: check items off as they land; keep this file updated as the single source of truth for "what's next".
+
+**Conventions:** `[sev/effort]` severity from the audit (critic-corrected) and rough effort (`h`=hours, `d`=days, `w`=week+). Every task lists its audit ID — read the full finding before starting.
+
+---
+
+## Phase 0 — Immediate (ops sanity + hours-level quick wins)
+
+### Ops checks (do first, ~minutes each)
+
+- [ ] **P0-1** [critical/h] **Verify Railway build branch for api + indexer** (D-4). Addresses are baked into Docker images from `contracts.json` at build time — env vars canNOT re-point them. `origin/main` is pre-cutover: if Railway builds from `main`, the gateway/indexer serve the OLD stack while the site runs the new one. Done when: both services confirmed building from `staging` (or images rebuilt), and resolved addresses logged at boot.
+- [ ] **P0-2** [high/h] **Confirm production env vars**: `API_HMAC_PEPPER`, `API_KEY_ALLOWLIST`, `API_CORS_ORIGIN`, `CRON_SECRET` set on Railway/Vercel (SEC-5, A-4). Done when: all four verified present and non-default.
+
+### Contract-adjacent one-liners (no redeploy needed)
+
+- [x] **P0-3** [critical/h] **Cross-margin SL/TP guard — web-side interim** (M-3) — DONE 2026-07-04 (commit `9100166`). PositionsList buttons disabled + OrderPanel trailing dropdown filtered + trade-page handlers refuse for `marginMode==='Cross'`. Contract-side fix ALSO landed same day (P1-2, commit `71363e3`).
+
+### Web quick wins (`web/`)
+
+- [x] **P0-4** [low/h] Rename `lookup_code` → `resolve_code` (R-7) — DONE 2026-07-04 (commit `b709cbd`). lookupCode returns taken/free/unknown; CreateCodeCard shows taken pre-signing, amber on check-failure.
+- [x] **P0-5** [high/h] **Fix false referral copy** (R-2, R-3) — DONE 2026-07-04 (commit `b709cbd`). Rates scoped to v1.1, volume-threshold claim removed, Claim button permanently disabled with v1.1 note.
+- [x] **P0-6** [high/h] Portfolio USDC + NOE balances (W-3/F-3/F-4) — DONE 2026-07-04 (commit `b709cbd`). Note: WalletProvider session-restore path still shows NOE 0 until refresh; portfolio page has no NOE display element yet (follow-up with P4-15).
+- [x] **P0-7** [low/h] Debug-log gating + `decodeContractError()` + stale branch deletion (W-8) — DONE 2026-07-04 (commit `9100166`). NOTE: error map now needs new code #80 CrossMarginOrderNotSupported added (introduced by P1-2 the same day).
+- [x] **P0-8** [medium/h] `assertContractsConfigured()` wired from providers.tsx + NOERACLE_SHIM required + router-missing banner (W-5) — DONE 2026-07-04 (commit `b709cbd`).
+- [x] **P0-9** [medium/h] SSE staleness handling (W-4) — DONE 2026-07-04 (commit `9100166`). onerror + 10s watchdog + amber badge + 5s shim fallback + auto-recovery.
+
+### API quick wins (`api/src`)
+
+- [x] **P0-10** [high/h] Tiered rate limiting engaged (A-1) — DONE 2026-07-04 (commit `64fd821`). Test asserts `X-RateLimit-Tier: standard` + key-bucket row.
+- [x] **P0-11** [high/h] trustProxy + request.ip + bucket sweep (A-2) — DONE 2026-07-04 (commit `64fd821`).
+- [x] **P0-12** [high/h] SQL-side /me/positions + /me/orders (A-3) — DONE 2026-07-04 (commit `64fd821`). /me/positions also returns authoritative `positions` array; `events` kept for SDK compat. Test seeds 600 global events. NOTE: /me/orders only sees order_placed (cancel/exec events carry no trader — indexer decoder gap, fold into P4-10).
+- [x] **P0-13** [medium/h] Pepper fail-fast + constant-time compare (A-4, SEC-8) — DONE 2026-07-04 (commit `64fd821`).
+- [x] **P0-14** [high/h] Fail-closed defaults (SEC-5) — DONE 2026-07-04 (commit `64fd821`). ⚠️ OPERATOR: after deploy, Railway api MUST have non-default `API_HMAC_PEPPER`, non-empty `API_KEY_ALLOWLIST`, non-wildcard `API_CORS_ORIGIN` or it refuses to boot; Vercel needs `CRON_SECRET` or the leaderboard cron 401s.
+
+### Indexer quick wins (`indexer/src`)
+
+- [x] **P0-15** [high/h] Dead-letter table + poison-loop fix (I-1) — DONE 2026-07-04 (commit `44e3b8c`). Migration 012; decode-fail → dead-letter + advance; apply-fail → dead-letter + rethrow (fail-loud once, recorded for replay; cursor advances after the retry pass hits the idempotency guard).
+- [x] **P0-16** [medium/h] Idempotency guard + counter-preserving code_created (I-2 minimal, R-4) — DONE 2026-07-04 (commit `44e3b8c`). Applied across market/vault/referral handlers.
+- [x] **P0-17** [medium/h] decodeCrossLiq mapping + phantom-position cleanup (I-5) — DONE 2026-07-04 (commit `44e3b8c`). New positionSync.ts verifies each projected row via get_position simulation on cross_liq.
+
+### CI (do early — everything after this gets a net)
+
+- [x] **P0-18** [high/h] CI on staging + contracts/web/sdk-py jobs (D-1) — DONE 2026-07-04 (commits `5d15c4e`, `a79f097`). The two failing leader_* tests were interface drift in the test stub (fake market returned u64/() where the real market returns Position/i128 — invoke_contract decode panic), NOT V-1 corruption; stub now mirrors the deployed interface. V-1 (commingling) remains real and remains the v1.1 gate. 114+ contract tests green; clippy status: see P1 sprint notes.
+
+---
+
+## Phase 1 — Contract security sprint (one testnet redeploy at the end)
+
+> Bundle all of these into a single WASM refit + blue-green `deploy_staging.sh` → verify → promote. Watch the 64KB budget throughout — drop view helpers if needed (the bulk-read replacement lives in Phase 5 as a separate view contract).
+>
+> **STATUS 2026-07-04: ALL ELEVEN CODE ITEMS LANDED** (140 tests, clippy clean, market 65,363/65,536 B). ⚠️ REDEPLOY COUPLING: `is_liquidatable` and `should_execute_order` were removed for WASM budget — the keeper MUST ship its P2-9 update (local health calc + simulate-first execution) in the same rollout, and web's getOrders/OrderBook must not call the removed views (they don't — they use get_all_order_ids + get_order). Vault interface changed (reserve_for_position signature, settle_pnl returns i128, sync_exposure replaces update_unrealized_pnl) — market+vault deploy TOGETHER. After redeploy: admin should call market.set_fee_split(treasury, 2000) and review vault.set_asset_cap defaults vs the parameter sheet (BTC 25 / ETH 20 / XLM 10 %).
+
+- [x] **P1-1** [critical/d] **Pause + upgrade entry points** (M-1, SEC-2) — DONE 2026-07-04 (commit `f28f01c`). pause/unpause on market (liquidations exempt — verified by test while paused); upgrade(wasm_hash) on market + vault + router. Tests: pause blocks open/close/cross-deposit, unpause restores, upgrade WASM round-trip with storage preserved. On-chain verification happens at the Phase-1 redeploy.
+- [x] **P1-2** [critical/h] **Cross-margin SL/TP fix** (M-3) — DONE 2026-07-04 (commit `71363e3`, ships with the Phase 1 redeploy). All three attach fns reject `margin_mode==1` with new error #80; `cancel_position_orders` helper cancels attached SL/TP/trailing in close_position, close_position_cross, liquidate, liquidate_cross_account AND execute_close_order (sibling orders); trailing stops gained a PositionTrailingStop link + one-per-position rule. 4 regression tests; WASM 63,164B.
+- [x] **P1-3** [critical/w] **OI caps + real reservation** (M-4, V-3) — DONE 2026-07-04 (commit `0bdb504`). ReservedPayout accumulates/releases; reserve cap 70% AUM + per-asset-side caps (default 25%, admin-settable) enforced at every open incl. limit-order execution (#82); settle_pnl caps payout + records Shortfall (winner can never freeze — test proves it); LP withdraws can't undercut reservations.
+- [x] **P1-4** [critical/d] **Unrealized PnL wired into NAV** (V-2, M-7, SEC-6) — DONE 2026-07-04 (commit `0bdb504`). Market keeps per-asset K/S exposure aggregates and pushes asset uPnL via vault.sync_exposure on every open/close/liquidation; public sync_asset_pnl(asset) for keeper NAV freshness (wire into keeper cycle — P2). NOE-price-moves-with-PnL test passes.
+- [x] **P1-5** [critical/d] **Oracle deviation guard** (M-2) — DONE 2026-07-04 (commit `1354119` + strictness unification in `0bdb504`). Strict paths (opens, entry executions, trailing peaks) reject stale + >1% moves vs last-good (#81); closes/liquidations never blocked; band self-disables after 10x staleness window of quiet.
+- [x] **P1-6** [high/h] **Vault TTL fix + shared constants** (V-6) — DONE 2026-07-04 (commit `fb832f0`). noether_common::ttl (17,280/518,400) used by all six contracts.
+- [x] **P1-7** [medium/d] Reduce-only actually reduces (M-6) — DONE 2026-07-04 (commit `0bdb504`). Closes the largest fitting opposing isolated position via TraderPositions; refunds order collateral; cancels when nothing fits (no partial close in v1 — full-close-or-cancel documented).
+- [x] **P1-8** [medium/d] Receipt-based loss accounting (V-3 tail) — DONE 2026-07-04 (commit `0bdb504`). settle_pnl loss branch credits nothing; receive_loss credits exactly the transferred USDC (losses, funding, liquidation proceeds — all credit points wired); isolated-close outflows capped at the position's own collateral.
+- [x] **P1-9** [high/d] **Vault + market test suites** (D-3) — DONE 2026-07-04. Vault: 7 tests (round-trip w/ fees, reserve caps, sync_exposure, settle shortfall, receipt credits, withdraw guard, auth rejection — first real suite, was zero). Market: 51 tests incl. funding-settles-on-close, liquidation reward cap, winner-never-freezes, loss-cap, reduce-only offset, fee split. C-1 underflow now structurally prevented (single saturating adjust_oi helper on every path). 140 tests workspace-wide, clippy -D warnings clean.
+- [x] **P1-10** [medium/d] **Protocol fee share** — DONE 2026-07-04 (commit `0bdb504`). set_fee_split(treasury, bps≤5000), default 20%, inactive until treasury set. Vault's fee share now CREDITED to accounting (fees finally count toward AUM/LP yield). ⚠️ OPERATOR: call set_fee_split after redeploy to activate.
+- [x] **P1-11** [low/h] Shared symbol→tag map (O-8) — DONE 2026-07-04 (commit `fb832f0`). noether_common::assets::symbol_to_tag + unit tests; shim panics/router Results preserved.
+
+---
+
+## Phase 2 — Oracle + keeper hardening (parallel with Phase 1)
+
+### Noeracle repo (Yahya — outside this repo, but gates everything)
+
+- [ ] **P2-1** [critical/w] **S-1/P0-1: harden the persistent write path** (O-1): registered-publisher set, ed25519 signature over (feed, price, conf, timestamp), strictly-increasing round/timestamp per feed, staleness bound, per-update deviation bound; hardened `update_batch_ed25519_persistent` (1 tx per round); feature-gate benchmark stubs out of deployed WASM. Pyth model: 2-of-3 publisher quorum, keys on separate infra (even if all operated by Yahya initially). **Hard release gate for mainnet.**
+- [ ] **P2-2** [high/w] Ring buffer `prices(asset,n)` + `twap(asset,n)` (O-4) so the market can use TWAP for liquidation/funding marks (consumed in Phase 5).
+- [ ] **P2-3** [medium/d] `last_update`/freshness view (P3-8) for watchdog probes; optional `get_price_pers_fresh(max_age)` (O-6).
+
+### This repo — router + shim
+
+- [x] **P2-4** [critical/d] **Router publisher allowlist** (O-2) — DONE 2026-07-04 (commit `3825396`). initialize takes publisher key set + admin set_publishers; refresh_price rejects foreign/empty keys (#3). ⚠️ OPERATOR: redeploy + re-init router with the keeper's publisher pubkey. Does NOT replace P2-1 (Noeracle O-1 hardening).
+- [x] **P2-5** [high/d] **Router liquidate_with_price + execute_with_price** (O-3, K-3) — DONE 2026-07-04 (commit `3825396`). Plus liquidate_cross_with_prices(Vec<PriceAttestation>) for multi-asset cross accounts. Keeper switch is part of the P2-7..P2-12 keeper update (in progress). Contract side proven by mock tests; live >60s-stale liquidation verified at redeploy.
+- [x] **P2-6** [medium/h] Coarse price sanity bounds (O-7 tail) — DONE 2026-07-04 (commit `3825396`). Per-asset bands in router refresh_price (BTC 1k-1M / ETH 50-100k / XLM 0.01-100); reject #31 regardless of signature.
+
+### Keeper (`scripts/keeper` + Railway `noetherkeeperbotv2`)
+
+> **IN FLIGHT 2026-07-04:** P2-7..P2-12 being implemented in one keeper-hardening pass (workflow). CRITICAL coupling: the market removed `is_liquidatable` + `should_execute_order` for WASM budget this session, so the keeper switch to local-health-calc + simulate-first execution ships in the SAME rollout, plus it must call the new router `liquidate_with_price`/`execute_with_price` (P2-5) and `market.sync_asset_pnl` per cycle. Apply to BOTH keeper copies.
+
+- [x] **P2-7** [critical/d] **Timeouts + watchdog + alerting** (K-1) — DONE 2026-07-04 (commit `64b6d8e`). 15s rpc timeouts, 10s fetch aborts (Noeracle raced), 3-min watchdog→exit(1), dependency-free Discord/Telegram alerts (rate-limited), compiled dist in prod. ⚠️ apply to noetherkeeperbotv2 Railway copy.
+- [x] **P2-8** [critical/d] Publish-path defenses (K-2) — DONE 2026-07-04 (commit `64b6d8e`). Prices persisted (breaker survives restart), per-asset jump bounds + absolute bands, independent Binance divergence check (>5% skip+alert).
+- [x] **P2-9** [high/d] Scan restructure (K-4) — DONE 2026-07-04 (commit `64b6d8e`). One shared snapshot/cycle; dummy Account for sims; local liquidation-health calc (replaces removed is_liquidatable) + simulate-before-submit; read-failure streak counted+alerted. 24/24 smoke assertions on the health math.
+- [x] **P2-10** [medium/h] Trailing-stop simulate-first (K-5) — DONE 2026-07-04 (commit `64b6d8e`). Replaces removed should_execute_order/update_trailing_peak views with simulate-then-submit; peaks only in cycles with an actual push.
+- [x] **P2-11** [medium/d] RPC failover + fee escalation (K-6) — DONE 2026-07-04 (commit `64b6d8e`). SOROBAN_RPC_URLS rotation, 2x liq fee escalation (cap 5 XLM), tx timeBounds aligned to 30s poll, NOT_FOUND→indeterminate re-check (no dup submits).
+- [x] **P2-12** [low/h] Funding tri-state + key hygiene (K-7/K-8) — DONE 2026-07-04 (commit `64b6d8e`). applied|not-due|failed from persisted last-submit (no on-chain view exists); no secret fragments logged; hard-fail admin-key fallback on mainnet.
+
+---
+
+## Phase 3 — Ops, monitoring, docs (cheap, high leverage — interleave anytime)
+
+- [~] **P3-1** [high/d] **Monitoring stack** (D-2) — CODE PART DONE 2026-07-04 (commit `bbfb9d1`): `/v1/health` now reports last-indexed-ledger age + resolved contracts. Keeper Discord webhook alerting lands with P2-7 (keeper workflow). ⚠️ OPERATOR: point UptimeRobot/BetterStack at `/v1/health` (alert when `indexer.ledgerAgeSeconds` climbs), add healthchecks.io deadman ping, Railway→Discord webhooks.
+- [x] **P3-2** [high/h] **Retire legacy deploy scripts** (D-5) — DONE 2026-07-04 (commit `b2dd4f0`). Four scripts → scripts/legacy/ with exit-1 guards (verified) + README; all three CLAUDE.md deploy tables updated (CLAUDE.md is gitignored — edits are local).
+- [x] **P3-3** [medium/d] sync_env.sh + verify_stack.sh (D-6) — DONE 2026-07-04 (commit `0df9816`). sync_env renders NEXT_PUBLIC_* + CONTRACT_* + railway CLI from contracts.json; verify_stack diffs contracts.json vs api /v1/health echo + flags stale cursor, exit 1 on drift. ⚠️ still to wire: call verify_stack at the tail of deploy_staging.sh/deploy_production.sh.
+- [x] **P3-4** [high/h] **CONTRACT_* env overrides + boot log + /v1/health echo** (D-4) — DONE 2026-07-04 (commit `bbfb9d1`). getContract/hasContract honour CONTRACT_<KEY>; api+indexer log resolved addresses at boot; /v1/health echoes {address, source}. Documented in .env.example.
+- [~] **P3-5** [medium/h] **Docs ground-truth pass** (D-7) — MOSTLY DONE 2026-07-04 (local edits, CLAUDE.md gitignored): root + contracts/ CLAUDE.md address table regenerated from contracts.json, oracle-chain section → Noeracle diagram, mock_oracle/adapter/Band/DIA marked RETIRED, deploy tables updated, SEC-3 + CONTRACT_* notes. STILL: KNOWN_ISSUES.md C-1/G-2/F-1 markers, GIT_WORKFLOW staging-as-production rewrite, handoff §3.
+- [x] **P3-6** [medium/h] **Turso backups + restore runbook** (D-8) — DONE 2026-07-04 (commit `5760be2`). scripts/backup_turso.sh (timestamped dump, api_keys sanity check, 30-dump retention, optional S3) + docs/BACKUP_RESTORE.md (why, PITR-vs-cron, restore+verify, api_keys-split plan). ⚠️ OPERATOR: enable PITR or schedule the cron.
+- [x] **P3-7** [medium/h] Incident runbook — DONE 2026-07-04 (commit `0df9816`). docs/INCIDENT_RUNBOOK.md: triage table, oracle-stale, keeper-down, exploit→pause (P1-1), key compromise (SEC-3), RPC failover, on-call + SEAL 911.
+- [ ] **P3-8** [critical/d] **Admin key ceremony** (SEC-3): 2-of-3 classic multisig on `noether_admin` (SetOptions, med/high thresholds = 2; Yahya + Mert + offline backup); dedicated low-privilege faucet key (get ADMIN_SECRET_KEY out of Vercel); dedicated keeper key enforced. Rotate `G...LOLN` before mainnet value.
+- [x] **P3-9** [medium/d] Keeper TTL job — DONE 2026-07-04 (commit `b960a4a`). 6h maybeBumpTtls phase extends market/vault/router/shim instance+code TTL via the canonical Operation.extendFootprintTtl (correct-by-construction per the SDK). Best-effort, non-fatal. tsc + 24/24 smoke. ⚠️ OPERATOR verifies the footprint on first live-ledger run + applies to noetherkeeperbotv2.
+- [x] **P3-10** [low/d] Keeper XLM-funding alarm — DONE 2026-07-04 (commit `b960a4a`). getXlmBalance via getLedgerEntries(LedgerKey.account); critical alert below MIN_KEEPER_XLM (default 20) each TTL cycle. Non-null-guarded (distinguishes low from couldn't-check). tsc clean.
+
+---
+
+## Phase 4 — Off-chain correctness (api / indexer / web / SDKs)
+
+> **IN FLIGHT 2026-07-04 (workflow):** api P4-2/4/5/6, indexer P4-7/8/9/10/11, sdk P4-19/20/21/22 being implemented. Web items (P4-13..P4-17) and the api-dependent web bits are NOT in that batch — they remain for a focused web pass. P4-25 already done (pre-session).
+
+### API
+
+- [x] **P4-1** [medium/d] WS hardening (A-5) — DONE 2026-07-04 (commit `d9faf18`). Global+per-IP caps (1013), 30s ping/idle-close, per-conn token bucket, stringify-once broadcast, bufferedAmount eviction. 8 tests. Env-tunable.
+- [x] **P4-2** [medium/d] `/v1/tx/submit` taxonomy (A-6) — DONE 2026-07-04 (commit `fd374dc`). DUPLICATE→idempotent poll; TRY_AGAIN_LATER→503+Retry-After; FAILED→contract error #+name from diagnostic events. FAILED stays HTTP 200 for SDK compat. NOTE: tx-builders submitSignedTx still bare-polls for direct SDK users (single-source unify pending).
+- [x] **P4-3** [low/d] Cursor pagination + read bounds (A-7) — DONE 2026-07-04 (commit `d9faf18`). before_ts on 8 endpoints, LIMIT on /v1/positions/open, 10s TtlCache over /v1/vaults. NOTE: /v1/referral/me/* history still limit-only (service ownership split — quick follow-up).
+- [x] **P4-4** [low/d] Observability (A-8) — DONE 2026-07-04 (commit `fd374dc`). x-request-id echo; response schemas on 8 route files (health.ts/account.ts owned elsewhere, skipped); version from package.json (0.1.0); servers URL from API_PUBLIC_URL.
+- [x] **P4-5** [medium/h] `GET /v1/account/volume?address=` (R-6) — DONE 2026-07-04 (commit `fd374dc`). 14d notional from events_raw. ⚠️ web OrderPanel still needs to CALL it (web pass).
+- [x] **P4-6** [medium/h] `/v1/markets/stats` + `/v1/trades?trader=` (W-3, W-6, I-8) — DONE 2026-07-04 (commit `fd374dc`). Per-asset OI + 24h volume + realized trades from projections/events. ⚠️ web trade page still needs to consume these instead of the hardcoded values.
+
+### Indexer
+
+- [x] **P4-7** [high/d] Full idempotency (I-2) — DONE 2026-07-04 (commit `f8ae46a`). Migration 013 UNIQUE keys; one libsql transaction per event.
+- [x] **P4-8** [high/d] Gap detection + retention + RPC failover (I-3) — DONE 2026-07-04 (commit `f8ae46a`). Migration 014 ledger_gaps; RpcPool rotation; retention-error → clamp + record.
+- [x] **P4-9** [medium/d] `/healthz` + CAS cursor (I-4) — DONE 2026-07-04 (commit `f8ae46a`). ⚠️ OPERATOR: set Railway indexer healthcheck path to /healthz.
+- [x] **P4-10** [medium/d] Raw XDR archive + close/liq decoder fields (I-6) — DONE 2026-07-04 (commit `f8ae46a`). Migration 015 topic/value XDR; close/liq carry asset/direction/size/entry.
+- [x] **P4-11** [medium/d] `npm run reindex` + contract_id stamping (I-7) — DONE 2026-07-04 (commit `f8ae46a`). Migration 016 + reindex.ts (bus suppressed). ⚠️ OPERATOR: run once post-deploy with indexer STOPPED to backfill + rebuild.
+- [x] **P4-12** [low/d] Trades projection (I-8) — DONE 2026-07-04 (commit `c1d2abc`). Migration 017 real realized-trade projection; close/liquidation writers (idempotent, contract_id-stamped). Backs /v1/trades + close-side volume + markets/stats with a real table. LP-vault-event TVL/APY history (for real APY, P4-15) still TODO. OPERATOR: reindex to backfill.
+
+### Web
+
+- [x] **P4-13** [high/d] **Single price source on the trade page** (W-1) — DONE 2026-07-04 (commit `129a4a9`). OrderPanel (markPrice, was pre-session), AssetSelectorDropdown + ChartHeader now quote the Noeracle SSE mark from currentPrices; Binance kept only for 24h change/high/low + bootstrap fallback.
+- [~] **P4-14** [medium/d] Personal-mode positions/orders via the indexer API with chain-scan fallback; shared getAccount per batch; OrderBook off the global scan (W-2).
+  - [x] **Positions DONE** 2026-06-10 (commit `4c5788d`, staging). Personal mode now loads from `/v1/positions/open?trader=` + `getPositionsByIds` (was a whole-market `get_all_position_ids` + per-id scan on the public RPC); chain scan kept as fallback only on API error; staggered post-trade refetch (now+2.5s+6s) for read-your-writes. Prod API verified live + on current stack. **Still needs to reach `main` to help production.**
+  - [ ] Orders list (`getOrders`) + OrderBook still do the whole-market RPC scan → move to a `/v1/orders?trader=` endpoint (table exists, needs an api route).
+- [~] **P4-15** [medium/d] Vault APY (W-3 tail) — HIDDEN-UNTIL-REAL DONE 2026-07-04 (commit `16a5b37`). Fabricated 12.5% removed everywhere (vault StatsBar/YourPosition null-safe, /vaults hero 'Variable'). Real computation still needs LP-vault fee history from the indexer (I-8/P4-12, in flight). Real NOE price on /vaults marketplace cards still TODO.
+- [x] **P4-16** [medium/d] Mobile trade flow (W-7) — DONE 2026-07-04 (commit `ea5754e`). Fixed bottom Long/Short bar (safe-area inset) presets direction + opens the OrderPanel in a bottom-sheet Modal below lg; desktop sidebar OrderPanel hidden on mobile, Market Info kept. tsc clean; 390px visual pass is the Vercel/manual step. NOTE: /vault + /vaults 390px audit not separately done.
+- [x] **P4-17** [medium/d] TP/SL at open (W-6) — DONE 2026-07-04 (commit `5506158`). Optional TP/SL inputs on isolated Market orders, pipelined as follow-up set_stop_loss/set_take_profit signatures after the open confirms (best-effort, never unwinds the fill). Router single-sig path (open_with_price_and_tpsl) is G-1/later. Trade-history-from-/v1/trades still TODO (web cutover).
+
+### SDKs + tx-builders
+
+- [~] **P4-18** [high/d] Router builders (S-1) — TX-BUILDERS HALF DONE 2026-07-04 (commit `faa3365`). openWithPrice/closeWithPrice/liquidateWithPrice/executeWithPrice + PriceAttestation type + 16 tests. GATEWAY HALF pending: wire api/routes/orders.ts to build via the router when NEXT_PUBLIC_NOETHER_ROUTER_ID set.
+- [x] **P4-19** [high/h] sdk-py key issuance (S-2) — DONE 2026-07-04 (commit `206f07c`). manageData challenge tx + signed XDR, verified vs walletAuth. ⚠️ OPERATOR: publish 0.1.2 to PyPI. (Optional raw-hex gateway fallback not done — the manageData fix is the real fix.)
+- [~] **P4-20** [high/h] WS robustness (S-3/S-4) — CLIENT HALF DONE 2026-07-04 (commit `206f07c`): both SDKs surface rejected/failed-login, re-send account.* after login-ack, connect() no longer hangs (readyPromise + timeout). ⚠️ SERVER half (serialize per-conn handling in api/plugins/ws.ts) still pending — fold into P4-1.
+- [x] **P4-21** [medium/h] Missing SDK endpoints + type re-sync (S-5) — DONE 2026-07-04 (commit `206f07c`). Four endpoints in both SDKs; sdk-ts vendored types re-synced + drift guard test.
+- [x] **P4-22** [medium/h] SDK package hygiene (S-6, S-8) — DONE 2026-07-04 (commit `206f07c`). README install name (noether-sdk), faucet step, websockets<14 cap, __version__ single-sourced, CHANGELOGs.
+- [x] **P4-23** [medium/d] tx-builders XDR snapshot tests (S-7) — DONE 2026-07-04 (commit `faa3365`). 16 tests pinning Direction=u32/TriggerCondition=bool/i128 parts/arg order (was ZERO). Add packages/tx-builders to root npm test list if not auto-picked.
+- [x] **P4-24** [medium/w] E2E harness (critic #8) — DONE 2026-07-04 (commit `74ccec4`). New e2e/ package: auth → /v1/orders/prepare → sign → /v1/tx/submit → indexer read-back via /v1/positions/open, asserting appear-then-clear + /v1/health stack self-check. tsc-clean; skip-path runs. ⚠️ OPERATOR runs against a live stack with a funded allowlisted trader.
+- [x] **P4-25** [high/d] **Leaderboard cron data-loss fix (Tier A)** — DONE 2026-06-09 (commit `ef054cd`). The `web/app/api/cron/sync-leaderboard` cron marked txs processed before fetching their events, so RPC failures silently dropped traders' closed PnL forever (tester report). Fixed: mark-processed-only-on-definitive-fetch + retry/backoff + age-out, single-account open-position scan, composite trades key for cross closes, board defaults to PnL. **Follow-ups:** (a) one-time `processed_txs` reset (DELETE the `sync_state` row where key='processed_txs') to recover any wrongly-dropped trades still within Soroban RPC retention; (b) the public-RPC rate-limiting that causes the drops is the real lever — see paid-RPC note below.
+- [~] **P4-26** [medium/w] **Leaderboard durable fix (Tier B)** — GATEWAY ROUTE DONE 2026-07-04 (commit `d9faf18`). GET /v1/leaderboard (top by realized PnL / volume from indexer projections, 5s cache). Depends-on (P4-7/8/12) all landed. WEB CUTOVER pending: point the web leaderboard at /v1/leaderboard + delete the web cron BFS/processed_txs path.
+
+---
+
+## Phase 5 — Tranche 3 risk engine (pre-audit; parameters in `docs/AUDIT-2026-06.md` Part 2.2 #10)
+
+- [x] **P5-1** [high/w] Per-market `RiskConfig` + admin setter (commit `97b6453`/`7fda615`) — DONE 2026-07-04. RiskConfig struct (IM/MM/OI/skew/funding/borrow) with major/xlm/new-pair presets; new `risk` CONTRACT stores it per asset with an admin setter (MM=IM/2 validated). Lives in the risk crate (not noether_common — it bloated market WASM). Market-side consumption rides the coordinated redeploy.
+- [x] **P5-2** [high/d] **MM = IM/2** (commit `97b6453`) — DONE 2026-07-04. Encoded + invariant-enforced in RiskConfig (major 4%/2%, xlm 10%/5%, new-pair 20%/10%); `is_valid()` rejects any config where mm != im/2. The market reads MM from the risk config at redeploy (lean v1 stays 10x where 1% is far less lethal; this gates the 25x ramp).
+- [~] **P5-3** [high/w] **Funding velocity** (commit `97b6453`) — MATH DONE + tested (`funding_velocity` SIP-279 + `clamp_funding` in the risk crate). ⚠️ Market WIRING blocked by the 64KB budget (173B headroom) — swapping calculate_funding_rate for the velocity form + integrating into the lazy index needs the coordinated market refit (move the funding accrual to the risk/router path or drop a view).
+- [~] **P5-4** [high/w] **Borrow fee** (commit `97b6453`) — MATH DONE + tested (`borrow_fee_rate` dual-slope in the risk crate). ⚠️ Market WIRING (second lazy cumulative index on utilization) blocked by the 64KB budget — same coordinated-refit dependency as P5-3.
+- [~] **P5-5** [critical/w] **Partial liquidation** (commit `97b6453`) — TRANCHE MATH + risk-contract compute DONE + tested (`partial_liq_tranche`, `risk.partial_liq_amount`). ⚠️ Execution needs market `close_position(size)` (P5-9, WASM-blocked) + cooldown state — the risk contract sizes the tranche + the keeper submits; the market close-by-size is the missing coordinated-refit piece.
+- [x] **P5-6** [critical/w] **Insurance buffer** (commit `fb3e053`) — DONE 2026-07-04. Vault buffer sub-balance (separate from LP AUM); settle_pnl pays winners from the buffer FIRST, LP only for the remainder; seed_buffer (admin) + fund_buffer (market-only penalties/fee-share/losses) + get_buffer_balance. Waterfall margin→buffer→LP→shortfall. 9 vault tests. ⚠️ Market wiring to route penalties + fee share into fund_buffer rides the redeploy.
+- [~] **P5-7** [high/w] **ADL** (commit `97b6453`) — RANKING DONE + tested (`adl_rank` = PnL%×leverage; `risk.rank_adl` orders candidates, drops losers). ⚠️ Execution (force-close the ranked winners on trigger + `adl_executed` event + indexer support) needs the market close path + keeper wiring — the coordinated-refit piece. Contract re-verifies the keeper's ranking as designed.
+- [ ] **P5-8** [medium/w] TWAP marks — BLOCKED on Noeracle `twap(asset,n)` (P2-2, in the separate Noeracle repo). The market-side consumption is a small read swap once the source exists.
+- [~] **P5-9** [medium/w] Partial close — ⚠️ BLOCKED by the market 64KB budget (173B headroom). close_position(size) + pro-rata collateral/funding is a real market change that overflows WASM; needs the coordinated refit (drop a view / move logic to router). The risk-contract tranche sizing (P5-5) is ready to feed it.
+- [~] **P5-10** [medium/w] Bulk-query views — LARGELY SATISFIED off-chain: Soroban contracts can't cross-read another contract's storage, so a separate 'view contract' can't batch the market's positions. The api/indexer projections already provide the bulk reads (/v1/positions/open, /me/positions, /v1/leaderboard, /v1/markets/stats — P0-12/P4-6/P4-26). On-chain storage sharding per pair (M-5) remains a market re-architecture, scheduled at traction.
+
+---
+
+## Phase 6 — Audit + guarded mainnet launch
+
+- [ ] **P6-1** [—/h] **Apply to SCF Audit Bank** (`sorobanaudits@stellar.org`) — trigger: Phases 1-2 complete. ~5% refundable co-pay; 2-4 month total lead; scope: market, vault, vault_factory, referral, router, shim, noether_common + Noeracle itself.
+- [~] **P6-2** [—/d] Pre-audit artifacts — THREAT MODEL DONE 2026-07-04 (commit `6477bdb`, docs/THREAT_MODEL.md, STRIDE + data-flow). ⚠️ still: `cargo scout-audit` (not installed locally — operator) + remediation plan; integration tests (P4-24).
+- [x] **P6-3** [—/d] Config-parity inventory + gate (critic #5) — DONE 2026-07-04 (commit `972540d`). scripts/check_mainnet_parity.sh catalogs every demo constant with its mainnet target; MAINNET=1 exits 1 if any testnet value remains (launch gate).
+- [x] **P6-4** [—/d] Geo-block + ToS (research 2.4 #8) — CODE DONE 2026-07-04 (commits `8b19699` web edge middleware + ToS + /restricted, `a67b263` api gateway geo-block plugin, 451 on trading endpoints). ⚠️ Non-code remainder: one crypto-savvy legal consult on entity domicile / NOE token treatment (critic #6).
+- [x] **P6-5** [—/h] SECURITY.md bug-bounty policy — DONE 2026-07-04 (commit `972540d`). Coordinated disclosure, reward tiers (critical 10% cap $10-25k), scope, SEAL 911, commitments.
+- [x] **P6-6** [—/d] Guarded-launch config — CODE DONE 2026-07-04 (commit `c9839e2` vault per-account deposit cap #43; OI caps P1-3; allowlist reuses the closed-beta api gate). ⚠️ Operator: set the cap values at launch + publish cap-raise criteria; the 25x ramp gates on P5-2 (MM=IM/2, ready in RiskConfig).
+- [ ] **P6-7** [—/h] DefiLlama listing at mainnet (own the "Stellar perps" category); stake the "first perp DEX on Stellar" claim publicly (two funded competitors exist, neither live — Stellars Finance SCF #40, Hermes SCF #32).
+
+---
+
+## v1.1 — Deferred features (gate: their critical fixes land + audit coverage)
+
+> **SCOPE NOTE:** per the founders' 2026-06-09 lean-v1 decision, vault_factory and on-chain referral payouts are OUT of v1 — these V1.1-* items are intentionally NOT part of the current "finish the codical tasks" sweep. Their critical fixes (V-1, R-1) gate v1.1, not v1.
+
+- [ ] **V1.1-1** [critical/w] vault_factory per-vault delta accounting (kill `sync_total_usdc` whole-balance read); vault→position ownership map; fix + re-enable the two failing `leader_*` tests (V-1).
+- [ ] **V1.1-2** [high/d] Open-position value in factory vault NAV; block deposits while positions open as interim (V-4).
+- [ ] **V1.1-3** [medium/w] Per-depositor cost basis for profit share (or forced fee-claim before every deposit/withdraw) (V-5).
+- [ ] **V1.1-4** [critical/d] Referral economics end-to-end **in one redeploy**: market `record_trade` hook + on-chain discount + funded `claim()` (USDC transfer) + `volume` param (fixes the 2000x stat) + admin revoke/unbind/pause + on-chain `min_code_volume` (R-1, R-2, R-3, R-5, R-8).
+- [ ] **V1.1-5** [low/h] `profit_share_bps` param + MAX cap enforcement (V-7).
+- [ ] **V1.1-6** [—/d] Vault UX growth loop: withdrawal cooldown, indexer-backed track records (PnL curve/drawdown/age), one-click deposit (research 2.1 #9).
+
+## Growth backlog (post-blockers; research-backed, roughly priority-ordered)
+
+- [ ] **G-1** TP/SL at open as ONE signature: router `open_with_price_and_tpsl` (research 2.1 #2).
+- [ ] **G-2** RWA pair strategy for "10+ pairs": XAU, EURUSD, indices via Noeracle feeds (Yahya's roadmap) — each new pair launches 3-5x leverage, 5%-TVL OI cap (research 2.1 #10). Avoid thin long-tail crypto (JELLY/AVAX attack surface).
+- [ ] **G-3** Builder codes: `builder_bps` per API key + indexer attribution + payout via referral rails; pitch LOBSTR/xBull/StellarTerm (research 2.1 #8).
+- [ ] **G-4** Points season computed off the indexer (weight fees paid + vault deposits + referrals, never raw volume); closed-beta cohort = season 0 (research 2.1 #7).
+- [ ] **G-5** Agent keys (1-click trading): `authorize_agent(trader, agent)` trade-only session signers (research 2.1 #3).
+- [ ] **G-6** Passkey smart wallets (PasskeyKit) + OpenZeppelin Relayer fee sponsorship (Launchtube is ARCHIVED) → mobile = PWA + passkeys; Relayer channel accounts also fix keeper sequence conflicts (research 2.1 #3, 2.3 #8).
+- [ ] **G-7** Hosted developer docs site + tutorials + SDK quickstarts (critic #4 — prerequisite for G-3).
+- [ ] **G-8** Blend integration: idle vault USDC earns yield → real APY story (research 2.3 #6).
+- [ ] **G-9** Scale + TWAP orders as gateway-side child orders (no contract work) (research 2.1 #2).
+- [ ] **G-10** Skew-reducing fee discount in trading.rs (cheap second lever besides funding) (research 2.1 #6).
+
+---
+
+## Reference — mainnet risk parameter sheet (from research; full version in audit doc Part 2.2)
+
+| Domain | Parameter |
+|---|---|
+| Leverage/margin | BTC/ETH 25x (IM 4%, MM 2%) · XLM 10x (IM 10%, MM 5%) · new pairs 3-5x · MM = IM/2 |
+| Funding | velocity dr/dt = 36%/day × skew/skewScale · skewScale = 2× OI cap · clamp ±0.5%/hr majors, ±1%/hr alts |
+| Borrow fee | dual-slope: 0.001%/hr @0% · 0.008%/hr @80% target · 0.06%/hr @100% utilization |
+| OI/skew | reserve ≤60-75% TVL · per-side caps BTC 25% / ETH 20% / XLM 10% / new 5% of TVL · net skew ≤10-15% TVL |
+| Partial liq | 20-25% tranches · 30s cooldown · restore ≥1.5× MM · full-close <2/3 MM · penalty 1% notional (50/50 keeper/insurance, 5 USDC floor) |
+| Insurance | seed ≥10% of aggregate OI cap · feed 100% liq penalties + 10-20% fees · waterfall margin→buffer→ADL→LP |
+| Oracle | 2-of-3 publisher quorum · median across publishers · liq on fresh median · funding/NAV on 1h TWAP · >60s stale → halt-open/allow-close · deviation breaker 2%/min majors, 5%/min alts |
+| Launch | deposit caps $5-25k/account · allowlist phase · 3 pairs @10x · publish cap-raise criteria |

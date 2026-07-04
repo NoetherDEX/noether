@@ -96,7 +96,7 @@ export default function VaultsPage() {
                   <div>
                     <div className="text-xs text-muted-foreground">APR</div>
                     <div className="mt-1 text-lg md:text-2xl font-bold font-mono text-green-400">
-                      ~12.5%
+                      Variable
                     </div>
                   </div>
                   <div>

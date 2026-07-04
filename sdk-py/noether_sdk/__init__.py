@@ -13,10 +13,12 @@ from .errors import (
 )
 from .models import (
     AccountIdentity,
+    BetaStatus,
     HealthStatus,
     IssuedApiKey,
     IssuedChallenge,
     MarketSummary,
+    OpenPositionRow,
     OracleSnapshot,
     PreparedTransaction,
     RawEvent,
@@ -28,9 +30,12 @@ from .models import (
     SubmittedTx,
     VaultActivityRow,
     VaultRow,
+    VaultTradeRow,
 )
 
-__version__ = "0.0.0"
+# Single source of truth for the package version — pyproject.toml reads
+# this via [tool.hatch.version].
+__version__ = "0.1.2"
 __all__ = [
     "NoetherClient",
     # Errors
@@ -44,10 +49,12 @@ __all__ = [
     "NetworkError",
     # Models
     "AccountIdentity",
+    "BetaStatus",
     "HealthStatus",
     "IssuedApiKey",
     "IssuedChallenge",
     "MarketSummary",
+    "OpenPositionRow",
     "OracleSnapshot",
     "PreparedTransaction",
     "RawEvent",
@@ -59,4 +66,5 @@ __all__ = [
     "SubmittedTx",
     "VaultActivityRow",
     "VaultRow",
+    "VaultTradeRow",
 ]

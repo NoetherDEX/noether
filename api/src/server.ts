@@ -1,9 +1,10 @@
+import { readFileSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import type { Client } from '@libsql/client';
-import type { ApiConfig } from './config.js';
+import { DEFAULT_HMAC_PEPPER, type ApiConfig } from './config.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerMarketsRoutes } from './routes/markets.js';
 import { registerOracleRoutes } from './routes/oracle.js';
@@ -15,6 +16,9 @@ import { registerTxRoutes, type TxRoutesDeps } from './routes/tx.js';
 import { registerVaultRoutes } from './routes/vaults.js';
 import { registerReferralRoutes } from './routes/referral.js';
 import { registerPositionsRoutes } from './routes/positions.js';
+import { registerVolumeRoutes } from './routes/volume.js';
+import { registerTradesRoutes } from './routes/trades.js';
+import { registerLeaderboardRoutes } from './routes/leaderboard.js';
 import { VaultsService } from './services/vaults.js';
 import { ReferralReadService } from './services/referral.js';
 import { ContractReader } from './services/contractReader.js';
@@ -28,11 +32,13 @@ import { WsBus } from './services/wsBus.js';
 import { WsManager } from './services/wsManager.js';
 import { OracleTicker } from './services/oracleTicker.js';
 import { LiveTailer } from './services/liveTailer.js';
+import { StatsService } from './services/stats.js';
 import { createIndexerDb } from './services/indexerDb.js';
 import { getNetworkPassphrase } from '@noether/shared';
 import { authPlugin } from './plugins/auth.js';
 import { rateLimitPlugin } from './plugins/rateLimit.js';
 import { wsPlugin } from './plugins/ws.js';
+import { geoBlockPlugin } from './plugins/geoBlock.js';
 
 export interface ServerDeps {
   oracle: OracleService;
@@ -50,14 +56,25 @@ export interface ServerDeps {
   liveTailer: LiveTailer;
   vaults: VaultsService;
   referral: ReferralReadService;
+  stats: StatsService;
 }
+
+const PKG = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as { version?: string };
 
 export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: config.logLevel },
+    trustProxy: 1,
+    requestIdHeader: 'x-request-id',
   });
 
   await app.register(cors, { origin: config.corsOrigin });
+
+  app.addHook('onSend', async (request, reply) => {
+    reply.header('x-request-id', request.id);
+  });
 
   await app.register(swagger, {
     openapi: {
@@ -65,9 +82,9 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
         title: 'Noether API',
         description:
           'Public REST + WebSocket gateway for the Noether decentralized perpetual exchange on Stellar / Soroban.',
-        version: '0.0.0-dev',
+        version: PKG.version ?? '0.0.0',
       },
-      servers: [{ url: `http://${config.host}:${config.port}` }],
+      servers: [{ url: process.env.API_PUBLIC_URL ?? `http://localhost:${config.port}` }],
     },
   });
 
@@ -75,21 +92,31 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
 
   const deps = depsOverride ?? buildDefaultDeps(config, app.log as unknown as import('pino').Logger);
 
+  await app.register(geoBlockPlugin, {
+    enabled: process.env.API_GEOBLOCK === '1',
+    countryHeader: process.env.GEO_COUNTRY_HEADER ?? 'cf-ipcountry',
+    regionHeader: process.env.GEO_REGION_HEADER ?? 'cf-region-code',
+  });
   await app.register(authPlugin, { apiKeys: deps.apiKeys });
-  await app.register(rateLimitPlugin, { limiter: deps.rateLimiter });
+  await app.register(rateLimitPlugin, { limiter: deps.rateLimiter, apiKeys: deps.apiKeys });
   await app.register(wsPlugin, { manager: deps.wsManager, apiKeys: deps.apiKeys });
 
-  await app.register(registerHealthRoutes);
-  await app.register((instance) => registerMarketsRoutes(instance, deps.markets));
+  await app.register((instance) =>
+    registerHealthRoutes(instance, { db: deps.db, contracts: config.contracts }),
+  );
+  await app.register((instance) => registerMarketsRoutes(instance, deps.markets, deps.stats));
   await app.register((instance) => registerOracleRoutes(instance, deps.oracle));
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
   await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth));
-  await app.register((instance) => registerAccountRoutes(instance, deps.events, deps.db));
+  await app.register((instance) => registerAccountRoutes(instance, deps.db));
   await app.register((instance) => registerOrderRoutes(instance, deps.orders));
   await app.register((instance) => registerTxRoutes(instance, deps.tx));
   await app.register((instance) => registerVaultRoutes(instance, deps.vaults));
   await app.register((instance) => registerReferralRoutes(instance, deps.referral));
   await app.register((instance) => registerPositionsRoutes(instance, deps.db));
+  await app.register((instance) => registerVolumeRoutes(instance, deps.stats));
+  await app.register((instance) => registerTradesRoutes(instance, deps.stats));
+  await app.register((instance) => registerLeaderboardRoutes(instance, deps.stats));
 
   deps.wsManager.attachBus();
   app.addHook('onReady', async () => {
@@ -115,7 +142,7 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const markets = new MarketsService(oracle);
   const db = createIndexerDb(config);
   const events = new EventsService(db);
-  const pepper = process.env.API_HMAC_PEPPER ?? 'change-me-in-production';
+  const pepper = process.env.API_HMAC_PEPPER ?? DEFAULT_HMAC_PEPPER;
   const apiKeys = new ApiKeyStore(db, pepper);
   const walletAuth = new WalletAuth(getNetworkPassphrase(config.network));
   const rateLimiter = new RateLimiter(db);
@@ -124,10 +151,11 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const tx: TxRoutesDeps = { txCtx };
   const wsBus = new WsBus();
   wsBus.setMaxListeners(64);
-  const wsManager = new WsManager(wsBus, log);
+  const wsManager = new WsManager(wsBus, log, config.ws);
   const oracleTicker = new OracleTicker({ oracle, bus: wsBus, log });
   const liveTailer = new LiveTailer({ db, bus: wsBus, log });
   const vaults = new VaultsService(db);
   const referral = new ReferralReadService(db);
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral };
+  const stats = new StatsService(db);
+  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats };
 }

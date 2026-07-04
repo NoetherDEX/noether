@@ -6,12 +6,26 @@
  * Phase 5, WebSocket in Phase 8.
  */
 
+import { resolvedContracts } from '@noether/shared';
 import { loadConfig } from './config.js';
 import { buildServer } from './server.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const app = await buildServer(config);
+
+  // Log which stack this process actually serves (env override vs baked
+  // manifest). D-4 was a silent divergence — now it's in the boot log and
+  // echoed from /v1/health.
+  app.log.info(
+    {
+      resolved: resolvedContracts(
+        ['market', 'vault', 'noeracleShim', 'noetherRouter', 'usdcToken', 'noeToken', 'vaultFactory', 'referral'],
+        config.contracts,
+      ),
+    },
+    'Resolved contract addresses',
+  );
 
   const close = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'Shutting down');

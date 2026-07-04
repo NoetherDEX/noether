@@ -1,5 +1,5 @@
 /**
- * @noether/sdk — grid market-maker (skeleton).
+ * noether-sdk — grid market-maker (skeleton).
  *
  * Educational only. Watches the BTC oracle price and places one buy
  * order below and one sell order above the current price, refreshing

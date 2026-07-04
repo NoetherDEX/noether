@@ -1,4 +1,22 @@
 #!/bin/bash
+# ═══════════════════════════════════════════════════════════════════════
+# RETIRED 2026-07-04 (audit D-5 / TASKS.md P3-2).
+#
+# This script predates the Noeracle cutover. It requires deleted WASM,
+# omits new init args, and OVERWRITES the authoritative contracts.json
+# with a manifest missing router/vaultFactory/referral — one run
+# corrupts the address file the api/indexer Docker images bake in.
+#
+# Use the current tooling instead:
+#   ./scripts/deploy_staging.sh     (blue-green testnet deploy → verify → promote)
+#   ./scripts/deploy_production.sh  (production stack)
+#   ./scripts/deploy_noeracle_shim.sh / deploy_noether_router.sh
+#
+# The original is preserved below the guard for reference only.
+# ═══════════════════════════════════════════════════════════════════════
+echo "REFUSING: deploy_testnet.sh is retired — see scripts/legacy/README.md (audit D-5)." >&2
+exit 1
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Noether Testnet Deployment Script
 # ═══════════════════════════════════════════════════════════════════════════════

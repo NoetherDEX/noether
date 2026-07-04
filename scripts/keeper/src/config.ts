@@ -5,19 +5,101 @@
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
-import { KeeperConfig, AssetConfig } from './types';
+import { KeeperConfig, AssetConfig, KeySource } from './types';
 
 // Load .env - try local first, then project root (for monorepo)
 dotenv.config(); // loads .env from cwd (Railway sets env vars directly)
 const projectRoot = path.resolve(__dirname, '../../../');
 dotenv.config({ path: path.join(projectRoot, '.env') }); // fallback for monorepo
 
-// Default assets to monitor
+// Default assets to monitor, with per-asset publish-path defenses (K-2):
+// maxMovePct = max % move vs last pushed price per push interval (env-tunable
+// via MAX_MOVE_PCT_<SYMBOL>); min/maxPrice = absolute sanity band in USD.
 const DEFAULT_ASSETS: AssetConfig[] = [
-  { symbol: 'BTC', decimals: 8 },
-  { symbol: 'ETH', decimals: 8 },
-  { symbol: 'XLM', decimals: 7 },
+  { symbol: 'BTC', decimals: 8, maxMovePct: 10, minPrice: 1_000, maxPrice: 1_000_000 },
+  { symbol: 'ETH', decimals: 8, maxMovePct: 10, minPrice: 50, maxPrice: 100_000 },
+  { symbol: 'XLM', decimals: 7, maxMovePct: 20, minPrice: 0.01, maxPrice: 100 },
 ];
+
+function envInt(name: string, fallback: number): number {
+  const parsed = parseInt(process.env[name] || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function envFloat(name: string, fallback: number): number {
+  const parsed = parseFloat(process.env[name] || '');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveAssets(): AssetConfig[] {
+  return DEFAULT_ASSETS.map((asset) => ({
+    ...asset,
+    maxMovePct: envFloat(`MAX_MOVE_PCT_${asset.symbol}`, asset.maxMovePct),
+  }));
+}
+
+/**
+ * Resolve the signing key. Resolution order is unchanged
+ * (KEEPER_SECRET_KEY → ORACLE_SECRET_KEY → ADMIN_SECRET_KEY) but (K-8):
+ * - no fragment of the secret is EVER logged — only the source env var;
+ * - the ADMIN_SECRET_KEY fallback warns loudly on testnet and hard-fails
+ *   on mainnet (the admin key is the issuer + market admin — a keeper box
+ *   compromise must not equal full protocol compromise).
+ */
+function resolveSigningKey(network: string): { secretKey: string; keySource: KeySource } {
+  let rawKey: string | undefined;
+  let keySource: KeySource = 'KEEPER_SECRET_KEY';
+
+  if (process.env.KEEPER_SECRET_KEY) {
+    rawKey = process.env.KEEPER_SECRET_KEY;
+    keySource = 'KEEPER_SECRET_KEY';
+  } else if (process.env.ORACLE_SECRET_KEY) {
+    rawKey = process.env.ORACLE_SECRET_KEY;
+    keySource = 'ORACLE_SECRET_KEY';
+  } else if (process.env.ADMIN_SECRET_KEY) {
+    rawKey = process.env.ADMIN_SECRET_KEY;
+    keySource = 'ADMIN_SECRET_KEY';
+  }
+
+  if (!rawKey) {
+    throw new Error('❌ KEEPER_SECRET_KEY, ORACLE_SECRET_KEY, or ADMIN_SECRET_KEY must be set in .env');
+  }
+
+  // Strip quotes, whitespace, newlines that Railway might inject.
+  // Never log any part of the secret (K-8) — only where it came from.
+  const secretKey = rawKey.replace(/['"\s\n\r]/g, '').trim();
+  console.log(`🔑 Signing key source: ${keySource}`);
+
+  if (keySource === 'ADMIN_SECRET_KEY') {
+    if (network === 'mainnet') {
+      console.error('❌ Refusing to run: NETWORK=mainnet with the signing key resolved from the');
+      console.error('   ADMIN_SECRET_KEY fallback. The admin key is the asset issuer and market');
+      console.error('   admin — set a dedicated KEEPER_SECRET_KEY (or ORACLE_SECRET_KEY) instead.');
+      process.exit(1);
+    }
+    console.warn('⚠️  Signing with the ADMIN_SECRET_KEY fallback — use a dedicated keeper key');
+    console.warn('   (sequence conflicts during deploys + unnecessary blast radius).');
+  }
+
+  return { secretKey, keySource };
+}
+
+/**
+ * RPC endpoints (K-6): SOROBAN_RPC_URLS (comma-separated, primary first)
+ * wins; falls back to SOROBAN_RPC_URL, then legacy RPC_URL, then the
+ * public testnet endpoint. The client rotates through the list on
+ * transient failures.
+ */
+function resolveRpcUrls(): string[] {
+  const list = (process.env.SOROBAN_RPC_URLS || '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean);
+  if (list.length > 0) return list;
+
+  const single = process.env.SOROBAN_RPC_URL || process.env.RPC_URL;
+  return [single || 'https://soroban-testnet.stellar.org'];
+}
 
 /**
  * Load and validate configuration
@@ -32,23 +114,20 @@ export function loadConfig(): KeeperConfig {
     console.log('📄 Loaded contract addresses from contracts.json');
   }
 
-  // Validate required environment variables
-  const rawKey = process.env.KEEPER_SECRET_KEY || process.env.ORACLE_SECRET_KEY || process.env.ADMIN_SECRET_KEY;
-  if (!rawKey) {
-    throw new Error('❌ KEEPER_SECRET_KEY, ORACLE_SECRET_KEY, or ADMIN_SECRET_KEY must be set in .env');
-  }
-  // Strip quotes, whitespace, newlines that Railway might inject
-  const secretKey = rawKey.replace(/['"\s\n\r]/g, '').trim();
-  console.log(`🔑 Key loaded: ${secretKey.substring(0, 4)}...${secretKey.substring(secretKey.length - 4)} (${secretKey.length} chars)`);
+  const network = (process.env.NETWORK || 'testnet') as 'testnet' | 'mainnet';
+  const { secretKey, keySource } = resolveSigningKey(network);
+  const rpcUrls = resolveRpcUrls();
 
   const config: KeeperConfig = {
     // Network configuration
-    network: (process.env.NETWORK || 'testnet') as 'testnet' | 'mainnet',
-    rpcUrl: process.env.RPC_URL || 'https://soroban-testnet.stellar.org',
+    network,
+    rpcUrl: rpcUrls[0],
+    rpcUrls,
     networkPassphrase: process.env.NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
 
     // Credentials
     secretKey,
+    keySource,
 
     // Contract addresses (from env or contracts.json)
     marketContractId:
@@ -66,13 +145,42 @@ export function loadConfig(): KeeperConfig {
       process.env.NEXT_PUBLIC_VAULT_ID ||
       contracts.contracts?.vault ||
       '',
+    // Router + shim — extended alongside market/vault by the TTL job (P3-9).
+    routerContractId:
+      process.env.NEXT_PUBLIC_NOETHER_ROUTER_ID ||
+      contracts.contracts?.noetherRouter ||
+      '',
+    shimContractId:
+      process.env.NEXT_PUBLIC_NOERACLE_SHIM_ID ||
+      contracts.contracts?.noeracleShim ||
+      '',
 
     // Timing
-    pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS || '5000', 10),
-    oracleUpdateIntervalMs: parseInt(process.env.ORACLE_UPDATE_INTERVAL_MS || '30000', 10),
+    pollIntervalMs: envInt('POLL_INTERVAL_MS', 5000),
+    oracleUpdateIntervalMs: envInt('ORACLE_UPDATE_INTERVAL_MS', 30000),
+
+    // TTL bump job (P3-9) + wallet-funding alarm (P3-10)
+    ttlBumpIntervalMs: envInt('TTL_BUMP_INTERVAL_MS', 6 * 60 * 60 * 1000), // 6h
+    ttlExtendToLedgers: envInt('TTL_EXTEND_TO_LEDGERS', 518_400), // ~30 days
+    minKeeperXlm: envFloat('MIN_KEEPER_XLM', 20),
+
+    // Reliability (K-1)
+    watchdogTimeoutMs: envInt('WATCHDOG_TIMEOUT_MS', 3 * 60 * 1000),
+    alertErrorStreak: envInt('ALERT_ERROR_STREAK', 5),
+
+    // Publish-path defenses (K-2)
+    stateFilePath: path.resolve(process.cwd(), process.env.KEEPER_STATE_FILE || './keeper-state.json'),
+    referenceTickerUrl:
+      process.env.REFERENCE_TICKER_URL || 'https://api.binance.com/api/v3/ticker/price',
+    referenceDivergencePct: envFloat('REFERENCE_DIVERGENCE_PCT', 5),
+
+    // Alerting (K-1)
+    discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || undefined,
+    telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,
+    telegramChatId: process.env.TELEGRAM_CHAT_ID || undefined,
 
     // Assets
-    assets: DEFAULT_ASSETS,
+    assets: resolveAssets(),
   };
 
   // Validate contract addresses

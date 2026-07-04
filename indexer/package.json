@@ -11,6 +11,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "migrate": "tsx src/migrations.ts",
+    "reindex": "tsx src/reindex.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist"

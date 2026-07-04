@@ -67,6 +67,8 @@ pub enum NoetherError {
     InvalidAmount = 41,
     /// Insufficient balance for operation
     InsufficientBalance = 42,
+    /// Deposit would exceed the per-account guarded-launch cap
+    DepositCapExceeded = 43,
 
     // ═══════════════════════════════════════════════════════════════
     // Liquidation Errors (50-54)
@@ -123,4 +125,14 @@ pub enum NoetherError {
     CrossMarginNotLiquidatable = 78,
     /// No cross-margin positions found for this trader
     CrossMarginNoPositions = 79,
+    /// SL/TP/trailing-stop orders are not supported on cross-margin
+    /// positions (they would execute via the isolated path and pay
+    /// out of the shared pool)
+    CrossMarginOrderNotSupported = 80,
+    /// Oracle price moved beyond max_oracle_deviation_bps vs the stored
+    /// last-good price (opens halt; closes/liquidations stay allowed)
+    PriceDeviationTooHigh = 81,
+    /// Open would exceed the per-asset-side OI cap or the aggregate
+    /// payout-reservation cap (both sized against vault AUM)
+    OpenInterestCapExceeded = 82,
 }

@@ -92,6 +92,13 @@ interface StreamEntry {
   round_id: number;
 }
 
+/** No frame for this long → the stream is considered stale. */
+const STALE_AFTER_MS = 10_000;
+/** While stale, poll the on-chain shim price at this cadence. */
+const SHIM_POLL_MS = 5_000;
+/** Default read-only source account for shim price simulations. */
+const READONLY_KEY = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+
 /**
  * Subscribe to Noeracle's live ~500ms price stream for the given assets.
  *
@@ -102,12 +109,22 @@ interface StreamEntry {
  * transient errors. No-op on the server (returns a noop) so it's safe to call
  * from a client component's effect.
  *
+ * Staleness: a watchdog tracks the last received frame. If none arrives for
+ * ~10s (feed died, laptop woke from sleep, fatal socket close), `onStatus(true)`
+ * fires and the on-chain shim price is polled every 5s and fed through `onPrice`
+ * so marks/PnL keep moving. When frames resume, `onStatus(false)` fires and the
+ * fallback poll stops. `readerKey` is the source account used for the read-only
+ * shim simulations (pass the connected wallet; defaults to the shared
+ * read-only key).
+ *
  * This drives the real-time price DISPLAY. It does NOT replace the on-chain
  * read (`getPrice` via the shim) used where a transaction needs a verified price.
  */
 export function subscribeLivePrices(
   assets: string[],
   onPrice: (p: LivePrice) => void,
+  onStatus?: (stale: boolean) => void,
+  readerKey?: string,
 ): () => void {
   if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
     return () => {};
@@ -116,9 +133,58 @@ export function subscribeLivePrices(
   const wanted = new Set(assets.map((a) => `${a}/USD`));
   const es = new EventSource(`${NOERACLE_API_URL}/v1/stream`);
 
+  const shimReader = readerKey || READONLY_KEY;
+  let lastFrameAt = Date.now();
+  let stale = false;
+  let closed = false;
+  let shimPoll: ReturnType<typeof setInterval> | null = null;
+
+  // Lazy-import the shim reader so oracle.ts (module-level shim Contract)
+  // only loads in the browser, and only if the fallback actually engages.
+  const pollShim = async () => {
+    try {
+      const { getPrice, priceToDisplay } = await import('./oracle');
+      await Promise.all(
+        assets.map(async (asset) => {
+          const priceData = await getPrice(shimReader, asset);
+          // Only deliver if still stale — never overwrite a resumed live feed.
+          if (priceData && stale && !closed) {
+            onPrice({
+              asset,
+              price: priceToDisplay(priceData.price),
+              timestamp: priceData.timestamp,
+              roundId: 0,
+            });
+          }
+        }),
+      );
+    } catch {
+      // shim read unavailable — keep the stale flag up and retry next tick
+    }
+  };
+
+  const setStale = (next: boolean) => {
+    if (stale === next || closed) return;
+    stale = next;
+    onStatus?.(next);
+    if (next) {
+      pollShim();
+      shimPoll = setInterval(pollShim, SHIM_POLL_MS);
+    } else if (shimPoll) {
+      clearInterval(shimPoll);
+      shimPoll = null;
+    }
+  };
+
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastFrameAt >= STALE_AFTER_MS) setStale(true);
+  }, 2_000);
+
   const handlePrices = (ev: MessageEvent) => {
     try {
       const data = JSON.parse(ev.data) as { assets?: Record<string, StreamEntry> };
+      lastFrameAt = Date.now();
+      setStale(false);
       const map = data.assets ?? {};
       for (const pair of wanted) {
         const e = map[pair];
@@ -141,8 +207,16 @@ export function subscribeLivePrices(
   // The service tags its frames `event: prices`; also handle default messages.
   es.addEventListener('prices', handlePrices as EventListener);
   es.onmessage = handlePrices;
+  es.onerror = () => {
+    // Transient drops auto-reconnect and are covered by the watchdog; a hard
+    // close never recovers, so flag stale right away.
+    if (es.readyState === EventSource.CLOSED) setStale(true);
+  };
 
   return () => {
+    closed = true;
+    clearInterval(watchdog);
+    if (shimPoll) clearInterval(shimPoll);
     es.removeEventListener('prices', handlePrices as EventListener);
     es.close();
   };

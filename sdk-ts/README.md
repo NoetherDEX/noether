@@ -1,4 +1,4 @@
-# @noether/sdk
+# noether-sdk
 
 Official TypeScript SDK for the [Noether](https://noether.exchange) decentralized perpetual exchange on Stellar / Soroban.
 
@@ -7,7 +7,7 @@ Type-safe, fetch-based, and split into focused sub-clients per resource. Works i
 ## Install
 
 ```bash
-npm install @noether/sdk @stellar/stellar-sdk
+npm install noether-sdk @stellar/stellar-sdk
 ```
 
 `@stellar/stellar-sdk` is only required if you want to sign locally with a `Keypair`; for browser wallets you can plug Freighter / Stellar Wallets Kit signers directly into the SDK helpers.
@@ -15,7 +15,7 @@ npm install @noether/sdk @stellar/stellar-sdk
 ## Quick start — public reads
 
 ```ts
-import { NoetherClient } from '@noether/sdk';
+import { NoetherClient } from 'noether-sdk';
 
 const client = new NoetherClient({ baseUrl: 'https://api.noether.exchange' });
 
@@ -52,6 +52,10 @@ console.log(issued.keyId, issued.secret); // store the secret immediately
 
 ## Place an order — `executeTrade`
 
+> Trading needs collateral: fund your wallet with testnet USDC from the
+> [Noether faucet](https://testnet.noether.exchange/faucet) (Friendbot only
+> provides XLM) before placing orders.
+
 ```ts
 import { Networks, TransactionBuilder } from '@stellar/stellar-sdk';
 
@@ -84,6 +88,7 @@ console.log(result.submitted.hash, result.submitted.status);
 | `client.oracle.getPrice(asset)` | live oracle price                      | no   |
 | `client.oracle.getPrices()`     | all asset prices                       | no   |
 | `client.events.list(query)`     | raw indexer events (filterable)        | no   |
+| `client.keys.betaStatus(addr?)` | closed-beta gating status              | no   |
 | `client.keys.create({...})`     | challenge → sign → issue key           | no   |
 | `client.keys.list()`            | own API keys                           | yes  |
 | `client.keys.revoke(keyId)`     | revoke own key                         | yes  |
@@ -93,13 +98,33 @@ console.log(result.submitted.hash, result.submitted.status);
 | `client.orders.prepare(req)`    | build unsigned XDR                     | yes  |
 | `client.tx.submit(req)`         | submit signed XDR + poll               | yes  |
 | `client.executeTrade({...})`    | prepare + sign + submit one-shot       | yes  |
+| `client.positions.open({...})`  | open positions (filter by trader)      | no   |
+| `client.vaults.list()` / `get(id)` / `trades(id)` / `deposits(id)` / `withdraws(id)` / `feeClaims(id)` | trading-vault marketplace reads | no |
+| `client.referral.lookupCode(c)` / `info(address)` | public referral reads | no   |
+| `client.referral.me()` / `trades()` / `claims()` | own referral state      | yes  |
+| `client.ws()`                   | WebSocket sub-client (see below)       | opt  |
+
+## WebSocket
+
+```ts
+const ws = client.ws(); // wss://…/v1/ws, same credentials as the client
+await ws.connect(); // resolves on server hello; rejects on timeout/failure
+await ws.subscribe('ticker.BTC', (data) => console.log(data));
+```
+
+`WsClient` auto-reconnects with exponential backoff, re-sends your login +
+subscriptions on every reconnect, and re-sends `account.*` subscriptions
+after each login ack. `connect()` rejects instead of hanging when the
+gateway is unreachable (`connectTimeoutMs`, default 15s). Server-side
+subscription rejections and failed logins surface through the
+`onSubscriptionRejected` / `onLogin` callbacks.
 
 ## Errors
 
 All API failures throw a typed subclass of `NoetherError`:
 
 ```ts
-import { AuthError, RateLimitError, BadRequestError, ServerError } from '@noether/sdk';
+import { AuthError, RateLimitError, BadRequestError, ServerError } from 'noether-sdk';
 
 try {
   await client.markets.get('DOGE');
@@ -114,7 +139,7 @@ try {
 
 ## Examples
 
-- [`examples/place-order.ts`](./examples/place-order.ts) — Friendbot funding + key issuance + open_position end-to-end.
+- [`examples/place-order.ts`](./examples/place-order.ts) — Friendbot funding + key issuance + open_position end-to-end (fund the wallet with testnet USDC from the [faucet](https://testnet.noether.exchange/faucet) first, or the open_position step will fail).
 - [`examples/grid-bot.ts`](./examples/grid-bot.ts) — minimal grid market-maker skeleton.
 
 Run with `tsx`:
@@ -128,11 +153,11 @@ npx tsx sdk-ts/examples/place-order.ts http://127.0.0.1:4000
 ```bash
 # from repo root
 npm install
-npm run build -w @noether/sdk         # tsup → dual ESM + CJS + .d.ts
-npm run test -w @noether/sdk          # vitest unit tests
-npm run typecheck -w @noether/sdk
+npm run build -w noether-sdk          # tsup → dual ESM + CJS + .d.ts
+npm run test -w noether-sdk           # vitest unit tests
+npm run typecheck -w noether-sdk
 ```
 
 ## Status
 
-Phase 6 v0 covers the REST surface shipped through Phase 5. WebSocket sub-client lands in Phase 8 and will sit at `client.ws`.
+Covers the full gateway REST surface plus the `client.ws()` WebSocket sub-client. See [CHANGELOG.md](./CHANGELOG.md).

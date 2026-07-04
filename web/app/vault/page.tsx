@@ -5,6 +5,7 @@ import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { fromPrecision, toPrecision } from '@/lib/utils';
+import { debugLog } from '@/lib/utils/debug';
 import {
   StatsBar,
   YourPosition,
@@ -34,10 +35,15 @@ function VaultPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Pool stats
-  const [poolStats, setPoolStats] = useState({
+  const [poolStats, setPoolStats] = useState<{
+    tvl: number;
+    noePrice: number;
+    apy: number | null;
+    noeBalance: number;
+  }>({
     tvl: 0,
     noePrice: 1.0,
-    apy: 12.5, // TODO: Calculate from actual fees
+    apy: null, // real APR needs fee-revenue history (P4-15); hidden until then
     noeBalance: 0,
   });
 
@@ -69,9 +75,9 @@ function VaultPage() {
       ]);
 
       // Debug: Log raw poolInfo to see what we're getting
-      console.log('[Vault] Raw poolInfo:', poolInfo);
-      console.log('[Vault] Raw noePrice:', noePrice);
-      console.log('[Vault] Raw noeBalance:', noeBalance);
+      debugLog('[Vault] Raw poolInfo:', poolInfo);
+      debugLog('[Vault] Raw noePrice:', noePrice);
+      debugLog('[Vault] Raw noeBalance:', noeBalance);
 
       if (poolInfo) {
         // Safely convert values with fallbacks
@@ -94,7 +100,7 @@ function VaultPage() {
         setPoolStats({
           tvl: isNaN(tvl) ? 0 : tvl,
           noePrice: isNaN(noePriceNum) ? 1.0 : noePriceNum,
-          apy: 12.5, // TODO: Calculate from actual fees
+          apy: null, // real APR needs fee-revenue history (P4-15); hidden until then
           noeBalance: isNaN(noeBalanceNum) ? 0 : noeBalanceNum,
         });
       }

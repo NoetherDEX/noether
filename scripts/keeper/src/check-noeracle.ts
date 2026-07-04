@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   // 3) Read it back from get_price_pers(tag). The 8-byte tag is the first 8
   //    bytes of the signed message (e.g. "BTCUSD\0\0").
   const tag = Buffer.from(att.message, 'hex').subarray(0, 8);
-  const server = new rpc.Server(config.rpcUrl);
+  const server = new rpc.Server(config.rpcUrl, { timeout: 15_000 });
   const account = await server.getAccount(stellar.publicKey);
   const noeracle = new Contract(config.noeracleContractId);
   const readTx = new TransactionBuilder(account, {

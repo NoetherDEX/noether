@@ -8,10 +8,11 @@ use soroban_sdk::{Address, Env, Vec};
 
 use crate::types::{FactoryError, StorageKey, VaultInfo};
 
-const INSTANCE_TTL_THRESHOLD: u32 = 17_280; // ~24 h
-const INSTANCE_TTL_EXTEND: u32 = 518_400; // ~30 d
-const PERSISTENT_TTL_THRESHOLD: u32 = 17_280;
-const PERSISTENT_TTL_EXTEND: u32 = 518_400;
+use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
+const INSTANCE_TTL_THRESHOLD: u32 = TTL_THRESHOLD;
+const INSTANCE_TTL_EXTEND: u32 = TTL_EXTEND_TO;
+const PERSISTENT_TTL_THRESHOLD: u32 = TTL_THRESHOLD;
+const PERSISTENT_TTL_EXTEND: u32 = TTL_EXTEND_TO;
 
 // ───────────────────────────────────────────────────────────────────────
 // Initialization
@@ -109,9 +110,6 @@ pub fn load_vault(env: &Env, vault_id: u32) -> Result<VaultInfo, FactoryError> {
         .ok_or(FactoryError::VaultNotFound)
 }
 
-pub fn vault_exists(env: &Env, vault_id: u32) -> bool {
-    env.storage().persistent().has(&StorageKey::Vault(vault_id))
-}
 
 // ───────────────────────────────────────────────────────────────────────
 // Depositor share balances

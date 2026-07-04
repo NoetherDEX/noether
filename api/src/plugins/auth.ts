@@ -21,36 +21,59 @@ export interface AuthPluginOpts {
 
 const TIMESTAMP_TOLERANCE_SEC = 30;
 
+export type AuthFailure = 'missing_bearer' | 'malformed_bearer' | 'stale_timestamp' | 'invalid_credentials';
+
+/**
+ * Resolve the bearer credentials on a request and populate `request.user`.
+ * Returns null on success or the failure reason without replying — callers
+ * decide whether an unauthenticated request is fatal (requireAuth) or fine
+ * (the rate-limit hook, which falls back to the public tier).
+ */
+export async function resolveRequestUser(
+  request: FastifyRequest,
+  apiKeys: ApiKeyStore,
+): Promise<AuthFailure | null> {
+  const auth = (request.headers.authorization ?? '').toString();
+  if (!auth.startsWith('Bearer ')) {
+    return 'missing_bearer';
+  }
+  const bearer = auth.slice('Bearer '.length).trim();
+  const sep = bearer.indexOf(':');
+  if (sep < 0) {
+    return 'malformed_bearer';
+  }
+  const keyId = bearer.slice(0, sep);
+  const secret = bearer.slice(sep + 1);
+
+  // Optional X-Timestamp replay protection (clients are encouraged but not
+  // required to send it; HTTPS is the primary mitigation).
+  const tsRaw = request.headers['x-timestamp'];
+  if (tsRaw !== undefined) {
+    const ts = Number(Array.isArray(tsRaw) ? tsRaw[0] : tsRaw);
+    const now = Math.floor(Date.now() / 1000);
+    if (!Number.isFinite(ts) || Math.abs(now - ts) > TIMESTAMP_TOLERANCE_SEC) {
+      return 'stale_timestamp';
+    }
+  }
+
+  const record = await apiKeys.lookupForAuth(keyId, secret);
+  if (!record) {
+    return 'invalid_credentials';
+  }
+  request.user = { keyId: record.keyId, owner: record.owner, tier: record.tier };
+  return null;
+}
+
 async function authPluginImpl(app: FastifyInstance, opts: AuthPluginOpts): Promise<void> {
   app.decorate('requireAuth', async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
-    const auth = (request.headers.authorization ?? '').toString();
-    if (!auth.startsWith('Bearer ')) {
-      return reply.code(401).send({ error: 'missing_bearer' });
-    }
-    const bearer = auth.slice('Bearer '.length).trim();
-    const sep = bearer.indexOf(':');
-    if (sep < 0) {
+    if (request.user) return;
+    const failure = await resolveRequestUser(request, opts.apiKeys);
+    if (failure === 'malformed_bearer') {
       return reply.code(401).send({ error: 'malformed_bearer', hint: 'use Bearer <keyId>:<secret>' });
     }
-    const keyId = bearer.slice(0, sep);
-    const secret = bearer.slice(sep + 1);
-
-    // Optional X-Timestamp replay protection (clients are encouraged but not
-    // required to send it; HTTPS is the primary mitigation).
-    const tsRaw = request.headers['x-timestamp'];
-    if (tsRaw !== undefined) {
-      const ts = Number(Array.isArray(tsRaw) ? tsRaw[0] : tsRaw);
-      const now = Math.floor(Date.now() / 1000);
-      if (!Number.isFinite(ts) || Math.abs(now - ts) > TIMESTAMP_TOLERANCE_SEC) {
-        return reply.code(401).send({ error: 'stale_timestamp' });
-      }
+    if (failure) {
+      return reply.code(401).send({ error: failure });
     }
-
-    const record = await opts.apiKeys.lookupForAuth(keyId, secret);
-    if (!record) {
-      return reply.code(401).send({ error: 'invalid_credentials' });
-    }
-    request.user = { keyId: record.keyId, owner: record.owner, tier: record.tier };
   });
 }
 

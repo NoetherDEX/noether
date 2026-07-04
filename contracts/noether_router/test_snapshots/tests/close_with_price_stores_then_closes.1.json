@@ -21,6 +21,13 @@
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                    }
+                  ]
                 }
               ]
             }
@@ -149,6 +156,17 @@
                       "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     },
                     "storage": [
+                      {
+                        "key": {
+                          "bytes": "4554485553440000"
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 350000000000
+                          }
+                        }
+                      },
                       {
                         "key": {
                           "symbol": "PRICE"
@@ -280,6 +298,22 @@
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                         }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Publishers"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "vec": [
+                            {
+                              "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                            }
+                          ]
+                        }
                       }
                     ]
                   }
@@ -376,6 +410,13 @@
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                    }
+                  ]
                 }
               ]
             }

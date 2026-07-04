@@ -56,6 +56,17 @@ describe('keys sub-client (challenge flow)', () => {
     const { client } = makeClient();
     await expect(client.account.me()).rejects.toThrow(/authenticated/);
   });
+
+  it('betaStatus() hits /v1/keys/beta-status with the address', async () => {
+    const { client, fake } = makeClient({
+      scripts: [{ status: 200, body: { gated: true, allowed: false } }],
+    });
+    const status = await client.keys.betaStatus('G'.padEnd(56, 'A'));
+    const url = new URL(fake.calls[0]!.url);
+    expect(url.pathname).toBe('/v1/keys/beta-status');
+    expect(url.searchParams.get('address')).toBe('G'.padEnd(56, 'A'));
+    expect(status).toEqual({ gated: true, allowed: false });
+  });
 });
 
 describe('authed bearer header', () => {

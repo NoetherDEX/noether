@@ -2,7 +2,7 @@
 //!
 //! Storage keys and helpers for the Market contract.
 
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -68,6 +68,18 @@ pub enum DataKey {
     AllCrossMarginTraders,
     /// Peak price tracked for trailing stop orders (order_id -> i128)
     TrailingStopPeak(u64),
+    /// Trailing-stop order ID attached to a position
+    PositionTrailingStop(u64),
+    /// Last accepted fresh oracle price + timestamp per asset (deviation guard)
+    LastGoodPrice(Symbol),
+    /// Treasury address receiving the protocol's share of trading fees
+    Treasury,
+    /// Protocol share of trading fees in bps (default 2000 = 20%)
+    ProtocolFeeBps,
+    /// Per-asset aggregate exposure (long_k, long_size, short_k, short_size)
+    /// where k = sum of size*PRECISION/entry — lets unrealized PnL at mark P
+    /// be computed incrementally without iterating positions
+    AssetExposure(Symbol),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -177,13 +189,48 @@ pub fn set_last_funding_time(env: &Env, time: u64) {
     extend_persistent_ttl(env, &DataKey::LastFundingTime);
 }
 
-pub fn get_current_funding_rate(env: &Env) -> i128 {
-    env.storage().persistent().get(&DataKey::CurrentFundingRate).unwrap_or(0)
-}
-
 pub fn set_current_funding_rate(env: &Env, rate: i128) {
     env.storage().persistent().set(&DataKey::CurrentFundingRate, &rate);
     extend_persistent_ttl(env, &DataKey::CurrentFundingRate);
+}
+
+pub fn get_treasury(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Treasury)
+}
+
+pub fn set_treasury(env: &Env, treasury: &Address) {
+    env.storage().instance().set(&DataKey::Treasury, treasury);
+}
+
+pub fn get_protocol_fee_bps(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::ProtocolFeeBps).unwrap_or(2_000)
+}
+
+pub fn set_protocol_fee_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&DataKey::ProtocolFeeBps, &bps);
+}
+
+pub fn get_asset_exposure(env: &Env, asset: &Symbol) -> (i128, i128, i128, i128) {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AssetExposure(asset.clone()))
+        .unwrap_or((0, 0, 0, 0))
+}
+
+pub fn set_asset_exposure(env: &Env, asset: &Symbol, exposure: &(i128, i128, i128, i128)) {
+    let key = DataKey::AssetExposure(asset.clone());
+    env.storage().persistent().set(&key, exposure);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn get_last_good_price(env: &Env, asset: &Symbol) -> Option<(i128, u64)> {
+    env.storage().persistent().get(&DataKey::LastGoodPrice(asset.clone()))
+}
+
+pub fn set_last_good_price(env: &Env, asset: &Symbol, price: i128, ts: u64) {
+    let key = DataKey::LastGoodPrice(asset.clone());
+    env.storage().persistent().set(&key, &(price, ts));
+    extend_persistent_ttl(env, &key);
 }
 
 pub fn get_cumulative_funding_rate(env: &Env) -> i128 {
@@ -286,15 +333,18 @@ pub fn init_position_index(env: &Env) {
     env.storage().persistent().set(&DataKey::AllPositions, &empty);
 }
 
+pub fn get_trader_position_ids(env: &Env, trader: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::TraderPositions(trader.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
 pub fn get_all_position_ids(env: &Env) -> Vec<u64> {
     env.storage()
         .persistent()
         .get(&DataKey::AllPositions)
         .unwrap_or(Vec::new(env))
-}
-
-pub fn get_position_count(env: &Env) -> u64 {
-    get_all_position_ids(env).len() as u64
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -326,10 +376,7 @@ pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
 // TTL Management
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Stellar best practice: threshold (check if TTL < this) + extend_to (set TTL to this)
-// Only extends if current TTL < threshold, avoiding wasted gas on every call
-const TTL_THRESHOLD: u32 = 17_280; // ~1 day at 5s ledgers
-const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
+use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
 
 pub fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
@@ -491,6 +538,19 @@ pub fn set_position_take_profit(env: &Env, position_id: u64, order_id: u64) {
 
 pub fn remove_position_take_profit(env: &Env, position_id: u64) {
     env.storage().persistent().remove(&DataKey::PositionTakeProfit(position_id));
+}
+
+pub fn get_position_trailing_stop(env: &Env, position_id: u64) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::PositionTrailingStop(position_id))
+}
+
+pub fn set_position_trailing_stop(env: &Env, position_id: u64, order_id: u64) {
+    env.storage().persistent().set(&DataKey::PositionTrailingStop(position_id), &order_id);
+    extend_persistent_ttl(env, &DataKey::PositionTrailingStop(position_id));
+}
+
+pub fn remove_position_trailing_stop(env: &Env, position_id: u64) {
+    env.storage().persistent().remove(&DataKey::PositionTrailingStop(position_id));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

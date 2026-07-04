@@ -1,0 +1,9 @@
+# Pin the contract toolchain so local dev and CI use the SAME Rust/clippy
+# version — floating `stable` silently introduced a new clippy lint
+# (manual_checked_ops in 1.96) that failed CI while passing on an older
+# local clippy. Bump this deliberately (and CI's dtolnay/rust-toolchain ref
+# to match) when adopting a newer toolchain.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

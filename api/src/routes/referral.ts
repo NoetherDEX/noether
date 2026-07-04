@@ -13,6 +13,84 @@ interface ActivityQuery {
   limit?: number;
 }
 
+const REFERRER_PROPERTIES = {
+  referrer: { type: 'string' },
+  code: { type: 'string' },
+  createdAt: { type: 'integer' },
+  referredCount: { type: 'integer' },
+  totalVolumeGenerated: { type: 'string' },
+  totalEarned: { type: 'string' },
+  claimable: { type: 'string' },
+  updatedAt: { type: 'integer' },
+} as const;
+
+const REFERRER_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: REFERRER_PROPERTIES,
+  required: ['referrer', 'code'],
+} as const;
+
+const NULLABLE_REFERRER_SCHEMA = {
+  type: ['object', 'null'],
+  additionalProperties: true,
+  properties: REFERRER_PROPERTIES,
+} as const;
+
+const NULLABLE_BINDING_SCHEMA = {
+  type: ['object', 'null'],
+  additionalProperties: true,
+  properties: {
+    referee: { type: 'string' },
+    referrer: { type: 'string' },
+    code: { type: 'string' },
+    boundAt: { type: 'integer' },
+    txHash: { type: 'string' },
+  },
+} as const;
+
+const REFERRAL_TRADE_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: { type: 'integer' },
+    referee: { type: 'string' },
+    referrer: { type: 'string' },
+    originalFee: { type: 'string' },
+    discount: { type: 'string' },
+    payout: { type: 'string' },
+    ledger: { type: 'integer' },
+    ts: { type: 'integer' },
+    txHash: { type: 'string' },
+  },
+  required: ['id', 'referee', 'referrer', 'ledger', 'ts', 'txHash'],
+} as const;
+
+const REFERRAL_CLAIM_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    id: { type: 'integer' },
+    referrer: { type: 'string' },
+    amount: { type: 'string' },
+    ledger: { type: 'integer' },
+    ts: { type: 'integer' },
+    txHash: { type: 'string' },
+  },
+  required: ['id', 'referrer', 'amount', 'ledger', 'ts', 'txHash'],
+} as const;
+
+const NOT_FOUND_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    error: { type: 'string' },
+    code: { type: 'string' },
+    address: { type: 'string' },
+  },
+  required: ['error'],
+} as const;
+
 export async function registerReferralRoutes(
   app: FastifyInstance,
   service: ReferralReadService,
@@ -27,6 +105,10 @@ export async function registerReferralRoutes(
           type: 'object',
           properties: { code: { type: 'string', minLength: 3, maxLength: 16 } },
           required: ['code'],
+        },
+        response: {
+          200: REFERRER_SCHEMA,
+          404: NOT_FOUND_SCHEMA,
         },
       },
     },
@@ -49,6 +131,17 @@ export async function registerReferralRoutes(
           properties: { address: { type: 'string', minLength: 56, maxLength: 56 } },
           required: ['address'],
         },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              self: REFERRER_SCHEMA,
+              binding: NULLABLE_BINDING_SCHEMA,
+            },
+            required: ['self'],
+          },
+          404: NOT_FOUND_SCHEMA,
+        },
       },
     },
     async (req, reply) => {
@@ -67,6 +160,15 @@ export async function registerReferralRoutes(
         description:
           'Returns the referral state of the authenticated owner — both their own referrer row (if any) and the binding they hold as a referee (if any).',
         tags: ['referral', 'account'],
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              self: NULLABLE_REFERRER_SCHEMA,
+              binding: NULLABLE_BINDING_SCHEMA,
+            },
+          },
+        },
       },
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
@@ -90,6 +192,13 @@ export async function registerReferralRoutes(
           type: 'object',
           properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
         },
+        response: {
+          200: {
+            type: 'object',
+            properties: { trades: { type: 'array', items: REFERRAL_TRADE_SCHEMA } },
+            required: ['trades'],
+          },
+        },
       },
     },
     async (req, reply) => {
@@ -108,6 +217,13 @@ export async function registerReferralRoutes(
         querystring: {
           type: 'object',
           properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { claims: { type: 'array', items: REFERRAL_CLAIM_SCHEMA } },
+            required: ['claims'],
+          },
         },
       },
     },

@@ -15,12 +15,12 @@ export function ReferralStats({ row }: { row: ReferrerRow }) {
     {
       label: 'Total Earned',
       value: `$${fmtReferralUsdc(row.totalEarned)}`,
-      hint: 'Lifetime payouts credited to your code',
+      hint: 'Lifetime credits to your code — accrual starts in v1.1',
     },
     {
-      label: 'Claimable Now',
+      label: 'Claimable',
       value: `$${fmtReferralUsdc(row.claimable)}`,
-      hint: 'Pending USDC, ready to claim',
+      hint: 'Pending USDC — payouts open in v1.1',
       tone: BigInt(row.claimable || '0') > 0n ? 'success' : 'neutral',
     },
     {

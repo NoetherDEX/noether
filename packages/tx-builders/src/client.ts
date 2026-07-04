@@ -52,6 +52,18 @@ function rpcServer(rpcUrl: string): rpc.Server {
   return new rpc.Server(rpcUrl, { allowHttp: rpcUrl.startsWith('http://') });
 }
 
+/** The unsigned invoke-contract operation produced by `Contract.call`. */
+export type InvokeOp = ReturnType<Contract['call']>;
+
+/**
+ * Build the unsigned invoke-contract operation for a method call. Pure and
+ * synchronous — no network, no simulation — so builders can expose it as a
+ * deterministic seam (offline op inspection, XDR snapshot tests).
+ */
+export function buildInvokeOp(contractId: string, method: string, args: xdr.ScVal[]): InvokeOp {
+  return new Contract(contractId).call(method, ...args);
+}
+
 /**
  * Construct, simulate, and assemble a contract call transaction.
  * The source account is the trader (their address); they will sign and
@@ -66,12 +78,11 @@ export async function buildContractTx(
 ): Promise<PreparedTx> {
   const server = rpcServer(ctx.rpcUrl);
   const account = await server.getAccount(sourcePublicKey);
-  const contract = new Contract(contractId);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: passphrase(ctx.network),
   })
-    .addOperation(contract.call(method, ...args))
+    .addOperation(buildInvokeOp(contractId, method, args))
     .setTimeout(300)
     .build();
 

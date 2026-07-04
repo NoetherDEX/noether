@@ -1,9 +1,15 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { EventsService } from '../services/events.js';
-import type { Client } from '@libsql/client';
+import type { Client, Row } from '@libsql/client';
+import { mapPositionRow, type PositionRow } from './positions.js';
 
 interface EventQueryString {
   topic?: string;
+  before_ts?: number;
+  limit?: number;
+}
+
+interface HistoryQueryString {
+  before_ts?: number;
   limit?: number;
 }
 
@@ -12,7 +18,6 @@ const ORDER_TOPICS = ['order_placed', 'order_executed', 'order_cancelled'];
 
 export async function registerAccountRoutes(
   app: FastifyInstance,
-  events: EventsService,
   db: Client,
 ): Promise<void> {
   app.get(
@@ -45,6 +50,7 @@ export async function registerAccountRoutes(
           type: 'object',
           properties: {
             topic: { type: 'string' },
+            before_ts: { type: 'integer', minimum: 0 },
             limit: { type: 'integer', minimum: 1, maximum: 500 },
           },
         },
@@ -62,6 +68,10 @@ export async function registerAccountRoutes(
           conditions.push(`topic = ?`);
           args.push(topicFilter[0]!);
         }
+        if (req.query.before_ts !== undefined) {
+          conditions.push(`ledger_close_ts < ?`);
+          args.push(req.query.before_ts);
+        }
         const result = await db.execute({
           sql: `
             SELECT event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
@@ -72,18 +82,7 @@ export async function registerAccountRoutes(
           `,
           args: [...args, limit],
         });
-        return reply.send({
-          events: result.rows.map((row) => ({
-            eventId: String(row.event_id),
-            contractId: String(row.contract_id),
-            topic: String(row.topic),
-            ledger: Number(row.ledger),
-            ledgerCloseTs: Number(row.ledger_close_ts),
-            txHash: String(row.tx_hash),
-            payload: JSON.parse(String(row.payload_json)),
-            insertedAt: Number(row.inserted_at),
-          })),
-        });
+        return reply.send({ events: result.rows.map(mapEventRow) });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes('no such table')) {
@@ -100,46 +99,96 @@ export async function registerAccountRoutes(
       preHandler: app.requireAuth,
       schema: {
         description:
-          'Position-related events for the authenticated owner (position_opened, position_closed, position_liquidated).',
+          'Open positions for the authenticated owner (from the indexer positions projection), ' +
+          'plus the owner\'s position events (position_opened, position_closed, position_liquidated).',
         tags: ['account'],
       },
     },
     async (req, reply) => {
       const owner = req.user!.owner;
-      const rows = await events.list({ topic: undefined, limit: 200 });
-      // EventsService doesn't yet support topic-IN; do an explicit query here.
-      const filtered = rows.filter(
-        (e) =>
-          POSITION_TOPICS.includes(e.topic) &&
-          isOwnedByTrader(e.payload as Record<string, unknown>, owner),
-      );
-      return reply.send({ events: filtered });
+      try {
+        const positionsResult = await db.execute({
+          sql: 'SELECT * FROM positions WHERE trader = ? ORDER BY opened_at DESC',
+          args: [owner],
+        });
+        const eventsResult = await db.execute({
+          sql: traderEventsSql(POSITION_TOPICS, false),
+          args: [owner, ...POSITION_TOPICS, 200],
+        });
+        return reply.send({
+          positions: (positionsResult.rows as unknown as PositionRow[]).map(mapPositionRow),
+          events: eventsResult.rows.map(mapEventRow),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('no such table')) {
+          return reply.send({ positions: [], events: [] });
+        }
+        throw err;
+      }
     },
   );
 
-  app.get(
+  app.get<{ Querystring: HistoryQueryString }>(
     '/v1/account/me/orders',
     {
       preHandler: app.requireAuth,
       schema: {
         description: 'Order-related events for the authenticated owner.',
         tags: ['account'],
+        querystring: {
+          type: 'object',
+          properties: {
+            before_ts: { type: 'integer', minimum: 0 },
+            limit: { type: 'integer', minimum: 1, maximum: 500 },
+          },
+        },
       },
     },
     async (req, reply) => {
       const owner = req.user!.owner;
-      const rows = await events.list({ topic: undefined, limit: 500 });
-      const filtered = rows.filter(
-        (e) =>
-          ORDER_TOPICS.includes(e.topic) &&
-          isOwnedByTrader(e.payload as Record<string, unknown>, owner),
-      );
-      return reply.send({ events: filtered });
+      const limit = Math.min(500, Math.max(1, req.query.limit ?? 500));
+      const beforeTs = req.query.before_ts;
+      try {
+        const result = await db.execute({
+          sql: traderEventsSql(ORDER_TOPICS, beforeTs !== undefined),
+          args: [owner, ...ORDER_TOPICS, ...(beforeTs !== undefined ? [beforeTs] : []), limit],
+        });
+        return reply.send({ events: result.rows.map(mapEventRow) });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('no such table')) {
+          return reply.send({ events: [] });
+        }
+        throw err;
+      }
     },
   );
 }
 
-function isOwnedByTrader(payload: Record<string, unknown>, owner: string): boolean {
-  const t = payload.trader;
-  return typeof t === 'string' && t === owner;
+function traderEventsSql(topics: string[], beforeTs: boolean): string {
+  const placeholders = topics.map(() => '?').join(', ');
+  const cursor = beforeTs ? 'AND ledger_close_ts < ?' : '';
+  return `
+    SELECT event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
+    FROM events_raw
+    WHERE json_extract(payload_json, '$.trader') = ?
+      AND topic IN (${placeholders})
+      ${cursor}
+    ORDER BY ledger DESC, event_id DESC
+    LIMIT ?
+  `;
+}
+
+function mapEventRow(row: Row) {
+  return {
+    eventId: String(row.event_id),
+    contractId: String(row.contract_id),
+    topic: String(row.topic),
+    ledger: Number(row.ledger),
+    ledgerCloseTs: Number(row.ledger_close_ts),
+    txHash: String(row.tx_hash),
+    payload: JSON.parse(String(row.payload_json)),
+    insertedAt: Number(row.inserted_at),
+  };
 }

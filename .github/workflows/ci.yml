@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, staging]
   push:
-    branches: [main, develop]
+    branches: [main, develop, staging]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -116,3 +116,77 @@ jobs:
           name: sdk-ts-dist
           path: sdk-ts/dist
           retention-days: 7
+
+  contracts:
+    name: Contract tests & clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to match contracts/rust-toolchain.toml — floating `@stable`
+      # introduced a new clippy lint (manual_checked_ops in 1.96) that broke
+      # CI while passing on older local clippy. Bump both together.
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      # The market test module embeds the vault contract via
+      # contractimport!(../target/wasm32-unknown-unknown/release/vault.wasm)
+      # and registers it with vault::WASM, so that file must exist before
+      # `cargo test`/`clippy` compile the market tests.
+      - name: Build vault WASM (imported by market tests)
+        working-directory: contracts
+        run: cargo build --release --target wasm32-unknown-unknown -p vault
+
+      - name: Run contract tests
+        working-directory: contracts
+        run: cargo test --workspace
+
+      - name: Run clippy
+        working-directory: contracts
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  web:
+    name: Web typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        run: npm ci
+
+      - name: Typecheck web
+        run: npx tsc --noEmit
+
+  sdk-py:
+    name: Python SDK tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk-py
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install sdk-py with dev + stellar deps
+        run: pip install -e ".[dev,stellar]"
+
+      - name: Run pytest
+        run: pytest

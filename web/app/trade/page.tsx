@@ -17,6 +17,7 @@ import {
   RecentTrades,
   OrderBook,
   CrossMarginBanner,
+  MobileTradeBar,
 } from '@/components/trading';
 import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
 import { useLeaderModeStore } from '@/lib/store';
@@ -40,9 +41,12 @@ import {
   getFundingRate,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
+import { getMarketsStats, statToUsd, type AssetMarketStats } from '@/lib/api/markets';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { subscribeLivePrices } from '@/lib/stellar/noeracle';
 import { toPrecision } from '@/lib/utils';
+import { formatCompactUsd } from '@/lib/utils/format';
+import { decodeContractError } from '@/lib/utils/contractErrors';
 import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
 
@@ -60,6 +64,8 @@ function TradePage() {
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
   const [fundingRate, setFundingRate] = useState<number>(0);
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
+  const [pricesStale, setPricesStale] = useState(false);
+  const [assetStats, setAssetStats] = useState<AssetMarketStats | null>(null);
   const prevOrdersRef = useRef<Map<number, string>>(new Map());
 
   // Display positions are derived from raw positions + the latest prices,
@@ -96,6 +102,25 @@ function TradePage() {
       .catch(() => {});
   }, [searchParams, publicKey, setLeaderVault]);
 
+  // Real market stats (OI + 24h volume) from the indexer projection —
+  // replaces the hardcoded $1.2M / $890K. Refetch on asset change + every
+  // 30s; null result keeps the neutral placeholder.
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      getMarketsStats().then((stats) => {
+        if (!active) return;
+        setAssetStats(stats?.assets.find((a) => a.asset === selectedAsset) ?? null);
+      });
+    };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, [selectedAsset]);
+
   // Fetch positions function - extracted for manual refresh
   const fetchPositions = useCallback(async (showLoading = true) => {
     if (!publicKey) return;
@@ -112,13 +137,11 @@ function TradePage() {
       // the positions tab to flash its skeleton every few seconds.
       const currentLeaderVault = useLeaderModeStore.getState().vault;
 
-      // Two flavours of position fetch:
-      //  - Leader mode: the indexer projection knows exactly which
-      //    positions the factory contract owns, so we ask the API for
-      //    that short list and pull on-chain detail just for those
-      //    ids (much faster than scanning every market position).
-      //  - Personal mode: the contract-side iterator stays, since
-      //    we don't yet expose a "by trader" filter for normal users.
+      // Both flavours resolve the open-position id list from the indexer-backed
+      // API (constant-time, no whole-market scan) and pull on-chain detail only
+      // for that short list:
+      //  - Leader mode: ids owned by the vault factory contract.
+      //  - Personal mode: ids for this trader.
       let contractPositions;
       if (currentLeaderVault && factoryAddress) {
         const open = await listOpenPositions(factoryAddress).catch(() => []);
@@ -127,7 +150,27 @@ function TradePage() {
           open.map((p) => p.positionId),
         );
       } else {
-        contractPositions = await getPositions(publicKey);
+        // Personal mode: fast path via the indexer API, then fall back to the
+        // full contract scan whenever the API yields NOTHING — whether it
+        // errored OR returned empty. Empty-but-OK is not trusted here because
+        // it also happens (a) on staging, where the shared API indexes the
+        // PRODUCTION market and so never has staging-market positions, and
+        // (b) in the brief window after opening before the indexer catches up.
+        // Net effect: never show "no positions" when the chain has them, while
+        // staying fast whenever the API does have the trader's positions. (At
+        // worst this is exactly the old whole-market scan, never slower.)
+        let apiPositions: Awaited<ReturnType<typeof getPositionsByIds>> = [];
+        try {
+          const open = await listOpenPositions(publicKey);
+          apiPositions = await getPositionsByIds(
+            publicKey,
+            open.map((p) => p.positionId),
+          );
+        } catch {
+          // API/indexer unavailable — fall through to the contract scan.
+        }
+        contractPositions =
+          apiPositions.length > 0 ? apiPositions : await getPositions(publicKey);
       }
 
       if (contractPositions.length === 0) {
@@ -163,6 +206,15 @@ function TradePage() {
   // Manual refresh handler
   const handleRefreshPositions = useCallback(() => {
     fetchPositions(false); // Don't show full loading state for manual refresh
+  }, [fetchPositions]);
+
+  // Personal positions now come from the indexer-backed API, which lags a beat
+  // behind a just-submitted open/close. Refetch immediately (snappy) and a
+  // couple of times after so a freshly opened position appears — and a freshly
+  // closed one drops — without the user hitting refresh (read-your-writes).
+  const refreshPositionsAfterTrade = useCallback(() => {
+    fetchPositions(false);
+    [2500, 6000].forEach((ms) => window.setTimeout(() => fetchPositions(false), ms));
   }, [fetchPositions]);
 
   // Fetch orders function — detects status changes and shows toasts
@@ -293,15 +345,25 @@ function TradePage() {
       }
     })();
 
-    // (2) stream live updates (~500ms) for those assets
-    const unsubscribe = subscribeLivePrices(assets, ({ asset, price }) => {
-      if (!cancelled) {
-        setCurrentPrices(prev => ({ ...prev, [asset]: price }));
-      }
-    });
+    // (2) stream live updates (~500ms) for those assets. If the SSE feed goes
+    // stale, subscribeLivePrices falls back to 5 s on-chain shim polls (fed
+    // through the same callback) and reports staleness for the amber badge.
+    const unsubscribe = subscribeLivePrices(
+      assets,
+      ({ asset, price }) => {
+        if (!cancelled) {
+          setCurrentPrices(prev => ({ ...prev, [asset]: price }));
+        }
+      },
+      (stale) => {
+        if (!cancelled) setPricesStale(stale);
+      },
+      publicKey,
+    );
 
     return () => {
       cancelled = true;
+      setPricesStale(false);
       unsubscribe();
     };
   }, [isConnected, publicKey, positionAssetKey]);
@@ -336,8 +398,9 @@ function TradePage() {
         console.log('Position closed:', result);
       }
 
-      // Refresh positions and balances
-      await fetchPositions(false);
+      // Refresh positions and balances. The staggered refetch covers the
+      // indexer lag so the closed position drops without a manual refresh.
+      refreshPositionsAfterTrade();
       refreshBalances();
     } catch (error) {
       console.error('Failed to close position:', error);
@@ -347,6 +410,15 @@ function TradePage() {
 
   const handleSetStopLoss = async (positionId: number, triggerPrice: number, slippageBps: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
+
+    // M-3 interim guard: SL orders attached to cross positions execute via
+    // the isolated close path on-chain, corrupting the shared pool. Refuse
+    // until the contract fix deploys.
+    const targetPosition = positions.find(p => p.id === positionId);
+    if (targetPosition?.marginMode === 'Cross') {
+      toast.error('Unavailable for cross-margin positions (contract fix pending)');
+      return;
+    }
 
     const promise = setStopLoss(publicKey, sign, {
       positionId,
@@ -362,7 +434,7 @@ function TradePage() {
       },
       error: (err) => {
         console.error('Failed to set stop-loss:', err);
-        return err?.message || 'Failed to set stop-loss';
+        return decodeContractError(err) || 'Failed to set stop-loss';
       },
     });
 
@@ -371,6 +443,13 @@ function TradePage() {
 
   const handleSetTakeProfit = async (positionId: number, triggerPrice: number, slippageBps: number, limitPrice?: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
+
+    // M-3 interim guard — see handleSetStopLoss.
+    const targetPosition = positions.find(p => p.id === positionId);
+    if (targetPosition?.marginMode === 'Cross') {
+      toast.error('Unavailable for cross-margin positions (contract fix pending)');
+      return;
+    }
 
     const promise = setTakeProfit(publicKey, sign, {
       positionId,
@@ -387,7 +466,7 @@ function TradePage() {
       },
       error: (err) => {
         console.error('Failed to set take-profit:', err);
-        return err?.message || 'Failed to set take-profit';
+        return decodeContractError(err) || 'Failed to set take-profit';
       },
     });
 
@@ -408,7 +487,7 @@ function TradePage() {
       },
       error: (err) => {
         console.error('Failed to cancel order:', err);
-        return err?.message || 'Failed to cancel order';
+        return decodeContractError(err) || 'Failed to cancel order';
       },
     });
 
@@ -494,13 +573,21 @@ function TradePage() {
                 <div className="border-b border-white/5">
                   <div className="flex items-center justify-between px-4 py-2">
                     {/* Asset Selector Dropdown */}
-                    <AssetSelectorDropdown
-                      selectedAsset={selectedAsset}
-                      onSelect={setSelectedAsset}
-                    />
+                    <div className="flex items-center gap-2">
+                      <AssetSelectorDropdown
+                        selectedAsset={selectedAsset}
+                        onSelect={setSelectedAsset}
+                        markPrices={currentPrices}
+                      />
+                      {pricesStale && (
+                        <span className="px-2 py-0.5 text-[10px] font-medium rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 whitespace-nowrap">
+                          Live prices stale
+                        </span>
+                      )}
+                    </div>
                     {/* Chart Header Stats (price, change, etc.) */}
                     <div className="hidden sm:block">
-                      <ChartHeader asset={selectedAsset} compact />
+                      <ChartHeader asset={selectedAsset} compact markPrice={currentPrices[selectedAsset] || 0} />
                     </div>
                   </div>
                 </div>
@@ -549,19 +636,22 @@ function TradePage() {
               </Card>
             </div>
 
-            {/* Right Sidebar - Order Panel */}
+            {/* Right Sidebar - Order Panel (desktop; mobile uses the fixed bottom bar) */}
             <div className="lg:col-span-4 xl:col-span-3">
               <div className="sticky top-20 space-y-4">
-                <LeaderModeSelector />
-                <OrderPanel
-                  asset={selectedAsset}
-                  markPrice={currentPrices[selectedAsset] || 0}
-                  positions={positions}
-                  onPositionOpened={() => {
-                    fetchPositions(false);
-                    refreshBalances();
-                  }}
-                />
+                {/* OrderPanel is replaced by the fixed bottom bar below lg */}
+                <div className="hidden lg:block space-y-4">
+                  <LeaderModeSelector />
+                  <OrderPanel
+                    asset={selectedAsset}
+                    markPrice={currentPrices[selectedAsset] || 0}
+                    positions={positions}
+                    onPositionOpened={() => {
+                      refreshPositionsAfterTrade();
+                      refreshBalances();
+                    }}
+                  />
+                </div>
 
                 {/* Market Stats */}
                 <Card>
@@ -569,11 +659,20 @@ function TradePage() {
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Open Interest</span>
-                      <span className="text-white">$1.2M</span>
+                      <span className="text-white">
+                        {assetStats
+                          ? formatCompactUsd(
+                              statToUsd(assetStats.openInterestLong) +
+                                statToUsd(assetStats.openInterestShort),
+                            )
+                          : '—'}
+                      </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">24h Volume</span>
-                      <span className="text-white">$890K</span>
+                      <span className="text-white">
+                        {assetStats ? formatCompactUsd(statToUsd(assetStats.volume24h)) : '—'}
+                      </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Funding Rate</span>
@@ -591,6 +690,17 @@ function TradePage() {
             </div>
           </div>
         </div>
+
+        {/* Mobile-only trade access (fixed bottom Long/Short → bottom-sheet OrderPanel) */}
+        <MobileTradeBar
+          asset={selectedAsset}
+          markPrice={currentPrices[selectedAsset] || 0}
+          positions={positions}
+          onPositionOpened={() => {
+            refreshPositionsAfterTrade();
+            refreshBalances();
+          }}
+        />
       </main>
     </div>
   );

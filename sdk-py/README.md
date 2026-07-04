@@ -2,13 +2,13 @@
 
 Official Python SDK for [Noether](https://noether.exchange) — a decentralized perpetual exchange on Stellar / Soroban.
 
-Async-first (`httpx` + `pydantic`), typed, mirrors the public surface of [@noether/sdk](https://github.com/NoetherDEX/noether/tree/main/sdk-ts).
+Async-first (`httpx` + `pydantic`), typed, mirrors the public surface of the [TypeScript SDK (`noether-sdk` on npm)](https://github.com/NoetherDEX/noether/tree/main/sdk-ts).
 
 ## Install
 
 ```bash
 pip install noether-sdk
-# Optional, only if you want to sign with a Stellar Keypair locally:
+# Required for API-key issuance (keys.create) and local Keypair signing:
 pip install "noether-sdk[stellar]"
 ```
 
@@ -42,6 +42,10 @@ async with NoetherClient(
 
 ## Issue an API key (one-shot)
 
+Requires the `stellar` extra. `keys.create` wraps the gateway challenge
+as a manageData op on a placeholder transaction and asks your signer for
+a signature over the transaction hash — the SDK never sees the secret.
+
 ```python
 from stellar_sdk import Keypair
 
@@ -56,6 +60,10 @@ async with NoetherClient("https://api.noether.exchange") as client:
 ```
 
 ## Place an order — `execute_trade`
+
+> Trading needs collateral: fund your wallet with testnet USDC from the
+> [Noether faucet](https://testnet.noether.exchange/faucet) (Friendbot only
+> provides XLM) before placing orders.
 
 ```python
 from stellar_sdk import Network, TransactionBuilder
@@ -88,14 +96,16 @@ print(submitted.hash, submitted.status)
 | `client.markets.list()` / `get(asset)` | no |
 | `client.oracle.get_price(asset)` / `get_prices()` | no |
 | `client.events.list(topic=, ...)` | no |
-| `client.keys.create({...})` | no |
+| `client.keys.beta_status(address=...)` | no |
+| `client.keys.create(...)` | no |
 | `client.keys.list()` / `revoke(id)` | yes |
 | `client.account.me()` / `events()` / `positions()` / `orders()` | yes |
 | `client.orders.prepare({op: ..., ...})` | yes |
+| `client.positions.open(trader=...)` | no |
 | `client.tx.submit(signed_xdr=...)` | yes |
 | `client.execute_trade({...}, signer)` | yes |
-| `client.vaults.list()` / `get(id)` / `deposits/withdraws/fee_claims(id)` | no |
-| `client.referral.lookup_code(code)` | no |
+| `client.vaults.list()` / `get(id)` / `trades/deposits/withdraws/fee_claims(id)` | no |
+| `client.referral.lookup_code(code)` / `info(address)` | no |
 | `client.referral.me()` / `trades()` / `claims()` | yes |
 
 ## WebSocket
@@ -104,11 +114,11 @@ print(submitted.hash, submitted.status)
 from noether_sdk.ws import WsClient
 
 ws = WsClient("wss://api.noether.exchange/v1/ws")
-await ws.connect()
+await ws.connect()  # returns on server hello; raises on timeout/failure
 await ws.subscribe("ticker.BTC", lambda data, ch: print(ch, data["priceFloat"]))
 ```
 
-`WsClient` reconnects automatically with exponential backoff and replays your active subscriptions on every reconnect.
+`WsClient` reconnects automatically with exponential backoff and replays your login + active subscriptions on every reconnect (`account.*` channels are re-sent after each login ack). `connect()` raises instead of hanging when the gateway is unreachable (`connect_timeout`, default 15s); subscription rejections and failed logins surface through the `on_rejected` / `on_login` callbacks.
 
 ## Errors
 
@@ -127,7 +137,7 @@ except RateLimitError as err:
 
 ## Examples
 
-- [`examples/place_order.py`](./examples/place_order.py) — Friendbot fund + key issuance + open_position end-to-end.
+- [`examples/place_order.py`](./examples/place_order.py) — Friendbot fund + key issuance + open_position end-to-end (fund the wallet with testnet USDC from the [faucet](https://testnet.noether.exchange/faucet) first, or the open_position step will fail).
 - [`examples/ws_ticker.py`](./examples/ws_ticker.py) — minimal WebSocket subscription.
 
 ## Dev
@@ -148,4 +158,4 @@ export TWINE_PASSWORD=pypi-...   # scope: entire account or project noether-sdk
 
 ## Status
 
-Phase 7 v0 — REST surface complete + WS sub-client + 11 unit tests. Mirror of the TypeScript SDK shape so cross-language services can be written in either language without translation cost.
+REST surface complete + WS sub-client. Mirror of the TypeScript SDK shape so cross-language services can be written in either language without translation cost. See [CHANGELOG.md](./CHANGELOG.md).

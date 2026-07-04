@@ -57,7 +57,7 @@ export class ApiKeyStore {
     const row = result.rows[0];
     if (!row) return null;
     if (row.revoked_at !== null) return null;
-    if (this.hashSecret(presentedSecret) !== String(row.secret_hash)) return null;
+    if (!timingSafeEqualHex(this.hashSecret(presentedSecret), String(row.secret_hash))) return null;
 
     // Update last_used_at; ignore failures.
     void this.db

@@ -2,10 +2,11 @@ use soroban_sdk::{Address, Env, String};
 
 use crate::types::{ReferralError, ReferralInfo, StorageKey};
 
-const INSTANCE_TTL_THRESHOLD: u32 = 17_280;
-const INSTANCE_TTL_EXTEND: u32 = 518_400;
-const PERSISTENT_TTL_THRESHOLD: u32 = 17_280;
-const PERSISTENT_TTL_EXTEND: u32 = 518_400;
+use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
+const INSTANCE_TTL_THRESHOLD: u32 = TTL_THRESHOLD;
+const INSTANCE_TTL_EXTEND: u32 = TTL_EXTEND_TO;
+const PERSISTENT_TTL_THRESHOLD: u32 = TTL_THRESHOLD;
+const PERSISTENT_TTL_EXTEND: u32 = TTL_EXTEND_TO;
 
 pub fn is_initialized(env: &Env) -> bool {
     env.storage()

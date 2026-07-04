@@ -3,7 +3,7 @@
 //! Core trading calculations and validations.
 //! Includes maker/taker fee system with 14-day rolling volume tiers.
 
-use noether_common::{Direction, Position, PRECISION, BASIS_POINTS, FEE_PRECISION, FeeTier, VolumeRecord, TraderFeeInfo};
+use noether_common::{PRECISION, FEE_PRECISION, FeeTier, VolumeRecord};
 use soroban_sdk::{Env, Vec};
 
 // Unused helpers removed for WASM size: calculate_effective_leverage, calculate_margin_ratio,
@@ -151,25 +151,8 @@ pub fn timestamp_to_day(timestamp: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{Env, Address, Symbol};
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
 
-    fn create_test_position(env: &Env) -> Position {
-        Position {
-            id: 1,
-            trader: Address::generate(env),
-            asset: Symbol::new(env, "XLM"),
-            collateral: 100 * PRECISION,
-            size: 1000 * PRECISION,
-            entry_price: PRECISION,
-            direction: Direction::Long,
-            leverage: 10,
-            liquidation_price: PRECISION * 91 / 100,
-            timestamp: 1000000,
-            entry_cumulative_funding: 0,
-            margin_mode: 0,
-        }
-    }
 
     fn create_empty_volume_record(env: &Env) -> VolumeRecord {
         VolumeRecord {

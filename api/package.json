@@ -1,6 +1,6 @@
 {
   "name": "@noether/api",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "REST + WebSocket gateway for Noether. Reads from the indexer's libsql, prepares + relays Soroban transactions for trading.",
   "type": "module",
