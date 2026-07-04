@@ -19,19 +19,29 @@ import { buildVaultRegistrations } from './handlers/vault.js';
 import { buildReferralRegistrations } from './handlers/referral.js';
 import { IndexerPoller } from './poll.js';
 import { reconcileAllVaults } from './vaultSync.js';
-import { getNetworkPassphrase } from '@noether/shared';
+import { getContract, getNetworkPassphrase, hasContract, resolvedContracts } from '@noether/shared';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const log = pino({ level: config.logLevel });
 
-  const market = config.contracts.contracts.market;
-  // vault_factory and referral are optional in contracts.json — they
-  // appear once their respective testnet deploys land. The router
-  // registers handlers conditionally so the indexer is useful before
-  // Phase 10/11 contracts are live.
-  const vaultFactory = config.contracts.contracts.vaultFactory;
-  const referral = config.contracts.contracts.referral;
+  // Resolve through getContract so CONTRACT_* env overrides take effect —
+  // the manifest is baked into the Docker image at build, so overrides are
+  // the only way to re-point a running indexer without a rebuild (D-4).
+  log.info(
+    { resolved: resolvedContracts(['market', 'vaultFactory', 'referral'], config.contracts) },
+    'Resolved contract addresses',
+  );
+  const market = getContract('market', config.contracts);
+  // vault_factory and referral are optional — they appear once their
+  // respective testnet deploys land. The router registers handlers
+  // conditionally so the indexer is useful before Phase 10/11 contracts.
+  const vaultFactory = hasContract('vaultFactory', config.contracts)
+    ? getContract('vaultFactory', config.contracts)
+    : undefined;
+  const referral = hasContract('referral', config.contracts)
+    ? getContract('referral', config.contracts)
+    : undefined;
 
   const contractIds: string[] = [market];
   if (vaultFactory) contractIds.push(vaultFactory);

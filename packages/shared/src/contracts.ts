@@ -69,7 +69,24 @@ export function loadContracts(path?: string): ContractsManifest {
   return parsed;
 }
 
+/**
+ * Environment-variable override name for a contract key, e.g.
+ * `market` → `CONTRACT_MARKET`, `noetherRouter` → `CONTRACT_NOETHER_ROUTER`.
+ * Set these on Railway/Vercel to re-point an address WITHOUT rebuilding the
+ * Docker image — the manifest is COPY'd in at build time, so before this the
+ * only way to change an address was a rebuild (audit D-4). An env override
+ * always wins over the baked-in manifest.
+ */
+export function contractEnvVar(key: ContractKey): string {
+  const snake = key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase();
+  return `CONTRACT_${snake}`;
+}
+
 export function getContract(key: ContractKey, manifest?: ContractsManifest): StellarAddress {
+  const override = process.env[contractEnvVar(key)];
+  if (override && override.trim()) {
+    return override.trim() as StellarAddress;
+  }
   const m = manifest ?? loadContracts();
   const addr = m.contracts[key];
   if (!addr) {
@@ -79,6 +96,34 @@ export function getContract(key: ContractKey, manifest?: ContractsManifest): Ste
 }
 
 export function hasContract(key: ContractKey, manifest?: ContractsManifest): boolean {
+  const override = process.env[contractEnvVar(key)];
+  if (override && override.trim()) return true;
   const m = manifest ?? loadContracts();
   return Boolean(m.contracts[key]);
+}
+
+/**
+ * Every contract address the process actually resolved to (env override or
+ * manifest), tagged with the source. Logged at boot and echoed from
+ * `/v1/health` so a running service self-reports which stack it serves —
+ * the D-4 failure was silent divergence between the baked manifest and the
+ * live site.
+ */
+export function resolvedContracts(
+  keys: readonly ContractKey[],
+  manifest?: ContractsManifest,
+): Record<string, { address: string; source: 'env' | 'manifest' | 'unset' }> {
+  const m = manifest ?? loadContracts();
+  const out: Record<string, { address: string; source: 'env' | 'manifest' | 'unset' }> = {};
+  for (const key of keys) {
+    const override = process.env[contractEnvVar(key)];
+    if (override && override.trim()) {
+      out[key] = { address: override.trim(), source: 'env' };
+    } else if (m.contracts[key]) {
+      out[key] = { address: m.contracts[key], source: 'manifest' };
+    } else {
+      out[key] = { address: '', source: 'unset' };
+    }
+  }
+  return out;
 }

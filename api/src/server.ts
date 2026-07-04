@@ -80,7 +80,9 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register(rateLimitPlugin, { limiter: deps.rateLimiter, apiKeys: deps.apiKeys });
   await app.register(wsPlugin, { manager: deps.wsManager, apiKeys: deps.apiKeys });
 
-  await app.register(registerHealthRoutes);
+  await app.register((instance) =>
+    registerHealthRoutes(instance, { db: deps.db, contracts: config.contracts }),
+  );
   await app.register((instance) => registerMarketsRoutes(instance, deps.markets));
   await app.register((instance) => registerOracleRoutes(instance, deps.oracle));
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
