@@ -126,10 +126,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: contracts
+
+      # The market test module embeds the vault contract via
+      # contractimport!(../target/wasm32-unknown-unknown/release/vault.wasm)
+      # and registers it with vault::WASM, so that file must exist before
+      # `cargo test`/`clippy` compile the market tests.
+      - name: Build vault WASM (imported by market tests)
+        working-directory: contracts
+        run: cargo build --release --target wasm32-unknown-unknown -p vault
 
       - name: Run contract tests
         working-directory: contracts
@@ -173,8 +182,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install sdk-py with dev deps
-        run: pip install -e ".[dev]"
+      - name: Install sdk-py with dev + stellar deps
+        run: pip install -e ".[dev,stellar]"
 
       - name: Run pytest
         run: pytest
