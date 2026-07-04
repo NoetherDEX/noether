@@ -176,8 +176,14 @@ export function loadConfig(): KeeperConfig {
     ttlExtendToLedgers: envInt('TTL_EXTEND_TO_LEDGERS', 518_400), // ~30 days
     minKeeperXlm: envFloat('MIN_KEEPER_XLM', 20),
 
-    // Reliability (K-1)
-    watchdogTimeoutMs: envInt('WATCHDOG_TIMEOUT_MS', 3 * 60 * 1000),
+    // Reliability (K-1). The default watchdog scales with the asset count:
+    // a full oracle pass costs ~10-12s per asset (tx confirm + NAV sync +
+    // inter-asset delay), so the old flat 3 minutes was only right for 3
+    // assets — with 14 it killed the keeper mid-cycle every cycle.
+    watchdogTimeoutMs: envInt(
+      'WATCHDOG_TIMEOUT_MS',
+      Math.max(3 * 60 * 1000, resolveAssets().length * 60 * 1000),
+    ),
     alertErrorStreak: envInt('ALERT_ERROR_STREAK', 5),
 
     // Publish-path defenses (K-2)
