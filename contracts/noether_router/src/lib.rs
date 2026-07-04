@@ -390,18 +390,31 @@ impl NoetherRouterContract {
 // wide — they only reject obvious garbage, never legitimate volatility.
 fn price_bounds(env: &Env, asset: &Symbol) -> Result<(i128, i128), NoetherError> {
     const P: i128 = 10_000_000;
-    let btc = Symbol::new(env, "BTC");
-    let eth = Symbol::new(env, "ETH");
-    let xlm = Symbol::new(env, "XLM");
-    if asset == &btc {
-        Ok((1_000 * P, 1_000_000 * P))
-    } else if asset == &eth {
-        Ok((50 * P, 100_000 * P))
-    } else if asset == &xlm {
-        Ok((P / 100, 100 * P))
-    } else {
-        Err(NoetherError::InvalidPrice)
+    // Coarse sanity bands in 7-dec USD: wide enough to never bind in a real
+    // market, tight enough to reject a wildly wrong attestation. Must cover
+    // every symbol in noether_common::assets::PAIR_TAGS.
+    const BANDS: &[(&str, i128, i128)] = &[
+        ("BTC", 1_000 * P, 1_000_000 * P),
+        ("ETH", 50 * P, 100_000 * P),
+        ("XLM", P / 100, 100 * P),
+        ("SOL", P, 100_000 * P),
+        ("XRP", P / 100, 1_000 * P),
+        ("ADA", P / 100, 1_000 * P),
+        ("BNB", 10 * P, 100_000 * P),
+        ("TRX", P / 100, 1_000 * P),
+        ("HYPE", P / 10, 100_000 * P),
+        ("DOGE", P / 1_000, 100 * P),
+        ("ZEC", P, 100_000 * P),
+        ("LINK", P / 10, 10_000 * P),
+        ("BCH", P, 100_000 * P),
+        ("LTC", P, 100_000 * P),
+    ];
+    for (sym, lo, hi) in BANDS {
+        if asset == &Symbol::new(env, sym) {
+            return Ok((*lo, *hi));
+        }
     }
+    Err(NoetherError::InvalidPrice)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -614,7 +627,7 @@ mod tests {
         let f = setup();
         let _ = f.client.open_with_price(
             &Address::generate(&f.env),
-            &Symbol::new(&f.env, "DOGE"),
+            &Symbol::new(&f.env, "PEPE"),
             &(100 * PRECISION),
             &5,
             &Direction::Long,

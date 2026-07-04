@@ -1,6 +1,15 @@
 import { TRADING } from './constants';
 
 /**
+ * Price display decimals per asset: sub-dollar assets need 4dp to be
+ * readable (e.g. DOGE at $0.0792); majors read fine at 2dp.
+ */
+const SUB_DOLLAR_ASSETS = new Set(['XLM', 'XRP', 'ADA', 'TRX', 'DOGE']);
+export function priceDecimals(asset: string): number {
+  return SUB_DOLLAR_ASSETS.has(asset) ? 4 : 2;
+}
+
+/**
  * Format a number as USD currency
  */
 export function formatUSD(value: number, decimals = 2): string {

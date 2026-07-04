@@ -269,7 +269,7 @@
               }
             ],
             "data": {
-              "symbol": "DOGE"
+              "symbol": "PEPE"
             }
           }
         }
@@ -386,7 +386,7 @@
                 {
                   "vec": [
                     {
-                      "symbol": "DOGE"
+                      "symbol": "PEPE"
                     }
                   ]
                 }

@@ -14,6 +14,7 @@ import {
   formatUSD,
   formatNumber,
   calculateLiquidationPrice,
+  priceDecimals,
   toPrecision,
 } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
@@ -855,7 +856,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   <Info className="h-3 w-3 opacity-50" />
                 </label>
                 <span className="text-xs text-muted-foreground">
-                  Current: ${assetPrice.toFixed(asset === 'XLM' ? 4 : 2)}
+                  Current: ${assetPrice.toFixed(priceDecimals(asset))}
                 </span>
               </div>
               <div className="relative">
@@ -1154,10 +1155,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <span className="font-mono text-sm text-foreground">
                 {orderType === 'Limit'
                   ? triggerPrice
-                    ? formatUSD(parseFloat(triggerPrice), asset === 'XLM' ? 4 : 2)
+                    ? formatUSD(parseFloat(triggerPrice), priceDecimals(asset))
                     : '--'
                   : assetPrice > 0
-                  ? formatUSD(assetPrice, asset === 'XLM' ? 4 : 2)
+                  ? formatUSD(assetPrice, priceDecimals(asset))
                   : '--'}
               </span>
             </div>
@@ -1178,7 +1179,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                     : 'text-foreground'
                 )}
               >
-                {liquidationPrice > 0 ? formatUSD(liquidationPrice, asset === 'XLM' ? 4 : 2) : '--'}
+                {liquidationPrice > 0 ? formatUSD(liquidationPrice, priceDecimals(asset)) : '--'}
               </span>
             </div>
 

@@ -29,6 +29,16 @@ const ASSETS = [
   { symbol: 'BTC', name: 'Bitcoin' },
   { symbol: 'ETH', name: 'Ethereum' },
   { symbol: 'XLM', name: 'Stellar' },
+  { symbol: 'SOL', name: 'Solana' },
+  { symbol: 'XRP', name: 'XRP' },
+  { symbol: 'ADA', name: 'Cardano' },
+  { symbol: 'BNB', name: 'BNB' },
+  { symbol: 'TRX', name: 'Tron' },
+  { symbol: 'DOGE', name: 'Dogecoin' },
+  { symbol: 'ZEC', name: 'Zcash' },
+  { symbol: 'LINK', name: 'Chainlink' },
+  { symbol: 'BCH', name: 'Bitcoin Cash' },
+  { symbol: 'LTC', name: 'Litecoin' },
 ];
 
 export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: AssetSelectorDropdownProps) {
