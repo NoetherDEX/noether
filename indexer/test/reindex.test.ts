@@ -109,6 +109,15 @@ describe('reindexProjections', () => {
     const raw = await db.execute('SELECT COUNT(*) AS n FROM events_raw');
     expect(Number(raw.rows[0]!.n)).toBe(3);
 
+    // The realized-trade projection rebuilds from the archived close,
+    // revived through the same string-typed payload as the live path.
+    const trades = await db.execute('SELECT position_id, asset, kind, pnl FROM trades');
+    expect(trades.rows).toHaveLength(1);
+    expect(Number(trades.rows[0]!.position_id)).toBe(2);
+    expect(trades.rows[0]!.asset).toBe('BTC');
+    expect(trades.rows[0]!.kind).toBe('close');
+    expect(String(trades.rows[0]!.pnl)).toBe('-2');
+
     db.close();
   });
 

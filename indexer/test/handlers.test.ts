@@ -10,7 +10,13 @@ import { buildMarketRegistrations } from '../src/handlers/market.js';
 import { buildReferralRegistrations } from '../src/handlers/referral.js';
 import { buildVaultRegistrations } from '../src/handlers/vault.js';
 import { runMigrations } from '../src/migrations.js';
-import type { CrossLiquidatedEvent, DecodedMarketEvent, PositionOpenedEvent } from '../src/types/events.js';
+import type {
+  CrossLiquidatedEvent,
+  DecodedMarketEvent,
+  PositionClosedEvent,
+  PositionLiquidatedEvent,
+  PositionOpenedEvent,
+} from '../src/types/events.js';
 import type { Logger } from 'pino';
 
 const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
@@ -159,6 +165,109 @@ describe('market handler', () => {
 
     const positions = await db.execute('SELECT COUNT(*) AS n FROM positions');
     expect(Number(positions.rows[0]!.n)).toBe(1);
+
+    db.close();
+  });
+});
+
+describe('market trades projection', () => {
+  function closedEvent(id: string): PositionClosedEvent {
+    return {
+      id,
+      contractId: FAKE_CONTRACT,
+      topic: 'position_closed',
+      ledger: 120,
+      ledgerCloseTs: 1745923500,
+      txHash: 'e'.repeat(64),
+      positionId: 7,
+      trader: FAKE_TRADER,
+      asset: 'ETH',
+      direction: 1,
+      size: 3_000_0000000n,
+      entryPrice: 3_000_0000000n,
+      closePrice: 3_200_0000000n,
+      pnl: 200_0000000n,
+    };
+  }
+
+  function makeMarketRouter(): EventRouter {
+    const router = new EventRouter();
+    for (const reg of buildMarketRegistrations(FAKE_CONTRACT)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    return router;
+  }
+
+  it('writes a realized-trade row on close with its asset + pnl', async () => {
+    const db = await setupDb();
+    const router = makeMarketRouter();
+    const ctx: HandlerContext = { db, rpc: {} as never, bus: new IndexerBus(), log: noopLogger };
+
+    await router.dispatch(closedEvent('evt-close-1'), ctx);
+
+    const rows = await db.execute('SELECT * FROM trades');
+    expect(rows.rows).toHaveLength(1);
+    const row = rows.rows[0]!;
+    expect(row.event_id).toBe('evt-close-1');
+    expect(Number(row.position_id)).toBe(7);
+    expect(row.trader).toBe(FAKE_TRADER);
+    expect(row.asset).toBe('ETH');
+    expect(Number(row.direction)).toBe(1);
+    expect(row.kind).toBe('close');
+    expect(String(row.size)).toBe('30000000000');
+    expect(String(row.entry_price)).toBe('30000000000');
+    expect(String(row.close_price)).toBe('32000000000');
+    expect(String(row.pnl)).toBe('2000000000');
+    expect(row.contract_id).toBe(FAKE_CONTRACT);
+
+    db.close();
+  });
+
+  it('is idempotent — redelivering the same close writes one row', async () => {
+    const db = await setupDb();
+    const router = makeMarketRouter();
+    const ctx: HandlerContext = { db, rpc: {} as never, bus: new IndexerBus(), log: noopLogger };
+
+    await router.dispatch(closedEvent('evt-close-dup'), ctx);
+    await router.dispatch(closedEvent('evt-close-dup'), ctx);
+
+    const rows = await db.execute('SELECT COUNT(*) AS n FROM trades');
+    expect(Number(rows.rows[0]!.n)).toBe(1);
+
+    db.close();
+  });
+
+  it('records a liquidation with null pnl and entry_price', async () => {
+    const db = await setupDb();
+    const router = makeMarketRouter();
+    const ctx: HandlerContext = { db, rpc: {} as never, bus: new IndexerBus(), log: noopLogger };
+
+    const liq: PositionLiquidatedEvent = {
+      id: 'evt-liq-1',
+      contractId: FAKE_CONTRACT,
+      topic: 'position_liquidated',
+      ledger: 130,
+      ledgerCloseTs: 1745923600,
+      txHash: 'f'.repeat(64),
+      positionId: 9,
+      trader: FAKE_TRADER,
+      asset: 'BTC',
+      direction: 0,
+      size: 1_500_0000000n,
+      keeperReward: 5_0000000n,
+      closePrice: 55_000_0000000n,
+    };
+    await router.dispatch(liq, ctx);
+
+    const rows = await db.execute('SELECT kind, asset, size, entry_price, close_price, pnl FROM trades');
+    expect(rows.rows).toHaveLength(1);
+    const row = rows.rows[0]!;
+    expect(row.kind).toBe('liquidation');
+    expect(row.asset).toBe('BTC');
+    expect(String(row.size)).toBe('15000000000');
+    expect(String(row.close_price)).toBe('550000000000');
+    expect(row.entry_price).toBeNull();
+    expect(row.pnl).toBeNull();
 
     db.close();
   });

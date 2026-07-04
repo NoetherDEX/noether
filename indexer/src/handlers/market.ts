@@ -23,6 +23,7 @@ function handle(topic: DecodedMarketEvent['topic']): Handler {
         return;
       }
       await maintainPositionsProjection(tx, event);
+      await recordRealizedTrade(tx, event);
       await tx.commit();
     } catch (err) {
       await rollbackQuietly(tx);
@@ -152,6 +153,42 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
     default:
       return;
   }
+}
+
+/**
+ * Realized-trade projection (I-8): one row per close / liquidation into
+ * the `trades` table (migration 017). position_closed carries entry_price
+ * and pnl; position_liquidated carries neither, so both stay NULL for
+ * liquidation rows. Keyed on the Soroban event_id via INSERT OR IGNORE so
+ * a live redelivery or a `reindex` replay writes exactly once.
+ */
+async function recordRealizedTrade(db: DbConn, event: DecodedMarketEvent): Promise<void> {
+  if (event.topic !== 'position_closed' && event.topic !== 'position_liquidated') return;
+  const isClose = event.topic === 'position_closed';
+  await db.execute({
+    sql: `
+      INSERT OR IGNORE INTO trades (
+        event_id, position_id, trader, asset, direction, kind, size,
+        entry_price, close_price, pnl, ledger, ts, tx_hash, contract_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      event.id,
+      event.positionId,
+      event.trader,
+      event.asset,
+      Number(event.direction),
+      isClose ? 'close' : 'liquidation',
+      event.size.toString(),
+      isClose ? event.entryPrice.toString() : null,
+      event.closePrice.toString(),
+      isClose ? event.pnl.toString() : null,
+      event.ledger,
+      event.ledgerCloseTs,
+      event.txHash,
+      event.contractId,
+    ],
+  });
 }
 
 async function insertEvent(db: DbConn, event: DecodedMarketEvent): Promise<boolean> {

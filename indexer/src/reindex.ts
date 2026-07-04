@@ -32,6 +32,7 @@ import type { DecodedMarketEvent } from './types/events.js';
 /** Tables written by the event handlers — truncated before replay. */
 export const PROJECTION_TABLES = [
   'positions',
+  'trades',
   'vaults',
   'vault_deposits',
   'vault_withdraws',
