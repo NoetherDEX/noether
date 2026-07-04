@@ -319,15 +319,20 @@ impl VaultContract {
 
         let mut paid: i128 = 0;
         if pnl > 0 {
-            // Trader WON — pay what the pool can actually cover
+            // Trader WON. Waterfall (P5-6): the insurance BUFFER pays first,
+            // LP value (total_usdc) only for the remainder — this shields the
+            // NOE price from winner payouts. Everything is still capped at the
+            // vault's real USDC balance so a close can never hard-revert.
             let total_usdc = get_total_usdc(&env);
+            let buffer = get_buffer_balance(&env);
             let usdc_token = get_usdc_token(&env);
             let token_client = token::Client::new(&env, &usdc_token);
             let vault_balance = token_client.balance(&env.current_contract_address());
 
             paid = pnl;
-            if paid > total_usdc {
-                paid = total_usdc;
+            let coverable = buffer + total_usdc;
+            if paid > coverable {
+                paid = coverable;
             }
             if paid > vault_balance {
                 paid = vault_balance;
@@ -338,7 +343,15 @@ impl VaultContract {
 
             if paid > 0 {
                 token_client.transfer(&env.current_contract_address(), &market_contract, &paid);
-                set_total_usdc(&env, total_usdc - paid);
+                // Draw from the buffer first, then LP value.
+                let from_buffer = if paid > buffer { buffer } else { paid };
+                if from_buffer > 0 {
+                    set_buffer_balance(&env, buffer - from_buffer);
+                }
+                let from_lp = paid - from_buffer;
+                if from_lp > 0 {
+                    set_total_usdc(&env, total_usdc - from_lp);
+                }
             }
             if paid < pnl {
                 let short = pnl - paid;
@@ -617,6 +630,44 @@ impl VaultContract {
         );
 
         Ok(())
+    }
+
+    /// Seed the insurance buffer from an admin-funded USDC transfer (P5-6).
+    /// The admin must have approved / holds the USDC; it is pulled in and
+    /// credited to the protocol-owned buffer (NOT LP value).
+    pub fn seed_buffer(env: Env, from: Address, amount: i128) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        require_admin(&env)?;
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        from.require_auth();
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        token_client.transfer(&from, &env.current_contract_address(), &amount);
+        set_buffer_balance(&env, get_buffer_balance(&env) + amount);
+        env.events().publish((Symbol::new(&env, "buffer_seeded"),), (amount,));
+        Ok(())
+    }
+
+    /// Credit USDC the market just transferred into the buffer — liquidation
+    /// penalties, protocol fee share, net trader losses (P5-6). Market-only,
+    /// credited on receipt (the market transfers, then calls this).
+    pub fn fund_buffer(env: Env, amount: i128) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        let market_contract = get_market_contract(&env);
+        market_contract.require_auth();
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        set_buffer_balance(&env, get_buffer_balance(&env) + amount);
+        env.events().publish((Symbol::new(&env, "buffer_funded"),), (amount,));
+        Ok(())
+    }
+
+    /// Current insurance buffer balance.
+    pub fn get_buffer_balance(env: Env) -> i128 {
+        storage::get_buffer_balance(&env)
     }
 
     /// Set the aggregate reservation cap (bps of AUM). Admin only.
@@ -962,6 +1013,42 @@ mod tests {
         // A small withdrawal that keeps the reservation covered is fine
         let small = t.vault.withdraw(&t.lp, &(noe / 10));
         assert!(small > 0);
+    }
+
+    #[test]
+    fn insurance_buffer_pays_winners_before_lp() {
+        let t = setup(100 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+
+        // Seed the buffer with 50 USDC (admin-funded).
+        t.vault.seed_buffer(&t.lp, &(50 * PRECISION));
+        assert_eq!(t.vault.get_buffer_balance(), 50 * PRECISION);
+        // Buffer is NOT LP value — total_usdc unchanged.
+        assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
+
+        // A 30 USDC win is paid entirely from the buffer; LP untouched.
+        let paid = t.vault.settle_pnl(&(30 * PRECISION));
+        assert_eq!(paid, 30 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 20 * PRECISION);
+        assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
+        assert_eq!(usdc.balance(&t.market), 30 * PRECISION);
+
+        // A 40 USDC win exhausts the remaining 20 buffer, then 20 from LP.
+        let paid2 = t.vault.settle_pnl(&(40 * PRECISION));
+        assert_eq!(paid2, 40 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert_eq!(t.vault.get_total_usdc(), 80 * PRECISION);
+    }
+
+    #[test]
+    fn fund_buffer_is_market_only() {
+        let t = setup(100 * PRECISION);
+        // Market-authed (mock_all_auths) works.
+        t.vault.fund_buffer(&(10 * PRECISION));
+        assert_eq!(t.vault.get_buffer_balance(), 10 * PRECISION);
+        // Without auth, rejected.
+        t.env.set_auths(&[]);
+        assert!(t.vault.try_fund_buffer(&PRECISION).is_err());
     }
 
     #[test]

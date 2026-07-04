@@ -40,8 +40,12 @@ pub enum DataKey {
     /// Sum of committed max payouts for open positions (7 decimals)
     ReservedPayout,
     /// Cumulative winner profit the pool could not pay at close (7 decimals);
-    /// owed against the future insurance buffer
+    /// owed against the insurance buffer
     Shortfall,
+    /// Protocol-owned first-loss insurance buffer (7 decimals). Pays trader
+    /// wins BEFORE LP value; fed by seed + liquidation penalties + fee share
+    /// + net losses. NOT part of LP AUM / NOE price (P5-6).
+    BufferBalance,
     /// Max total reservation as bps of AUM (default 7000 = 70%)
     ReserveCapBps,
     /// Per-asset-side OI cap as bps of AUM (default 2500 = 25%)
@@ -168,6 +172,15 @@ pub fn get_shortfall(env: &Env) -> i128 {
 pub fn set_shortfall(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::Shortfall, &amount);
     extend_ttl(env, &DataKey::Shortfall);
+}
+
+pub fn get_buffer_balance(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::BufferBalance).unwrap_or(0)
+}
+
+pub fn set_buffer_balance(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::BufferBalance, &amount);
+    extend_ttl(env, &DataKey::BufferBalance);
 }
 
 pub fn get_reserve_cap_bps(env: &Env) -> u32 {
