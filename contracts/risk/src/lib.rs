@@ -14,7 +14,8 @@
 
 #![no_std]
 
-use noether_common::risk::{adl_rank, partial_liq_tranche, RiskConfig};
+mod risk;
+use risk::{adl_rank, partial_liq_tranche, RiskConfig};
 use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
 use noether_common::NoetherError;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Vec};

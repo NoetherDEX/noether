@@ -10,7 +10,6 @@ pub mod errors;
 pub mod math;
 pub mod assets;
 pub mod ttl;
-pub mod risk;
 
 // Re-export all public items for convenient importing
 pub use types::*;

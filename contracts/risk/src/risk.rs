@@ -9,7 +9,7 @@
 
 use soroban_sdk::contracttype;
 
-use crate::types::{BASIS_POINTS, PRECISION};
+use noether_common::types::{BASIS_POINTS, PRECISION};
 
 /// Per-market risk parameters (P5-1). The rollout vehicle for new pairs:
 /// an admin stores one of these per asset in the `risk` contract, and the
