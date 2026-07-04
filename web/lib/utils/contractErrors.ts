@@ -48,6 +48,9 @@ const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
   77: 'Withdrawal would leave insufficient free margin',
   78: 'Cross-margin account is not liquidatable',
   79: 'No cross-margin positions found',
+  80: 'Stop-loss/take-profit orders are not supported on cross-margin positions',
+  81: 'Price moved too fast — please retry in a moment',
+  82: 'Open interest cap reached for this market — try a smaller size',
 };
 
 /**
