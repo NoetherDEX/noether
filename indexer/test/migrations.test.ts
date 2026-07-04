@@ -16,6 +16,7 @@ describe('migration runner', () => {
     expect(names).toContain('poll_cursor');
     expect(names).toContain('schema_versions');
     expect(names).toContain('trades');
+    expect(names).toContain('dead_letter');
 
     const second = await runMigrations(db);
     expect(second.applied).toHaveLength(0);

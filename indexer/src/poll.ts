@@ -8,7 +8,7 @@
 
 import type { Logger } from 'pino';
 import type { Client } from '@libsql/client';
-import type { rpc as RpcNs } from '@stellar/stellar-sdk';
+import type { rpc as RpcNs, xdr } from '@stellar/stellar-sdk';
 import type { IndexerBus } from './bus.js';
 import type { EventRouter, HandlerContext } from './router.js';
 import { decodeMarketEvent, type RawEvent } from './decoders/market.js';
@@ -89,18 +89,30 @@ export class IndexerPoller {
     for (const raw of response.events) {
       const contractId = raw.contractId?.toString() ?? '';
       let decoded: ReturnType<typeof decodeMarketEvent> | null = null;
-      if (contractId === this.deps.vaultFactoryContract) {
-        decoded = decodeVaultEvent(raw as unknown as RawEvent) as any;
-      } else if (contractId === this.deps.referralContract) {
-        decoded = decodeReferralEvent(raw as unknown as RawEvent) as any;
-      } else {
-        decoded = decodeMarketEvent(raw as unknown as RawEvent);
+      try {
+        if (contractId === this.deps.vaultFactoryContract) {
+          decoded = decodeVaultEvent(raw as unknown as RawEvent) as any;
+        } else if (contractId === this.deps.referralContract) {
+          decoded = decodeReferralEvent(raw as unknown as RawEvent) as any;
+        } else {
+          decoded = decodeMarketEvent(raw as unknown as RawEvent);
+        }
+      } catch (err) {
+        this.deps.log.error({ err, id: raw.id }, 'Event decode failed — dead-lettered');
+        await this.deadLetter(raw.id, contractId, raw.ledger, 'decode', err, rawEventPayload(raw as unknown as RawEvent));
+        highestLedger = Math.max(highestLedger, raw.ledger);
+        continue;
       }
       if (!decoded) {
         this.deps.log.debug({ id: raw.id, topics: raw.topic.length }, 'Unrecognised event topic — skipped');
         continue;
       }
-      await this.deps.router.dispatch(decoded as any, ctx);
+      try {
+        await this.deps.router.dispatch(decoded as any, ctx);
+      } catch (err) {
+        await this.deadLetter(raw.id, contractId, raw.ledger, 'apply', err, decoded);
+        throw err;
+      }
       processed++;
       highestLedger = Math.max(highestLedger, decoded.ledger);
     }
@@ -119,6 +131,51 @@ export class IndexerPoller {
   private async coldStartLedger(): Promise<number> {
     const latest = await getLatestLedger(this.deps.rpc);
     return Math.max(1, latest - this.deps.coldStartLedgers);
+  }
+
+  private async deadLetter(
+    eventId: string,
+    contractId: string,
+    ledger: number,
+    stage: 'decode' | 'apply',
+    err: unknown,
+    payload: unknown,
+  ): Promise<void> {
+    await this.deps.db.execute({
+      sql: `
+        INSERT INTO dead_letter (event_id, contract_id, ledger, stage, error, payload_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        eventId,
+        contractId,
+        ledger,
+        stage,
+        err instanceof Error ? err.message : String(err),
+        safeStringify(payload),
+        Date.now(),
+      ],
+    });
+  }
+}
+
+function rawEventPayload(raw: RawEvent): unknown {
+  try {
+    return {
+      txHash: raw.txHash,
+      topicXdr: (raw.topic as xdr.ScVal[]).map((t) => t.toXDR('base64')),
+      valueXdr: (raw.value as unknown as xdr.ScVal).toXDR('base64'),
+    };
+  } catch {
+    return { txHash: raw.txHash };
+  }
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) ?? String(value);
+  } catch {
+    return String(value);
   }
 }
 

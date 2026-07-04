@@ -1,6 +1,7 @@
 import type { Client } from '@libsql/client';
 import type { DecodedMarketEvent } from '../types/events.js';
 import type { Handler, HandlerContext } from '../router.js';
+import { cleanupCrossLiquidatedPositions } from '../positionSync.js';
 
 /**
  * Phase 2 v0 market handler: persist the decoded event to events_raw and
@@ -9,8 +10,12 @@ import type { Handler, HandlerContext } from '../router.js';
  */
 function handle(topic: DecodedMarketEvent['topic']): Handler {
   return async (event, ctx) => {
-    await insertEvent(ctx.db, event);
-    await maintainPositionsProjection(ctx.db, event);
+    const inserted = await insertEvent(ctx.db, event);
+    if (!inserted) {
+      ctx.log.debug({ topic, eventId: event.id }, 'Duplicate event — projection and bus emit skipped');
+      return;
+    }
+    await maintainPositionsProjection(ctx.db, event, { rpc: ctx.rpc, log: ctx.log });
     ctx.bus.emit('event', event);
 
     switch (event.topic) {
@@ -63,7 +68,7 @@ function handle(topic: DecodedMarketEvent['topic']): Handler {
           ts: event.ledgerCloseTs,
         });
         break;
-      // initialized / cross_liq are persisted but have no projection
+      // initialized / cross_liq are persisted but have no bus fan-out
       default:
         break;
     }
@@ -72,7 +77,11 @@ function handle(topic: DecodedMarketEvent['topic']): Handler {
   };
 }
 
-async function maintainPositionsProjection(db: Client, event: DecodedMarketEvent): Promise<void> {
+async function maintainPositionsProjection(
+  db: Client,
+  event: DecodedMarketEvent,
+  ctx?: { rpc: HandlerContext['rpc']; log: HandlerContext['log'] },
+): Promise<void> {
   switch (event.topic) {
     case 'position_opened':
       await db.execute({
@@ -100,14 +109,27 @@ async function maintainPositionsProjection(db: Client, event: DecodedMarketEvent
         args: [event.positionId],
       });
       return;
+    case 'cross_liq': {
+      // liquidate_cross_account wipes ALL of the trader's cross positions
+      // on-chain but emits a single cross_liq event with no position ids,
+      // and the projection stores no margin mode — verify each of the
+      // trader's projected rows via get_position and drop the dead ones.
+      if (!ctx) return;
+      const passphrase = process.env.NETWORK_PASSPHRASE
+        ?? 'Test SDF Network ; September 2015';
+      await cleanupCrossLiquidatedPositions(
+        db, ctx.rpc, event.contractId, event.trader, passphrase, ctx.log,
+      );
+      return;
+    }
     default:
       return;
   }
 }
 
-async function insertEvent(db: Client, event: DecodedMarketEvent): Promise<void> {
+async function insertEvent(db: Client, event: DecodedMarketEvent): Promise<boolean> {
   const payload = serialisePayload(event);
-  await db.execute({
+  const result = await db.execute({
     sql: `
       INSERT OR IGNORE INTO events_raw (
         event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
@@ -124,6 +146,7 @@ async function insertEvent(db: Client, event: DecodedMarketEvent): Promise<void>
       Date.now(),
     ],
   });
+  return result.rowsAffected > 0;
 }
 
 function serialisePayload(event: DecodedMarketEvent): string {

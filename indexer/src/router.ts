@@ -43,6 +43,7 @@ export class EventRouter {
         await match.handler(event, ctx);
       } catch (err) {
         ctx.log.error({ err, eventId: event.id, topic: event.topic }, 'Handler failed');
+        throw err;
       }
     }
   }

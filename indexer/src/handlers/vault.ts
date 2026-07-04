@@ -40,8 +40,8 @@ function envelopeFor(event: VaultEvent, fallbackId: string, contractId: string):
   };
 }
 
-async function persistRaw(db: Client, raw: RawShape, payload: object): Promise<void> {
-  await db.execute({
+async function persistRaw(db: Client, raw: RawShape, payload: object): Promise<boolean> {
+  const result = await db.execute({
     sql: `
       INSERT OR IGNORE INTO events_raw (
         event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
@@ -58,6 +58,7 @@ async function persistRaw(db: Client, raw: RawShape, payload: object): Promise<v
       Date.now(),
     ],
   });
+  return result.rowsAffected > 0;
 }
 
 async function upsertVault(
@@ -345,7 +346,11 @@ function makeHandler(topic: VaultEvent['topic'], contractId: string): Handler {
     const v = event as unknown as VaultEvent;
     if (v.topic !== topic) return;
     const raw = envelopeFor(v, (event as unknown as { id: string }).id, contractId);
-    await persistRaw(ctx.db, raw, v);
+    const inserted = await persistRaw(ctx.db, raw, v);
+    if (!inserted) {
+      ctx.log.debug({ topic, vaultId: v.vaultId }, 'Duplicate vault event — projection and bus emit skipped');
+      return;
+    }
     await upsertVault(ctx.db, v, { rpc: ctx.rpc, log: ctx.log, contractId });
     await logActivity(ctx.db, v);
     ctx.bus.emit('event', event);

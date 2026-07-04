@@ -115,11 +115,13 @@ function decodePositionLiquidated(raw: RawEvent, v: unknown[]): PositionLiquidat
 }
 
 function decodeCrossLiq(raw: RawEvent, v: unknown[]): CrossLiquidatedEvent {
+  // Contract emits 3-tuple: (trader, total_pnl, keeper_reward)
   return {
     ...envelope(raw, 'cross_liq'),
     topic: 'cross_liq',
     trader: asString(v[0], 'cross_liq.trader'),
-    keeperReward: asBigInt(v[1], 'cross_liq.keeper_reward'),
+    totalPnl: asBigInt(v[1], 'cross_liq.total_pnl'),
+    keeperReward: asBigInt(v[2], 'cross_liq.keeper_reward'),
   };
 }
 
