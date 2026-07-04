@@ -115,6 +115,18 @@ export async function seedSchema(db: Client): Promise<void> {
       inserted_at INTEGER NOT NULL
     );
   `);
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS positions (
+      position_id INTEGER PRIMARY KEY,
+      trader TEXT NOT NULL,
+      asset TEXT NOT NULL,
+      direction INTEGER NOT NULL,
+      size TEXT NOT NULL,
+      entry_price TEXT NOT NULL,
+      opened_at INTEGER NOT NULL,
+      opened_tx_hash TEXT NOT NULL
+    );
+  `);
 }
 
 export async function setupTestServer(opts?: {

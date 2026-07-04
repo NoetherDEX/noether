@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import type { Client } from '@libsql/client';
-import type { ApiConfig } from './config.js';
+import { DEFAULT_HMAC_PEPPER, type ApiConfig } from './config.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerMarketsRoutes } from './routes/markets.js';
 import { registerOracleRoutes } from './routes/oracle.js';
@@ -55,6 +55,7 @@ export interface ServerDeps {
 export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: config.logLevel },
+    trustProxy: 1,
   });
 
   await app.register(cors, { origin: config.corsOrigin });
@@ -76,7 +77,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   const deps = depsOverride ?? buildDefaultDeps(config, app.log as unknown as import('pino').Logger);
 
   await app.register(authPlugin, { apiKeys: deps.apiKeys });
-  await app.register(rateLimitPlugin, { limiter: deps.rateLimiter });
+  await app.register(rateLimitPlugin, { limiter: deps.rateLimiter, apiKeys: deps.apiKeys });
   await app.register(wsPlugin, { manager: deps.wsManager, apiKeys: deps.apiKeys });
 
   await app.register(registerHealthRoutes);
@@ -84,7 +85,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerOracleRoutes(instance, deps.oracle));
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
   await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth));
-  await app.register((instance) => registerAccountRoutes(instance, deps.events, deps.db));
+  await app.register((instance) => registerAccountRoutes(instance, deps.db));
   await app.register((instance) => registerOrderRoutes(instance, deps.orders));
   await app.register((instance) => registerTxRoutes(instance, deps.tx));
   await app.register((instance) => registerVaultRoutes(instance, deps.vaults));
@@ -115,7 +116,7 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const markets = new MarketsService(oracle);
   const db = createIndexerDb(config);
   const events = new EventsService(db);
-  const pepper = process.env.API_HMAC_PEPPER ?? 'change-me-in-production';
+  const pepper = process.env.API_HMAC_PEPPER ?? DEFAULT_HMAC_PEPPER;
   const apiKeys = new ApiKeyStore(db, pepper);
   const walletAuth = new WalletAuth(getNetworkPassphrase(config.network));
   const rateLimiter = new RateLimiter(db);

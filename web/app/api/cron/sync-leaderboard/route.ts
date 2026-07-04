@@ -237,9 +237,10 @@ async function recomputeTraderAggregates(): Promise<void> {
 }
 
 export async function GET(request: NextRequest) {
-  // Verify cron secret
+  // Verify cron secret — fail closed when CRON_SECRET is not configured.
+  const cronSecret = process.env.CRON_SECRET;
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

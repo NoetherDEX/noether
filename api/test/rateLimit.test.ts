@@ -1,4 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest';
+import { Keypair } from '@stellar/stellar-sdk';
 import { setupTestServer } from './helpers.js';
 import { RATE_LIMIT_TIERS } from '../src/services/rateLimit.js';
 
@@ -50,5 +51,52 @@ describe('rate limiter', () => {
     });
     const res = await app.inject({ method: 'GET', url: '/v1/health' });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('resolves a real key to its tier and a key-scoped bucket', async () => {
+    const setup = await setupTestServer();
+    app = setup.app;
+    const issued = await setup.deps.apiKeys.issue(Keypair.random().publicKey(), 'rl-test');
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/markets',
+      headers: { authorization: `Bearer ${issued.keyId}:${issued.secret}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-ratelimit-tier']).toBe('standard');
+    const buckets = await setup.db.execute('SELECT key_id FROM rate_limit_buckets');
+    expect(buckets.rows.map((r) => String(r.key_id))).toEqual([`key:${issued.keyId}`]);
+  });
+
+  it('keeps invalid credentials on the public tier', async () => {
+    const setup = await setupTestServer();
+    app = setup.app;
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/markets',
+      headers: { authorization: 'Bearer nk_bogus:not-a-secret' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['x-ratelimit-tier']).toBe('public');
+  });
+
+  it('sweepExpired deletes only buckets from elapsed windows', async () => {
+    const setup = await setupTestServer();
+    app = setup.app;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const window = nowSec - (nowSec % 60);
+    await setup.db.execute({
+      sql: `INSERT OR REPLACE INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?)`,
+      args: ['ip:1.2.3.4', window - 120, 5],
+    });
+    await setup.db.execute({
+      sql: `INSERT OR REPLACE INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?)`,
+      args: ['ip:1.2.3.4', window, 5],
+    });
+    await setup.deps.rateLimiter.sweepExpired();
+    const rows = await setup.db.execute(
+      `SELECT window_start FROM rate_limit_buckets WHERE key_id = 'ip:1.2.3.4'`,
+    );
+    expect(rows.rows.map((r) => Number(r.window_start))).toEqual([window]);
   });
 });
