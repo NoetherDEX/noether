@@ -26,6 +26,7 @@ const CONTRACT_ERROR_MESSAGES: Record<number, string> = {
   40: 'Insufficient liquidity in the vault',
   41: 'Amount must be positive',
   42: 'Insufficient balance',
+  43: 'Deposit would exceed the per-account cap',
   // Liquidation (50-54)
   50: 'Position is healthy and cannot be liquidated',
   51: 'Liquidation failed',

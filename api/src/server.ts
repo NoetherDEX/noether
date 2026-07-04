@@ -38,6 +38,7 @@ import { getNetworkPassphrase } from '@noether/shared';
 import { authPlugin } from './plugins/auth.js';
 import { rateLimitPlugin } from './plugins/rateLimit.js';
 import { wsPlugin } from './plugins/ws.js';
+import { geoBlockPlugin } from './plugins/geoBlock.js';
 
 export interface ServerDeps {
   oracle: OracleService;
@@ -91,6 +92,11 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
 
   const deps = depsOverride ?? buildDefaultDeps(config, app.log as unknown as import('pino').Logger);
 
+  await app.register(geoBlockPlugin, {
+    enabled: process.env.API_GEOBLOCK === '1',
+    countryHeader: process.env.GEO_COUNTRY_HEADER ?? 'cf-ipcountry',
+    regionHeader: process.env.GEO_REGION_HEADER ?? 'cf-region-code',
+  });
   await app.register(authPlugin, { apiKeys: deps.apiKeys });
   await app.register(rateLimitPlugin, { limiter: deps.rateLimiter, apiKeys: deps.apiKeys });
   await app.register(wsPlugin, { manager: deps.wsManager, apiKeys: deps.apiKeys });
