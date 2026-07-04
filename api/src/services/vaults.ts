@@ -1,4 +1,5 @@
 import type { Client } from '@libsql/client';
+import { TtlCache } from './cache.js';
 
 export interface VaultRow {
   id: number;
@@ -64,6 +65,23 @@ export interface VaultActivityRow {
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const AGG_TTL_MS = 10_000;
+
+/** Cursor + limit for the activity/trade history endpoints. */
+export interface HistoryOpts {
+  limit?: number;
+  /** Only rows strictly older than this ts (unix sec). */
+  beforeTs?: number;
+}
+
+export interface VaultAggregates {
+  depositorCount: number;
+  openPositions: number;
+  tradeCount: number;
+  drawdownBps: number;
+  apyBps: number;
+  closedTradePnl: string;
+}
 
 function clampLimit(n?: number): number {
   return Math.min(MAX_LIMIT, Math.max(1, n ?? DEFAULT_LIMIT));
@@ -87,6 +105,10 @@ function toRow(row: Record<string, unknown>): VaultRow {
 }
 
 export class VaultsService {
+  // Coalesce the per-vault aggregate fan-out (audit A-7) so a burst of
+  // /v1/vaults requests doesn't re-run the N+1 round-trips every time.
+  private readonly aggCache = new TtlCache<VaultAggregates>(AGG_TTL_MS);
+
   constructor(private readonly db: Client) {}
 
   async list(opts?: { leader?: string; limit?: number }): Promise<VaultRow[]> {
@@ -126,24 +148,27 @@ export class VaultsService {
     }
   }
 
-  async deposits(vaultId: number, limit?: number): Promise<VaultActivityRow[]> {
-    return this.activity('vault_deposits', 'depositor', vaultId, limit, true);
+  async deposits(vaultId: number, opts: HistoryOpts = {}): Promise<VaultActivityRow[]> {
+    return this.activity('vault_deposits', 'depositor', vaultId, opts, true);
   }
 
-  async withdraws(vaultId: number, limit?: number): Promise<VaultActivityRow[]> {
-    return this.activity('vault_withdraws', 'depositor', vaultId, limit, true);
+  async withdraws(vaultId: number, opts: HistoryOpts = {}): Promise<VaultActivityRow[]> {
+    return this.activity('vault_withdraws', 'depositor', vaultId, opts, true);
   }
 
-  async feeClaims(vaultId: number, limit?: number): Promise<VaultActivityRow[]> {
-    return this.activity('vault_fee_claims', 'leader', vaultId, limit, false);
+  async feeClaims(vaultId: number, opts: HistoryOpts = {}): Promise<VaultActivityRow[]> {
+    return this.activity('vault_fee_claims', 'leader', vaultId, opts, false);
   }
 
-  async trades(vaultId: number, limit?: number): Promise<VaultTradeRow[]> {
-    const cap = clampLimit(limit);
+  async trades(vaultId: number, opts: HistoryOpts = {}): Promise<VaultTradeRow[]> {
+    const cap = clampLimit(opts.limit);
+    const cursor = opts.beforeTs !== undefined ? 'AND ts < ?' : '';
+    const args: (string | number)[] =
+      opts.beforeTs !== undefined ? [vaultId, opts.beforeTs, cap] : [vaultId, cap];
     try {
       const result = await this.db.execute({
-        sql: 'SELECT * FROM vault_trades WHERE vault_id = ? ORDER BY ts DESC LIMIT ?',
-        args: [vaultId, cap],
+        sql: `SELECT * FROM vault_trades WHERE vault_id = ? ${cursor} ORDER BY ts DESC LIMIT ?`,
+        args,
       });
       return result.rows.map((r) => {
         const row = r as unknown as Record<string, unknown>;
@@ -173,14 +198,11 @@ export class VaultsService {
    * Returns undefined fields if the underlying table doesn't exist yet
    * (e.g. older indexer that hasn't run migration 005).
    */
-  async aggregates(vaultId: number, vault?: VaultRow): Promise<{
-    depositorCount: number;
-    openPositions: number;
-    tradeCount: number;
-    drawdownBps: number;
-    apyBps: number;
-    closedTradePnl: string;
-  }> {
+  async aggregates(vaultId: number, vault?: VaultRow): Promise<VaultAggregates> {
+    return this.aggCache.getOrLoad(String(vaultId), () => this.computeAggregates(vaultId, vault));
+  }
+
+  private async computeAggregates(vaultId: number, vault?: VaultRow): Promise<VaultAggregates> {
     let depositorCount = 0;
     let openPositions = 0;
     let tradeCount = 0;
@@ -247,14 +269,17 @@ export class VaultsService {
     table: 'vault_deposits' | 'vault_withdraws' | 'vault_fee_claims',
     principalCol: string,
     vaultId: number,
-    limit: number | undefined,
+    opts: HistoryOpts,
     hasShares: boolean,
   ): Promise<VaultActivityRow[]> {
-    const cap = clampLimit(limit);
+    const cap = clampLimit(opts.limit);
+    const cursor = opts.beforeTs !== undefined ? 'AND ts < ?' : '';
+    const args: (string | number)[] =
+      opts.beforeTs !== undefined ? [vaultId, opts.beforeTs, cap] : [vaultId, cap];
     try {
       const result = await this.db.execute({
-        sql: `SELECT * FROM ${table} WHERE vault_id = ? ORDER BY ts DESC LIMIT ?`,
-        args: [vaultId, cap],
+        sql: `SELECT * FROM ${table} WHERE vault_id = ? ${cursor} ORDER BY ts DESC LIMIT ?`,
+        args,
       });
       return result.rows.map((r) => {
         const row = r as unknown as Record<string, unknown>;

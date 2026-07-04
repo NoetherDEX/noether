@@ -4,6 +4,12 @@ import { mapPositionRow, type PositionRow } from './positions.js';
 
 interface EventQueryString {
   topic?: string;
+  before_ts?: number;
+  limit?: number;
+}
+
+interface HistoryQueryString {
+  before_ts?: number;
   limit?: number;
 }
 
@@ -44,6 +50,7 @@ export async function registerAccountRoutes(
           type: 'object',
           properties: {
             topic: { type: 'string' },
+            before_ts: { type: 'integer', minimum: 0 },
             limit: { type: 'integer', minimum: 1, maximum: 500 },
           },
         },
@@ -60,6 +67,10 @@ export async function registerAccountRoutes(
         if (topicFilter) {
           conditions.push(`topic = ?`);
           args.push(topicFilter[0]!);
+        }
+        if (req.query.before_ts !== undefined) {
+          conditions.push(`ledger_close_ts < ?`);
+          args.push(req.query.before_ts);
         }
         const result = await db.execute({
           sql: `
@@ -101,7 +112,7 @@ export async function registerAccountRoutes(
           args: [owner],
         });
         const eventsResult = await db.execute({
-          sql: traderEventsSql(POSITION_TOPICS),
+          sql: traderEventsSql(POSITION_TOPICS, false),
           args: [owner, ...POSITION_TOPICS, 200],
         });
         return reply.send({
@@ -118,21 +129,30 @@ export async function registerAccountRoutes(
     },
   );
 
-  app.get(
+  app.get<{ Querystring: HistoryQueryString }>(
     '/v1/account/me/orders',
     {
       preHandler: app.requireAuth,
       schema: {
         description: 'Order-related events for the authenticated owner.',
         tags: ['account'],
+        querystring: {
+          type: 'object',
+          properties: {
+            before_ts: { type: 'integer', minimum: 0 },
+            limit: { type: 'integer', minimum: 1, maximum: 500 },
+          },
+        },
       },
     },
     async (req, reply) => {
       const owner = req.user!.owner;
+      const limit = Math.min(500, Math.max(1, req.query.limit ?? 500));
+      const beforeTs = req.query.before_ts;
       try {
         const result = await db.execute({
-          sql: traderEventsSql(ORDER_TOPICS),
-          args: [owner, ...ORDER_TOPICS, 500],
+          sql: traderEventsSql(ORDER_TOPICS, beforeTs !== undefined),
+          args: [owner, ...ORDER_TOPICS, ...(beforeTs !== undefined ? [beforeTs] : []), limit],
         });
         return reply.send({ events: result.rows.map(mapEventRow) });
       } catch (err) {
@@ -146,13 +166,15 @@ export async function registerAccountRoutes(
   );
 }
 
-function traderEventsSql(topics: string[]): string {
+function traderEventsSql(topics: string[], beforeTs: boolean): string {
   const placeholders = topics.map(() => '?').join(', ');
+  const cursor = beforeTs ? 'AND ledger_close_ts < ?' : '';
   return `
     SELECT event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
     FROM events_raw
     WHERE json_extract(payload_json, '$.trader') = ?
       AND topic IN (${placeholders})
+      ${cursor}
     ORDER BY ledger DESC, event_id DESC
     LIMIT ?
   `;

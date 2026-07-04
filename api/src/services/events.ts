@@ -16,6 +16,8 @@ export interface EventQuery {
   contractId?: string;
   fromLedger?: number;
   toLedger?: number;
+  /** Cursor: only rows strictly older than this ledger_close_ts (unix sec). */
+  beforeTs?: number;
   limit?: number;
 }
 
@@ -45,6 +47,10 @@ export class EventsService {
     if (query.toLedger !== undefined) {
       conditions.push('ledger <= ?');
       args.push(query.toLedger);
+    }
+    if (query.beforeTs !== undefined) {
+      conditions.push('ledger_close_ts < ?');
+      args.push(query.beforeTs);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

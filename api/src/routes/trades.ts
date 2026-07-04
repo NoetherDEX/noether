@@ -4,6 +4,7 @@ import type { StatsService } from '../services/stats.js';
 interface TradesQuery {
   trader?: string;
   asset?: string;
+  before_ts?: number;
   limit?: number;
 }
 
@@ -44,6 +45,7 @@ export async function registerTradesRoutes(
           properties: {
             trader: { type: 'string', minLength: 56, maxLength: 56 },
             asset: { type: 'string', minLength: 1, maxLength: 12 },
+            before_ts: { type: 'integer', minimum: 0 },
             limit: { type: 'integer', minimum: 1, maximum: 200 },
           },
         },
@@ -60,6 +62,7 @@ export async function registerTradesRoutes(
       const trades = await stats.recentTrades({
         trader: req.query.trader,
         asset: req.query.asset?.toUpperCase(),
+        beforeTs: req.query.before_ts,
         limit: req.query.limit,
       });
       return reply.send({ trades });

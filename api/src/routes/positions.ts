@@ -5,6 +5,10 @@ interface OpenPositionsQuery {
   trader?: string;
 }
 
+// Hard caps so neither branch can trigger an unbounded table scan (audit A-7).
+const GLOBAL_POSITIONS_LIMIT = 200;
+const TRADER_POSITIONS_LIMIT = 500;
+
 export interface PositionRow {
   position_id: number | bigint;
   trader: string;
@@ -48,9 +52,13 @@ export async function registerPositionsRoutes(
     async (req: FastifyRequest<{ Querystring: OpenPositionsQuery }>, reply: FastifyReply) => {
       const trader = req.query.trader?.trim();
       const sql = trader
-        ? 'SELECT * FROM positions WHERE trader = ? ORDER BY opened_at DESC'
-        : 'SELECT * FROM positions ORDER BY opened_at DESC LIMIT 200';
-      const result = await db.execute(trader ? { sql, args: [trader] } : { sql });
+        ? 'SELECT * FROM positions WHERE trader = ? ORDER BY opened_at DESC LIMIT ?'
+        : 'SELECT * FROM positions ORDER BY opened_at DESC LIMIT ?';
+      const result = await db.execute(
+        trader
+          ? { sql, args: [trader, TRADER_POSITIONS_LIMIT] }
+          : { sql, args: [GLOBAL_POSITIONS_LIMIT] },
+      );
       const rows = (result.rows as unknown as PositionRow[]).map(mapPositionRow);
       return reply.send({ positions: rows });
     },

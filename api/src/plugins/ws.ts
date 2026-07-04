@@ -51,15 +51,35 @@ async function impl(app: FastifyInstance, opts: WsPluginOpts): Promise<void> {
     const id = randomUUID();
     const conn: WsConnection = {
       id,
+      ip: req.ip,
+      isAlive: true,
       subscriptions: new Set(),
       send: (msg: unknown) => socket.send(JSON.stringify(msg)),
+      sendRaw: (data: string) => socket.send(data),
+      ping: () => socket.ping(),
+      bufferedAmount: () => socket.bufferedAmount,
       close: (code?: number, reason?: string) => socket.close(code, reason),
+      terminate: () => socket.terminate(),
     };
-    opts.manager.register(conn);
+    const reg = opts.manager.register(conn);
+    if (!reg.ok) {
+      req.log.warn({ connectionId: id, ip: req.ip, reason: reg.reason }, 'ws connection rejected');
+      socket.close(reg.code ?? 1013, reg.reason ?? 'try again later');
+      return;
+    }
     req.log.info({ connectionId: id, ip: req.ip }, 'ws connected');
     conn.send({ type: 'hello', ts: Date.now() });
 
+    // Heartbeat: a pong (auto-sent by compliant clients in response to the
+    // manager's ping frames) marks the connection live for the next sweep.
+    socket.on('pong', () => {
+      conn.isAlive = true;
+    });
+
     socket.on('message', (raw: Buffer) => {
+      // Token-bucket gate; the manager closes the socket on abuse so we just
+      // stop processing here.
+      if (!opts.manager.allowMessage(id)) return;
       let msg: ClientMessage;
       try {
         msg = JSON.parse(raw.toString('utf8')) as ClientMessage;

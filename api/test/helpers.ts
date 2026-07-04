@@ -75,6 +75,13 @@ export const TEST_CONFIG: ApiConfig = {
     },
     noeAsset: { code: 'NOE', issuer: FAKE_CONTRACT },
   },
+  ws: {
+    maxConnections: 1000,
+    maxPerIp: 100,
+    pingIntervalMs: 1_000_000,
+    msgRate: 1000,
+    maxBufferedBytes: 1_048_576,
+  },
 };
 
 /**

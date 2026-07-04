@@ -12,6 +12,7 @@ interface ListQuery {
 
 interface ActivityQuery {
   limit?: number;
+  before_ts?: number;
 }
 
 const VAULT_SCHEMA = {
@@ -164,7 +165,10 @@ export async function registerVaultRoutes(
         },
         querystring: {
           type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            before_ts: { type: 'integer', minimum: 0 },
+          },
         },
         response: {
           200: {
@@ -176,7 +180,10 @@ export async function registerVaultRoutes(
       },
     },
     async (req, reply) => {
-      const rows = await vaults.trades(req.params.id, req.query.limit);
+      const rows = await vaults.trades(req.params.id, {
+        limit: req.query.limit,
+        beforeTs: req.query.before_ts,
+      });
       return reply.send({ trades: rows });
     },
   );
@@ -194,7 +201,10 @@ export async function registerVaultRoutes(
         },
         querystring: {
           type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            before_ts: { type: 'integer', minimum: 0 },
+          },
         },
         response: {
           200: {
@@ -206,7 +216,10 @@ export async function registerVaultRoutes(
       },
     },
     async (req, reply) => {
-      const rows = await vaults.deposits(req.params.id, req.query.limit);
+      const rows = await vaults.deposits(req.params.id, {
+        limit: req.query.limit,
+        beforeTs: req.query.before_ts,
+      });
       return reply.send({ deposits: rows });
     },
   );
@@ -224,7 +237,10 @@ export async function registerVaultRoutes(
         },
         querystring: {
           type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            before_ts: { type: 'integer', minimum: 0 },
+          },
         },
         response: {
           200: {
@@ -236,7 +252,10 @@ export async function registerVaultRoutes(
       },
     },
     async (req, reply) => {
-      const rows = await vaults.withdraws(req.params.id, req.query.limit);
+      const rows = await vaults.withdraws(req.params.id, {
+        limit: req.query.limit,
+        beforeTs: req.query.before_ts,
+      });
       return reply.send({ withdraws: rows });
     },
   );
@@ -254,7 +273,10 @@ export async function registerVaultRoutes(
         },
         querystring: {
           type: 'object',
-          properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } },
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            before_ts: { type: 'integer', minimum: 0 },
+          },
         },
         response: {
           200: {
@@ -266,7 +288,10 @@ export async function registerVaultRoutes(
       },
     },
     async (req, reply) => {
-      const rows = await vaults.feeClaims(req.params.id, req.query.limit);
+      const rows = await vaults.feeClaims(req.params.id, {
+        limit: req.query.limit,
+        beforeTs: req.query.before_ts,
+      });
       return reply.send({ feeClaims: rows });
     },
   );

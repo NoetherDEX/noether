@@ -8,6 +8,18 @@ export const VOLUME_WINDOW_SEC = 14 * DAY_SEC;
 const STATS_TTL_MS = 5_000;
 const DEFAULT_TRADES_LIMIT = 50;
 const MAX_TRADES_LIMIT = 200;
+const DEFAULT_LEADERBOARD_LIMIT = 50;
+const MAX_LEADERBOARD_LIMIT = 200;
+
+export type LeaderboardSort = 'pnl' | 'volume';
+
+export interface LeaderboardEntry {
+  trader: string;
+  /** Lifetime realized PnL, 7-dec USDC (sum of position_closed pnl). */
+  pnl: string;
+  /** Lifetime traded notional, 7-dec (opens + matched closes). */
+  volume: string;
+}
 
 export interface AssetStats {
   asset: string;
@@ -42,6 +54,7 @@ export interface RealizedTradeRow {
  */
 export class StatsService {
   private readonly cache = new TtlCache<AssetStats[]>(STATS_TTL_MS);
+  private readonly lbCache = new TtlCache<LeaderboardEntry[]>(STATS_TTL_MS);
 
   constructor(private readonly db: Client) {}
 
@@ -154,7 +167,7 @@ export class StatsService {
   }
 
   async recentTrades(
-    opts: { trader?: string; asset?: string; limit?: number } = {},
+    opts: { trader?: string; asset?: string; beforeTs?: number; limit?: number } = {},
   ): Promise<RealizedTradeRow[]> {
     const limit = Math.min(MAX_TRADES_LIMIT, Math.max(1, opts.limit ?? DEFAULT_TRADES_LIMIT));
     const conditions = [`c.topic IN ('position_closed', 'position_liquidated')`];
@@ -166,6 +179,10 @@ export class StatsService {
     if (opts.asset) {
       conditions.push(`json_extract(o.payload_json, '$.asset') = ?`);
       args.push(opts.asset);
+    }
+    if (opts.beforeTs !== undefined) {
+      conditions.push(`c.ledger_close_ts < ?`);
+      args.push(opts.beforeTs);
     }
     try {
       const result = await this.db.execute({
@@ -188,6 +205,89 @@ export class StatsService {
       if (isMissingTable(err)) return [];
       throw err;
     }
+  }
+
+  /**
+   * Trader leaderboard from the indexer projections — the durable
+   * replacement for the web cron that re-scanned Horizon (audit W-5 / P4-26).
+   * Ranks by lifetime realized PnL (sum of position_closed pnl) or by traded
+   * notional (opens + matched closes, mirroring the fee-tier volume model;
+   * liquidations excluded). Sums are folded in BigInt so large i128 totals
+   * stay exact regardless of libsql int mode. Cached briefly to absorb
+   * anonymous polling.
+   */
+  async leaderboard(
+    opts: { sort?: LeaderboardSort; limit?: number } = {},
+  ): Promise<LeaderboardEntry[]> {
+    const sort: LeaderboardSort = opts.sort === 'volume' ? 'volume' : 'pnl';
+    const limit = Math.min(
+      MAX_LEADERBOARD_LIMIT,
+      Math.max(1, opts.limit ?? DEFAULT_LEADERBOARD_LIMIT),
+    );
+    return this.lbCache.getOrLoad(`${sort}:${limit}`, () => this.computeLeaderboard(sort, limit));
+  }
+
+  private async computeLeaderboard(sort: LeaderboardSort, limit: number): Promise<LeaderboardEntry[]> {
+    const board = new Map<string, { pnl: bigint; volume: bigint }>();
+    const bucket = (trader: string) => {
+      let b = board.get(trader);
+      if (!b) {
+        b = { pnl: 0n, volume: 0n };
+        board.set(trader, b);
+      }
+      return b;
+    };
+
+    try {
+      const pnl = await this.db.execute(`
+        SELECT json_extract(payload_json, '$.trader') AS trader,
+               json_extract(payload_json, '$.pnl') AS pnl
+        FROM events_raw
+        WHERE topic = 'position_closed'
+      `);
+      for (const row of pnl.rows) {
+        const trader = row.trader == null ? '' : String(row.trader);
+        if (trader) bucket(trader).pnl += toBigInt(row.pnl);
+      }
+      const opens = await this.db.execute(`
+        SELECT json_extract(payload_json, '$.trader') AS trader,
+               json_extract(payload_json, '$.size') AS size
+        FROM events_raw
+        WHERE topic = 'position_opened'
+      `);
+      for (const row of opens.rows) {
+        const trader = row.trader == null ? '' : String(row.trader);
+        if (trader) bucket(trader).volume += toBigInt(row.size);
+      }
+      const closes = await this.db.execute(`
+        SELECT json_extract(c.payload_json, '$.trader') AS trader,
+               json_extract(o.payload_json, '$.size') AS size
+        FROM events_raw c
+        JOIN events_raw o
+          ON o.topic = 'position_opened'
+         AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
+        WHERE c.topic = 'position_closed'
+      `);
+      for (const row of closes.rows) {
+        const trader = row.trader == null ? '' : String(row.trader);
+        if (trader) bucket(trader).volume += toBigInt(row.size);
+      }
+    } catch (err) {
+      if (isMissingTable(err)) return [];
+      throw err;
+    }
+
+    const entries: LeaderboardEntry[] = [...board.entries()].map(([trader, b]) => ({
+      trader,
+      pnl: b.pnl.toString(),
+      volume: b.volume.toString(),
+    }));
+    entries.sort((a, b) => {
+      const av = sort === 'volume' ? BigInt(a.volume) : BigInt(a.pnl);
+      const bv = sort === 'volume' ? BigInt(b.volume) : BigInt(b.pnl);
+      return bv > av ? 1 : bv < av ? -1 : 0;
+    });
+    return entries.slice(0, limit);
   }
 }
 
@@ -228,6 +328,15 @@ function sumSizes(rows: Row[]): bigint {
   let total = 0n;
   for (const row of rows) total += BigInt(String(row.size ?? 0));
   return total;
+}
+
+function toBigInt(value: unknown): bigint {
+  if (value == null) return 0n;
+  try {
+    return BigInt(String(value));
+  } catch {
+    return 0n;
+  }
 }
 
 function isMissingTable(err: unknown): boolean {

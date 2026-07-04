@@ -6,6 +6,7 @@ interface EventQueryString {
   contract?: string;
   from_ledger?: number;
   to_ledger?: number;
+  before_ts?: number;
   limit?: number;
 }
 
@@ -27,6 +28,7 @@ export async function registerEventsRoutes(
             contract: { type: 'string' },
             from_ledger: { type: 'integer', minimum: 0 },
             to_ledger: { type: 'integer', minimum: 0 },
+            before_ts: { type: 'integer', minimum: 0 },
             limit: { type: 'integer', minimum: 1, maximum: 500 },
           },
         },
@@ -63,6 +65,7 @@ export async function registerEventsRoutes(
         contractId: req.query.contract,
         fromLedger: req.query.from_ledger,
         toLedger: req.query.to_ledger,
+        beforeTs: req.query.before_ts,
         limit: req.query.limit,
       });
       return reply.send({ events: rows });

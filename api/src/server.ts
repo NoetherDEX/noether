@@ -18,6 +18,7 @@ import { registerReferralRoutes } from './routes/referral.js';
 import { registerPositionsRoutes } from './routes/positions.js';
 import { registerVolumeRoutes } from './routes/volume.js';
 import { registerTradesRoutes } from './routes/trades.js';
+import { registerLeaderboardRoutes } from './routes/leaderboard.js';
 import { VaultsService } from './services/vaults.js';
 import { ReferralReadService } from './services/referral.js';
 import { ContractReader } from './services/contractReader.js';
@@ -109,6 +110,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerPositionsRoutes(instance, deps.db));
   await app.register((instance) => registerVolumeRoutes(instance, deps.stats));
   await app.register((instance) => registerTradesRoutes(instance, deps.stats));
+  await app.register((instance) => registerLeaderboardRoutes(instance, deps.stats));
 
   deps.wsManager.attachBus();
   app.addHook('onReady', async () => {
@@ -143,7 +145,7 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const tx: TxRoutesDeps = { txCtx };
   const wsBus = new WsBus();
   wsBus.setMaxListeners(64);
-  const wsManager = new WsManager(wsBus, log);
+  const wsManager = new WsManager(wsBus, log, config.ws);
   const oracleTicker = new OracleTicker({ oracle, bus: wsBus, log });
   const liveTailer = new LiveTailer({ db, bus: wsBus, log });
   const vaults = new VaultsService(db);

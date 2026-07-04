@@ -16,6 +16,16 @@ export interface ApiConfig {
   libsqlUrl: string;
   libsqlAuthToken: string | undefined;
   contracts: ContractsManifest;
+  ws: WsLimits;
+}
+
+/** WebSocket abuse controls (audit A-5). All overridable via env. */
+export interface WsLimits {
+  maxConnections: number;
+  maxPerIp: number;
+  pingIntervalMs: number;
+  msgRate: number;
+  maxBufferedBytes: number;
 }
 
 export const DEFAULT_HMAC_PEPPER = 'change-me-in-production';
@@ -40,6 +50,13 @@ export function loadConfig(): ApiConfig {
     libsqlUrl: process.env.LIBSQL_URL ?? 'file:../indexer/data/indexer.db',
     libsqlAuthToken: process.env.LIBSQL_AUTH_TOKEN || undefined,
     contracts,
+    ws: {
+      maxConnections: Number(process.env.WS_MAX_CONNECTIONS ?? 1000),
+      maxPerIp: Number(process.env.WS_MAX_PER_IP ?? 20),
+      pingIntervalMs: Number(process.env.WS_PING_INTERVAL_MS ?? 30_000),
+      msgRate: Number(process.env.WS_MSG_RATE ?? 20),
+      maxBufferedBytes: Number(process.env.WS_MAX_BUFFERED_BYTES ?? 1_048_576),
+    },
   };
 }
 
