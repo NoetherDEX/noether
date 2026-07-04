@@ -46,6 +46,21 @@ pub enum DataKey {
     Market,
     Noeracle,
     Initialized,
+    /// Publisher pubkeys whose attestations refresh_price will relay
+    Publishers,
+}
+
+/// One signed Noeracle price attestation (used by the multi-asset
+/// cross-liquidation entry point).
+#[contracttype]
+#[derive(Clone)]
+pub struct PriceAttestation {
+    pub asset: Symbol,
+    pub price: i128,
+    pub timestamp: u64,
+    pub round_id: u64,
+    pub pubkeys: Vec<BytesN<32>>,
+    pub sigs: Vec<BytesN<64>>,
 }
 
 #[contract]
@@ -53,21 +68,29 @@ pub struct NoetherRouterContract;
 
 #[contractimpl]
 impl NoetherRouterContract {
-    /// One-time setup. Records the admin (who can rotate the market / Noeracle
-    /// addresses) plus the market and Noeracle contract addresses.
+    /// One-time setup. Records the admin (who can rotate the market /
+    /// Noeracle addresses), the market and Noeracle contract addresses,
+    /// and the allowed publisher keys — refresh_price relays ONLY
+    /// attestations signed by these (O-2: without the allowlist any
+    /// trader could self-sign a price and trade against it).
     pub fn initialize(
         env: Env,
         admin: Address,
         market: Address,
         noeracle: Address,
+        publishers: Vec<BytesN<32>>,
     ) -> Result<(), NoetherError> {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(NoetherError::AlreadyInitialized);
+        }
+        if publishers.is_empty() {
+            return Err(NoetherError::InvalidParameter);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Market, &market);
         env.storage().instance().set(&DataKey::Noeracle, &noeracle);
+        env.storage().instance().set(&DataKey::Publishers, &publishers);
         env.storage().instance().set(&DataKey::Initialized, &true);
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
@@ -133,9 +156,99 @@ impl NoetherRouterContract {
         Ok(pnl)
     }
 
+    /// Verify + store a fresh price, then liquidate the position against
+    /// it — liquidations no longer depend on the heartbeat staying inside
+    /// the market's 60s staleness window (O-3/K-3). Returns the keeper
+    /// reward.
+    pub fn liquidate_with_price(
+        env: Env,
+        keeper: Address,
+        position_id: u64,
+        asset: Symbol,
+        price: i128,
+        timestamp: u64,
+        round_id: u64,
+        pubkeys: Vec<BytesN<32>>,
+        sigs: Vec<BytesN<64>>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        keeper.require_auth();
+
+        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (keeper, position_id).into_val(&env);
+        let reward: i128 = env.invoke_contract(&market, &Symbol::new(&env, "liquidate"), args);
+        Ok(reward)
+    }
+
+    /// Verify + store a fresh price, then execute the pending order
+    /// against it. `asset` MUST be the order's asset. Returns the keeper
+    /// fee (0 = order cancelled rather than executed).
+    pub fn execute_with_price(
+        env: Env,
+        keeper: Address,
+        order_id: u64,
+        asset: Symbol,
+        price: i128,
+        timestamp: u64,
+        round_id: u64,
+        pubkeys: Vec<BytesN<32>>,
+        sigs: Vec<BytesN<64>>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        keeper.require_auth();
+
+        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (keeper, order_id).into_val(&env);
+        let fee: i128 = env.invoke_contract(&market, &Symbol::new(&env, "execute_order"), args);
+        Ok(fee)
+    }
+
+    /// Refresh EVERY asset the trader holds (one attestation each), then
+    /// liquidate the whole cross-margin account — the account-level
+    /// equity check reads all of them. Returns the keeper reward.
+    pub fn liquidate_cross_with_prices(
+        env: Env,
+        keeper: Address,
+        trader: Address,
+        attestations: Vec<PriceAttestation>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        keeper.require_auth();
+
+        for att in attestations.iter() {
+            Self::refresh_price(
+                &env, &att.asset, att.price, att.timestamp, att.round_id,
+                att.pubkeys.clone(), att.sigs.clone(),
+            )?;
+        }
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (keeper, trader).into_val(&env);
+        let reward: i128 =
+            env.invoke_contract(&market, &Symbol::new(&env, "liquidate_cross_account"), args);
+        Ok(reward)
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Admin
     // ───────────────────────────────────────────────────────────────────────
+
+    /// Replace the allowed publisher key set. Admin-authenticated.
+    pub fn set_publishers(
+        env: Env,
+        publishers: Vec<BytesN<32>>,
+    ) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        if publishers.is_empty() {
+            return Err(NoetherError::InvalidParameter);
+        }
+        env.storage().instance().set(&DataKey::Publishers, &publishers);
+        Ok(())
+    }
 
     /// Point the router at a different market deployment. Admin-authenticated.
     pub fn set_market(env: Env, new_market: Address) -> Result<(), NoetherError> {
@@ -203,6 +316,31 @@ impl NoetherRouterContract {
         pubkeys: Vec<BytesN<32>>,
         sigs: Vec<BytesN<64>>,
     ) -> Result<(), NoetherError> {
+        // Publisher allowlist (O-2): every supplied key must be
+        // registered, and at least one must be present — the router
+        // never relays a self-signed price. Defense-in-depth: O-1
+        // hardening in Noeracle itself remains the primary gate.
+        let allowed: Vec<BytesN<32>> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Publishers)
+            .ok_or(NoetherError::NotInitialized)?;
+        if pubkeys.is_empty() {
+            return Err(NoetherError::Unauthorized);
+        }
+        for pk in pubkeys.iter() {
+            if !allowed.contains(&pk) {
+                return Err(NoetherError::Unauthorized);
+            }
+        }
+
+        // Coarse sanity bounds (O-7 backstop): a price outside these is
+        // garbage regardless of signatures
+        let (lo, hi) = price_bounds(env, asset)?;
+        if price < lo || price > hi {
+            return Err(NoetherError::InvalidPrice);
+        }
+
         let noeracle = Self::noeracle_addr(env)?;
         let tag = symbol_to_tag(env, asset)?;
         let update_args: Vec<Val> =
@@ -248,6 +386,24 @@ impl NoetherRouterContract {
 }
 
 
+// Coarse per-asset sanity bands, 7-decimal fixed point. Deliberately
+// wide — they only reject obvious garbage, never legitimate volatility.
+fn price_bounds(env: &Env, asset: &Symbol) -> Result<(i128, i128), NoetherError> {
+    const P: i128 = 10_000_000;
+    let btc = Symbol::new(env, "BTC");
+    let eth = Symbol::new(env, "ETH");
+    let xlm = Symbol::new(env, "XLM");
+    if asset == &btc {
+        Ok((1_000 * P, 1_000_000 * P))
+    } else if asset == &eth {
+        Ok((50 * P, 100_000 * P))
+    } else if asset == &xlm {
+        Ok((P / 100, 100 * P))
+    } else {
+        Err(NoetherError::InvalidPrice)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════════
@@ -280,6 +436,8 @@ mod tests {
             ) {
                 env.storage().instance().set(&symbol_short!("PRICE"), &price);
                 env.storage().instance().set(&symbol_short!("TAG"), &asset);
+                // per-tag map for multi-asset tests
+                env.storage().instance().set(&asset, &price);
                 let _ = (timestamp, round_id, pubkeys, sigs);
             }
 
@@ -289,6 +447,10 @@ mod tests {
 
             pub fn recorded_tag(env: Env) -> BytesN<8> {
                 env.storage().instance().get(&symbol_short!("TAG")).unwrap()
+            }
+
+            pub fn price_for(env: Env, tag: BytesN<8>) -> i128 {
+                env.storage().instance().get(&tag).unwrap_or(0)
             }
         }
     }
@@ -331,6 +493,18 @@ mod tests {
             pub fn close_position(_env: Env, _trader: Address, _position_id: u64) -> i128 {
                 4_321
             }
+
+            pub fn liquidate(_env: Env, _keeper: Address, _position_id: u64) -> i128 {
+                55
+            }
+
+            pub fn execute_order(_env: Env, _keeper: Address, _order_id: u64) -> i128 {
+                66
+            }
+
+            pub fn liquidate_cross_account(_env: Env, _keeper: Address, _trader: Address) -> i128 {
+                77
+            }
         }
     }
 
@@ -358,7 +532,7 @@ mod tests {
         let market_id = env.register_contract(None, mock_market::MockMarket);
         let router_id = env.register_contract(None, NoetherRouterContract);
         let client = NoetherRouterContractClient::new(&env, &router_id);
-        client.initialize(&admin, &market_id, &noeracle_id);
+        client.initialize(&admin, &market_id, &noeracle_id, &pubkeys(&env));
         Fixture { env, admin, market_id, noeracle_id, client }
     }
 
@@ -374,13 +548,13 @@ mod tests {
     #[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
     fn initialize_twice_errors() {
         let f = setup();
-        f.client.initialize(&f.admin, &f.market_id, &f.noeracle_id);
+        f.client.initialize(&f.admin, &f.market_id, &f.noeracle_id, &pubkeys(&f.env));
     }
 
     #[test]
     fn open_with_price_stores_then_opens() {
         let f = setup();
-        let price = 700_000_000_000_000i128;
+        let price = 70_000 * PRECISION;
         let pos = f.client.open_with_price(
             &Address::generate(&f.env),
             &Symbol::new(&f.env, "BTC"),
@@ -469,5 +643,165 @@ mod tests {
         let new_admin = Address::generate(&f.env);
         f.client.set_admin(&new_admin);
         assert_eq!(f.client.get_admin(), new_admin);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Publisher allowlist (O-2 / P2-4)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")] // Unauthorized
+    fn foreign_publisher_key_rejected() {
+        let f = setup();
+        let foreign = soroban_sdk::vec![&f.env, BytesN::from_array(&f.env, &[42u8; 32])];
+        let _ = f.client.open_with_price(
+            &Address::generate(&f.env),
+            &Symbol::new(&f.env, "BTC"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &(70_000 * PRECISION),
+            &1_700_000_000u64,
+            &1u64,
+            &foreign,
+            &sigs(&f.env),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")] // Unauthorized
+    fn empty_publisher_set_rejected() {
+        let f = setup();
+        let none: Vec<BytesN<32>> = soroban_sdk::vec![&f.env];
+        let _ = f.client.open_with_price(
+            &Address::generate(&f.env),
+            &Symbol::new(&f.env, "BTC"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &(70_000 * PRECISION),
+            &1_700_000_000u64,
+            &1u64,
+            &none,
+            &sigs(&f.env),
+        );
+    }
+
+    #[test]
+    fn admin_can_rotate_publishers() {
+        let f = setup();
+        let new_keys = soroban_sdk::vec![&f.env, BytesN::from_array(&f.env, &[9u8; 32])];
+        f.client.set_publishers(&new_keys);
+        // Old key now rejected
+        let res = f.client.try_open_with_price(
+            &Address::generate(&f.env),
+            &Symbol::new(&f.env, "BTC"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &(70_000 * PRECISION),
+            &1_700_000_000u64,
+            &1u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
+        assert!(res.is_err());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Keeper entry points (O-3 / P2-5)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn liquidate_with_price_stores_then_liquidates() {
+        let f = setup();
+        let price = 65_000 * PRECISION;
+        let reward = f.client.liquidate_with_price(
+            &Address::generate(&f.env),
+            &7u64,
+            &Symbol::new(&f.env, "BTC"),
+            &price,
+            &1_700_000_000u64,
+            &3u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
+        assert_eq!(reward, 55);
+        let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
+        assert_eq!(noeracle.recorded_price(), price);
+    }
+
+    #[test]
+    fn execute_with_price_stores_then_executes() {
+        let f = setup();
+        let fee = f.client.execute_with_price(
+            &Address::generate(&f.env),
+            &12u64,
+            &Symbol::new(&f.env, "ETH"),
+            &(3_000 * PRECISION),
+            &1_700_000_000u64,
+            &4u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
+        assert_eq!(fee, 66);
+    }
+
+    #[test]
+    fn liquidate_cross_with_prices_refreshes_every_asset() {
+        let f = setup();
+        let atts = soroban_sdk::vec![
+            &f.env,
+            PriceAttestation {
+                asset: Symbol::new(&f.env, "BTC"),
+                price: 64_000 * PRECISION,
+                timestamp: 1_700_000_000,
+                round_id: 5,
+                pubkeys: pubkeys(&f.env),
+                sigs: sigs(&f.env),
+            },
+            PriceAttestation {
+                asset: Symbol::new(&f.env, "XLM"),
+                price: PRECISION / 10,
+                timestamp: 1_700_000_000,
+                round_id: 5,
+                pubkeys: pubkeys(&f.env),
+                sigs: sigs(&f.env),
+            },
+        ];
+        let reward = f.client.liquidate_cross_with_prices(
+            &Address::generate(&f.env),
+            &Address::generate(&f.env),
+            &atts,
+        );
+        assert_eq!(reward, 77);
+
+        let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
+        let btc_tag = BytesN::from_array(&f.env, &[b'B', b'T', b'C', b'U', b'S', b'D', 0, 0]);
+        let xlm_tag = BytesN::from_array(&f.env, &[b'X', b'L', b'M', b'U', b'S', b'D', 0, 0]);
+        assert_eq!(noeracle.price_for(&btc_tag), 64_000 * PRECISION);
+        assert_eq!(noeracle.price_for(&xlm_tag), PRECISION / 10);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Coarse sanity bounds (O-7 / P2-6)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #31)")] // InvalidPrice
+    fn absurd_price_rejected_even_with_valid_publisher() {
+        let f = setup();
+        let _ = f.client.open_with_price(
+            &Address::generate(&f.env),
+            &Symbol::new(&f.env, "BTC"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &PRECISION, // BTC at $1 — below the 1k floor
+            &1_700_000_000u64,
+            &1u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
     }
 }

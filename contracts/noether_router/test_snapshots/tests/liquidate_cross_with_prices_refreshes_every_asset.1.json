@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 6,
     "nonce": 0
   },
   "auth": [
@@ -43,40 +43,141 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-              "function_name": "close_with_price",
+              "function_name": "liquidate_cross_with_prices",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
                 {
-                  "u64": 99
-                },
-                {
-                  "symbol": "ETH"
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 350000000000
-                  }
-                },
-                {
-                  "u64": 1700000000
-                },
-                {
-                  "u64": 7
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                 },
                 {
                   "vec": [
                     {
-                      "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
-                    }
-                  ]
-                },
-                {
-                  "vec": [
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "asset"
+                          },
+                          "val": {
+                            "symbol": "BTC"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "price"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 640000000000
+                            }
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "pubkeys"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "round_id"
+                          },
+                          "val": {
+                            "u64": 5
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "sigs"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 1700000000
+                          }
+                        }
+                      ]
+                    },
                     {
-                      "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "asset"
+                          },
+                          "val": {
+                            "symbol": "XLM"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "price"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000000
+                            }
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "pubkeys"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "round_id"
+                          },
+                          "val": {
+                            "u64": 5
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "sigs"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 1700000000
+                          }
+                        }
+                      ]
                     }
                   ]
                 }
@@ -158,12 +259,23 @@
                     "storage": [
                       {
                         "key": {
-                          "bytes": "4554485553440000"
+                          "bytes": "4254435553440000"
                         },
                         "val": {
                           "i128": {
                             "hi": 0,
-                            "lo": 350000000000
+                            "lo": 640000000000
+                          }
+                        }
+                      },
+                      {
+                        "key": {
+                          "bytes": "584c4d5553440000"
+                        },
+                        "val": {
+                          "i128": {
+                            "hi": 0,
+                            "lo": 1000000
                           }
                         }
                       },
@@ -174,7 +286,7 @@
                         "val": {
                           "i128": {
                             "hi": 0,
-                            "lo": 350000000000
+                            "lo": 1000000
                           }
                         }
                       },
@@ -183,7 +295,7 @@
                           "symbol": "TAG"
                         },
                         "val": {
-                          "bytes": "4554485553440000"
+                          "bytes": "584c4d5553440000"
                         }
                       }
                     ]
@@ -461,7 +573,7 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
               },
               {
-                "symbol": "close_with_price"
+                "symbol": "liquidate_cross_with_prices"
               }
             ],
             "data": {
@@ -470,34 +582,135 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
                 {
-                  "u64": 99
-                },
-                {
-                  "symbol": "ETH"
-                },
-                {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 350000000000
-                  }
-                },
-                {
-                  "u64": 1700000000
-                },
-                {
-                  "u64": 7
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                 },
                 {
                   "vec": [
                     {
-                      "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
-                    }
-                  ]
-                },
-                {
-                  "vec": [
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "asset"
+                          },
+                          "val": {
+                            "symbol": "BTC"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "price"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 640000000000
+                            }
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "pubkeys"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "round_id"
+                          },
+                          "val": {
+                            "u64": 5
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "sigs"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 1700000000
+                          }
+                        }
+                      ]
+                    },
                     {
-                      "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "asset"
+                          },
+                          "val": {
+                            "symbol": "XLM"
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "price"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 1000000
+                            }
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "pubkeys"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "round_id"
+                          },
+                          "val": {
+                            "u64": 5
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "sigs"
+                          },
+                          "val": {
+                            "vec": [
+                              {
+                                "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "timestamp"
+                          },
+                          "val": {
+                            "u64": 1700000000
+                          }
+                        }
+                      ]
                     }
                   ]
                 }
@@ -529,19 +742,96 @@
             "data": {
               "vec": [
                 {
-                  "bytes": "4554485553440000"
+                  "bytes": "4254435553440000"
                 },
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 350000000000
+                    "lo": 640000000000
                   }
                 },
                 {
                   "u64": 1700000000
                 },
                 {
-                  "u64": 7
+                  "u64": 5
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                    }
+                  ]
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "update_ed25519_persistent"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
+              },
+              {
+                "symbol": "update_ed25519_persistent"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "bytes": "584c4d5553440000"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 1000000
+                  }
+                },
+                {
+                  "u64": 1700000000
+                },
+                {
+                  "u64": 5
                 },
                 {
                   "vec": [
@@ -600,7 +890,7 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000003"
               },
               {
-                "symbol": "close_position"
+                "symbol": "liquidate_cross_account"
               }
             ],
             "data": {
@@ -609,7 +899,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
                 {
-                  "u64": 99
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                 }
               ]
             }
@@ -630,13 +920,13 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "close_position"
+                "symbol": "liquidate_cross_account"
               }
             ],
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 4321
+                "lo": 77
               }
             }
           }
@@ -656,13 +946,13 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "close_with_price"
+                "symbol": "liquidate_cross_with_prices"
               }
             ],
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 4321
+                "lo": 77
               }
             }
           }
@@ -685,10 +975,12 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
               },
               {
-                "symbol": "recorded_price"
+                "symbol": "price_for"
               }
             ],
-            "data": "void"
+            "data": {
+              "bytes": "4254435553440000"
+            }
           }
         }
       },
@@ -706,13 +998,13 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "recorded_price"
+                "symbol": "price_for"
               }
             ],
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 350000000000
+                "lo": 640000000000
               }
             }
           }
@@ -735,10 +1027,12 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
               },
               {
-                "symbol": "recorded_tag"
+                "symbol": "price_for"
               }
             ],
-            "data": "void"
+            "data": {
+              "bytes": "584c4d5553440000"
+            }
           }
         }
       },
@@ -756,11 +1050,14 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "recorded_tag"
+                "symbol": "price_for"
               }
             ],
             "data": {
-              "bytes": "4554485553440000"
+              "i128": {
+                "hi": 0,
+                "lo": 1000000
+              }
             }
           }
         }
