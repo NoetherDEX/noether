@@ -12,6 +12,8 @@ import {
   scValToNative,
 } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
+import { debugLog, debugError } from '@/lib/utils/debug';
+import { decodeContractError } from '@/lib/utils/contractErrors';
 
 // Horizon server for account queries (balances, etc.)
 const horizonServer = new Horizon.Server(NETWORK.HORIZON_URL);
@@ -54,7 +56,7 @@ export async function buildTransaction(
   const simulated = await sorobanRpc.simulateTransaction(transaction);
 
   if (rpc.Api.isSimulationError(simulated)) {
-    throw new Error(`Simulation failed: ${simulated.error}`);
+    throw new Error(decodeContractError(`Simulation failed: ${simulated.error}`));
   }
 
   // Prepare the transaction with the simulation results
@@ -64,7 +66,7 @@ export async function buildTransaction(
   // Use toXDR() which returns base64 string in browser environment
   const xdrString = prepared.toXDR();
 
-  console.log('[DEBUG] Built transaction XDR (first 100 chars):', xdrString.substring(0, 100));
+  debugLog('[DEBUG] Built transaction XDR (first 100 chars):', xdrString.substring(0, 100));
 
   return xdrString;
 }
@@ -73,19 +75,19 @@ export async function buildTransaction(
  * Submit a signed transaction
  */
 export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetTransactionResponse> {
-  console.log('[DEBUG] Submitting signed XDR (first 100 chars):', signedXdr.substring(0, 100));
-  console.log('[DEBUG] Full signed XDR length:', signedXdr.length);
+  debugLog('[DEBUG] Submitting signed XDR (first 100 chars):', signedXdr.substring(0, 100));
+  debugLog('[DEBUG] Full signed XDR length:', signedXdr.length);
 
   // Parse the signed XDR using TransactionBuilder.fromXDR
   const transaction = TransactionBuilder.fromXDR(signedXdr, NETWORK.PASSPHRASE) as Transaction;
-  console.log('[DEBUG] Parsed transaction successfully');
+  debugLog('[DEBUG] Parsed transaction successfully');
 
   const response = await sorobanRpc.sendTransaction(transaction);
 
-  console.log('[DEBUG] Send response:', response.status, response.hash);
+  debugLog('[DEBUG] Send response:', response.status, response.hash);
 
   if (response.status === 'ERROR') {
-    console.error('[DEBUG] Transaction error:', response.errorResult);
+    debugError('[DEBUG] Transaction error:', response.errorResult);
     // Try to extract meaningful error message
     let errorMessage = 'Transaction submission failed';
     try {
@@ -110,7 +112,7 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
   }
 
   if (result.status === 'FAILED') {
-    console.error('[DEBUG] Transaction failed on-chain:', result);
+    debugError('[DEBUG] Transaction failed on-chain:', result);
     // Try to extract the error from resultXdr
     let errorMessage = 'Transaction failed on-chain';
     try {
@@ -128,7 +130,7 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
     throw new Error(`Transaction did not complete: ${result.status}`);
   }
 
-  console.log('[DEBUG] Transaction successful!');
+  debugLog('[DEBUG] Transaction successful!');
   return result;
 }
 

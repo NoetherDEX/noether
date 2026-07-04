@@ -5,6 +5,7 @@ import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { fromPrecision, toPrecision } from '@/lib/utils';
+import { debugLog } from '@/lib/utils/debug';
 import {
   StatsBar,
   YourPosition,
@@ -69,9 +70,9 @@ function VaultPage() {
       ]);
 
       // Debug: Log raw poolInfo to see what we're getting
-      console.log('[Vault] Raw poolInfo:', poolInfo);
-      console.log('[Vault] Raw noePrice:', noePrice);
-      console.log('[Vault] Raw noeBalance:', noeBalance);
+      debugLog('[Vault] Raw poolInfo:', poolInfo);
+      debugLog('[Vault] Raw noePrice:', noePrice);
+      debugLog('[Vault] Raw noeBalance:', noeBalance);
 
       if (poolInfo) {
         // Safely convert values with fallbacks

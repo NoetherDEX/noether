@@ -17,6 +17,7 @@ import {
   toPrecision,
 } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
+import { decodeContractError } from '@/lib/utils/contractErrors';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { TRADING, FEE_TIERS } from '@/lib/utils/constants';
 import type { TriggerCondition, DisplayPosition } from '@/types';
@@ -103,6 +104,12 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
   // Fee tier info — existing 14d volume fetched from contract
   const [existing14dVolume, setExisting14dVolume] = useState<number>(0);
+
+  // M-3 interim guard: trailing stops attached to cross positions execute via
+  // the isolated close path on-chain, corrupting the shared pool. Only offer
+  // isolated positions until the contract fix deploys.
+  const trailingEligiblePositions = positions.filter(p => p.marginMode !== 'Cross');
+  const hasCrossPositions = positions.length > trailingEligiblePositions.length;
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -203,6 +210,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const errors: string[] = [];
   if (orderType === 'TrailingStop') {
     if (!trailingPositionId) errors.push('Select a position');
+    if (positions.find(p => p.id === Number(trailingPositionId))?.marginMode === 'Cross')
+      errors.push('Unavailable for cross-margin positions (contract fix pending)');
     if (xlmBalance < 1) errors.push('Need XLM for gas fees');
   } else {
     if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
@@ -237,6 +246,12 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (orderType === 'TrailingStop') {
       // Trailing stop - attach to existing position
       const posId = parseInt(trailingPositionId) || 0;
+      // M-3 interim guard — cross positions must never reach place_trailing_stop.
+      if (positions.find(p => p.id === posId)?.marginMode === 'Cross') {
+        toast.error('Unavailable for cross-margin positions (contract fix pending)');
+        setIsSubmitting(false);
+        return;
+      }
       const pct = Math.round((parseFloat(trailingPercent) || 3) * 100); // % to bps
       try {
         await placeTrailingStop(publicKey, sign, {
@@ -247,7 +262,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         toast.success(`Trailing stop (${trailingPercent}%) placed on position #${posId}`);
         onSubmit?.();
       } catch (err: any) {
-        toast.error(err?.message || 'Failed to place trailing stop');
+        toast.error(decodeContractError(err) || 'Failed to place trailing stop');
       }
       setIsSubmitting(false);
       return;
@@ -278,7 +293,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         refreshBalances();
         onSubmit?.();
       } catch (err: any) {
-        toast.error(err?.message || 'Failed to place stop-limit order');
+        toast.error(decodeContractError(err) || 'Failed to place stop-limit order');
       }
       setIsSubmitting(false);
       return;
@@ -312,7 +327,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             }).catch(() => {});
             return `${direction} ${asset} opened from ${leaderVault.name}`;
           },
-          error: (err) => err?.message || 'Leader trade failed',
+          error: (err) => decodeContractError(err) || 'Leader trade failed',
         });
         try { await leaderPromise; } catch {}
         setIsSubmitting(false);
@@ -339,7 +354,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             getCrossMarginBalance(publicKey).then(b => setCrossBalance(Number(b) / 10_000_000)).catch(() => {});
             return `Cross ${direction} ${asset} position opened!`;
           },
-          error: (err) => err?.message || 'Failed to open cross position',
+          error: (err) => decodeContractError(err) || 'Failed to open cross position',
         });
 
         try { await openCrossPromise; } catch {}
@@ -370,10 +385,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             if (err?.message?.includes('InvalidLeverage')) {
               return 'Invalid leverage. Must be between 1x and 10x.';
             }
-            if (err?.message?.includes('AllOraclesFailed')) {
-              return 'Price feed unavailable. Please try again.';
-            }
-            return err?.message || 'Failed to open position';
+            return decodeContractError(err) || 'Failed to open position';
           },
         });
 
@@ -425,7 +437,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           if (err?.message?.includes('InvalidSlippageTolerance')) {
             return 'Invalid slippage tolerance.';
           }
-          return err?.message || 'Failed to place limit order';
+          return decodeContractError(err) || 'Failed to place limit order';
         },
       });
 
@@ -460,7 +472,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       const bal = await getCrossMarginBalance(publicKey);
       setCrossBalance(Number(bal) / 10_000_000);
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to deposit');
+      toast.error(decodeContractError(err) || 'Failed to deposit');
     } finally {
       setIsCrossDepositing(false);
     }
@@ -486,7 +498,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       if (msg.includes('CrossMarginInsufficientFreeMargin')) {
         toast.error('Insufficient free margin — reduce positions first');
       } else {
-        toast.error(msg || 'Failed to withdraw');
+        toast.error(decodeContractError(err) || 'Failed to withdraw');
       }
     } finally {
       setIsCrossWithdrawing(false);
@@ -972,14 +984,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             </h4>
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground">Select Position</label>
-              {positions.length > 0 ? (
+              {trailingEligiblePositions.length > 0 ? (
                 <select
                   value={trailingPositionId}
                   onChange={(e) => setTrailingPositionId(e.target.value)}
                   className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500"
                 >
                   <option value="">Select a position...</option>
-                  {positions.map((pos) => (
+                  {trailingEligiblePositions.map((pos) => (
                     <option key={pos.id} value={pos.id.toString()}>
                       #{pos.id} {pos.asset} {pos.direction} {pos.leverage}x — ${pos.size.toLocaleString(undefined, {maximumFractionDigits: 0})}
                     </option>
@@ -987,6 +999,11 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 </select>
               ) : (
                 <p className="text-xs text-muted-foreground py-2">No open positions. Open a position first.</p>
+              )}
+              {hasCrossPositions && (
+                <p className="text-xs text-muted-foreground/70">
+                  Unavailable for cross-margin positions (contract fix pending)
+                </p>
               )}
             </div>
             <div className="space-y-2">

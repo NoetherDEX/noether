@@ -4,6 +4,7 @@ import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, 
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
 import { rpc, scValToNative, xdr, Horizon, Address } from '@stellar/stellar-sdk';
 import { CONTRACTS, NETWORK } from '@/lib/utils/constants';
+import { debugLog } from '@/lib/utils/debug';
 
 /**
  * Raw position data from contract (before parsing)
@@ -67,7 +68,7 @@ export async function openPosition(
     direction: Direction;
   }
 ): Promise<Position> {
-  console.log('[DEBUG] Opening position...');
+  debugLog('[DEBUG] Opening position...');
 
   // Trade args, shared by the direct and router paths. Matches:
   // open_position(trader: Address, asset: Symbol, collateral: i128, leverage: u32, direction: Direction)
@@ -105,7 +106,7 @@ export async function openPosition(
   const result = await submitTransaction(signedXdr);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
-    console.log('[DEBUG] Position opened successfully!');
+    debugLog('[DEBUG] Position opened successfully!');
     return scValToNative(result.returnValue) as Position;
   }
 
@@ -121,7 +122,7 @@ export async function closePosition(
   positionId: number,
   asset: string,
 ): Promise<{ pnl: bigint; fee: bigint }> {
-  console.log('[DEBUG] Closing position...');
+  debugLog('[DEBUG] Closing position...');
 
   let xdrStr: string;
   if (routerContract) {
@@ -156,7 +157,7 @@ export async function closePosition(
   const result = await submitTransaction(signedXdr);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
-    console.log('[DEBUG] Position closed successfully!');
+    debugLog('[DEBUG] Position closed successfully!');
     const native = scValToNative(result.returnValue);
     // Direct close_position returns { pnl, fee }; router close_with_price
     // returns a bare i128 pnl. Normalise to the same shape for callers.
@@ -696,7 +697,7 @@ export async function placeLimitOrder(
     timeInForce?: number; // 0=GTC, 1=IOC, 2=PostOnly. Bit 8 = reduce_only
   }
 ): Promise<Order> {
-  console.log('[DEBUG] Placing limit order...');
+  debugLog('[DEBUG] Placing limit order...');
 
   const args = [
     toScVal(signerPublicKey, 'address'),
@@ -715,7 +716,7 @@ export async function placeLimitOrder(
   const result = await submitTransaction(signedXdr);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
-    console.log('[DEBUG] Limit order placed successfully!');
+    debugLog('[DEBUG] Limit order placed successfully!');
     const rawOrder = scValToNative(result.returnValue) as RawOrder;
     return parseOrder(rawOrder);
   }
@@ -735,7 +736,7 @@ export async function setStopLoss(
     slippageToleranceBps: number;
   }
 ): Promise<Order> {
-  console.log('[DEBUG] Setting stop-loss for position:', params.positionId);
+  debugLog('[DEBUG] Setting stop-loss for position:', params.positionId);
 
   // Contract signature: set_stop_loss(trader, position_id, trigger_price, slippage_tolerance_bps)
   const args = [
@@ -750,7 +751,7 @@ export async function setStopLoss(
   const result = await submitTransaction(signedXdr);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
-    console.log('[DEBUG] Stop-loss set successfully!');
+    debugLog('[DEBUG] Stop-loss set successfully!');
     const rawOrder = scValToNative(result.returnValue) as RawOrder;
     return parseOrder(rawOrder);
   }
@@ -771,7 +772,7 @@ export async function setTakeProfit(
     limitPrice?: bigint;
   }
 ): Promise<Order> {
-  console.log('[DEBUG] Setting take-profit for position:', params.positionId);
+  debugLog('[DEBUG] Setting take-profit for position:', params.positionId);
 
   // Contract signature: set_take_profit(trader, position_id, trigger_price, slippage_tolerance_bps, limit_price)
   const args = [
@@ -787,7 +788,7 @@ export async function setTakeProfit(
   const result = await submitTransaction(signedXdr);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
-    console.log('[DEBUG] Take-profit set successfully!');
+    debugLog('[DEBUG] Take-profit set successfully!');
     const rawOrder = scValToNative(result.returnValue) as RawOrder;
     return parseOrder(rawOrder);
   }
@@ -803,7 +804,7 @@ export async function cancelOrder(
   signTransaction: (xdr: string) => Promise<string>,
   orderId: number
 ): Promise<void> {
-  console.log('[DEBUG] Cancelling order:', orderId);
+  debugLog('[DEBUG] Cancelling order:', orderId);
 
   // Contract signature: cancel_order(trader, order_id)
   const args = [
@@ -816,7 +817,7 @@ export async function cancelOrder(
   const result = await submitTransaction(signedXdr);
 
   if (result.status === 'SUCCESS') {
-    console.log('[DEBUG] Order cancelled successfully!');
+    debugLog('[DEBUG] Order cancelled successfully!');
     return;
   }
 
@@ -901,7 +902,7 @@ export async function getOrderById(publicKey: string, orderId: number): Promise<
 export async function getAllPendingOrders(publicKey: string): Promise<Order[]> {
   try {
     const orderIds = await getAllOrderIds(publicKey);
-    console.log('[DEBUG] All order IDs:', orderIds);
+    debugLog('[DEBUG] All order IDs:', orderIds);
 
     if (orderIds.length === 0) return [];
 

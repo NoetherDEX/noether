@@ -766,7 +766,10 @@ const PositionRow = memo(function PositionRow({
   onShare: () => void;
 }) {
   const isPositive = position.pnl >= 0;
-
+  // M-3 interim guard: SL/TP orders on cross positions execute via the
+  // isolated close path on-chain, corrupting the shared pool. Disabled
+  // until the contract fix deploys.
+  const isCross = position.marginMode === 'Cross';
 
   return (
     <tr className="border-b border-white/5 hover:bg-zinc-900/50 transition-colors">
@@ -852,15 +855,27 @@ const PositionRow = memo(function PositionRow({
             <>
               <button
                 onClick={onSetStopLoss}
-                className="p-1.5 rounded hover:bg-[#ef4444]/10 text-muted-foreground hover:text-[#ef4444] transition-colors"
-                title="Set Stop-Loss"
+                disabled={isCross}
+                className={cn(
+                  'p-1.5 rounded transition-colors',
+                  isCross
+                    ? 'text-muted-foreground/30 cursor-not-allowed'
+                    : 'hover:bg-[#ef4444]/10 text-muted-foreground hover:text-[#ef4444]'
+                )}
+                title={isCross ? 'Unavailable for cross-margin positions (contract fix pending)' : 'Set Stop-Loss'}
               >
                 <Shield className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={onSetTakeProfit}
-                className="p-1.5 rounded hover:bg-[#22c55e]/10 text-muted-foreground hover:text-[#22c55e] transition-colors"
-                title="Set Take-Profit"
+                disabled={isCross}
+                className={cn(
+                  'p-1.5 rounded transition-colors',
+                  isCross
+                    ? 'text-muted-foreground/30 cursor-not-allowed'
+                    : 'hover:bg-[#22c55e]/10 text-muted-foreground hover:text-[#22c55e]'
+                )}
+                title={isCross ? 'Unavailable for cross-margin positions (contract fix pending)' : 'Set Take-Profit'}
               >
                 <Target className="w-3.5 h-3.5" />
               </button>
@@ -964,16 +979,22 @@ const PositionCard = memo(function PositionCard({
       </div>
 
       {hasSlTpCallbacks && (
-        <div className="flex gap-2 mb-2">
-          <Button variant="secondary" size="sm" className="flex-1" onClick={onSetStopLoss}>
-            <Shield className="w-4 h-4 mr-1" />
-            Stop-Loss
-          </Button>
-          <Button variant="secondary" size="sm" className="flex-1" onClick={onSetTakeProfit}>
-            <Target className="w-4 h-4 mr-1" />
-            Take-Profit
-          </Button>
-        </div>
+        position.marginMode === 'Cross' ? (
+          <p className="mb-2 text-xs text-muted-foreground/70">
+            Stop-loss / take-profit unavailable for cross-margin positions (contract fix pending)
+          </p>
+        ) : (
+          <div className="flex gap-2 mb-2">
+            <Button variant="secondary" size="sm" className="flex-1" onClick={onSetStopLoss}>
+              <Shield className="w-4 h-4 mr-1" />
+              Stop-Loss
+            </Button>
+            <Button variant="secondary" size="sm" className="flex-1" onClick={onSetTakeProfit}>
+              <Target className="w-4 h-4 mr-1" />
+              Take-Profit
+            </Button>
+          </div>
+        )
       )}
 
       <div className="flex gap-2">
