@@ -40,9 +40,11 @@ import {
   getFundingRate,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
+import { getMarketsStats, statToUsd, type AssetMarketStats } from '@/lib/api/markets';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { subscribeLivePrices } from '@/lib/stellar/noeracle';
 import { toPrecision } from '@/lib/utils';
+import { formatCompactUsd } from '@/lib/utils/format';
 import { decodeContractError } from '@/lib/utils/contractErrors';
 import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
@@ -62,6 +64,7 @@ function TradePage() {
   const [fundingRate, setFundingRate] = useState<number>(0);
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const [pricesStale, setPricesStale] = useState(false);
+  const [assetStats, setAssetStats] = useState<AssetMarketStats | null>(null);
   const prevOrdersRef = useRef<Map<number, string>>(new Map());
 
   // Display positions are derived from raw positions + the latest prices,
@@ -97,6 +100,25 @@ function TradePage() {
       })
       .catch(() => {});
   }, [searchParams, publicKey, setLeaderVault]);
+
+  // Real market stats (OI + 24h volume) from the indexer projection —
+  // replaces the hardcoded $1.2M / $890K. Refetch on asset change + every
+  // 30s; null result keeps the neutral placeholder.
+  useEffect(() => {
+    let active = true;
+    const load = () => {
+      getMarketsStats().then((stats) => {
+        if (!active) return;
+        setAssetStats(stats?.assets.find((a) => a.asset === selectedAsset) ?? null);
+      });
+    };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, [selectedAsset]);
 
   // Fetch positions function - extracted for manual refresh
   const fetchPositions = useCallback(async (showLoading = true) => {
@@ -632,11 +654,20 @@ function TradePage() {
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Open Interest</span>
-                      <span className="text-white">$1.2M</span>
+                      <span className="text-white">
+                        {assetStats
+                          ? formatCompactUsd(
+                              statToUsd(assetStats.openInterestLong) +
+                                statToUsd(assetStats.openInterestShort),
+                            )
+                          : '—'}
+                      </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">24h Volume</span>
-                      <span className="text-white">$890K</span>
+                      <span className="text-white">
+                        {assetStats ? formatCompactUsd(statToUsd(assetStats.volume24h)) : '—'}
+                      </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-neutral-500">Funding Rate</span>
