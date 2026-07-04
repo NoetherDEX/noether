@@ -97,11 +97,7 @@ impl RiskConfig {
 
     /// Max leverage implied by the initial margin (10000/im_bps).
     pub fn max_leverage(&self) -> u32 {
-        if self.im_bps == 0 {
-            0
-        } else {
-            BASIS_POINTS / self.im_bps
-        }
+        BASIS_POINTS.checked_div(self.im_bps).unwrap_or(0)
     }
 }
 
