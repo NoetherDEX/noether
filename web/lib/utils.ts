@@ -9,6 +9,7 @@ export function cn(...inputs: ClassValue[]) {
 export {
   formatUSD,
   formatPrice,
+  priceDecimals,
   formatNumber,
   formatPercent,
   bpsToPercent,

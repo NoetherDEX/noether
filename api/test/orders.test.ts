@@ -102,7 +102,7 @@ describe('POST /v1/orders/prepare', () => {
       method: 'POST',
       url: '/v1/orders/prepare',
       headers: { authorization: `Bearer ${keyId}:${secret}` },
-      payload: { op: 'open_position', asset: 'DOGE', collateral: '100', leverage: 5, direction: 'Long' },
+      payload: { op: 'open_position', asset: 'PEPE', collateral: '100', leverage: 5, direction: 'Long' },
     });
     expect(res.statusCode).toBe(400);
     const body = res.json() as { error: string };

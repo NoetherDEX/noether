@@ -91,10 +91,10 @@ describe('/v1/ws', () => {
     const mb = await openMailbox(`${address.replace('http', 'ws')}/v1/ws`);
     cleanup.push(async () => mb.close());
     await mb.next();
-    mb.socket.send(JSON.stringify({ op: 'subscribe', channels: ['ticker.DOGE', 'unknown'] }));
+    mb.socket.send(JSON.stringify({ op: 'subscribe', channels: ['ticker.PEPE', 'unknown'] }));
     const msg = (await mb.next()) as { type: string; channels: string[] };
     expect(msg.type).toBe('rejected');
-    expect(msg.channels).toEqual(['ticker.DOGE', 'unknown']);
+    expect(msg.channels).toEqual(['ticker.PEPE', 'unknown']);
   });
 
   it('login + account.events.<owner> subscription works for matching owner', async () => {
