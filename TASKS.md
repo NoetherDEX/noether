@@ -91,12 +91,12 @@ Derived from the 2026-06-09 full-project audit (**`docs/AUDIT-2026-06.md`** — 
 
 > **IN FLIGHT 2026-07-04:** P2-7..P2-12 being implemented in one keeper-hardening pass (workflow). CRITICAL coupling: the market removed `is_liquidatable` + `should_execute_order` for WASM budget this session, so the keeper switch to local-health-calc + simulate-first execution ships in the SAME rollout, plus it must call the new router `liquidate_with_price`/`execute_with_price` (P2-5) and `market.sync_asset_pnl` per cycle. Apply to BOTH keeper copies.
 
-- [ ] **P2-7** [critical/d] **Timeouts + watchdog + alerting** (K-1): `{timeout:15000}` on rpc.Server; `AbortSignal.timeout(10s)` on all fetches; watchdog `process.exit(1)` if no cycle completes in 3 min; Discord/Telegram webhook on startup/error-streak/shutdown; run compiled dist in prod. Apply to BOTH keeper copies.
-- [ ] **P2-8** [critical/d] Publish-path defenses (K-2): persist last-pushed prices across restarts (file/libsql) so the circuit breaker survives boot; tighten per-asset jump bounds; sanity-check each attestation against one independent ticker before pushing, skip+alert on divergence.
-- [ ] **P2-9** [high/d] Scan restructure (K-4): one per-cycle snapshot shared across phases; constant dummy Account for simulations; compute cross health locally; count consecutive read failures into stats + alert.
-- [ ] **P2-10** [medium/h] Trailing-stop: simulate first, submit only when `true`; gate peak updates to post-oracle-push (K-5).
-- [ ] **P2-11** [medium/d] `SOROBAN_RPC_URLS` failover (port indexer rotation) + fee escalation on liquidations + align tx timeout with polling window (K-6).
-- [ ] **P2-12** [low/h] Funding scheduling: tri-state result; schedule from on-chain `last_funding_time + 3600` (K-7). Stop logging secret-key fragments; hard-fail admin-key fallback when NETWORK=mainnet (K-8).
+- [x] **P2-7** [critical/d] **Timeouts + watchdog + alerting** (K-1) — DONE 2026-07-04 (commit `64b6d8e`). 15s rpc timeouts, 10s fetch aborts (Noeracle raced), 3-min watchdog→exit(1), dependency-free Discord/Telegram alerts (rate-limited), compiled dist in prod. ⚠️ apply to noetherkeeperbotv2 Railway copy.
+- [x] **P2-8** [critical/d] Publish-path defenses (K-2) — DONE 2026-07-04 (commit `64b6d8e`). Prices persisted (breaker survives restart), per-asset jump bounds + absolute bands, independent Binance divergence check (>5% skip+alert).
+- [x] **P2-9** [high/d] Scan restructure (K-4) — DONE 2026-07-04 (commit `64b6d8e`). One shared snapshot/cycle; dummy Account for sims; local liquidation-health calc (replaces removed is_liquidatable) + simulate-before-submit; read-failure streak counted+alerted. 24/24 smoke assertions on the health math.
+- [x] **P2-10** [medium/h] Trailing-stop simulate-first (K-5) — DONE 2026-07-04 (commit `64b6d8e`). Replaces removed should_execute_order/update_trailing_peak views with simulate-then-submit; peaks only in cycles with an actual push.
+- [x] **P2-11** [medium/d] RPC failover + fee escalation (K-6) — DONE 2026-07-04 (commit `64b6d8e`). SOROBAN_RPC_URLS rotation, 2x liq fee escalation (cap 5 XLM), tx timeBounds aligned to 30s poll, NOT_FOUND→indeterminate re-check (no dup submits).
+- [x] **P2-12** [low/h] Funding tri-state + key hygiene (K-7/K-8) — DONE 2026-07-04 (commit `64b6d8e`). applied|not-due|failed from persisted last-submit (no on-chain view exists); no secret fragments logged; hard-fail admin-key fallback on mainnet.
 
 ---
 
