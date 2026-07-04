@@ -7,7 +7,7 @@ interface YourPositionProps {
   noeBalance: number;
   noePrice: number;
   tvl: number;
-  apy: number;
+  apy: number | null;
   isConnected: boolean;
   isLoading?: boolean;
   hasTrustline: boolean;
@@ -48,7 +48,7 @@ export function YourPosition({
 
   const value = noeBalance * noePrice;
   const poolShare = tvl > 0 ? (value / tvl) * 100 : 0;
-  const dailyEarnings = (value * apy / 100) / 365;
+  const dailyEarnings = apy != null ? (value * apy / 100) / 365 : null;
 
   const hasPosition = noeBalance > 0;
 
@@ -86,12 +86,14 @@ export function YourPosition({
               </span>
             </div>
 
-            <div className="flex items-center justify-between pt-3 border-t border-white/5">
-              <span className="text-sm text-muted-foreground">Est. Daily Earnings</span>
-              <span className="font-mono text-sm font-medium text-[#22c55e]">
-                ~{formatUSD(dailyEarnings)}
-              </span>
-            </div>
+            {dailyEarnings != null && (
+              <div className="flex items-center justify-between pt-3 border-t border-white/5">
+                <span className="text-sm text-muted-foreground">Est. Daily Earnings</span>
+                <span className="font-mono text-sm font-medium text-[#22c55e]">
+                  ~{formatUSD(dailyEarnings)}
+                </span>
+              </div>
+            )}
 
             {!hasTrustline && (
               <div className="pt-3">
