@@ -30,6 +30,8 @@ import {
   scValToNative,
   nativeToScVal,
   Account,
+  Operation,
+  SorobanDataBuilder,
 } from '@stellar/stellar-sdk';
 import { KeeperConfig, Position, Order, ExecutionResult, SimulationOutcome } from './types';
 // Type-only — the @noeracle/sdk package is ESM-only; the index.ts loader
@@ -193,6 +195,67 @@ export class StellarClient {
 
   async getAccount(): Promise<Account> {
     return this.withRpc((server) => server.getAccount(this.keypair.publicKey()));
+  }
+
+  /**
+   * Native XLM balance of the keeper wallet, in XLM (P3-10). An empty keeper
+   * wallet freezes prices AND liquidations, so the caller alarms below a
+   * threshold. Read via getLedgerEntries (RPC has no balance-bearing
+   * getAccount). Returns null on read failure so the caller can distinguish
+   * "low" from "couldn't check".
+   */
+  async getXlmBalance(): Promise<number | null> {
+    try {
+      const acctKey = xdr.LedgerKey.account(
+        new xdr.LedgerKeyAccount({
+          accountId: Keypair.fromPublicKey(this.keypair.publicKey()).xdrAccountId(),
+        }),
+      );
+      const res = await this.withRpc((server) => server.getLedgerEntries(acctKey));
+      const entry = res.entries?.[0];
+      if (!entry) return null;
+      const stroops = entry.val.account().balance().toBigInt();
+      return Number(stroops) / 10_000_000;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Extend a contract's instance+code TTL via the canonical
+   * extendFootprintTtl operation (P3-9). An archived instance is a dead
+   * exchange until restored, and the keeper doesn't otherwise write to
+   * vault/router/shim. Best-effort: returns true on a PENDING submit, false
+   * on any failure (logged by the caller, never fatal). On-chain verification
+   * of the footprint is the operator's first-run step.
+   */
+  async bumpContractTtl(contractId: string, extendTo: number): Promise<boolean> {
+    if (!contractId) return false;
+    try {
+      const account = await this.getAccount();
+      const instanceKey = xdr.LedgerKey.contractData(
+        new xdr.LedgerKeyContractData({
+          contract: new Address(contractId).toScAddress(),
+          key: xdr.ScVal.scvLedgerKeyContractInstance(),
+          durability: xdr.ContractDataDurability.persistent(),
+        }),
+      );
+      const sorobanData = new SorobanDataBuilder().setReadOnly([instanceKey]).build();
+      const tx = new TransactionBuilder(account, {
+        fee: String(BASE_INCLUSION_FEE),
+        networkPassphrase: this.networkPassphrase,
+      })
+        .setSorobanData(sorobanData)
+        .addOperation(Operation.extendFootprintTtl({ extendTo }))
+        .setTimeout(TX_TIMEOUT_SECONDS)
+        .build();
+      const prepared = await this.withRpc((server) => server.prepareTransaction(tx));
+      prepared.sign(this.keypair);
+      const res = await this.withRpc((server) => server.sendTransaction(prepared));
+      return res.status === 'PENDING';
+    } catch {
+      return false;
+    }
   }
 
   /**

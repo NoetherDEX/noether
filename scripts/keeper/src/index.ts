@@ -136,6 +136,7 @@ class KeeperBot {
   private crossBalanceCache: Map<string, { balance: bigint; fetchedAt: number }> = new Map();
   private orphanedOrderIds: Set<string> = new Set();
   private throttledLogAt: Map<string, number> = new Map();
+  private nextTtlBumpAt: number = 0; // P3-9
 
   constructor() {
     this.config = loadConfig();
@@ -372,6 +373,9 @@ class KeeperBot {
 
     // 6. Apply funding rate (hourly, tri-state — K-7)
     await this.maybeApplyFunding(Date.now());
+
+    // 7. Proactive TTL bump + wallet-funding alarm (P3-9/P3-10)
+    await this.maybeBumpTtls(Date.now());
 
     // Status line
     const priceStr = this.config.assets
@@ -1032,6 +1036,46 @@ class KeeperBot {
    * NOT a failure. Only repeated real failures alert; a real failure
    * retries in 60s instead of silently waiting another full hour.
    */
+  /**
+   * Periodic (default 6h) proactive TTL extension of the long-lived
+   * contracts the keeper doesn't otherwise write to (market/vault/router/
+   * shim) + a keeper-wallet XLM funding alarm (P3-9/P3-10). An archived
+   * instance is a dead exchange; an empty keeper wallet freezes prices AND
+   * liquidations. Best-effort and non-fatal.
+   */
+  private async maybeBumpTtls(now: number): Promise<void> {
+    if (now < this.nextTtlBumpAt) return;
+    this.nextTtlBumpAt = now + this.config.ttlBumpIntervalMs;
+
+    // Wallet-funding alarm first — cheap and the most urgent signal.
+    const xlm = await this.stellar.getXlmBalance();
+    if (xlm !== null && xlm < this.config.minKeeperXlm) {
+      void sendAlert(
+        'critical',
+        'Keeper wallet low on XLM',
+        `balance=${xlm.toFixed(2)} XLM < min ${this.config.minKeeperXlm} — refill ${this.stellar.publicKey}`,
+      );
+    }
+
+    // Extend instance+code TTLs. Failures are logged, never fatal.
+    const targets: Array<[string, string]> = [
+      ['market', this.config.marketContractId],
+      ['vault', this.config.vaultContractId],
+      ['router', this.config.routerContractId],
+      ['shim', this.config.shimContractId],
+    ];
+    const bumped: string[] = [];
+    for (const [name, id] of targets) {
+      if (!id) continue;
+      const ok = await this.stellar.bumpContractTtl(id, this.config.ttlExtendToLedgers);
+      if (ok) bumped.push(name);
+      else this.logThrottled(`ttl:${name}`, `⚠️  TTL bump failed for ${name} (${id.slice(0, 8)}…)`);
+    }
+    if (bumped.length > 0) {
+      console.log(`\n🔁 Extended TTL: ${bumped.join(', ')}`);
+    }
+  }
+
   private async maybeApplyFunding(now: number): Promise<void> {
     if (now < this.nextFundingAttemptAt) return;
 

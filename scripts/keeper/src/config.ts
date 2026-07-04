@@ -145,10 +145,24 @@ export function loadConfig(): KeeperConfig {
       process.env.NEXT_PUBLIC_VAULT_ID ||
       contracts.contracts?.vault ||
       '',
+    // Router + shim — extended alongside market/vault by the TTL job (P3-9).
+    routerContractId:
+      process.env.NEXT_PUBLIC_NOETHER_ROUTER_ID ||
+      contracts.contracts?.noetherRouter ||
+      '',
+    shimContractId:
+      process.env.NEXT_PUBLIC_NOERACLE_SHIM_ID ||
+      contracts.contracts?.noeracleShim ||
+      '',
 
     // Timing
     pollIntervalMs: envInt('POLL_INTERVAL_MS', 5000),
     oracleUpdateIntervalMs: envInt('ORACLE_UPDATE_INTERVAL_MS', 30000),
+
+    // TTL bump job (P3-9) + wallet-funding alarm (P3-10)
+    ttlBumpIntervalMs: envInt('TTL_BUMP_INTERVAL_MS', 6 * 60 * 60 * 1000), // 6h
+    ttlExtendToLedgers: envInt('TTL_EXTEND_TO_LEDGERS', 518_400), // ~30 days
+    minKeeperXlm: envFloat('MIN_KEEPER_XLM', 20),
 
     // Reliability (K-1)
     watchdogTimeoutMs: envInt('WATCHDOG_TIMEOUT_MS', 3 * 60 * 1000),

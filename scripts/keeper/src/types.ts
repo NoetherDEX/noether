@@ -138,10 +138,22 @@ export interface KeeperConfig {
   /** Noeracle on-chain contract — destination for update_ed25519_persistent. */
   noeracleContractId: string;
   vaultContractId: string;
+  /** Router — extended by the TTL job (P3-9). */
+  routerContractId: string;
+  /** Noeracle shim — extended by the TTL job (P3-9). */
+  shimContractId: string;
 
   // Timing
   pollIntervalMs: number;
   oracleUpdateIntervalMs: number;
+
+  // TTL bump job (P3-9) + wallet-funding alarm (P3-10)
+  /** How often to extend contract instance TTLs. */
+  ttlBumpIntervalMs: number;
+  /** Ledger count to extend instance+code TTL to (~30 days). */
+  ttlExtendToLedgers: number;
+  /** Alert when the keeper wallet's XLM balance drops below this. */
+  minKeeperXlm: number;
 
   // Reliability (K-1)
   /** Exit(1) when no cycle completed within this window; Railway restarts. */
