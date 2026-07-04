@@ -152,6 +152,13 @@ impl VaultContract {
         // Require depositor authorization
         depositor.require_auth();
 
+        // Guarded-launch per-account deposit cap (P6-6). 0 = unlimited.
+        let cap = get_deposit_cap(&env);
+        let already = get_deposited(&env, &depositor);
+        if cap > 0 && already + usdc_amount > cap {
+            return Err(NoetherError::DepositCapExceeded);
+        }
+
         // Calculate fee
         let fee_bps = get_deposit_fee_bps(&env);
         let fee = usdc_amount * (fee_bps as i128) / (BASIS_POINTS as i128);
@@ -181,6 +188,7 @@ impl VaultContract {
 
         // Update pool state
         set_total_usdc(&env, get_total_usdc(&env) + usdc_amount);
+        set_deposited(&env, &depositor, already + usdc_amount);
         set_total_fees(&env, get_total_fees(&env) + fee);
 
         // Transfer NOE to depositor
@@ -632,6 +640,29 @@ impl VaultContract {
         Ok(())
     }
 
+    /// Set the per-account cumulative-deposit cap (7 decimals; 0 = unlimited).
+    /// The guarded-launch lever (P6-6) — start low, raise on clean metrics.
+    /// Admin only.
+    pub fn set_deposit_cap(env: Env, cap: i128) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if cap < 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        storage::set_deposit_cap(&env, cap);
+        env.events().publish((Symbol::new(&env, "deposit_cap_set"),), (cap,));
+        Ok(())
+    }
+
+    /// Current per-account deposit cap (0 = unlimited).
+    pub fn get_deposit_cap(env: Env) -> i128 {
+        storage::get_deposit_cap(&env)
+    }
+
+    /// Cumulative USDC an account has deposited (against the cap).
+    pub fn get_deposited(env: Env, who: Address) -> i128 {
+        storage::get_deposited(&env, &who)
+    }
+
     /// Seed the insurance buffer from an admin-funded USDC transfer (P5-6).
     /// The admin must have approved / holds the USDC; it is pulled in and
     /// credited to the protocol-owned buffer (NOT LP value).
@@ -1038,6 +1069,31 @@ mod tests {
         assert_eq!(paid2, 40 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 0);
         assert_eq!(t.vault.get_total_usdc(), 80 * PRECISION);
+    }
+
+    #[test]
+    fn deposit_cap_enforced_per_account() {
+        let t = setup(0);
+        // Cap each account at 500 USDC.
+        t.vault.set_deposit_cap(&(500 * PRECISION));
+        assert_eq!(t.vault.get_deposit_cap(), 500 * PRECISION);
+
+        // First deposit under the cap works and records cumulative.
+        t.vault.deposit(&t.lp, &(300 * PRECISION));
+        assert_eq!(t.vault.get_deposited(&t.lp), 300 * PRECISION);
+
+        // A second deposit crossing the cap is rejected.
+        let over = t.vault.try_deposit(&t.lp, &(300 * PRECISION));
+        assert_eq!(over, Err(Ok(NoetherError::DepositCapExceeded)));
+
+        // Exactly hitting the cap is allowed.
+        t.vault.deposit(&t.lp, &(200 * PRECISION));
+        assert_eq!(t.vault.get_deposited(&t.lp), 500 * PRECISION);
+
+        // Cap = 0 disables the limit.
+        t.vault.set_deposit_cap(&0);
+        let ok = t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        assert!(ok > 0);
     }
 
     #[test]

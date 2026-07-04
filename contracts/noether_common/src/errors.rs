@@ -67,6 +67,8 @@ pub enum NoetherError {
     InvalidAmount = 41,
     /// Insufficient balance for operation
     InsufficientBalance = 42,
+    /// Deposit would exceed the per-account guarded-launch cap
+    DepositCapExceeded = 43,
 
     // ═══════════════════════════════════════════════════════════════
     // Liquidation Errors (50-54)

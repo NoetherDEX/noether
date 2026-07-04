@@ -46,6 +46,11 @@ pub enum DataKey {
     /// wins BEFORE LP value; fed by seed + liquidation penalties + fee share
     /// + net losses. NOT part of LP AUM / NOE price (P5-6).
     BufferBalance,
+    /// Per-account cumulative USDC deposited (7 decimals), for the
+    /// guarded-launch deposit cap (P6-6).
+    Deposited(Address),
+    /// Per-account cumulative-deposit cap (7 decimals); 0 = unlimited (P6-6).
+    DepositCap,
     /// Max total reservation as bps of AUM (default 7000 = 70%)
     ReserveCapBps,
     /// Per-asset-side OI cap as bps of AUM (default 2500 = 25%)
@@ -181,6 +186,26 @@ pub fn get_buffer_balance(env: &Env) -> i128 {
 pub fn set_buffer_balance(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::BufferBalance, &amount);
     extend_ttl(env, &DataKey::BufferBalance);
+}
+
+pub fn get_deposited(env: &Env, who: &Address) -> i128 {
+    env.storage().persistent().get(&DataKey::Deposited(who.clone())).unwrap_or(0)
+}
+
+pub fn set_deposited(env: &Env, who: &Address, amount: i128) {
+    let key = DataKey::Deposited(who.clone());
+    env.storage().persistent().set(&key, &amount);
+    extend_ttl(env, &key);
+}
+
+/// Per-account cumulative-deposit cap (7 decimals). 0 = unlimited (default,
+/// off — the guarded-launch mainnet config sets it via set_deposit_cap).
+pub fn get_deposit_cap(env: &Env) -> i128 {
+    env.storage().instance().get(&DataKey::DepositCap).unwrap_or(0)
+}
+
+pub fn set_deposit_cap(env: &Env, cap: i128) {
+    env.storage().instance().set(&DataKey::DepositCap, &cap);
 }
 
 pub fn get_reserve_cap_bps(env: &Env) -> u32 {
