@@ -15,7 +15,9 @@
 #![no_std]
 
 mod risk;
-use risk::{adl_rank, partial_liq_tranche, RiskConfig};
+use risk::{
+    adl_rank, borrow_fee_rate, clamp_funding, funding_velocity, partial_liq_tranche, RiskConfig,
+};
 use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
 use noether_common::NoetherError;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Vec};
@@ -107,6 +109,38 @@ impl RiskContract {
         // Config presence is the market's trade gate; require it here too.
         let _ = Self::get_config(env, asset)?;
         Ok(partial_liq_tranche(position_size, tranche_bps, min_notional))
+    }
+
+    /// Config-aware funding-rate step for a market (P5-3): the clamped
+    /// SIP-279 velocity increment to fold into the lazy cumulative index,
+    /// given the current net skew and elapsed seconds. skewScale is 2× the
+    /// asset's OI cap (the audit convention) — but the OI cap is a % of AUM,
+    /// so the caller passes the concrete `oi_cap_notional` for this market.
+    pub fn funding_step(
+        env: Env,
+        asset: Symbol,
+        net_skew: i128,
+        oi_cap_notional: i128,
+        elapsed_seconds: u64,
+    ) -> Result<i128, NoetherError> {
+        let cfg = Self::get_config(env, asset)?;
+        let skew_scale = oi_cap_notional.saturating_mul(2);
+        let step = funding_velocity(net_skew, skew_scale, cfg.max_funding_velocity_bps, elapsed_seconds);
+        Ok(clamp_funding(step, cfg.funding_clamp_bps))
+    }
+
+    /// Config-aware hourly borrow fee for a market at a given utilization
+    /// (bps of TVL reserved), in FEE_PRECISION deci-bps (P5-4). Target
+    /// utilization is fixed at 80% (the GMX/Jupiter kink).
+    pub fn borrow_fee(env: Env, asset: Symbol, utilization_bps: u32) -> Result<u32, NoetherError> {
+        let cfg = Self::get_config(env, asset)?;
+        Ok(borrow_fee_rate(
+            utilization_bps,
+            8_000,
+            cfg.borrow_base_fee,
+            cfg.borrow_target_fee,
+            cfg.borrow_max_fee,
+        ))
     }
 
     /// Rank ADL candidates by PnL% × leverage, highest first (P5-7). The
@@ -246,6 +280,29 @@ mod tests {
         assert_eq!(ranked.len(), 2);
         assert_eq!(ranked.get(0).unwrap().position_id, 2);
         assert_eq!(ranked.get(1).unwrap().position_id, 1);
+    }
+
+    #[test]
+    fn funding_step_signs_and_clamps() {
+        let (env, _admin, client) = setup();
+        let btc = Symbol::new(&env, "BTC");
+        client.set_config(&btc, &RiskConfig::major(2_500));
+        let up = client.funding_step(&btc, &(100 * 10_000_000i128), &(100 * 10_000_000i128), &3_600);
+        assert!(up > 0);
+        let down = client.funding_step(&btc, &(-100 * 10_000_000i128), &(100 * 10_000_000i128), &3_600);
+        assert_eq!(down, -up);
+        let clamped = client.funding_step(&btc, &(10_000 * 10_000_000i128), &(10_000_000i128), &3_600);
+        assert_eq!(clamped, 50i128 * 10_000_000i128);
+    }
+
+    #[test]
+    fn borrow_fee_reads_config_dual_slope() {
+        let (env, _admin, client) = setup();
+        let btc = Symbol::new(&env, "BTC");
+        client.set_config(&btc, &RiskConfig::major(2_500));
+        assert_eq!(client.borrow_fee(&btc, &0), 1);
+        assert_eq!(client.borrow_fee(&btc, &8_000), 8);
+        assert_eq!(client.borrow_fee(&btc, &10_000), 60);
     }
 
     #[test]
