@@ -10,13 +10,12 @@ import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import type { DisplayPosition, Trade } from '@/types';
 
 function PortfolioPage() {
-  const { isConnected, publicKey } = useWallet();
+  const { isConnected, publicKey, usdcBalance } = useWallet();
 
   const [positions, setPositions] = useState<DisplayPosition[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(true);
   const [isLoadingTrades, setIsLoadingTrades] = useState(true);
-  const [usdcBalance, setUsdcBalance] = useState(0);
 
   // Fetch positions from Soroban contract
   const fetchPositions = useCallback(async () => {

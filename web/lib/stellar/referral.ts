@@ -77,13 +77,16 @@ async function simulateView(method: string, args: any[], source: string): Promis
   return scValToNative(sim.result.retval);
 }
 
-/** Resolve a code to its referrer address, or null. */
-export async function lookupCode(source: string, code: string): Promise<string | null> {
+/** Availability of a referral code: taken / free / unknown (check failed). */
+export type CodeAvailability = 'taken' | 'free' | 'unknown';
+
+/** Resolve a code via the contract's `resolve_code` view. */
+export async function lookupCode(source: string, code: string): Promise<CodeAvailability> {
   try {
-    const v = await simulateView('lookup_code', [toScVal(code, 'string')], source);
-    return typeof v === 'string' ? v : null;
+    const v = await simulateView('resolve_code', [toScVal(code, 'string')], source);
+    return typeof v === 'string' ? 'taken' : 'free';
   } catch {
-    return null;
+    return 'unknown';
   }
 }
 

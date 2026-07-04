@@ -1,46 +1,16 @@
 'use client';
 
-import { useState } from 'react';
 import { Button } from '@/components/ui';
-import { useWalletStore } from '@/lib/store';
-import { claimReferralFees } from '@/lib/stellar/referral';
 import { fmtReferralUsdc } from '@/types/referral';
-import toast from 'react-hot-toast';
 
 interface Props {
   claimable: string; // raw bigint string (PRECISION-scaled)
   onClaimed: () => void;
 }
 
-function humanize(raw: string): string {
-  const s = raw || '';
-  if (/Error\(Contract, #14\)/.test(s)) return 'Nothing to claim right now.';
-  if (/Error\(Contract, #10\)/.test(s)) return 'No code registered for this address.';
-  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
-}
-
-export function ClaimFeesCard({ claimable, onClaimed }: Props) {
-  const wallet = useWalletStore();
-  const [busy, setBusy] = useState(false);
-
+export function ClaimFeesCard({ claimable }: Props) {
   const claimableBI = BigInt(claimable || '0');
   const hasClaim = claimableBI > 0n;
-
-  async function claim() {
-    if (!wallet.address) return toast.error('Connect a wallet first');
-    if (!hasClaim) return toast.error('Nothing to claim');
-    setBusy(true);
-    try {
-      await claimReferralFees(wallet.address);
-      toast.success('Claim transaction submitted');
-      onClaimed();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed: ${humanize(msg)}`);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
@@ -58,13 +28,11 @@ export function ClaimFeesCard({ claimable, onClaimed }: Props) {
             >
               ${fmtReferralUsdc(claimable)}
             </p>
-            <p className="mt-2 text-xs text-muted-foreground hidden md:block">
-              Released directly to your Stellar wallet in a single transaction.
+            <p className="mt-2 text-xs text-muted-foreground">
+              Fee accrual and payouts go live in v1.1.
             </p>
           </div>
-          <Button onClick={claim} disabled={busy || !hasClaim || !wallet.address}>
-            {busy ? 'Signing…' : hasClaim ? 'Claim now' : 'Nothing to claim'}
-          </Button>
+          <Button disabled>Claims open in v1.1</Button>
         </div>
       </div>
     </div>

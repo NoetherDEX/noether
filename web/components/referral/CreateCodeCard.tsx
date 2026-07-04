@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button, Input } from '@/components/ui';
 import { useWalletStore } from '@/lib/store';
-import { createReferralCode, lookupCode } from '@/lib/stellar/referral';
+import { createReferralCode, lookupCode, type CodeAvailability } from '@/lib/stellar/referral';
 import toast from 'react-hot-toast';
 
 const MIN = 3;
@@ -16,8 +16,6 @@ function humanize(raw: string): string {
   if (/Error\(Contract, #7\)/.test(s)) return 'Code is too long (max 16 characters).';
   if (/Error\(Contract, #8\)/.test(s)) return 'That code is already taken.';
   if (/Error\(Contract, #9\)/.test(s)) return 'You already have a code registered.';
-  if (/Error\(Contract, #13\)/.test(s))
-    return 'Insufficient trading volume — your 14-day volume must cross the threshold first.';
   if (/Error\(Contract, #5\)/.test(s)) return 'Invalid parameter.';
   return s.length > 200 ? `${s.slice(0, 200)}…` : s;
 }
@@ -27,9 +25,9 @@ const VALID_RE = /^[A-Za-z0-9_-]+$/;
 /**
  * Closed-beta allowlist for code creation. Reads
  * `NEXT_PUBLIC_REFERRAL_CREATOR_ALLOWLIST` (comma-separated Stellar
- * addresses) at build time. Empty/unset → anyone may try (contract
- * still enforces InsufficientVolume on-chain). Set → only wallets in
- * the list see the create form active.
+ * addresses) at build time. Eligibility is client-side only — the
+ * contract does not enforce a volume threshold. Empty/unset → anyone
+ * may try. Set → only wallets in the list see the create form active.
  */
 const ALLOWLIST = (() => {
   const raw = (process.env.NEXT_PUBLIC_REFERRAL_CREATOR_ALLOWLIST ?? '').trim();
@@ -47,7 +45,7 @@ export function CreateCodeCard({ onCreated }: Props) {
   const wallet = useWalletStore();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
-  const [available, setAvailable] = useState<null | boolean>(null);
+  const [available, setAvailable] = useState<CodeAvailability | null>(null);
   const [checking, setChecking] = useState(false);
 
   const gated = ALLOWLIST !== null;
@@ -62,10 +60,7 @@ export function CreateCodeCard({ onCreated }: Props) {
     }
     setChecking(true);
     try {
-      const owner = await lookupCode(wallet.address, trimmed);
-      setAvailable(owner === null);
-    } catch {
-      setAvailable(null);
+      setAvailable(await lookupCode(wallet.address, trimmed));
     } finally {
       setChecking(false);
     }
@@ -81,6 +76,12 @@ export function CreateCodeCard({ onCreated }: Props) {
     setBusy(true);
     console.log('[referral] register start', { trimmed, wallet: wallet.address });
     try {
+      const availability = await lookupCode(wallet.address, trimmed);
+      setAvailable(availability);
+      if (availability === 'taken') {
+        toast.error(`"${trimmed}" is already taken — pick another code.`);
+        return;
+      }
       await createReferralCode(wallet.address, trimmed);
       toast.success(`Code "${trimmed}" registered on-chain`);
       setCode('');
@@ -112,9 +113,9 @@ export function CreateCodeCard({ onCreated }: Props) {
           <h3 className="text-base font-semibold">Referral codes are invite-only right now</h3>
           <p className="text-sm text-muted-foreground">
             During the test phase we&apos;re hand-picking the first creators.
-            You can still earn discounts as a referee — clicking somebody
-            else&apos;s referral link binds you to them on-chain on your
-            first authed call.
+            You can still bind as a referee — clicking somebody else&apos;s
+            referral link links you to them on-chain on your first authed
+            call. Referee fee discounts activate in v1.1.
           </p>
           <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4 text-xs space-y-1">
             <p className="text-muted-foreground">Your wallet</p>
@@ -197,17 +198,20 @@ export function CreateCodeCard({ onCreated }: Props) {
                 </span>
               )}
               {checking && <span className="text-muted-foreground">checking…</span>}
-              {available === true && lengthOk && charsOk && (
+              {!checking && available === 'free' && lengthOk && charsOk && (
                 <span className="text-[#22c55e]">✓ available</span>
               )}
-              {available === false && (
+              {!checking && available === 'taken' && (
                 <span className="text-red-400">already taken</span>
+              )}
+              {!checking && available === 'unknown' && lengthOk && charsOk && (
+                <span className="text-amber-400">couldn&apos;t verify availability</span>
               )}
             </div>
           </div>
           <Button
             onClick={submit}
-            disabled={busy || !wallet.address || !lengthOk || !charsOk || available === false}
+            disabled={busy || !wallet.address || !lengthOk || !charsOk || available === 'taken'}
           >
             {busy ? 'Signing…' : 'Register code'}
           </Button>

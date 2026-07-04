@@ -104,7 +104,7 @@ export function ReferralSignIn() {
         <div className="p-6">
           <p className="text-sm text-muted-foreground">
             Connect a Stellar wallet from the navbar to register a referral
-            code and start earning. No sign-up needed — the code lives on-chain.
+            code. No sign-up needed — the code lives on-chain.
           </p>
         </div>
       </div>
@@ -158,7 +158,7 @@ export function ReferralSignIn() {
             <p className="text-sm text-muted-foreground">
               Sign a one-time challenge to unlock the analytics dashboard —
               trade-by-trade earnings, claim history, and aggregated stats.
-              The code, share link and claim above work without this.
+              The code and share link above work without this.
             </p>
 
             {betaBlocked ? (
