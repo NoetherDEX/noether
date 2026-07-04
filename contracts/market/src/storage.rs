@@ -179,10 +179,6 @@ pub fn set_last_funding_time(env: &Env, time: u64) {
     extend_persistent_ttl(env, &DataKey::LastFundingTime);
 }
 
-pub fn get_current_funding_rate(env: &Env) -> i128 {
-    env.storage().persistent().get(&DataKey::CurrentFundingRate).unwrap_or(0)
-}
-
 pub fn set_current_funding_rate(env: &Env, rate: i128) {
     env.storage().persistent().set(&DataKey::CurrentFundingRate, &rate);
     extend_persistent_ttl(env, &DataKey::CurrentFundingRate);

@@ -31,6 +31,8 @@
 //! weakness.
 
 #![no_std]
+// Soroban entry points carrying full oracle attestations exceed clippy's 7-arg heuristic
+#![allow(clippy::too_many_arguments)]
 
 use noether_common::{Direction, NoetherError, Position};
 use soroban_sdk::{
@@ -146,6 +148,13 @@ impl NoetherRouterContract {
     pub fn set_noeracle(env: Env, new_noeracle: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Noeracle, &new_noeracle);
+        Ok(())
+    }
+
+    /// Swap the running WASM in place (admin-gated).
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 

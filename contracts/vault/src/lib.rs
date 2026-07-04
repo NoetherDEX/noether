@@ -44,7 +44,7 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol};
 use noether_common::{
     NoetherError, PoolInfo, BASIS_POINTS,
     calculate_glp_for_deposit, calculate_usdc_for_withdrawal, calculate_glp_price,
@@ -609,6 +609,14 @@ impl VaultContract {
         Ok(())
     }
 
+    /// Swap the running WASM in place; LP balances and pool accounting
+    /// are preserved across the upgrade.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
     /// Transfer admin role.
     /// Requires both current admin and new admin authorization.
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
@@ -707,9 +715,6 @@ impl VaultContract {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use soroban_sdk::testutils::{Address as _, Ledger};
-
-    // Tests will be added in integration test file
-    // as they require token contract setup
+    // Vault money-path tests land with the Phase 1 sprint (P1-9);
+    // they require token contract setup.
 }

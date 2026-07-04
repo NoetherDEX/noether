@@ -72,7 +72,7 @@ fn aggregate_cross_positions(
             }
             // Funding from cumulative model (accurate, no pending calculation needed)
             let pos_funding = calculate_cumulative_funding(
-                pos.size, pos.direction.clone(),
+                pos.size, pos.direction,
                 pos.entry_cumulative_funding, current_cumulative,
             );
             agg.total_funding = agg.total_funding.checked_add(pos_funding).unwrap_or(agg.total_funding);

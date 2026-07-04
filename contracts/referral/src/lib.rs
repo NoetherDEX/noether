@@ -16,6 +16,8 @@
 //! the next commits in this branch.
 
 #![no_std]
+// Amounts use the <units>_<7 decimals> grouping (10_000_0000000 = 10k USDC)
+#![allow(clippy::inconsistent_digit_grouping)]
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol};
 

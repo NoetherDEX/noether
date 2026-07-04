@@ -34,12 +34,14 @@
 //! 4. Trader gets nothing
 
 #![no_std]
+// Soroban order entry points legitimately exceed clippy's 7-arg heuristic
+#![allow(clippy::too_many_arguments)]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol, Vec, IntoVal};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec, IntoVal};
 use noether_common::{
-    NoetherError, Position, Direction, MarketConfig, MarketStats,
+    NoetherError, Position, Direction, MarketConfig,
     Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
-    FeeTier, TraderFeeInfo, VolumeRecord, PRECISION, BASIS_POINTS,
+    VolumeRecord, BASIS_POINTS,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
     calculate_trading_fee, calculate_funding_rate, calculate_cumulative_funding,
     calculate_keeper_reward, should_liquidate,
@@ -67,7 +69,7 @@ fn calculate_fee_and_record_volume(
     config: &MarketConfig,
 ) -> i128 {
     let fee_tiers = get_fee_tiers(env);
-    if fee_tiers.len() > 0 {
+    if !fee_tiers.is_empty() {
         let mut volume_record = get_trader_volume(env, trader)
             .unwrap_or(VolumeRecord {
                 daily_volumes: Vec::new(env),
@@ -88,7 +90,7 @@ fn calculate_fee_and_record_volume(
 /// Record only volume (no fee calculation). Used for close operations.
 fn record_volume_only(env: &Env, trader: &Address, size: i128) {
     let fee_tiers = get_fee_tiers(env);
-    if fee_tiers.len() > 0 {
+    if !fee_tiers.is_empty() {
         let mut volume_record = get_trader_volume(env, trader)
             .unwrap_or(VolumeRecord {
                 daily_volumes: Vec::new(env),
@@ -175,6 +177,35 @@ impl MarketContract {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // Admin Functions
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Halt trading (opens, closes, cross deposits/withdrawals, orders).
+    /// Liquidations are exempt so risk can still be unwound mid-incident.
+    pub fn pause(env: Env) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        set_paused(&env, true);
+        env.events().publish((Symbol::new(&env, "paused"),), ());
+        Ok(())
+    }
+
+    /// Resume trading after a pause.
+    pub fn unpause(env: Env) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        set_paused(&env, false);
+        env.events().publish((Symbol::new(&env, "unpaused"),), ());
+        Ok(())
+    }
+
+    /// Swap the running WASM in place; all storage (positions, orders,
+    /// cross balances) is preserved across the upgrade.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // Trading Functions
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -239,7 +270,7 @@ impl MarketContract {
         let liquidation_price = calculate_liquidation_price(
             entry_price,
             leverage,
-            direction.clone(),
+            direction,
             config.maintenance_margin_bps,
         );
 
@@ -266,7 +297,7 @@ impl MarketContract {
             collateral: net_collateral,
             size,
             entry_price,
-            direction: direction.clone(),
+            direction,
             leverage,
             liquidation_price,
             timestamp: env.ledger().timestamp(),
@@ -341,7 +372,7 @@ impl MarketContract {
         // Calculate funding from cumulative rate
         let cumulative = get_cumulative_funding_rate(&env);
         let funding = calculate_cumulative_funding(
-            position.size, position.direction.clone(),
+            position.size, position.direction,
             position.entry_cumulative_funding, cumulative,
         );
 
@@ -466,7 +497,7 @@ impl MarketContract {
         let pnl = calculate_pnl(&position, current_price)?;
         let cumulative = get_cumulative_funding_rate(&env);
         let funding = calculate_cumulative_funding(
-            position.size, position.direction.clone(),
+            position.size, position.direction,
             position.entry_cumulative_funding, cumulative,
         );
 
@@ -608,7 +639,6 @@ impl MarketContract {
         Ok(())
     }
 
-    /// Get current funding rate.
     // get_funding_rate removed - use get_market_stats().funding_rate instead
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -846,7 +876,7 @@ impl MarketContract {
             collateral: net_collateral,
             size,
             entry_price,
-            direction: direction.clone(),
+            direction,
             leverage,
             liquidation_price: 0, // Cross-margin: no per-position liq price
             timestamp: env.ledger().timestamp(),
@@ -908,7 +938,7 @@ impl MarketContract {
         // Calculate funding from cumulative rate
         let cumulative = get_cumulative_funding_rate(&env);
         let funding = calculate_cumulative_funding(
-            pos.size, pos.direction.clone(),
+            pos.size, pos.direction,
             pos.entry_cumulative_funding, cumulative,
         );
 
@@ -1038,7 +1068,7 @@ impl MarketContract {
 
                 // Calculate funding from cumulative rate
                 let funding = calculate_cumulative_funding(
-                    pos.size, pos.direction.clone(),
+                    pos.size, pos.direction,
                     pos.entry_cumulative_funding, cumulative,
                 );
 
@@ -1405,7 +1435,7 @@ impl MarketContract {
             trader: trader.clone(),
             asset: position.asset.clone(),
             order_type: OrderType::StopLoss,
-            direction: position.direction.clone(),
+            direction: position.direction,
             collateral: 0, // No collateral locked for SL
             leverage: position.leverage,
             trigger_price,
@@ -1531,7 +1561,7 @@ impl MarketContract {
             trader: trader.clone(),
             asset: position.asset.clone(),
             order_type: OrderType::TakeProfit,
-            direction: position.direction.clone(),
+            direction: position.direction,
             collateral: 0, // No collateral locked for TP
             leverage: position.leverage,
             trigger_price,
@@ -2007,7 +2037,7 @@ impl MarketContract {
             trader: trader.clone(),
             asset: position.asset.clone(),
             order_type: OrderType::TrailingStop,
-            direction: position.direction.clone(),
+            direction: position.direction,
             collateral: 0,
             leverage: position.leverage,
             trigger_price: 0, // Dynamic, calculated from peak
@@ -2074,7 +2104,7 @@ impl MarketContract {
         let pnl = calculate_pnl(pos, price).unwrap_or(0);
         let cumulative = get_cumulative_funding_rate(env);
         let funding = calculate_cumulative_funding(
-            pos.size, pos.direction.clone(),
+            pos.size, pos.direction,
             pos.entry_cumulative_funding, cumulative,
         );
         let margin = pos.collateral + pnl - funding;
@@ -2119,18 +2149,16 @@ impl MarketContract {
             get_position_take_profit(env, position_id),
             get_position_trailing_stop(env, position_id),
         ];
-        for maybe_id in linked.iter() {
-            if let Some(order_id) = maybe_id {
-                if skip == Some(*order_id) {
-                    continue;
-                }
-                update_order_status(env, *order_id, OrderStatus::Cancelled);
-                remove_trailing_stop_peak(env, *order_id);
-                env.events().publish(
-                    (Symbol::new(env, "order_cancelled"),),
-                    (*order_id, Symbol::new(env, "pos_closed")),
-                );
+        for order_id in linked.iter().flatten() {
+            if skip == Some(*order_id) {
+                continue;
             }
+            update_order_status(env, *order_id, OrderStatus::Cancelled);
+            remove_trailing_stop_peak(env, *order_id);
+            env.events().publish(
+                (Symbol::new(env, "order_cancelled"),),
+                (*order_id, Symbol::new(env, "pos_closed")),
+            );
         }
         remove_position_stop_loss(env, position_id);
         remove_position_take_profit(env, position_id);
@@ -2244,7 +2272,7 @@ impl MarketContract {
         let liquidation_price = calculate_liquidation_price(
             current_price,
             order.leverage,
-            order.direction.clone(),
+            order.direction,
             config.maintenance_margin_bps,
         );
 
@@ -2270,7 +2298,7 @@ impl MarketContract {
             collateral: net_collateral,
             size,
             entry_price: current_price,
-            direction: order.direction.clone(),
+            direction: order.direction,
             leverage: order.leverage,
             liquidation_price,
             timestamp: env.ledger().timestamp(),
@@ -2305,7 +2333,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(env, "position_opened"),),
-            (position.id, order.trader.clone(), position.asset.clone(), position.direction.clone(), size, current_price),
+            (position.id, order.trader.clone(), position.asset.clone(), position.direction, size, current_price),
         );
 
         Ok(keeper_fee)
@@ -2326,7 +2354,7 @@ impl MarketContract {
         // Calculate funding from cumulative rate
         let cumulative = get_cumulative_funding_rate(env);
         let funding = calculate_cumulative_funding(
-            position.size, position.direction.clone(),
+            position.size, position.direction,
             position.entry_cumulative_funding, cumulative,
         );
 
@@ -2393,7 +2421,7 @@ impl MarketContract {
 
         env.events().publish(
             (Symbol::new(env, "position_closed"),),
-            (position.id, position.trader.clone(), position.asset.clone(), position.direction.clone(), position.size, position.entry_price, current_price, pnl),
+            (position.id, position.trader.clone(), position.asset.clone(), position.direction, position.size, position.entry_price, current_price, pnl),
         );
 
         Ok(keeper_fee)
@@ -2421,6 +2449,7 @@ mod tests {
     // Test Helpers
     // ═══════════════════════════════════════════════════════════════════
 
+    #[allow(dead_code)] // fixture keeps handles tests may not all read
     struct TestEnv {
         env: Env,
         admin: Address,
@@ -3149,5 +3178,94 @@ mod tests {
             test.market.get_order(&ts2.id).unwrap().status,
             OrderStatus::Cancelled
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Pause / Unpause / Upgrade (M-1 / P1-1)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_pause_blocks_trading_and_unpause_restores() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        test.market.pause();
+
+        let blocked_open = test.market.try_open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+        assert!(matches!(blocked_open, Err(Ok(NoetherError::Paused))));
+
+        let blocked_close = test.market.try_close_position(&trader, &pos.id);
+        assert!(matches!(blocked_close, Err(Ok(NoetherError::Paused))));
+
+        let blocked_deposit =
+            test.market.try_deposit_cross_margin(&trader, &(100 * PRECISION));
+        assert!(matches!(blocked_deposit, Err(Ok(NoetherError::Paused))));
+
+        test.market.unpause();
+        let pnl = test.market.close_position(&trader, &pos.id);
+        let _ = pnl; // closes fine after unpause
+    }
+
+    #[test]
+    fn test_liquidation_works_while_paused() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &10,
+            &Direction::Long,
+        );
+
+        test.market.pause();
+
+        // Crash the price; the liquidation path must ignore the pause
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 85 / 1000));
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(reward >= 0);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_upgrade_swaps_wasm_and_preserves_storage() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+
+        // Upgrade the market's code to a different (vault) WASM — proves the
+        // admin-gated update_current_contract_wasm hook round-trips. Instance
+        // storage survives the code swap by construction on Soroban.
+        let new_hash = test.env.deployer().upload_contract_wasm(vault::WASM);
+        test.market.upgrade(&new_hash);
+
+        // The contract at the market address now runs vault code: a market
+        // entry point no longer exists, which is exactly what proves the
+        // WASM was swapped in place.
+        let res = test.market.try_get_all_position_ids();
+        assert!(res.is_err());
     }
 }

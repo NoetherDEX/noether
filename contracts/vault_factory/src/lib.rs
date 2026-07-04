@@ -13,6 +13,10 @@
 //! subsequent commits in this branch.
 
 #![no_std]
+// Amounts use the <units>_<7 decimals> grouping (1_000_0000000 = 1000 USDC)
+#![allow(clippy::inconsistent_digit_grouping)]
+// Leader trade proxies mirror full market signatures
+#![allow(clippy::too_many_arguments)]
 
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
@@ -82,7 +86,7 @@ impl VaultFactoryContract {
     ) -> Result<u32, FactoryError> {
         storage::require_initialized(&env)?;
         leader.require_auth();
-        if name.len() == 0 || name.len() > 64 {
+        if name.is_empty() || name.len() > 64 {
             return Err(FactoryError::InvalidName);
         }
         let id = storage::next_vault_id(&env);
@@ -695,7 +699,7 @@ mod tests {
         assert_eq!(info.circulating_shares, 0);
         assert_eq!(info.hwm_nav, PRECISION);
         assert_eq!(info.profit_share_bps, DEFAULT_PROFIT_SHARE_BPS);
-        assert_eq!(info.paused, false);
+        assert!(!info.paused);
     }
 
     #[test]
@@ -1114,7 +1118,7 @@ mod tests {
         client.deposit(&leader, &vault_id, &200_0000000);
         client.admin_pause(&vault_id, &true);
         let info = client.get_vault(&vault_id);
-        assert_eq!(info.paused, true);
+        assert!(info.paused);
     }
 
     #[test]

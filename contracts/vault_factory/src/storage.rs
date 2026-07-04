@@ -109,9 +109,6 @@ pub fn load_vault(env: &Env, vault_id: u32) -> Result<VaultInfo, FactoryError> {
         .ok_or(FactoryError::VaultNotFound)
 }
 
-pub fn vault_exists(env: &Env, vault_id: u32) -> bool {
-    env.storage().persistent().has(&StorageKey::Vault(vault_id))
-}
 
 // ───────────────────────────────────────────────────────────────────────
 // Depositor share balances
