@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui';
 import { OrderPanel } from './OrderPanel';
 import { LeaderModeSelector } from './LeaderModeSelector';
@@ -12,6 +12,11 @@ interface MobileTradeBarProps {
   markPrice: number;
   positions: DisplayPosition[];
   onPositionOpened: () => void;
+  /**
+   * Increment to open the trade sheet from outside (e.g. the positions
+   * empty-state "Start Trading" CTA — A13). 0/undefined never opens.
+   */
+  openRequest?: number;
 }
 
 /**
@@ -21,9 +26,14 @@ interface MobileTradeBarProps {
  * the shared trade store and opens the full OrderPanel in a bottom-sheet.
  * Hidden on `lg`+ where the OrderPanel is already in the sticky sidebar.
  */
-export function MobileTradeBar({ asset, markPrice, positions, onPositionOpened }: MobileTradeBarProps) {
+export function MobileTradeBar({ asset, markPrice, positions, onPositionOpened, openRequest = 0 }: MobileTradeBarProps) {
   const [open, setOpen] = useState(false);
   const { setDirection } = useTradeStore();
+
+  // External open trigger (counter — every increment opens the sheet once).
+  useEffect(() => {
+    if (openRequest > 0) setOpen(true);
+  }, [openRequest]);
 
   const openWith = (direction: 'Long' | 'Short') => {
     setDirection(direction);

@@ -302,12 +302,10 @@ export function toDisplayPosition(
   const leverage = collateral > 0 ? size / collateral : 0;
 
   const isLong = position.direction === 'Long';
-  const { pnl, pnlPercent } = calculatePnL(
-    entryPrice,
-    currentPrice,
-    size,
-    isLong
-  );
+  // calculatePnL returns null when the mark price is unknown (0/NaN). An
+  // unknown price must never render as a fabricated 0 or a −100% loss, so
+  // propagate NaN — every format.ts helper renders NaN as '—'.
+  const pnlResult = calculatePnL(entryPrice, currentPrice, size, isLong);
 
   return {
     id: position.id,
@@ -319,8 +317,8 @@ export function toDisplayPosition(
     entryPrice,
     liquidationPrice,
     currentPrice,
-    pnl: isNaN(pnl) ? 0 : pnl,
-    pnlPercent: isNaN(pnlPercent) ? 0 : pnlPercent,
+    pnl: pnlResult ? pnlResult.pnl : Number.NaN,
+    pnlPercent: pnlResult ? pnlResult.pnlPercent : Number.NaN,
     leverage: isNaN(leverage) ? 0 : leverage,
     openedAt: new Date(position.openedAt * 1000),
     marginMode: position.marginMode || 'Isolated',
@@ -328,8 +326,11 @@ export function toDisplayPosition(
 }
 
 /**
- * Raw event data for position_closed from contract (NEW FORMAT)
- * Contract emits: (position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid)
+ * Raw event data for position_closed from contract.
+ * The DEPLOYED event has 8 fields — it does NOT emit fee or funding
+ * (contracts/market/src/lib.rs:2052-2055). Fee emission ships with the
+ * next contract deploy (roadmap C2); until then trade rows expose
+ * `fee: undefined`, never a fabricated 0.
  */
 interface RawPositionClosedEvent {
   0: number | bigint;  // position_id
@@ -338,9 +339,8 @@ interface RawPositionClosedEvent {
   3: number | { Long?: null; Short?: null };  // direction (0=Long, 1=Short or enum object)
   4: bigint;           // size
   5: bigint;           // entry_price
-  6: bigint;           // exit_price
+  6: bigint;           // exit_price (current_price)
   7: bigint;           // pnl
-  8: bigint;           // funding_paid (fee)
 }
 
 /**
@@ -351,8 +351,7 @@ export async function getTradeHistory(traderPublicKey: string): Promise<Trade[]>
   try {
     const trades: Trade[] = [];
 
-    console.log('[TradeHistory] Fetching for trader:', traderPublicKey);
-    console.log('[TradeHistory] Using Market contract:', CONTRACTS.MARKET);
+    debugLog('[TradeHistory] Fetching for trader:', traderPublicKey);
 
     const horizonServer = new Horizon.Server(NETWORK.HORIZON_URL);
 
@@ -364,7 +363,7 @@ export async function getTradeHistory(traderPublicKey: string): Promise<Trade[]>
       .limit(100)
       .call();
 
-    console.log('[TradeHistory] Found', transactionsResponse.records.length, 'transactions');
+    debugLog('[TradeHistory] Found', transactionsResponse.records.length, 'transactions');
 
     for (const tx of transactionsResponse.records) {
       try {
@@ -381,7 +380,7 @@ export async function getTradeHistory(traderPublicKey: string): Promise<Trade[]>
       }
     }
 
-    console.log('[TradeHistory] Found', trades.length, 'trades from Horizon');
+    debugLog('[TradeHistory] Found', trades.length, 'trades from Horizon');
 
     // If no trades found via Horizon, try the Soroban events as fallback
     if (trades.length === 0) {
@@ -407,7 +406,7 @@ export async function getTradeHistory(traderPublicKey: string): Promise<Trade[]>
 /**
  * Parse a close_position transaction to extract trade data.
  * Looks for position_closed events in the transaction metadata.
- * NEW FORMAT: (position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid)
+ * Deployed format (8 fields): (position_id, trader, asset, direction, size, entry_price, exit_price, pnl)
  */
 function parseClosePositionFromTransaction(
   tx: Horizon.ServerApi.TransactionRecord,
@@ -443,8 +442,8 @@ function parseClosePositionFromTransaction(
         if (topics.length > 0) {
           const firstTopic = scValToNative(topics[0]);
           if (firstTopic === 'position_closed') {
-            // Parse event data - NEW FORMAT:
-            // (position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid)
+            // Parse event data — deployed 8-field format:
+            // (position_id, trader, asset, direction, size, entry_price, exit_price, pnl)
             const eventData = scValToNative(data);
 
             // Extract fields from the event data
@@ -456,10 +455,9 @@ function parseClosePositionFromTransaction(
             let entryPrice: bigint = BigInt(0);
             let exitPrice: bigint = BigInt(0);
             let pnl: bigint = BigInt(0);
-            let fee: bigint = BigInt(0);
 
             if (Array.isArray(eventData)) {
-              // Array format: [position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid]
+              // Array format: [position_id, trader, asset, direction, size, entry_price, exit_price, pnl]
               positionId = eventData[0] as number | bigint;
               trader = eventData[1] as string;
               asset = eventData[2] as string;
@@ -474,7 +472,6 @@ function parseClosePositionFromTransaction(
               entryPrice = eventData[5] as bigint;
               exitPrice = eventData[6] as bigint;
               pnl = eventData[7] as bigint;
-              fee = eventData[8] as bigint;
             } else if (typeof eventData === 'object' && eventData !== null) {
               const obj = eventData as Record<string, unknown>;
               positionId = (obj[0] || obj.position_id || 0) as number | bigint;
@@ -490,7 +487,6 @@ function parseClosePositionFromTransaction(
               entryPrice = (obj[5] || obj.entry_price || BigInt(0)) as bigint;
               exitPrice = (obj[6] || obj.exit_price || BigInt(0)) as bigint;
               pnl = (obj[7] || obj.pnl || BigInt(0)) as bigint;
-              fee = (obj[8] || obj.funding_paid || BigInt(0)) as bigint;
             } else {
               continue;
             }
@@ -507,7 +503,8 @@ function parseClosePositionFromTransaction(
               price: bigIntToNumber(exitPrice),
               entryPrice: bigIntToNumber(entryPrice),
               pnl: bigIntToNumber(pnl),
-              fee: bigIntToNumber(fee),
+              // The deployed event carries no fee — undefined renders '—', never a fabricated 0.
+              fee: undefined,
               timestamp: new Date(tx.created_at),
             };
           }
@@ -536,7 +533,7 @@ async function getTradeHistoryFromEvents(traderPublicKey: string): Promise<Trade
     const LOOKBACK_LEDGERS = 10000;
     const startLedger = Math.max(latestLedger.sequence - LOOKBACK_LEDGERS, latestLedger.sequence - 17000);
 
-    console.log(`[TradeHistory] Fetching events from ledger ${startLedger} to ${latestLedger.sequence}`);
+    debugLog(`[TradeHistory] Fetching events from ledger ${startLedger} to ${latestLedger.sequence}`);
 
     // Try position_closed first (what contract actually emits)
     const response = await sorobanRpc.getEvents({
@@ -554,11 +551,11 @@ async function getTradeHistoryFromEvents(traderPublicKey: string): Promise<Trade
     });
 
     if (!response.events || response.events.length === 0) {
-      console.log('[TradeHistory] No position_closed events found');
+      debugLog('[TradeHistory] No position_closed events found');
       return [];
     }
 
-    console.log(`[TradeHistory] Found ${response.events.length} events`);
+    debugLog(`[TradeHistory] Found ${response.events.length} events`);
     return parseEventsToTrades(response.events, traderPublicKey);
   } catch (error) {
     console.error('Error fetching trade history from events:', error);
@@ -566,10 +563,6 @@ async function getTradeHistoryFromEvents(traderPublicKey: string): Promise<Trade
   }
 }
 
-/**
- * Parse Soroban events into Trade objects
- * NEW FORMAT: (position_id, trader, asset, direction, size, entry_price, exit_price, pnl, funding_paid)
- */
 /**
  * Raw order data from contract (before parsing)
  * Contract uses snake_case and enum indices
@@ -979,7 +972,6 @@ function parseEventsToTrades(events: rpc.Api.EventResponse[], traderPublicKey: s
       let entryPrice: bigint = BigInt(0);
       let exitPrice: bigint = BigInt(0);
       let pnl: bigint = BigInt(0);
-      let fee: bigint = BigInt(0);
 
       if (Array.isArray(data)) {
         // Format: [position_id, trader, asset, direction, size, entry_price, current_price, pnl]
@@ -1027,7 +1019,8 @@ function parseEventsToTrades(events: rpc.Api.EventResponse[], traderPublicKey: s
         price: bigIntToNumber(exitPrice),
         entryPrice: bigIntToNumber(entryPrice),
         pnl: bigIntToNumber(pnl),
-        fee: bigIntToNumber(fee),
+        // No fee in the deployed event — undefined renders '—', never a fabricated 0.
+        fee: undefined,
         timestamp: new Date(event.ledgerClosedAt || Date.now()),
       };
 
@@ -1137,7 +1130,7 @@ export async function closePositionCross(
 /**
  * Get cross-margin balance for a trader (read-only)
  */
-export async function getCrossMarginBalance(traderPublicKey: string): Promise<bigint> {
+export async function getCrossMarginBalance(traderPublicKey: string): Promise<bigint | null> {
   try {
     const args = [toScVal(traderPublicKey, 'address')];
     const result = await sorobanRpc.simulateTransaction(
@@ -1147,9 +1140,10 @@ export async function getCrossMarginBalance(traderPublicKey: string): Promise<bi
     if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
       return scValToNative(result.result.retval) as bigint;
     }
-    return BigInt(0);
+    // Read failed / sim non-success: unknown, not zero — callers render '—'.
+    return null;
   } catch {
-    return BigInt(0);
+    return null;
   }
 }
 
@@ -1254,6 +1248,10 @@ export async function placeTrailingStop(
 /**
  * Get trader's fee tier info by reading volume record from contract storage.
  * Calculates tier client-side using the known tier thresholds.
+ * Returns null when the volume cannot be read (get_trader_volume was removed
+ * from the deployed WASM for size) — callers must treat the tier as UNKNOWN
+ * and hide tier UI rather than asserting "Base". The real fix is the
+ * indexer-backed per-trader volume endpoint (roadmap B5).
  */
 export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
   volume14d: bigint;
@@ -1280,11 +1278,13 @@ export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
     if ('result' in simResult && simResult.result) {
       const rawVolume = scValToNative((simResult.result as any).retval);
       volume14d = BigInt(rawVolume);
+    } else {
+      return null;
     }
   } catch {
-    // get_trader_volume may not exist (removed for WASM size)
-    // Fall back to default tier 0
-    volume14d = BigInt(0);
+    // Volume unknown (view removed for WASM size / RPC failure) — never
+    // report a fabricated tier-0 record.
+    return null;
   }
 
   // Convert volume from precision to USD
@@ -1317,8 +1317,10 @@ export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
  * Get current funding rate by reading contract storage directly via RPC.
  * Returns the rate as a percentage (e.g., 0.005 for 0.005% per hour).
  * Positive = longs pay shorts, negative = shorts pay longs.
+ * Returns null when the rate is unknown (RPC failure or the storage entry
+ * is absent) — callers must render '—', never a healthy-looking 0.
  */
-export async function getFundingRate(): Promise<number> {
+export async function getFundingRate(): Promise<number | null> {
   try {
     const PRECISION = 10_000_000;
     const key = xdr.LedgerKey.contractData(
@@ -1335,8 +1337,8 @@ export async function getFundingRate(): Promise<number> {
       const rate = typeof val === 'bigint' ? Number(val) : Number(val);
       return (rate / PRECISION) * 100; // Convert to percentage
     }
-    return 0;
+    return null;
   } catch {
-    return 0;
+    return null;
   }
 }

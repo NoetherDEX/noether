@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { AlertCircle, Info, Loader2, AlertTriangle, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
@@ -16,9 +17,12 @@ import {
   calculateLiquidationPrice,
   toPrecision,
 } from '@/lib/utils';
+import { formatPairPrice } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
 import { decodeContractError } from '@/lib/utils/contractErrors';
 import { TokenIcon } from '@/components/ui/TokenIcon';
+import { Tooltip } from '@/components/ui';
+import { WalletModal } from '@/components/wallet';
 import { TRADING, FEE_TIERS } from '@/lib/utils/constants';
 import type { TriggerCondition, DisplayPosition } from '@/types';
 
@@ -38,7 +42,7 @@ interface OrderPanelProps {
 }
 
 export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, markPrice = 0 }: OrderPanelProps) {
-  const { isConnected, publicKey, walletId, xlmBalance, usdcBalance, sign, refreshBalances } = useWallet();
+  const { isConnected, publicKey, walletId, xlmBalance, usdcBalance, sign, refreshBalances, onConnected } = useWallet();
   const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
   const isLeader = !!leaderVault;
   // Leader mode trades from the vault's USDC pool, not the wallet's.
@@ -110,8 +114,11 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const [timeInForce, setTimeInForce] = useState<number>(0); // 0=GTC, 1=IOC, 2=PostOnly
   const [reduceOnly, setReduceOnly] = useState<boolean>(false);
 
-  // Fee tier info — existing 14d volume fetched from contract
-  const [existing14dVolume, setExisting14dVolume] = useState<number>(0);
+  // Fee tier info — existing 14d volume. null = UNKNOWN (the on-chain view
+  // was removed for WASM size, so the read currently always fails): tier UI
+  // is hidden and the fee is quoted at the base tier, labeled estimated
+  // (A18). Session trades accumulate a known lower bound.
+  const [existing14dVolume, setExisting14dVolume] = useState<number | null>(null);
 
   // M-3 interim guard: trailing stops attached to cross positions execute via
   // the isolated close path on-chain, corrupting the shared pool. Only offer
@@ -121,6 +128,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // A12: the logged-out CTA opens the wallet modal instead of sitting dead.
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
 
   // Fetch a Binance fallback price ONLY while the Noeracle mark price is
   // unavailable (e.g. before the first SSE frame). Once `markPrice` is live we
@@ -168,19 +177,72 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // Position size in USD (collateral is already in USD since it's USDC)
   const positionSize = collateralNum * leverage;
 
-  const liquidationPrice = useMemo(
+  // A19: risk previews are based on the EFFECTIVE entry — the price the
+  // contract will actually fill at (trigger for Limit, limit price for
+  // Stop-Limit, mark for Market) — never the current mark for conditional
+  // orders. null until the user has entered the relevant price.
+  const effectiveEntryPrice = useMemo<number | null>(() => {
+    if (orderType === 'Limit') {
+      const p = parseFloat(triggerPrice);
+      return p > 0 ? p : null;
+    }
+    if (orderType === 'StopLimit') {
+      const p = parseFloat(limitPrice);
+      return p > 0 ? p : null;
+    }
+    return assetPrice > 0 ? assetPrice : null;
+  }, [orderType, triggerPrice, limitPrice, assetPrice]);
+
+  // Isolated-margin liq preview from the effective entry (matches the
+  // contract, which computes liquidation from the fill price).
+  const liquidationPrice = useMemo<number | null>(
     () =>
-      assetPrice > 0
-        ? calculateLiquidationPrice(assetPrice, leverage, direction === 'Long')
-        : 0,
-    [assetPrice, leverage, direction]
+      effectiveEntryPrice != null
+        ? calculateLiquidationPrice(effectiveEntryPrice, leverage, direction === 'Long')
+        : null,
+    [effectiveEntryPrice, leverage, direction]
   );
+
+  // A19 (cross): the contract stores liquidation_price = 0 for cross
+  // positions — liquidation is account-level (equity vs maintenance margin,
+  // same aggregates as CrossMarginBanner). Estimate the mark at which THIS
+  // order would tip the account to equity == maintenance, assuming every
+  // other position's PnL stays frozen at its current value. null = not
+  // computable (missing inputs / unknown PnL) or unreachable (equity covers
+  // a full move).
+  const crossLiqEstimate = useMemo<number | null>(() => {
+    if (marginMode !== 'Cross') return null;
+    if (effectiveEntryPrice == null || collateralNum <= 0 || positionSize <= 0) return null;
+    const crossPositions = positions.filter(p => p.marginMode === 'Cross');
+    // Any unknown PnL (mark unavailable) makes the account estimate wrong —
+    // show '—' instead of a fabricated figure.
+    if (crossPositions.some(p => !Number.isFinite(p.pnl))) return null;
+    const totalCollateral = crossPositions.reduce((s, p) => s + p.collateral, 0);
+    const totalPnl = crossPositions.reduce((s, p) => s + p.pnl, 0);
+    const totalSize = crossPositions.reduce((s, p) => s + p.size, 0);
+    // Opening moves collateral pool→position (equity-neutral); only the
+    // wallet auto-deposit of any shortfall adds equity.
+    const walletTopUp = Math.max(0, collateralNum - crossBalance);
+    const equityAfterOpen = crossBalance + totalCollateral + totalPnl + walletTopUp;
+    const maintenanceAfterOpen = (totalSize + positionSize) * 0.01; // 1% MM
+    // PnL on the new position at which equity hits maintenance:
+    const pnlAtLiq = maintenanceAfterOpen - equityAfterOpen;
+    const ratio = pnlAtLiq / positionSize;
+    const liq = direction === 'Long'
+      ? effectiveEntryPrice * (1 + ratio)
+      : effectiveEntryPrice * (1 - ratio);
+    return liq > 0 ? liq : null;
+  }, [marginMode, effectiveEntryPrice, collateralNum, positionSize, positions, crossBalance, direction]);
 
   const isMaker = orderType === 'Limit' || orderType === 'StopLimit';
 
-  // Dynamically compute fee tier based on projected volume (existing + this trade)
+  // Fee estimate (A18). The trader's real 14d volume is currently unreadable
+  // on-chain, so this is always an ESTIMATE: with no known volume the fee is
+  // quoted at the base tier (the highest — tiers only lower it) and the tier
+  // rows are hidden entirely rather than asserting "Base".
+  const volumeKnown = existing14dVolume !== null;
   const projectedFee = useMemo(() => {
-    const projectedVolume = existing14dVolume + positionSize;
+    const projectedVolume = (existing14dVolume ?? 0) + positionSize;
     let tierIndex = 0;
     for (let i = FEE_TIERS.length - 1; i >= 0; i--) {
       if (projectedVolume >= FEE_TIERS[i].minVolume) {
@@ -194,9 +256,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     const feeAmount = positionSize * feeBps / 100000;
     const volStr = projectedVolume >= 1_000_000
       ? `$${(projectedVolume / 1_000_000).toFixed(2)}M`
-      : `$${projectedVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+      : `$${formatNumber(projectedVolume, 0)}`;
     const nextVolStr = nextTier
-      ? (nextTier.minVolume >= 1_000_000 ? `$${(nextTier.minVolume / 1_000_000).toFixed(0)}M` : `$${nextTier.minVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
+      ? (nextTier.minVolume >= 1_000_000 ? `$${(nextTier.minVolume / 1_000_000).toFixed(0)}M` : `$${formatNumber(nextTier.minVolume, 0)}`)
       : '';
     return {
       tierName: tier.name,
@@ -401,7 +463,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         toast.promise(openCrossPromise, {
           loading: `Opening Cross ${direction} ${asset}...`,
           success: () => {
-            setExisting14dVolume(prev => prev + positionSize);
+            setExisting14dVolume(prev => (prev ?? 0) + positionSize);
             setCollateral('');
             refreshBalances();
             onSubmit?.();
@@ -425,7 +487,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         toast.promise(openPositionPromise, {
           loading: `Opening ${direction} ${asset} position...`,
           success: (position) => {
-            setExisting14dVolume(prev => prev + positionSize);
+            setExisting14dVolume(prev => (prev ?? 0) + positionSize);
             setCollateral('');
             refreshBalances();
             onSubmit?.();
@@ -519,7 +581,18 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (!publicKey || isCrossDepositing) return;
     const amount = parseFloat(crossDepositAmount) || 0;
     if (amount < 1) { toast.error('Minimum deposit is 1 USDC'); return; }
-    if (amount > usdcBalance) { toast.error('Insufficient USDC balance'); return; }
+    if (amount > usdcBalance) {
+      // A11: route broke users to funds instead of dead-ending them.
+      toast.error(
+        <span>
+          Insufficient USDC balance —{' '}
+          <Link href="/faucet" className="underline text-[#eab308]">
+            get test USDC from the faucet
+          </Link>
+        </span>,
+      );
+      return;
+    }
 
     setIsCrossDepositing(true);
     try {
@@ -651,7 +724,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                       value={crossDepositAmount}
                       onChange={(e) => setCrossDepositAmount(e.target.value)}
                       placeholder="Deposit USDC"
-                      className="w-full bg-zinc-900/80 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                      aria-label="Cross-margin deposit amount in USDC"
+                      className="w-full bg-zinc-900/80 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
                     />
                   </div>
                   <button
@@ -672,7 +746,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                       value={crossWithdrawAmount}
                       onChange={(e) => setCrossWithdrawAmount(e.target.value)}
                       placeholder="Withdraw USDC"
-                      className="w-full bg-zinc-900/80 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                      aria-label="Cross-margin withdraw amount in USDC"
+                      className="w-full bg-zinc-900/80 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
                     />
                   </div>
                   <button
@@ -719,12 +794,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
         {/* Long/Short Tabs - hidden for TrailingStop (uses position's direction) */}
         {orderType !== 'TrailingStop' && <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden border border-white/10">
+          {/* A3: black text on the green/red fills (white was 2.28:1 on
+              #22c55e) — same treatment as MobileTradeBar. */}
           <button
             onClick={() => setDirection('Long')}
             className={cn(
               'py-3 text-sm font-bold transition-all relative',
               direction === 'Long'
-                ? 'bg-[#22c55e] text-white'
+                ? 'bg-[#22c55e] text-black'
                 : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
             )}
           >
@@ -736,7 +813,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             className={cn(
               'py-3 text-sm font-bold transition-all relative',
               direction === 'Short'
-                ? 'bg-[#ef4444] text-white'
+                ? 'bg-[#ef4444] text-black'
                 : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
             )}
           >
@@ -750,7 +827,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           <div className="flex items-center justify-between">
             <label className="text-xs text-muted-foreground flex items-center gap-1.5">
               Pay (Collateral)
-              <Info className="h-3 w-3 opacity-50" />
+              <Tooltip content="USDC locked as margin to back this position; the trading fee is deducted from it.">
+                <Info className="h-3 w-3 opacity-50" />
+              </Tooltip>
             </label>
           </div>
           <div className="relative">
@@ -760,7 +839,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               value={collateral}
               onChange={(e) => setCollateral(e.target.value.replace(/[^0-9.]/g, ''))}
               placeholder="0.00"
-              className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-20"
+              aria-label="Collateral amount in USDC"
+              data-collateral-input
+              className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-20"
             />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
               <TokenIcon symbol="USDC" size={16} />
@@ -776,6 +857,29 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               USDC
             </span>
           </div>
+          {/* A11: connected wallets with no funds get routed to the faucet
+              instead of dead-ending on a disabled money page. */}
+          {isConnected && !isLeader && (usdcBalance === 0 || xlmBalance < 1) && (
+            <div className="p-2 bg-[#eab308]/[0.08] border border-[#eab308]/20 rounded-md space-y-1">
+              {usdcBalance === 0 && (
+                <p className="text-xs text-[#eab308]">
+                  No test USDC yet —{' '}
+                  <Link href="/faucet" className="underline hover:opacity-80">
+                    get test USDC from the faucet →
+                  </Link>
+                </p>
+              )}
+              {xlmBalance < 1 && (
+                <p className="text-xs text-[#eab308]/80">
+                  Low XLM for gas — the{' '}
+                  <Link href="/faucet" className="underline hover:opacity-80">
+                    faucet
+                  </Link>{' '}
+                  funds new testnet accounts.
+                </p>
+              )}
+            </div>
+          )}
           {/* Percentage Buttons */}
           <div className="grid grid-cols-4 gap-1.5">
             {[25, 50, 75, 100].map((pct) => (
@@ -795,7 +899,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           <div className="flex items-center justify-between">
             <label className="text-xs text-muted-foreground flex items-center gap-1.5">
               Leverage
-              <Info className="h-3 w-3 opacity-50" />
+              <Tooltip content="Multiplies your position size — and how fast a price move reaches your liquidation price.">
+                <Info className="h-3 w-3 opacity-50" />
+              </Tooltip>
             </label>
             <div className="flex items-center gap-2">
               <span
@@ -817,6 +923,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               step={1}
               value={leverage}
               onChange={(e) => setLeverage(parseInt(e.target.value))}
+              aria-label="Leverage"
+              aria-valuetext={`${leverage}x`}
               className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
             />
           </div>
@@ -852,7 +960,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <div className="flex items-center justify-between">
                 <label className="text-xs text-muted-foreground flex items-center gap-1.5">
                   Trigger Price
-                  <Info className="h-3 w-3 opacity-50" />
+                  <Tooltip content="The mark price at which this order becomes eligible to execute.">
+                    <Info className="h-3 w-3 opacity-50" />
+                  </Tooltip>
                 </label>
                 <span className="text-xs text-muted-foreground">
                   Current: ${assetPrice.toFixed(asset === 'XLM' ? 4 : 2)}
@@ -865,7 +975,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   value={triggerPrice}
                   onChange={(e) => setTriggerPrice(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder="Enter the trigger price"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2.5 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-colors pr-8"
+                  aria-label="Trigger price in USD"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2.5 text-right font-mono text-sm text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-colors pr-8"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
               </div>
@@ -881,7 +992,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <div className="flex items-center justify-between">
                 <label className="text-xs text-muted-foreground flex items-center gap-1.5">
                   Slippage Tolerance
-                  <Info className="h-3 w-3 opacity-50" />
+                  <Tooltip content="Maximum difference between trigger and execution price before the order cancels itself.">
+                    <Info className="h-3 w-3 opacity-50" />
+                  </Tooltip>
                 </label>
                 <span className="text-xs font-mono text-foreground">
                   {(slippageTolerance / 100).toFixed(2)}%
@@ -921,8 +1034,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                       }
                     }}
                     placeholder="Custom"
+                    aria-label="Custom slippage tolerance in percent"
                     className={cn(
-                      'w-full bg-zinc-900/50 border rounded-md px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-colors pr-5',
+                      'w-full bg-zinc-900/50 border rounded-md px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-colors pr-5',
                       customSlippage !== ''
                         ? 'border-amber-500/50'
                         : 'border-white/10'
@@ -940,7 +1054,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground flex items-center gap-1.5">
                 Time-in-Force
-                <Info className="h-3 w-3 opacity-50" />
+                <Tooltip content="How long the order stays working before it fills or cancels.">
+                  <Info className="h-3 w-3 opacity-50" />
+                </Tooltip>
               </label>
               <div className="flex gap-1.5">
                 {([
@@ -971,19 +1087,24 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               </p>
             </div>
 
-            {/* Reduce Only */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={reduceOnly}
-                onChange={(e) => setReduceOnly(e.target.checked)}
-                className="w-3.5 h-3.5 rounded border-white/20 bg-zinc-900/50 text-amber-500 focus:ring-amber-500 focus:ring-offset-0"
-              />
-              <span className="text-xs text-muted-foreground">
-                Reduce Only
-              </span>
-              <Info className="h-3 w-3 opacity-50 text-muted-foreground" />
-            </label>
+            {/* Reduce Only — the tooltip trigger sits OUTSIDE the label so
+                hovering/focusing it never toggles the checkbox. */}
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={reduceOnly}
+                  onChange={(e) => setReduceOnly(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-white/20 bg-zinc-900/50 text-amber-500 focus:ring-amber-500 focus:ring-offset-0"
+                />
+                <span className="text-xs text-muted-foreground">
+                  Reduce Only
+                </span>
+              </label>
+              <Tooltip content="Executes only if it reduces an existing position — it can never open or grow one.">
+                <Info className="h-3 w-3 opacity-50 text-muted-foreground" />
+              </Tooltip>
+            </div>
             {reduceOnly && (
               <p className="text-xs text-muted-foreground -mt-1 ml-5">
                 Order will only execute if it reduces an existing position
@@ -1009,7 +1130,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 value={stopPrice}
                 onChange={(e) => setStopPrice(e.target.value.replace(/[^0-9.]/g, ''))}
                 placeholder={`e.g. ${assetPrice > 0 ? (assetPrice * 0.95).toFixed(2) : '0'}`}
-                className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-purple-500"
+                aria-label="Stop price in USD"
+                className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-purple-500"
               />
             </div>
             <div className="space-y-2">
@@ -1023,7 +1145,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 value={limitPrice}
                 onChange={(e) => setLimitPrice(e.target.value.replace(/[^0-9.]/g, ''))}
                 placeholder={`e.g. ${assetPrice > 0 ? (assetPrice * 0.94).toFixed(2) : '0'}`}
-                className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-purple-500"
+                aria-label="Limit price in USD"
+                className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-purple-500"
               />
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1051,7 +1174,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   <option value="">Select a position...</option>
                   {trailingEligiblePositions.map((pos) => (
                     <option key={pos.id} value={pos.id.toString()}>
-                      #{pos.id} {pos.asset} {pos.direction} {pos.leverage}x — ${pos.size.toLocaleString(undefined, {maximumFractionDigits: 0})}
+                      #{pos.id} {pos.asset} {pos.direction} {pos.leverage}x — ${formatNumber(pos.size, 0)}
                     </option>
                   ))}
                 </select>
@@ -1086,6 +1209,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   inputMode="decimal"
                   value={trailingPercent}
                   onChange={(e) => setTrailingPercent(e.target.value.replace(/[^0-9.]/g, ''))}
+                  aria-label="Trailing distance in percent"
                   className="w-16 bg-zinc-900/50 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-cyan-500"
                 />
               </div>
@@ -1114,7 +1238,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   value={attachTp}
                   onChange={(e) => setAttachTp(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder={assetPrice > 0 ? (assetPrice * (direction === 'Long' ? 1.1 : 0.9)).toFixed(2) : '0'}
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  aria-label="Take-profit price in USD"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               </div>
               <div className="space-y-1">
@@ -1125,7 +1250,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   value={attachSl}
                   onChange={(e) => setAttachSl(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder={assetPrice > 0 ? (assetPrice * (direction === 'Long' ? 0.95 : 1.05)).toFixed(2) : '0'}
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
+                  aria-label="Stop-loss price in USD"
+                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-red-500"
                 />
               </div>
             </div>
@@ -1146,63 +1272,90 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <span className="font-mono text-sm text-foreground">{formatUSD(positionSize)}</span>
             </div>
 
-            {/* Entry Price / Trigger Price */}
+            {/* Effective entry: trigger (Limit) / limit price (Stop-Limit) /
+                mark (Market) — the price the contract will actually fill at,
+                which also drives the liq preview below (A19). */}
             <div className="flex justify-between items-center">
               <span className="text-xs text-muted-foreground flex items-center gap-1">
-                {orderType === 'Limit' ? 'Trigger Price' : 'Entry Price'}
+                {orderType === 'Limit'
+                  ? 'Trigger Price'
+                  : orderType === 'StopLimit'
+                  ? 'Limit Price'
+                  : 'Entry Price'}
               </span>
               <span className="font-mono text-sm text-foreground">
-                {orderType === 'Limit'
-                  ? triggerPrice
-                    ? formatUSD(parseFloat(triggerPrice), asset === 'XLM' ? 4 : 2)
-                    : '--'
-                  : assetPrice > 0
-                  ? formatUSD(assetPrice, asset === 'XLM' ? 4 : 2)
-                  : '--'}
+                {effectiveEntryPrice != null ? formatPairPrice(asset, effectiveEntryPrice) : '—'}
               </span>
             </div>
 
             {/* Liquidation Price */}
-            <div className="flex justify-between items-center">
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                Liq. Price
-                {liquidationRisk === 'high' && <AlertTriangle className="h-3 w-3 text-[#ef4444]" />}
-              </span>
-              <span
-                className={cn(
-                  'font-mono text-sm font-medium',
-                  liquidationRisk === 'high'
-                    ? 'text-[#ef4444]'
-                    : liquidationRisk === 'medium'
-                    ? 'text-[#f59e0b]'
-                    : 'text-foreground'
-                )}
-              >
-                {liquidationPrice > 0 ? formatUSD(liquidationPrice, asset === 'XLM' ? 4 : 2) : '--'}
-              </span>
-            </div>
+            {marginMode === 'Cross' ? (
+              // Cross positions have NO per-position liq price on-chain —
+              // liquidation is account-level. Show the computed estimate.
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  Liq. (est., cross)
+                  <Tooltip content="Account-level estimate assuming your other cross positions' PnL stays frozen at current marks. Actual liquidation triggers when whole-account equity falls to maintenance margin.">
+                    <Info className="h-3 w-3 opacity-50" />
+                  </Tooltip>
+                  {liquidationRisk === 'high' && <AlertTriangle className="h-3 w-3 text-[#ef4444]" />}
+                </span>
+                <span className="font-mono text-sm font-medium text-foreground">
+                  {crossLiqEstimate != null ? formatPairPrice(asset, crossLiqEstimate) : '—'}
+                </span>
+              </div>
+            ) : (
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  Liq. Price
+                  {liquidationRisk === 'high' && <AlertTriangle className="h-3 w-3 text-[#ef4444]" />}
+                </span>
+                <span
+                  className={cn(
+                    'font-mono text-sm font-medium',
+                    liquidationRisk === 'high'
+                      ? 'text-[#ef4444]'
+                      : liquidationRisk === 'medium'
+                      ? 'text-[#f59e0b]'
+                      : 'text-foreground'
+                  )}
+                >
+                  {liquidationPrice != null && liquidationPrice > 0
+                    ? formatPairPrice(asset, liquidationPrice)
+                    : '—'}
+                </span>
+              </div>
+            )}
 
             {/* Divider */}
             <div className="border-t border-white/5 my-1" />
 
-            {/* Trading Fee */}
+            {/* Trading Fee — always an estimate while the trader's real 14d
+                volume is unreadable on-chain (A18). */}
             <div className="flex justify-between items-center">
               <span className="text-xs text-muted-foreground">
-                Fee ({isMaker ? 'Maker' : 'Taker'} {(feeBps / 1000).toFixed(3)}%)
+                Est. Fee ({isMaker ? 'Maker' : 'Taker'} {(feeBps / 1000).toFixed(3)}%)
               </span>
               <span className="font-mono text-xs text-muted-foreground">{formatUSD(tradingFee)}</span>
             </div>
+            {isLeader && (
+              <p className="text-[10px] text-muted-foreground/70">
+                Leader trades are charged at the vault factory&apos;s fee tier, not your wallet&apos;s.
+              </p>
+            )}
 
-            {/* Fee Tier Info */}
-            {positionSize > 0 && (
+            {/* Fee Tier Info — hidden while the trader's volume is unknown
+                (never assert "Base"); reappears as an estimate once session
+                trades establish a lower bound (A18). */}
+            {positionSize > 0 && volumeKnown && (
               <>
                 <div className="border-t border-white/5 my-1" />
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">Fee Tier</span>
+                  <span className="text-xs text-muted-foreground">Fee Tier (est.)</span>
                   <span className="font-mono text-xs text-primary">{projectedFee.tierName}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground">14d Volume</span>
+                  <span className="text-xs text-muted-foreground">14d Volume (est.)</span>
                   <span className="font-mono text-xs text-muted-foreground">{projectedFee.volume14d}</span>
                 </div>
                 {projectedFee.nextTierVolume && (
@@ -1221,23 +1374,38 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           <div className="p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg">
             {errors.map((error, i) => (
               <div key={i} className="flex items-center gap-2 text-sm text-[#ef4444]">
-                <AlertCircle className="w-4 h-4" />
-                {error}
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>
+                  {error}
+                  {/* A11: broke ≠ blocked — link straight to funds. */}
+                  {error === 'Insufficient USDC balance' && (
+                    <>
+                      {' — '}
+                      <Link href="/faucet" className="underline text-[#eab308] hover:opacity-80">
+                        get test USDC from the faucet →
+                      </Link>
+                    </>
+                  )}
+                </span>
               </div>
             ))}
           </div>
         )}
 
-        {/* CTA Button */}
+        {/* CTA Button. Disconnected → a LIVE brand-gold "Connect Wallet"
+            that opens the wallet modal (A12), never a dead disabled button.
+            Connected → black text on the green/red fill (A3, contrast). */}
         <button
-          onClick={handleSubmit}
-          disabled={!canSubmit || isSubmitting}
+          onClick={isConnected ? handleSubmit : () => setWalletModalOpen(true)}
+          disabled={isConnected && (!canSubmit || isSubmitting)}
           className={cn(
             'w-full h-14 text-base font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed',
             'flex items-center justify-center gap-2 rounded-lg',
-            direction === 'Long'
-              ? 'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
-              : 'bg-[#ef4444] hover:bg-[#ef4444]/90 text-white'
+            !isConnected
+              ? 'bg-[#eab308] hover:bg-[#eab308]/90 text-black'
+              : direction === 'Long'
+              ? 'bg-[#22c55e] hover:bg-[#22c55e]/90 text-black'
+              : 'bg-[#ef4444] hover:bg-[#ef4444]/90 text-black'
           )}
         >
           {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
@@ -1252,6 +1420,13 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             : `${direction === 'Long' ? 'Buy / Long' : 'Sell / Short'} ${asset}${marginMode === 'Cross' ? ' (Cross)' : ''}`}
         </button>
       </div>
+
+      {/* Wallet modal for the logged-out CTA (same flow as the header). */}
+      <WalletModal
+        isOpen={walletModalOpen}
+        onClose={() => setWalletModalOpen(false)}
+        onConnected={onConnected}
+      />
     </div>
   );
 }

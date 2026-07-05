@@ -40,13 +40,19 @@ export function CrossMarginBanner({ positions, publicKey }: CrossMarginBannerPro
   const totalUnrealizedPnl = crossPositions.reduce((sum, p) => sum + p.pnl, 0);
   const totalSize = crossPositions.reduce((sum, p) => sum + p.size, 0);
 
+  // Any position with an unknown mark (pnl = NaN) makes equity unknown —
+  // show '—' and a neutral state, never "At Risk" red from NaN comparisons.
+  const pnlUnknown = !Number.isFinite(totalUnrealizedPnl);
+
   const equity = poolBalance + totalCollateral + totalUnrealizedPnl;
   const maintenanceMargin = totalSize * MAINTENANCE_MARGIN_BPS / 10000;
   const usedMargin = totalCollateral;
   const freeMargin = equity - usedMargin;
   const marginRatio = maintenanceMargin > 0 ? (equity / maintenanceMargin) * 100 : Infinity;
 
-  const healthColor = marginRatio === Infinity
+  const healthColor = pnlUnknown
+    ? 'text-muted-foreground'
+    : marginRatio === Infinity
     ? 'text-[#22c55e]'
     : marginRatio > 300
     ? 'text-[#22c55e]'
@@ -54,7 +60,9 @@ export function CrossMarginBanner({ positions, publicKey }: CrossMarginBannerPro
     ? 'text-[#f59e0b]'
     : 'text-[#ef4444]';
 
-  const healthBg = marginRatio === Infinity
+  const healthBg = pnlUnknown
+    ? 'border-white/10 bg-white/[0.03]'
+    : marginRatio === Infinity
     ? 'border-[#22c55e]/20 bg-[#22c55e]/5'
     : marginRatio > 300
     ? 'border-[#22c55e]/20 bg-[#22c55e]/5'
@@ -62,7 +70,9 @@ export function CrossMarginBanner({ positions, publicKey }: CrossMarginBannerPro
     ? 'border-[#f59e0b]/20 bg-[#f59e0b]/5'
     : 'border-[#ef4444]/20 bg-[#ef4444]/5';
 
-  const healthLabel = marginRatio === Infinity
+  const healthLabel = pnlUnknown
+    ? 'Mark price unavailable'
+    : marginRatio === Infinity
     ? 'Healthy'
     : marginRatio > 300
     ? 'Healthy'
@@ -89,14 +99,18 @@ export function CrossMarginBanner({ positions, publicKey }: CrossMarginBannerPro
         </div>
         <div className="flex justify-between sm:flex-col sm:gap-0">
           <span className="text-[11px] text-muted-foreground">Free Margin</span>
-          <span className={cn('text-xs font-mono', freeMargin >= 0 ? 'text-foreground' : 'text-[#ef4444]')}>
+          <span className={cn('text-xs font-mono', Number.isFinite(freeMargin) && freeMargin < 0 ? 'text-[#ef4444]' : 'text-foreground')}>
             {formatUSD(freeMargin)}
           </span>
         </div>
         <div className="flex justify-between sm:flex-col sm:gap-0">
           <span className="text-[11px] text-muted-foreground">Margin Ratio</span>
           <span className={cn('text-xs font-mono', healthColor)}>
-            {marginRatio === Infinity ? '--' : `${marginRatio.toFixed(0)}%`}
+            {marginRatio === Infinity
+              ? '--'
+              : Number.isFinite(marginRatio)
+              ? `${marginRatio.toFixed(0)}%`
+              : '—'}
           </span>
         </div>
       </div>

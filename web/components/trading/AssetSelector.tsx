@@ -61,7 +61,8 @@ export function AssetSelector({ selectedAsset, onSelect }: AssetSelectorProps) {
             <div className="flex items-center gap-3">
               <TokenIcon symbol={asset.symbol} size={32} />
               <div className="text-left">
-                <p className="text-sm font-medium text-foreground">{asset.symbol}-USDC</p>
+                {/* Perp market, not a spot pair — label accordingly (A16). */}
+                <p className="text-sm font-medium text-foreground">{asset.symbol}-PERP</p>
                 <p className="text-xs text-muted-foreground">{asset.name}</p>
               </div>
             </div>

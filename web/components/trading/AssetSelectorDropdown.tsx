@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
-import { formatPrice } from '@/lib/utils';
+import { formatPrice, formatPercent } from '@/lib/utils';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 
@@ -11,7 +11,8 @@ interface AssetOption {
   symbol: string;
   name: string;
   price: number;
-  change24h: number;
+  /** 24h change in percent (Binance reference); null = fetch failed → '—'. */
+  changePercent24h: number | null;
 }
 
 interface AssetSelectorDropdownProps {
@@ -39,19 +40,19 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
   // Noeracle marks stream in.
   useEffect(() => {
     const loadPrices = async () => {
-      const assetPromises = ASSETS.map(async (asset) => {
+      const assetPromises = ASSETS.map(async (asset): Promise<AssetOption> => {
         try {
           const ticker = await fetchTicker(asset.symbol);
           return {
             ...asset,
             price: ticker.price,
-            change24h: ticker.change24h,
+            changePercent24h: ticker.changePercent24h,
           };
         } catch {
           return {
             ...asset,
             price: 0,
-            change24h: 0,
+            changePercent24h: null, // unknown → '—', never a fabricated 0.00%
           };
         }
       });
@@ -74,13 +75,29 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
 
   const displayAssets = assets.map((a) => ({ ...a, price: priceFor(a.symbol, a.price) }));
 
-  const selectedAssetData = displayAssets.find(a => a.symbol === selectedAsset) || {
+  const selectedAssetData: AssetOption = displayAssets.find(a => a.symbol === selectedAsset) || {
     symbol: selectedAsset,
     name: selectedAsset,
     price: markPrices?.[selectedAsset] ?? 0,
-    change24h: 0,
+    changePercent24h: null,
   };
 
+  // Signed, colored 24h % (Binance reference stat) — was fetched every 10s
+  // and rendered nowhere (A13).
+  const changeBadge = (change: number | null, className?: string) =>
+    change == null ? (
+      <span className={cn('font-mono text-muted-foreground', className)}>—</span>
+    ) : (
+      <span
+        className={cn(
+          'font-mono',
+          change > 0 ? 'text-[#22c55e]' : change < 0 ? 'text-[#ef4444]' : 'text-muted-foreground',
+          className,
+        )}
+      >
+        {formatPercent(change)}
+      </span>
+    );
 
   return (
     <div className="relative">
@@ -102,8 +119,9 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
             <span className="text-sm font-semibold text-foreground">{selectedAsset}-PERP</span>
           </div>
           <span className="text-xs text-muted-foreground font-mono">
-            {formatPrice(selectedAssetData.price)}
-          </span>
+            {selectedAssetData.price > 0 ? formatPrice(selectedAssetData.price) : '—'}
+          </span>{' '}
+          {changeBadge(selectedAssetData.changePercent24h, 'text-[10px]')}
         </div>
 
         {/* Chevron */}
@@ -142,14 +160,16 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
                 {/* Asset Info */}
                 <div className="flex-1 text-left">
                   <div className="flex items-center gap-1">
-                    <span className="text-sm font-medium text-foreground">{asset.symbol}</span>
+                    <span className="text-sm font-medium text-foreground">{asset.symbol}-PERP</span>
                     <span className="text-xs text-muted-foreground">{asset.name}</span>
                   </div>
                   <span className="text-xs text-muted-foreground font-mono">
-                    {formatPrice(asset.price)}
+                    {asset.price > 0 ? formatPrice(asset.price) : '—'}
                   </span>
                 </div>
 
+                {/* 24h change (Binance reference) */}
+                {changeBadge(asset.changePercent24h, 'text-xs')}
               </button>
             ))}
           </div>

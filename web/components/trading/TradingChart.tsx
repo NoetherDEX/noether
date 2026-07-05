@@ -31,6 +31,11 @@ export function TradingChart({ asset, interval = '1h', className }: TradingChart
         background: { color: 'transparent' },
         textColor: '#71717a',
       },
+      // Pin axis/date formatting to en-US — otherwise the time scale renders
+      // in the browser locale ('05 Nis ’26') next to en-US money values (A17).
+      localization: {
+        locale: 'en-US',
+      },
       grid: {
         vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
         horzLines: { color: 'rgba(255, 255, 255, 0.03)' },
