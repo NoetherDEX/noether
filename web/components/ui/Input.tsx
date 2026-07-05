@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, InputHTMLAttributes } from 'react';
+import { forwardRef, useId, InputHTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
@@ -11,11 +11,15 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 }
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, suffix, prefix, type = 'text', ...props }, ref) => {
+  ({ className, label, error, suffix, prefix, type = 'text', id, ...props }, ref) => {
+    const autoId = useId();
+    const inputId = id ?? autoId;
+    const errorId = `${inputId}-error`;
+
     return (
       <div className="w-full">
         {label && (
-          <label className="block text-sm font-medium text-neutral-400 mb-2">
+          <label htmlFor={inputId} className="block text-sm font-medium text-neutral-400 mb-2">
             {label}
           </label>
         )}
@@ -27,9 +31,12 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
           )}
           <input
             ref={ref}
+            id={inputId}
             type={type}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
             className={cn(
-              'w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-neutral-600',
+              'w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/60',
               'focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/20',
               'transition-all duration-200',
               // Remove browser default number input spinners
@@ -50,7 +57,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
           )}
         </div>
         {error && (
-          <p className="mt-1 text-sm text-red-400">{error}</p>
+          <p id={errorId} className="mt-1 text-sm text-red-400">{error}</p>
         )}
       </div>
     );

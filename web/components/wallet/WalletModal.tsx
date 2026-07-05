@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, ExternalLink, Smartphone } from 'lucide-react';
-import { cn } from '@/lib/utils/cn';
 import { getSupportedWallets, connectWallet, WALLETCONNECT_ID, type SupportedWallet } from '@/lib/stellar/walletKit';
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface WalletModalProps {
   isOpen: boolean;
@@ -21,10 +23,27 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
   const [mounted, setMounted] = useState(false);
   // When WalletConnect is selected we hide our modal so its QR modal (z-index 9999) is visible
   const [hiddenForWC, setHiddenForWC] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Move focus into the dialog on open; restore it to the trigger on close.
+  useEffect(() => {
+    if (!isOpen) return;
+    restoreFocusRef.current = document.activeElement as HTMLElement | null;
+    const raf = requestAnimationFrame(() => {
+      panelRef.current?.focus();
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      restoreFocusRef.current?.focus?.();
+      restoreFocusRef.current = null;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -68,11 +87,39 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
     [connectingId, onConnected, onClose]
   );
 
-  // Close on Escape key
+  // Close on Escape key; trap Tab inside the dialog
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const panel = panelRef.current;
+        if (!panel) return;
+        const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+          (el) => el.offsetParent !== null
+        );
+        if (focusable.length === 0) {
+          e.preventDefault();
+          panel.focus();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (!panel.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        } else if (e.shiftKey && (active === first || active === panel)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -112,19 +159,26 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ duration: 0.2 }}
             className="fixed inset-0 z-[101] flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={onClose}
           >
             <div
-              className="relative w-full sm:max-w-[480px] max-h-[85vh] bg-[#111114] border border-white/10 rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+              ref={panelRef}
+              tabIndex={-1}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={titleId}
+              className="relative w-full sm:max-w-[480px] max-h-[85dvh] bg-[#111114] border border-white/10 rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col outline-none"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] flex-shrink-0">
-                <h2 className="text-base font-bold text-white">Connect Wallet</h2>
+                <h2 id={titleId} className="text-base font-bold text-white">Connect Wallet</h2>
                 <button
                   onClick={onClose}
+                  aria-label="Close dialog"
                   className="p-1.5 text-neutral-500 hover:text-white transition-colors rounded-lg hover:bg-white/5"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-5 h-5" aria-hidden="true" />
                 </button>
               </div>
 
@@ -182,43 +236,58 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
 
                     {/* Other wallets */}
                     <div className="space-y-0.5">
-                      {otherWallets.map((wallet) => (
-                        <button
-                          key={wallet.id}
-                          onClick={() => handleSelect(wallet)}
-                          disabled={!wallet.isAvailable || connectingId !== null}
-                          className={cn(
-                            'w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all',
-                            wallet.isAvailable
-                              ? 'hover:bg-white/[0.05] cursor-pointer'
-                              : 'opacity-40 cursor-not-allowed'
-                          )}
-                        >
-                          <div className="w-9 h-9 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center overflow-hidden flex-shrink-0">
-                            {wallet.icon ? (
-                              // eslint-disable-next-line @next/next/no-img-element -- dynamic wallet icon (data URI / remote) from stellar-wallets-kit; next/image is unsuitable
-                              <img src={wallet.icon} alt={wallet.name} className="w-5 h-5 object-contain" />
-                            ) : (
-                              <span className="text-xs font-bold text-neutral-500">{wallet.name.charAt(0)}</span>
-                            )}
-                          </div>
-                          <span className="text-sm font-medium text-white flex-1 text-left">{wallet.name}</span>
-                          {connectingId === wallet.id ? (
-                            <Loader2 className="w-4 h-4 text-[#eab308] animate-spin" />
-                          ) : !wallet.isAvailable ? (
-                            <a
-                              href={wallet.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-neutral-500 border border-white/10 rounded-full hover:text-white hover:border-white/20 transition-colors"
+                      {otherWallets.map((wallet) => {
+                        const identity = (
+                          <>
+                            <div className="w-9 h-9 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center overflow-hidden flex-shrink-0">
+                              {wallet.icon ? (
+                                // eslint-disable-next-line @next/next/no-img-element -- dynamic wallet icon (data URI / remote) from stellar-wallets-kit; next/image is unsuitable
+                                <img src={wallet.icon} alt={wallet.name} className="w-5 h-5 object-contain" />
+                              ) : (
+                                <span className="text-xs font-bold text-neutral-500">{wallet.name.charAt(0)}</span>
+                              )}
+                            </div>
+                            <span className="text-sm font-medium text-white flex-1 text-left">{wallet.name}</span>
+                          </>
+                        );
+
+                        if (!wallet.isAvailable) {
+                          // Not installed: keep the Install link outside any disabled control
+                          // so it stays keyboard-reachable (an <a> inside a disabled <button> is invalid HTML)
+                          return (
+                            <div
+                              key={wallet.id}
+                              className="w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all"
                             >
-                              Install
-                              <ExternalLink className="w-2.5 h-2.5" />
-                            </a>
-                          ) : null}
-                        </button>
-                      ))}
+                              <div className="flex items-center gap-4 flex-1 opacity-40">{identity}</div>
+                              <a
+                                href={wallet.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={`Install ${wallet.name}`}
+                                className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-neutral-500 border border-white/10 rounded-full hover:text-white hover:border-white/20 transition-colors"
+                              >
+                                Install
+                                <ExternalLink className="w-2.5 h-2.5" aria-hidden="true" />
+                              </a>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <button
+                            key={wallet.id}
+                            onClick={() => handleSelect(wallet)}
+                            disabled={connectingId !== null}
+                            className="w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all hover:bg-white/[0.05] cursor-pointer"
+                          >
+                            {identity}
+                            {connectingId === wallet.id && (
+                              <Loader2 className="w-4 h-4 text-[#eab308] animate-spin" />
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

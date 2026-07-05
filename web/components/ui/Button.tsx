@@ -11,14 +11,16 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', isLoading, disabled, children, ...props }, ref) => {
-    const baseStyles = 'inline-flex items-center justify-center font-medium transition-all duration-200 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#09090b]';
+    // Focus indication comes from the global gold :focus-visible outline (globals.css)
+    const baseStyles = 'inline-flex items-center justify-center font-medium transition-all duration-200 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed';
 
     const variants = {
-      primary: 'bg-white text-black hover:bg-neutral-200 focus:ring-white',
-      secondary: 'bg-white/5 text-white hover:bg-white/10 border border-white/10 hover:border-white/20 focus:ring-white/50',
-      ghost: 'bg-transparent text-neutral-400 hover:text-white hover:bg-white/5 focus:ring-white/30',
-      success: 'bg-emerald-500 text-white hover:bg-emerald-600 focus:ring-emerald-500',
-      danger: 'bg-red-500 text-white hover:bg-red-600 focus:ring-red-500',
+      primary: 'bg-white text-black hover:bg-neutral-200',
+      secondary: 'bg-white/5 text-white hover:bg-white/10 border border-white/10 hover:border-white/20',
+      ghost: 'bg-transparent text-neutral-400 hover:text-white hover:bg-white/5',
+      // Black text on the direction fills — matches MobileTradeBar (9.2:1 vs 2.28:1 white-on-green)
+      success: 'bg-emerald-500 text-black hover:bg-emerald-600',
+      danger: 'bg-red-500 text-black hover:bg-red-600',
     };
 
     const sizes = {

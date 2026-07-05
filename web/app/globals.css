@@ -10,7 +10,8 @@
   --popover: 0 0% 4%;
   --popover-foreground: 0 0% 98%;
   --primary: 45 93% 47%;
-  --primary-foreground: 0 0% 100%;
+  /* Near-black on the gold primary — white on #eab308 is 1.98:1 and must never ship */
+  --primary-foreground: 0 0% 4%;
   --secondary: 0 0% 10%;
   --secondary-foreground: 0 0% 98%;
   --muted: 0 0% 10%;
@@ -98,9 +99,9 @@
   background: #52525b;
 }
 
-/* Selection - violet accent */
+/* Selection - brand gold */
 ::selection {
-  background: rgba(139, 92, 246, 0.3);
+  background: rgba(234, 179, 8, 0.35);
   color: white;
 }
 
@@ -113,10 +114,14 @@ details summary {
   list-style: none;
 }
 
-/* Focus styles */
+/* Focus styles — brand gold, 10.3:1 on the dark background */
 button:focus-visible,
-a:focus-visible {
-  outline: 1px solid rgba(139, 92, 246, 0.5);
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:not([tabindex='-1']):focus-visible {
+  outline: 2px solid var(--stellar-gold);
   outline-offset: 2px;
 }
 

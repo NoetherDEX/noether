@@ -49,6 +49,7 @@ export function Navbar() {
   const isDark = theme === 'dark';
 
   return (
+    <>
     <nav className={`fixed top-0 left-0 right-0 z-50 transition-colors duration-300 ${isDark ? 'navbar-dark' : 'navbar-light'}`}>
       <div className="max-w-[1400px] mx-auto px-6 py-4">
         <div
@@ -73,7 +74,7 @@ export function Navbar() {
                 key={link.href}
                 href={link.href}
                 className={`nav-link text-sm transition-colors duration-200 ${
-                  isDark ? 'text-[#eab308]/50 hover:text-[#eab308]' : 'text-black/50 hover:text-black'
+                  isDark ? 'text-[#eab308] hover:text-[#fbbf24]' : 'text-black/75 hover:text-black'
                 }`}
               >
                 {link.label}
@@ -96,6 +97,7 @@ export function Navbar() {
             className="lg:hidden flex flex-col gap-1.5 p-2"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
+            aria-expanded={mobileOpen}
           >
             <span className={`block w-5 h-0.5 transition-all duration-200 ${isDark ? 'bg-white' : 'bg-black'} ${mobileOpen ? 'rotate-45 translate-y-2' : ''}`} />
             <span className={`block w-5 h-0.5 transition-all duration-200 ${isDark ? 'bg-white' : 'bg-black'} ${mobileOpen ? 'opacity-0' : ''}`} />
@@ -113,13 +115,15 @@ export function Navbar() {
               : 'bg-white/90 border-black/10'
           }`}
         >
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`text-base transition-colors ${
-                  isDark ? 'text-[#eab308]/60 hover:text-[#eab308]' : 'text-black/70 hover:text-black'
+                className={`px-4 py-3 rounded-lg text-base transition-colors ${
+                  isDark
+                    ? 'text-[#eab308] hover:text-[#fbbf24] hover:bg-white/5'
+                    : 'text-black/80 hover:text-black hover:bg-black/5'
                 }`}
                 onClick={() => setMobileOpen(false)}
               >
@@ -128,7 +132,7 @@ export function Navbar() {
             ))}
             <Link
               href="/trade"
-              className="pill-button pill-button-filled text-sm mt-2 text-center"
+              className="pill-button pill-button-filled text-sm mt-3 text-center"
               onClick={() => setMobileOpen(false)}
             >
               Launch App
@@ -137,5 +141,9 @@ export function Navbar() {
         </div>
       )}
     </nav>
+
+    {/* Skip-link target: after the nav, before the slide deck */}
+    <span id="main-content" tabIndex={-1} className="sr-only" />
+    </>
   );
 }
