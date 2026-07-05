@@ -3,7 +3,7 @@
  * Targets the @noether/api gateway via NEXT_PUBLIC_NOETHER_API_URL.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_NOETHER_API_URL ?? 'http://localhost:4000';
+import { apiBase } from './base';
 
 export interface IssuedChallenge {
   challengeHex: string;
@@ -37,7 +37,7 @@ async function postJson<T>(path: string, body: unknown, auth?: { keyId: string; 
     headers.authorization = `Bearer ${auth.keyId}:${auth.secret}`;
     headers['x-timestamp'] = String(Math.floor(Date.now() / 1000));
   }
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${apiBase()}${path}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -52,7 +52,7 @@ async function getJson<T>(path: string, auth?: { keyId: string; secret: string }
     headers.authorization = `Bearer ${auth.keyId}:${auth.secret}`;
     headers['x-timestamp'] = String(Math.floor(Date.now() / 1000));
   }
-  const res = await fetch(`${API_BASE}${path}`, { headers, cache: 'no-store' });
+  const res = await fetch(`${apiBase()}${path}`, { headers, cache: 'no-store' });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
   return (await res.json()) as T;
 }
@@ -63,7 +63,7 @@ async function deleteJson(path: string, auth: { keyId: string; secret: string })
     authorization: `Bearer ${auth.keyId}:${auth.secret}`,
     'x-timestamp': String(Math.floor(Date.now() / 1000)),
   };
-  const res = await fetch(`${API_BASE}${path}`, { method: 'DELETE', headers });
+  const res = await fetch(`${apiBase()}${path}`, { method: 'DELETE', headers });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
 }
 

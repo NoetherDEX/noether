@@ -22,6 +22,11 @@ export const CONTRACTS = {
   MARKET: process.env.NEXT_PUBLIC_MARKET_ID || '',
   USDC_TOKEN: process.env.NEXT_PUBLIC_USDC_TOKEN_ID || '',
   NOE_TOKEN: process.env.NEXT_PUBLIC_NOE_TOKEN_ID || '',
+  // Tranche 2 contracts — optional (their features hide when unset), so they
+  // are NOT in REQUIRED_CONTRACTS. Used to pick the right error table when a
+  // failed call targets vault_factory / referral (see contractErrors.ts).
+  VAULT_FACTORY: process.env.NEXT_PUBLIC_VAULT_FACTORY_ID || '',
+  REFERRAL: process.env.NEXT_PUBLIC_REFERRAL_ID || '',
 } as const;
 
 // Deploy environment, as reported by Vercel ('production' | 'preview' |
@@ -74,6 +79,23 @@ export const NOE_ASSET = {
   ISSUER: process.env.NEXT_PUBLIC_NOE_ISSUER || 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN',
 } as const;
 
+// USDC Asset (Classic Stellar Asset wrapped by the USDC SAC) — the single
+// source for the issuer previously duplicated in faucet.ts, TrustlineSection,
+// and the faucet claim route. Testnet issuer = the admin account.
+export const USDC_ASSET = {
+  CODE: process.env.NEXT_PUBLIC_USDC_ASSET_CODE || 'USDC',
+  ISSUER: process.env.NEXT_PUBLIC_USDC_ISSUER || 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN',
+} as const;
+
+// Faucet daily claim limit (USDC) — single source for the client lib
+// (faucet.ts) and the api/faucet/* route responses.
+export const FAUCET_DAILY_LIMIT_USDC = 1000;
+
+// Community links — ONE canonical invite (three different invites used to be
+// hardcoded across not-found / landing footer / referral + keys cards). This
+// is the invite the active T2 surfaces (referrals, api-keys) already shipped.
+export const DISCORD_URL = 'https://discord.gg/2BxYv6Uc';
+
 // Network configuration
 export const NETWORK = {
   NAME: 'testnet' as const,
@@ -81,6 +103,16 @@ export const NETWORK = {
   RPC_URL: 'https://soroban-testnet.stellar.org',
   HORIZON_URL: 'https://horizon-testnet.stellar.org',
 } as const;
+
+// stellar.expert explorer base for the current network — use instead of
+// hardcoding the '/testnet/' path segment in links.
+export const STELLAR_EXPERT_BASE = `https://stellar.expert/explorer/${NETWORK.NAME}`;
+
+// Well-known all-zeros public key: the source account for unauthenticated
+// read-only Soroban simulations (build with `new Account(NULL_ACCOUNT, '0')`,
+// no getAccount round-trip needed — simulation ignores sequence numbers).
+// Lets logged-out visitors get real on-chain reads instead of fabricated 0s.
+export const NULL_ACCOUNT = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
 
 // Trading constants
 export const TRADING = {

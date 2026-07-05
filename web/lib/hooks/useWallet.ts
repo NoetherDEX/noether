@@ -61,7 +61,7 @@ export function useWallet() {
           getUSDCBalance(walletAddress),
           getNoeBalance(walletAddress, walletAddress),
         ]);
-        setBalances(xlmBal, usdcBal, fromPrecision(noeBal));
+        setBalances(xlmBal, usdcBal, fromPrecision(noeBal ?? 0n));
       } catch (error) {
         console.error('Failed to complete wallet connection:', error);
         setDisconnected();
@@ -126,7 +126,7 @@ export function useWallet() {
       getUSDCBalance(publicKey),
       getNoeBalance(publicKey, publicKey),
     ]);
-    setBalances(xlmBal, usdcBal, fromPrecision(noeBal));
+    setBalances(xlmBal, usdcBal, fromPrecision(noeBal ?? 0n));
   }, [publicKey, setBalances]);
 
   return {
