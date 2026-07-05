@@ -1,29 +1,21 @@
 'use client';
 
 import type { VaultRow } from '@/types/vault';
-import { vaultNav, vaultLeaderHoldingPct, VAULT_PRECISION } from '@/types/vault';
+import { vaultNav, vaultLeaderHoldingPct } from '@/types/vault';
+import { fmtUsdc7 } from '@/lib/utils/format';
 
-function fmtUsdc(raw: string, dp = 2): string {
-  const value = BigInt(raw);
-  const negative = value < 0n;
-  const abs = negative ? -value : value;
-  const whole = abs / VAULT_PRECISION;
-  const frac = abs % VAULT_PRECISION;
-  const fracStr = frac.toString().padStart(7, '0').slice(0, dp);
-  return `${negative ? '-' : ''}${whole}${dp > 0 ? '.' + fracStr : ''}`;
-}
-
-function fmtNav(nav: bigint): string {
-  const whole = nav / VAULT_PRECISION;
-  const frac = nav % VAULT_PRECISION;
-  return `${whole}.${frac.toString().padStart(7, '0').slice(0, 4)}`;
-}
-
-function fmtShares(raw: string): string {
-  const value = BigInt(raw);
-  const whole = value / VAULT_PRECISION;
-  const frac = value % VAULT_PRECISION;
-  return `${whole}.${frac.toString().padStart(7, '0').slice(0, 2)}`;
+/** Signed money display built ON fmtUsdc7 — sign outside the '$'
+ *  ('+$1,234.56' / '-$1,234.56'), exact zero stays unsigned. */
+function fmtSignedUsd(raw: string): string {
+  let value: bigint;
+  try {
+    value = BigInt(raw);
+  } catch {
+    return '—';
+  }
+  if (value === 0n) return `$${fmtUsdc7(value)}`;
+  const abs = value < 0n ? -value : value;
+  return `${value < 0n ? '-' : '+'}$${fmtUsdc7(abs)}`;
 }
 
 interface Stat {
@@ -62,9 +54,9 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
   // Primary row — financial headline (SCF deliverable surface)
   const primary: Stat[] = [
     {
-      label: 'Total Value Locked',
-      value: `$${fmtUsdc(vault.totalUsdc)}`,
-      hint: 'USDC pooled by all depositors',
+      label: 'TVL (liquid)',
+      value: `$${fmtUsdc7(vault.totalUsdc)}`,
+      hint: 'USDC sitting in the vault — excludes capital deployed in open positions',
     },
     {
       label: 'APY',
@@ -75,26 +67,27 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
     {
       label: 'Max Drawdown',
       value: fmtBps(vault.drawdownBps),
-      hint: '(HWM − current NAV) / HWM',
+      hint: '(HWM − current liquid NAV) / HWM',
       tone: drawdownTone,
     },
   ];
 
-  // Secondary row — operational
+  // Secondary row — operational. Unknown aggregates render '—', never a
+  // fabricated 0 (money-display honesty rule).
   const secondary: Stat[] = [
     {
       label: 'Open Positions',
-      value: String(vault.openPositions ?? 0),
+      value: vault.openPositions != null ? String(vault.openPositions) : '—',
       hint: 'leader_open − leader_close events',
     },
     {
       label: 'Total Trades',
-      value: String(vault.tradeCount ?? 0),
+      value: vault.tradeCount != null ? String(vault.tradeCount) : '—',
       hint: 'Lifetime trade count',
     },
     {
       label: 'Depositors',
-      value: String(vault.depositorCount ?? 0),
+      value: vault.depositorCount != null ? String(vault.depositorCount) : '—',
       hint: 'Distinct wallet count from vault_deposits',
     },
   ];
@@ -102,19 +95,19 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
   // Tertiary row — structural / governance / pnl breakdown
   const tertiary: Stat[] = [
     {
-      label: 'NAV per Share',
-      value: fmtNav(nav),
-      hint: 'Net asset value, in USDC',
+      label: 'Liquid NAV per Share',
+      value: fmtUsdc7(nav, 4),
+      hint: 'Counts only liquid USDC — deployed capital excluded',
     },
     {
       label: 'Realized PnL',
-      value: `${closedPnlNum >= 0 ? '+' : ''}$${fmtUsdc(closedPnl)}`,
+      value: fmtSignedUsd(closedPnl),
       hint: 'Closed trade profits returned to the pool',
       tone: closedPnlTone,
     },
     {
       label: 'Leader Fees Claimed',
-      value: `${feesClaimedNum >= 0 ? '+' : ''}$${fmtUsdc(vault.realizedPnl)}`,
+      value: fmtSignedUsd(vault.realizedPnl),
       hint: 'Lifetime profit-share paid out to the leader',
       tone: feesClaimedTone,
     },

@@ -9,8 +9,11 @@ import {
   getUserVaultShares,
   getWalletUsdcBalance,
 } from '@/lib/stellar/vaultFactory';
+import { getVaultTrades } from '@/lib/api/vaults';
 import { VAULT_PRECISION, vaultNav } from '@/types/vault';
 import type { VaultRow } from '@/types/vault';
+import { fmtUsdc7 } from '@/lib/utils/format';
+import { decodeContractError } from '@/lib/utils/contractErrors';
 import toast from 'react-hot-toast';
 
 interface Props {
@@ -35,34 +38,32 @@ function parseAmount(input: string): bigint | null {
   }
 }
 
-function fmt(raw: bigint, decimals = 4): string {
-  const negative = raw < 0n;
-  const abs = negative ? -raw : raw;
-  const whole = abs / VAULT_PRECISION;
-  const frac = (abs % VAULT_PRECISION).toString().padStart(7, '0').slice(0, decimals);
-  return `${negative ? '-' : ''}${whole}.${frac}`;
+/** Plain (comma-free) amount string for filling the input — the parseAmount
+ *  regex above rejects thousands separators, so display formatting must not
+ *  leak into the field. Balances here are never negative. */
+function fmtInputAmount(raw: bigint): string {
+  const whole = raw / VAULT_PRECISION;
+  const frac = (raw % VAULT_PRECISION).toString().padStart(7, '0');
+  return `${whole}.${frac}`.replace(/\.?0+$/, '');
 }
 
-/** Pretty-print common on-chain errors so the toast is actionable. */
-function humanizeError(raw: string): string {
-  const s = raw || '';
-  // SAC balance error (10) — most common cause for deposit
-  if (/Error\(Contract, #10\)/.test(s)) {
-    return 'Insufficient USDC balance for this deposit.';
+/**
+ * Decode on-chain errors with the vault_factory table (A26 — the old local
+ * map explained withdraw failures as deposit problems). Mode-aware carve-out:
+ * the factory never raises #10 on `deposit`, so a #10 there bubbled from the
+ * USDC SAC (payer balance) — including when buildTransaction already rewrote
+ * it into the factory-table sentence during simulation.
+ */
+function humanizeError(err: unknown, mode: Mode): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (
+    mode === 'deposit' &&
+    (/Error\(Contract, #10\)/.test(raw) || raw.includes('does not have enough free USDC'))
+  ) {
+    return 'USDC transfer failed — insufficient USDC balance for this deposit.';
   }
-  if (/Error\(Contract, #9\)/.test(s)) {
-    return 'USDC allowance too low — approve the vault to spend your USDC.';
-  }
-  if (/Error\(Contract, #11\)/.test(s)) {
-    return 'Leader minimum violated: the leader must hold ≥5% of the vault after this transaction.';
-  }
-  if (/Error\(Contract, #12\)/.test(s)) return 'Vault is paused.';
-  if (/Error\(Contract, #8\)/.test(s)) return 'Amount must be positive.';
-  if (/Error\(Contract, #13\)/.test(s)) return 'Arithmetic overflow.';
-  if (/Error\(Contract, #14\)/.test(s)) return 'NAV calculation failed.';
-  if (/Error\(Contract, #5\)/.test(s))  return 'Vault not found.';
-  if (/Error\(Contract, #6\)/.test(s))  return 'Only the vault leader can do this.';
-  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+  const decoded = decodeContractError(err, { contract: 'vault_factory' });
+  return decoded.length > 200 ? `${decoded.slice(0, 200)}…` : decoded;
 }
 
 export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props) {
@@ -73,6 +74,9 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
   const [usdcBalance, setUsdcBalance] = useState<bigint>(0n);
   const [userShares, setUserShares] = useState<bigint>(0n);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Capital the leader currently has deployed in open positions — excluded
+  // from the liquid NAV a withdrawal is priced at (A20). null = unknown.
+  const [deployed, setDeployed] = useState<{ count: number; usdc: bigint } | null>(null);
 
   const connected = Boolean(wallet.address);
   const nav = vaultNav(vault);
@@ -105,17 +109,63 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
     };
   }, [open, wallet.address, vault.id, refreshKey]);
 
+  // Best-effort read of the leader's open trades so the withdraw warning can
+  // show the ≈ dollar figure of excluded capital. Unmatched leader_open rows
+  // (no leader_close for the same positionId) approximate what is deployed.
+  useEffect(() => {
+    if (!open) {
+      setDeployed(null);
+      return;
+    }
+    let cancelled = false;
+    getVaultTrades(vault.id, 200)
+      .then((trades) => {
+        if (cancelled) return;
+        const opens = new Map<string, bigint>();
+        const closed = new Set<string>();
+        for (const t of trades) {
+          if (t.action === 'open') {
+            let coll = 0n;
+            try {
+              coll = BigInt(t.collateral);
+            } catch {
+              /* unparseable row — count the position, skip its amount */
+            }
+            opens.set(t.positionId, coll);
+          } else {
+            closed.add(t.positionId);
+          }
+        }
+        let count = 0;
+        let usdc = 0n;
+        opens.forEach((coll, id) => {
+          if (!closed.has(id)) {
+            count += 1;
+            usdc += coll;
+          }
+        });
+        setDeployed({ count, usdc });
+      })
+      .catch(() => {
+        if (!cancelled) setDeployed(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, vault.id, refreshKey]);
+
   if (!open) return null;
 
   const parsed = parseAmount(amount);
   const maxRaw = mode === 'deposit' ? usdcBalance : userShares;
   const exceedsBalance = parsed !== null && parsed > maxRaw;
-  const insufficientLiquidity =
-    mode === 'withdraw' &&
-    parsed !== null &&
-    parsed > 0n &&
-    BigInt(vault.circulatingShares) > 0n &&
-    (parsed * BigInt(vault.totalUsdc)) / BigInt(vault.circulatingShares) > BigInt(vault.totalUsdc);
+  // How many positions the leader has open right now. Trades-derived count
+  // (paired with the ≈$ figure, 200-row window) and the API aggregate can
+  // each miss independently — warn if EITHER says capital is deployed. The
+  // old "insufficient liquidity" pre-check here was dead code AND a lie —
+  // the contract pays such withdrawals out at the collapsed liquid NAV
+  // instead of rejecting them, which is exactly why this warning exists.
+  const openPositionCount = Math.max(deployed?.count ?? 0, vault.openPositions ?? 0);
 
   // Preview math
   let previewLine = '';
@@ -128,17 +178,17 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
         circulating === 0n || totalUsdc === 0n
           ? parsed
           : (parsed * circulating) / totalUsdc;
-      previewLine = `You will receive ≈ ${fmt(sharesOut)} shares`;
+      previewLine = `You will receive ≈ ${fmtUsdc7(sharesOut, 4)} shares`;
     } else {
-      // shares burned * NAV
+      // shares burned * liquid NAV
       const usdcOut = (parsed * nav) / VAULT_PRECISION;
-      previewLine = `You will receive ≈ ${fmt(usdcOut)} USDC`;
+      previewLine = `You will receive ≈ ${fmtUsdc7(usdcOut, 4)} USDC at liquid NAV`;
     }
   }
 
   function setMax() {
     if (maxRaw === 0n) return;
-    setAmount(fmt(maxRaw, 7).replace(/\.?0+$/, ''));
+    setAmount(fmtInputAmount(maxRaw));
   }
 
   async function submit() {
@@ -147,8 +197,8 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
     if (exceedsBalance) {
       return toast.error(
         mode === 'deposit'
-          ? `Amount exceeds USDC balance (${fmt(usdcBalance)} available)`
-          : `Amount exceeds your shares (${fmt(userShares)} available)`,
+          ? `Amount exceeds USDC balance (${fmtUsdc7(usdcBalance, 4)} available)`
+          : `Amount exceeds your shares (${fmtUsdc7(userShares, 4)} available)`,
       );
     }
     setBusy(true);
@@ -165,20 +215,14 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
       onSuccess?.();
       onClose();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed: ${humanizeError(msg)}`);
+      toast.error(`Failed: ${humanizeError(err, mode)}`);
     } finally {
       setBusy(false);
     }
   }
 
   const canSubmit =
-    connected &&
-    !busy &&
-    parsed !== null &&
-    parsed > 0n &&
-    !exceedsBalance &&
-    (mode === 'deposit' || !insufficientLiquidity);
+    connected && !busy && parsed !== null && parsed > 0n && !exceedsBalance;
 
   return (
     <Modal
@@ -214,16 +258,16 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
         {/* Vault status row */}
         <div className="grid grid-cols-3 gap-2 text-xs">
           <div className="rounded-md bg-zinc-900/50 px-3 py-2">
-            <div className="text-zinc-500">Vault TVL</div>
-            <div className="font-mono mt-0.5">{fmt(BigInt(vault.totalUsdc))} USDC</div>
+            <div className="text-zinc-500">Liquid TVL</div>
+            <div className="font-mono mt-0.5">{fmtUsdc7(vault.totalUsdc)} USDC</div>
           </div>
           <div className="rounded-md bg-zinc-900/50 px-3 py-2">
-            <div className="text-zinc-500">NAV</div>
-            <div className="font-mono mt-0.5">{fmt(nav)}</div>
+            <div className="text-zinc-500">Liquid NAV</div>
+            <div className="font-mono mt-0.5">{fmtUsdc7(nav, 4)}</div>
           </div>
           <div className="rounded-md bg-zinc-900/50 px-3 py-2">
             <div className="text-zinc-500">Shares out</div>
-            <div className="font-mono mt-0.5">{fmt(BigInt(vault.circulatingShares))}</div>
+            <div className="font-mono mt-0.5">{fmtUsdc7(vault.circulatingShares)}</div>
           </div>
         </div>
 
@@ -240,7 +284,7 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
                 disabled={!connected || maxRaw === 0n}
                 className="text-xs text-amber-400 hover:text-amber-300 disabled:text-zinc-600 disabled:cursor-not-allowed"
               >
-                Max ({fmt(maxRaw)})
+                Max ({fmtUsdc7(maxRaw, 4)})
               </button>
             </div>
             <Input
@@ -258,14 +302,31 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
                 Amount exceeds {mode === 'deposit' ? 'USDC balance' : 'share balance'}.
               </p>
             )}
-            {insufficientLiquidity && (
-              <p className="text-xs text-red-400">
-                Vault doesn&apos;t have enough free USDC for this withdrawal — leader
-                has open positions tying up the capital.
-              </p>
-            )}
           </CardContent>
         </Card>
+
+        {/* Hard warning (A20): withdrawing while the leader has capital
+            deployed pays out at the collapsed liquid NAV — the depositor
+            permanently forfeits their share of the in-flight capital. */}
+        {mode === 'withdraw' && openPositionCount > 0 && (
+          <Card className="border-red-500/40 bg-red-500/5">
+            <CardContent className="p-3 text-xs text-red-400 space-y-1">
+              <p className="font-semibold">
+                The leader has {openPositionCount} open position
+                {openPositionCount === 1 ? '' : 's'}
+                {deployed && deployed.usdc > 0n
+                  ? ` holding ≈ $${fmtUsdc7(deployed.usdc)} of vault capital`
+                  : ''}
+                .
+              </p>
+              <p>
+                That capital is excluded from the liquid NAV this withdrawal is
+                priced at — withdrawing now permanently forfeits your share of
+                it. Consider waiting until the positions close.
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Context banner */}
         {!connected && (

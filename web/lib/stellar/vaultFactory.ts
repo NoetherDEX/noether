@@ -198,6 +198,13 @@ function decodeVaultInfo(raw: unknown): OnChainVaultInfo {
   // scValToNative turns the struct into a plain object keyed by the
   // contract's snake_case field names.
   const r = raw as Record<string, unknown>;
+  // profit_share_bps is a required field of the on-chain VaultInfo struct
+  // (contracts/vault_factory/src/types.rs). If it's missing the decode is
+  // broken — fail loud rather than silently invent "10%" leader economics
+  // (getVaultInfo's catch turns this into null, hiding the row).
+  if (r.profit_share_bps == null) {
+    throw new Error(`view_vault decode: profit_share_bps missing (vault ${String(r.id)})`);
+  }
   return {
     id: Number(r.id ?? 0),
     leader: String(r.leader),
@@ -208,7 +215,7 @@ function decodeVaultInfo(raw: unknown): OnChainVaultInfo {
     hwmNav: BigInt((r.hwm_nav as number | bigint | string | undefined) ?? 0),
     realizedPnl: BigInt((r.realized_pnl as number | bigint | string | undefined) ?? 0),
     leaderShares: BigInt((r.leader_shares as number | bigint | string | undefined) ?? 0),
-    profitShareBps: Number(r.profit_share_bps ?? 1000),
+    profitShareBps: Number(r.profit_share_bps),
     paused: Boolean(r.paused),
   };
 }

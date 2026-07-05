@@ -15,6 +15,8 @@ import {
   getVaultWithdraws,
   getVaultTrades,
 } from '@/lib/api/vaults';
+import { formatDate } from '@/lib/utils/format';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -66,7 +68,7 @@ export default async function VaultDetailPage({
                 <h1 className="mt-3 text-3xl md:text-4xl font-bold">{vault.name}</h1>
 
                 <a
-                  href={`https://stellar.expert/explorer/testnet/account/${vault.leader}`}
+                  href={`${STELLAR_EXPERT_BASE}/account/${vault.leader}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-3 inline-flex items-center gap-2 text-xs md:text-sm text-muted-foreground hover:text-amber-400 transition-colors group"
@@ -81,12 +83,21 @@ export default async function VaultDetailPage({
                   </span>
                 </a>
                 <p className="mt-1 text-xs text-muted-foreground/70">
-                  Created {new Date(vault.createdAt * 1000).toLocaleDateString()}
+                  Created {formatDate(vault.createdAt)}
                 </p>
               </div>
 
               <VaultActions vault={vault} />
             </div>
+          </div>
+
+          {/* Beta caveat (A20) — leader-vault accounting counts only liquid
+              USDC until the V-1 contract fix lands. */}
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs md:text-sm text-amber-400/90">
+            <span className="font-semibold">Beta:</span> all numbers below count
+            only the USDC sitting in the vault. While the leader has open
+            positions, TVL, NAV and P&amp;L exclude the deployed capital — and
+            withdrawing mid-trade forfeits your share of it.
           </div>
 
           {/* Stat rows */}
@@ -137,10 +148,17 @@ export default async function VaultDetailPage({
             </div>
             <div className="p-6 text-sm text-muted-foreground space-y-3 leading-relaxed">
               <p>
-                Depositors send USDC and receive shares proportional to current
-                NAV. The leader trades the pooled capital through the Noether
+                Depositors send USDC and receive shares proportional to the current
+                liquid NAV. The leader trades the pooled capital through the Noether
                 market and takes <span className="text-foreground font-medium">{(vault.profitShareBps / 100).toFixed(1)}%</span> of
                 any gain above the high-water mark.
+              </p>
+              <p>
+                Accounting counts only liquid USDC: while the leader has open
+                positions, TVL and NAV exclude the deployed capital, and both
+                deposits and withdrawals are priced at that reduced liquid NAV.
+                Withdrawing mid-trade forfeits your share of the deployed
+                capital — the numbers recover only when positions close.
               </p>
               <p>
                 The leader is required to hold <span className="text-foreground font-medium">≥ 5% of the vault</span> at
