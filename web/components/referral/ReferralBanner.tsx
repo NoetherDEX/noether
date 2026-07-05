@@ -1,16 +1,28 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui';
+import { cn } from '@/lib/utils/cn';
 import {
   captureReferralFromLocation,
   clearPendingReferral,
   getPendingReferral,
+  isPendingReferralParked,
+  parkPendingReferral,
 } from '@/lib/referralCode';
 import { lookupReferralCode } from '@/lib/api/referral';
 import { useWalletStore } from '@/lib/store';
+import { useWalletContext } from '@/components/wallet/WalletProvider';
 import type { ReferrerRow } from '@/types/referral';
 import toast from 'react-hot-toast';
+
+// Lazy chunk: the wallet picker only loads if a disconnected visitor actually
+// clicks the connect CTA (the banner mounts in the root layout on every page).
+const WalletModal = dynamic(
+  () => import('@/components/wallet/WalletModal').then((m) => m.WalletModal),
+  { ssr: false },
+);
 
 /**
  * Floating notification card shown in the bottom-right corner whenever
@@ -21,22 +33,28 @@ import toast from 'react-hot-toast';
  *  - Resolves the code to a referrer via the public API (best-effort —
  *    the on-chain bind doesn't need this to succeed).
  *  - When a wallet is connected, exposes a 'Bind referral code' CTA
- *    that calls `referral.set_referrer(referee, code)` on-chain.
+ *    that calls `referral.set_referrer(referee, code)` on-chain; when
+ *    disconnected, the CTA opens the wallet picker instead.
  *  - Animates in from the bottom, persists across page navigations,
- *    survives refresh — only goes away when the user dismisses it or
- *    a bind tx succeeds.
+ *    survives refresh. Dismissing PARKS the code (redeemable later via
+ *    /referrals); only a successful bind clears it.
  */
 export function ReferralBanner() {
   const wallet = useWalletStore();
+  const { refreshBalance } = useWalletContext();
   const [code, setCode] = useState<string | null>(null);
   const [referrer, setReferrer_] = useState<ReferrerRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   // Cheap fade-in: render after mount.
   const [shown, setShown] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  // Mount the (lazy) wallet modal only after the first connect click.
+  const [connectMounted, setConnectMounted] = useState(false);
 
   useEffect(() => {
     captureReferralFromLocation();
+    if (isPendingReferralParked()) return;
     const pending = getPendingReferral();
     if (!pending) return;
     setCode(pending);
@@ -54,9 +72,16 @@ export function ReferralBanner() {
   function dismiss() {
     setShown(false);
     setTimeout(() => {
-      clearPendingReferral();
+      // Park, don't delete — dismissal must never forfeit attribution.
+      parkPendingReferral();
       setCode(null);
     }, 200);
+    toast('Invite saved — enter the code anytime on the Referrals page.');
+  }
+
+  function openConnect() {
+    setConnectMounted(true);
+    setConnectOpen(true);
   }
 
   async function bind() {
@@ -98,7 +123,10 @@ export function ReferralBanner() {
     <div
       data-noether-chrome
       className={[
-        'fixed bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm',
+        // Below lg sit above the fixed MobileTradeBar (~68px + its own
+        // safe-area inset), so the Long/Short bar is never covered or
+        // tap-blocked; from lg the bar is hidden → bottom-4.
+        'fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] lg:bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm',
         'transition-all duration-300 ease-out',
         shown ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none',
       ].join(' ')}
@@ -182,9 +210,14 @@ export function ReferralBanner() {
             </div>
 
             <Button
-              onClick={bind}
-              disabled={busy || !wallet.address}
-              className="w-full"
+              onClick={wallet.address ? bind : openConnect}
+              disabled={busy}
+              className={cn(
+                'w-full',
+                // Brand-gold connect CTA (matches the app's connect treatment).
+                !wallet.address &&
+                  'bg-[#eab308] text-black hover:bg-[#eab308]/90 focus:ring-[#eab308]',
+              )}
             >
               {busy
                 ? 'Signing…'
@@ -195,6 +228,20 @@ export function ReferralBanner() {
           </div>
         )}
       </div>
+
+      {connectMounted && (
+        <WalletModal
+          isOpen={connectOpen}
+          onClose={() => setConnectOpen(false)}
+          onConnected={(address, walletId) => {
+            // Light-weight connect completion (useWallet would drag
+            // stellar-sdk into the layout bundle): set the store, then let
+            // the global provider fetch balances.
+            wallet.setConnected(address, address, walletId);
+            void refreshBalance();
+          }}
+        />
+      )}
     </div>
   );
 }
