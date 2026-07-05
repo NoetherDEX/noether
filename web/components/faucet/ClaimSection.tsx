@@ -3,6 +3,7 @@
 import { Droplets, Clock, Loader2 } from 'lucide-react';
 import { AmountCard } from './AmountCard';
 import { cn } from '@/lib/utils/cn';
+import { formatNumber } from '@/lib/utils/format';
 import { getAvailableAmounts, getTimeUntilReset } from '@/lib/stellar/faucet';
 import type { ClaimAmount } from '@/lib/stellar/faucet';
 import { useState, useEffect } from 'react';
@@ -60,8 +61,8 @@ export function ClaimSection({
             <div className="space-y-3">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Daily Limit</span>
-                <span className="text-foreground font-medium font-mono">
-                  {claimedToday.toLocaleString()} / {dailyLimit.toLocaleString()} USDC
+                <span className="text-foreground font-medium font-mono tabular-nums">
+                  {formatNumber(claimedToday, 0)} / {formatNumber(dailyLimit, 0)} USDC
                 </span>
               </div>
               <div className="h-2 bg-secondary rounded-full overflow-hidden">
@@ -77,7 +78,7 @@ export function ClaimSection({
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">
-                  Remaining: <span className="font-mono">{remainingToday.toLocaleString()}</span> USDC
+                  Remaining: <span className="font-mono tabular-nums">{formatNumber(remainingToday, 0)}</span> USDC
                 </span>
                 {isLimitReached && (
                   <span className="flex items-center gap-1 text-[#f59e0b]">
@@ -95,7 +96,7 @@ export function ClaimSection({
                   Daily Limit Reached
                 </h3>
                 <p className="text-muted-foreground text-sm">
-                  You&apos;ve claimed 1,000 USDC today. Come back tomorrow for more!
+                  You&apos;ve claimed {formatNumber(dailyLimit, 0)} USDC today. Come back tomorrow for more!
                 </p>
                 <p className="text-[#f59e0b] font-medium font-mono mt-4">
                   Resets in {timeUntilReset.hours}h {timeUntilReset.minutes}m {timeUntilReset.seconds}s

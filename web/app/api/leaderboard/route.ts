@@ -26,6 +26,8 @@ export async function GET() {
     });
   } catch (error) {
     console.error('[Leaderboard] DB read error:', error);
-    return NextResponse.json([], { status: 500 });
+    // Never return [] on failure — an empty array is indistinguishable from a
+    // genuinely empty board and renders as a confident "No traders yet".
+    return NextResponse.json({ error: 'leaderboard_unavailable' }, { status: 500 });
   }
 }

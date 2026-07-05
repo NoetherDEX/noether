@@ -2,6 +2,7 @@
 
 import { CheckCircle, AlertCircle, Loader2, Plus, Rocket } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { USDC_ASSET } from '@/lib/utils/constants';
 import type { TrustlineStatus, AccountStatus } from '@/lib/hooks/useFaucet';
 
 interface TrustlineSectionProps {
@@ -23,7 +24,7 @@ export function TrustlineSection({
   onFundAccount,
   isFundingAccount,
 }: TrustlineSectionProps) {
-  const issuerAddress = 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
+  const issuerAddress = USDC_ASSET.ISSUER;
   const truncatedIssuer = `${issuerAddress.slice(0, 8)}...${issuerAddress.slice(-8)}`;
 
   const needsActivation = accountStatus === 'not_found' || accountStatus === 'funding' || accountStatus === 'error';

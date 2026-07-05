@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { History, ExternalLink, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { formatDateTimeFull, formatNumber } from '@/lib/utils/format';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import type { ClaimRecord } from '@/lib/stellar/faucet';
 
 interface ClaimHistoryProps {
@@ -22,18 +24,8 @@ export function ClaimHistory({
   const displayedRecords = records.slice(0, displayCount);
   const hasMore = records.length > displayCount;
 
-  const formatDate = (date: Date) => {
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
-  };
-
   const getStellarExpertUrl = (txHash: string) => {
-    return `https://stellar.expert/explorer/testnet/tx/${txHash}`;
+    return `${STELLAR_EXPERT_BASE}/tx/${txHash}`;
   };
 
   return (
@@ -46,8 +38,8 @@ export function ClaimHistory({
         </h3>
         <div className="text-sm text-muted-foreground">
           Total Received:{' '}
-          <span className="text-foreground font-medium font-mono">
-            {totalAllTime.toLocaleString()} USDC
+          <span className="text-foreground font-medium font-mono tabular-nums">
+            {formatNumber(totalAllTime, 0)} USDC
           </span>
         </div>
       </div>
@@ -89,13 +81,13 @@ export function ClaimHistory({
                 className="grid grid-cols-4 gap-4 px-4 py-3 bg-secondary/20 rounded-lg border border-white/5 hover:bg-secondary/30 transition-colors"
               >
                 <span className="text-sm text-muted-foreground">
-                  {formatDate(record.timestamp)}
+                  {formatDateTimeFull(record.timestamp)}
                 </span>
-                <span className="text-sm text-[#22c55e] font-medium font-mono text-right">
-                  +{record.amount.toLocaleString()} USDC
+                <span className="text-sm text-[#22c55e] font-medium font-mono tabular-nums text-right">
+                  +{formatNumber(record.amount, 0)} USDC
                 </span>
-                <span className="text-sm text-muted-foreground font-mono text-right">
-                  {record.runningTotal.toLocaleString()} USDC
+                <span className="text-sm text-muted-foreground font-mono tabular-nums text-right">
+                  {formatNumber(record.runningTotal, 0)} USDC
                 </span>
                 <div className="text-right">
                   <a

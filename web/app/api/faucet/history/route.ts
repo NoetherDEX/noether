@@ -9,6 +9,7 @@ import {
   getTodaysClaims,
   hasTrustline,
 } from '@/lib/stellar/faucet';
+import { FAUCET_DAILY_LIMIT_USDC } from '@/lib/utils/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
       claimedToday,
       remainingToday,
       totalAllTime,
-      dailyLimit: 1000,
+      dailyLimit: FAUCET_DAILY_LIMIT_USDC,
     });
   } catch (error) {
     console.error('Faucet history error:', error);
