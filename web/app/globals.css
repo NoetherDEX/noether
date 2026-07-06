@@ -212,3 +212,15 @@ w3m-modal, appkit-modal {
     display: none;
   }
 }
+
+/* Animated rainbow gradient — used by the leaderboard self-rank border (A22).
+   Pans a 200%-wide gradient by one full period; the gradient starts and ends
+   on the same hue so the loop is seamless. Applied via motion-safe only. */
+@keyframes rainbow-pan {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}

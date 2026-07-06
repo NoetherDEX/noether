@@ -145,29 +145,43 @@ export function LeaderboardContent() {
           table scrolls; hidden while loading or when rankings are unknown. */}
       {walletAddress && !loading && !errorNoData && (
         <div className="sticky top-16 z-20 rounded-xl bg-[#0a0a0a]">
-          <div className="rounded-xl border border-[#eab308]/25 bg-[#eab308]/[0.06] px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1">
-            {self ? (
-              <>
-                <span className="text-sm font-semibold text-[#eab308]">
-                  Your rank: #{selfIdx + 1}
-                </span>
-                <span className="text-xs text-white/60">
-                  <span className="font-mono text-white/80">{formatUSD(self.totalVolume, 0)}</span> volume
-                  <span className="mx-1.5 text-white/30">·</span>
-                  <PnlCell value={self.pnl} className="text-xs" /> PnL
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="text-sm font-medium text-white/80">Not ranked yet</span>
-                <Link
-                  href="/trade"
-                  className="text-xs font-medium text-[#eab308] hover:text-[#facc15] transition-colors"
-                >
-                  Make your first trade →
-                </Link>
-              </>
-            )}
+          {/* Animated rainbow gradient border marks the connected trader's own row */}
+          <div className="rounded-xl p-[1.5px] bg-[length:200%_auto] bg-[linear-gradient(110deg,#f87171,#fbbf24,#4ade80,#22d3ee,#818cf8,#e879f9,#f87171)] motion-safe:animate-[rainbow-pan_6s_linear_infinite]">
+            <div className="rounded-[calc(0.75rem-1.5px)] bg-gradient-to-b from-[#15151a] to-[#0b0b0e] px-5 py-3.5 flex flex-wrap items-center gap-x-5 gap-y-2">
+              {self ? (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/45">
+                      Your rank
+                    </span>
+                    <span className="font-mono text-xl font-bold tabular-nums text-white leading-none">
+                      #{selfIdx + 1}
+                    </span>
+                  </div>
+                  <span className="hidden sm:block h-5 w-px bg-white/10" aria-hidden="true" />
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-white/45">Volume</span>
+                    <span className="font-mono text-sm font-semibold tabular-nums text-white/90">
+                      {formatUSD(self.totalVolume, 0)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-white/45">PnL</span>
+                    <PnlCell value={self.pnl} className="text-sm font-semibold" />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="text-sm font-semibold text-white/85">You&apos;re not ranked yet</span>
+                  <Link
+                    href="/trade"
+                    className="text-sm font-semibold text-transparent bg-clip-text bg-gradient-to-r from-[#fbbf24] via-[#f472b6] to-[#818cf8] hover:opacity-80 transition-opacity"
+                  >
+                    Make your first trade →
+                  </Link>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
