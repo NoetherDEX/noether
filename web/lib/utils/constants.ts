@@ -163,6 +163,7 @@ export const TIMEFRAMES = [
   { label: '1H', value: '1h', seconds: 3600 },
   { label: '4H', value: '4h', seconds: 14400 },
   { label: '1D', value: '1d', seconds: 86400 },
+  { label: '1W', value: '1w', seconds: 604800 },
 ] as const;
 
 // Binance API for chart data

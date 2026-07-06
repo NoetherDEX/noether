@@ -19,6 +19,7 @@ import {
   MobileTradeBar,
 } from '@/components/trading';
 import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
+import type { ChartType } from '@/components/trading/TradingChart';
 import { useLeaderModeStore } from '@/lib/store';
 import { leaderClosePosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
@@ -52,6 +53,7 @@ import toast from 'react-hot-toast';
 function TradePage() {
   const [selectedAsset, setSelectedAsset] = useState('BTC');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
+  const [chartType, setChartType] = useState<ChartType>('candles');
   // Raw contract positions. Refreshed on connect / vault-swap / explicit
   // trade actions / 60 s safety tick — NOT on every price update. The
   // displayed PnL / Mark / Net Value comes from currentPrices below.
@@ -620,22 +622,42 @@ function TradePage() {
                   </div>
                 </div>
 
-                {/* Timeframe Selector */}
-                <div className="flex items-center gap-1 px-3 sm:px-4 py-2 border-b border-white/5 overflow-x-auto scrollbar-none">
-                  {TIMEFRAMES.map((tf) => (
-                    <button
-                      key={tf.value}
-                      onClick={() => setSelectedTimeframe(tf.value)}
-                      className={cn(
-                        'px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap',
-                        selectedTimeframe === tf.value
-                          ? 'bg-white text-black'
-                          : 'text-neutral-400 hover:text-white hover:bg-white/5'
-                      )}
-                    >
-                      {tf.label}
-                    </button>
-                  ))}
+                {/* Timeframe + chart-type toolbar */}
+                <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2 border-b border-white/5">
+                  <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+                    {TIMEFRAMES.map((tf) => (
+                      <button
+                        key={tf.value}
+                        onClick={() => setSelectedTimeframe(tf.value)}
+                        className={cn(
+                          'px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap',
+                          selectedTimeframe === tf.value
+                            ? 'bg-white text-black'
+                            : 'text-neutral-400 hover:text-white hover:bg-white/5'
+                        )}
+                      >
+                        {tf.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0 rounded-lg bg-white/5 p-0.5">
+                    {(['candles', 'line', 'area'] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setChartType(t)}
+                        aria-pressed={chartType === t}
+                        title={t === 'candles' ? 'Candlesticks' : t === 'line' ? 'Line' : 'Area'}
+                        className={cn(
+                          'px-2 py-1 text-xs font-medium rounded-md capitalize transition-colors',
+                          chartType === t
+                            ? 'bg-white/10 text-white'
+                            : 'text-neutral-500 hover:text-white'
+                        )}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Chart */}
@@ -643,6 +665,11 @@ function TradePage() {
                   <TradingChart
                     asset={selectedAsset}
                     interval={selectedTimeframe}
+                    chartType={chartType}
+                    markPrice={currentPrices[selectedAsset] || 0}
+                    stale={pricesStale}
+                    positions={positions.filter((p) => p.asset === selectedAsset)}
+                    orders={orders.filter((o) => o.asset === selectedAsset && o.status === 'Pending')}
                   />
                 </div>
 
