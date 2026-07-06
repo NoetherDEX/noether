@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { fetchTicker, subscribeToPriceUpdates } from '@/lib/hooks/usePriceData';
-import { formatUSD, formatNumber, formatPercent } from '@/lib/utils';
+import { formatUSD, formatNumber, formatPercent, priceDecimals } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import type { Ticker } from '@/types';
 
@@ -86,14 +86,14 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
             <div>
               <p className="text-[10px] text-neutral-500 mb-0.5">24h High</p>
               <p className="text-xs font-medium text-white font-mono">
-                {formatUSD(ticker.high24h, asset === 'XLM' ? 4 : 2)}
+                {formatUSD(ticker.high24h, priceDecimals(asset))}
               </p>
             </div>
 
             <div>
               <p className="text-[10px] text-neutral-500 mb-0.5">24h Low</p>
               <p className="text-xs font-medium text-white font-mono">
-                {formatUSD(ticker.low24h, asset === 'XLM' ? 4 : 2)}
+                {formatUSD(ticker.low24h, priceDecimals(asset))}
               </p>
             </div>
 
@@ -128,7 +128,7 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
               !priceFlash && 'text-white'
             )}
           >
-            {displayPrice > 0 ? formatUSD(displayPrice, asset === 'XLM' ? 4 : 2) : '--'}
+            {displayPrice > 0 ? formatUSD(displayPrice, priceDecimals(asset)) : '--'}
           </span>
           {ticker && (
             <div
@@ -156,14 +156,14 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
           <div className="hidden sm:block">
             <p className="text-xs text-neutral-500 mb-1">24h High</p>
             <p className="text-sm font-medium text-white">
-              {formatUSD(ticker.high24h, asset === 'XLM' ? 4 : 2)}
+              {formatUSD(ticker.high24h, priceDecimals(asset))}
             </p>
           </div>
 
           <div className="hidden sm:block">
             <p className="text-xs text-neutral-500 mb-1">24h Low</p>
             <p className="text-sm font-medium text-white">
-              {formatUSD(ticker.low24h, asset === 'XLM' ? 4 : 2)}
+              {formatUSD(ticker.low24h, priceDecimals(asset))}
             </p>
           </div>
 

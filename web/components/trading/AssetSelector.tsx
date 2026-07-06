@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
-import { formatUSD, formatPercent } from '@/lib/utils';
+import { formatUSD, formatPercent, priceDecimals } from '@/lib/utils';
 import type { Ticker } from '@/types';
 
 interface AssetSelectorProps {
@@ -17,6 +17,16 @@ const ASSETS = [
   { symbol: 'BTC', name: 'Bitcoin', color: '#f7931a' },
   { symbol: 'ETH', name: 'Ethereum', color: '#627eea' },
   { symbol: 'XLM', name: 'Stellar', color: '#08b5e5' },
+  { symbol: 'SOL', name: 'Solana', color: '#9945ff' },
+  { symbol: 'XRP', name: 'XRP', color: '#00aae4' },
+  { symbol: 'ADA', name: 'Cardano', color: '#0033ad' },
+  { symbol: 'BNB', name: 'BNB', color: '#f3ba2f' },
+  { symbol: 'TRX', name: 'Tron', color: '#eb0029' },
+  { symbol: 'DOGE', name: 'Dogecoin', color: '#c2a633' },
+  { symbol: 'ZEC', name: 'Zcash', color: '#f4b728' },
+  { symbol: 'LINK', name: 'Chainlink', color: '#2a5ada' },
+  { symbol: 'BCH', name: 'Bitcoin Cash', color: '#8dc351' },
+  { symbol: 'LTC', name: 'Litecoin', color: '#345d9d' },
 ];
 
 export function AssetSelector({ selectedAsset, onSelect }: AssetSelectorProps) {
@@ -70,7 +80,7 @@ export function AssetSelector({ selectedAsset, onSelect }: AssetSelectorProps) {
             <div className="text-right">
               <p className="font-mono text-sm text-foreground">
                 {ticker
-                  ? formatUSD(ticker.price, asset.symbol === 'XLM' ? 4 : 2)
+                  ? formatUSD(ticker.price, priceDecimals(asset.symbol))
                   : '--'}
               </p>
               {ticker && (

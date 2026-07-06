@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Clock, ExternalLink, Info, RefreshCw, Share2 } from 'lucide-react';
 import { Badge, Tooltip } from '@/components/ui';
-import { formatUSD, formatDateTime, shortenTxHash } from '@/lib/utils';
+import { formatUSD, formatDateTime, shortenTxHash, priceDecimals } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useWallet } from '@/lib/hooks/useWallet';
@@ -192,11 +192,11 @@ function TradeRow({
       </td>
       {/* Entry Price */}
       <td className="py-3 px-3 text-right text-neutral-400">
-        {formatUSD(trade.entryPrice ?? 0, trade.asset === 'XLM' ? 4 : 2)}
+        {formatUSD(trade.entryPrice ?? 0, priceDecimals(trade.asset))}
       </td>
       {/* Exit Price */}
       <td className="py-3 px-3 text-right text-neutral-400">
-        {formatUSD(trade.price ?? 0, trade.asset === 'XLM' ? 4 : 2)}
+        {formatUSD(trade.price ?? 0, priceDecimals(trade.asset))}
       </td>
       {/* Gross PnL */}
       <td className="py-3 px-3 text-right">

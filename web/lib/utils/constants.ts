@@ -137,11 +137,22 @@ export const FEE_TIERS = [
   { name: 'Tier 3', minVolume: 100_000, makerBps: 5, takerBps: 20 },
 ] as const;
 
-// Supported assets
+// Supported assets (mirrors packages/shared/src/assets.ts, minus HYPE —
+// no Binance candle source for the chart yet)
 export const ASSETS = [
   { symbol: 'BTC', name: 'Bitcoin', decimals: 8 },
   { symbol: 'ETH', name: 'Ethereum', decimals: 8 },
   { symbol: 'XLM', name: 'Stellar Lumens', decimals: 7 },
+  { symbol: 'SOL', name: 'Solana', decimals: 7 },
+  { symbol: 'XRP', name: 'XRP', decimals: 7 },
+  { symbol: 'ADA', name: 'Cardano', decimals: 7 },
+  { symbol: 'BNB', name: 'BNB', decimals: 7 },
+  { symbol: 'TRX', name: 'Tron', decimals: 7 },
+  { symbol: 'DOGE', name: 'Dogecoin', decimals: 7 },
+  { symbol: 'ZEC', name: 'Zcash', decimals: 7 },
+  { symbol: 'LINK', name: 'Chainlink', decimals: 7 },
+  { symbol: 'BCH', name: 'Bitcoin Cash', decimals: 7 },
+  { symbol: 'LTC', name: 'Litecoin', decimals: 7 },
 ] as const;
 
 // Chart timeframes

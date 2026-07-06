@@ -3,7 +3,7 @@
 import { memo, useState } from 'react';
 import { TrendingUp, X, RefreshCw, Share2, AlertTriangle, Shield, Target } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
-import { formatUSD, formatPercent, formatDateTime } from '@/lib/utils';
+import { formatUSD, formatPrice, formatPercent, formatDateTime, priceDecimals } from '@/lib/utils';
 import { formatPairPrice } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayPosition, PnlShareData } from '@/types';
@@ -233,7 +233,7 @@ export function PositionsList({
                   const suggestedSL = position.direction === 'Long'
                     ? position.entryPrice * 0.95
                     : position.entryPrice * 1.05;
-                  setSlTpPrice(suggestedSL.toFixed(position.asset === 'XLM' ? 4 : 2));
+                  setSlTpPrice(suggestedSL.toFixed(priceDecimals(position.asset)));
                   setActionModal('stop-loss');
                 }}
                 onSetTakeProfit={() => {
@@ -242,7 +242,7 @@ export function PositionsList({
                   const suggestedTP = position.direction === 'Long'
                     ? position.entryPrice * 1.10
                     : position.entryPrice * 0.90;
-                  setSlTpPrice(suggestedTP.toFixed(position.asset === 'XLM' ? 4 : 2));
+                  setSlTpPrice(suggestedTP.toFixed(priceDecimals(position.asset)));
                   setActionModal('take-profit');
                 }}
                 hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
@@ -268,7 +268,7 @@ export function PositionsList({
               const suggestedSL = position.direction === 'Long'
                 ? position.entryPrice * 0.95
                 : position.entryPrice * 1.05;
-              setSlTpPrice(suggestedSL.toFixed(position.asset === 'XLM' ? 4 : 2));
+              setSlTpPrice(suggestedSL.toFixed(priceDecimals(position.asset)));
               setActionModal('stop-loss');
             }}
             onSetTakeProfit={() => {
@@ -276,7 +276,7 @@ export function PositionsList({
               const suggestedTP = position.direction === 'Long'
                 ? position.entryPrice * 1.10
                 : position.entryPrice * 0.90;
-              setSlTpPrice(suggestedTP.toFixed(position.asset === 'XLM' ? 4 : 2));
+              setSlTpPrice(suggestedTP.toFixed(priceDecimals(position.asset)));
               setActionModal('take-profit');
             }}
             hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
@@ -351,7 +351,7 @@ export function PositionsList({
           const estPnl = entry > 0 ? selectedPosition.size * (isLong ? (triggerPrice - entry) / entry : (entry - triggerPrice) / entry) : 0;
           const estPnlPct = selectedPosition.size > 0 ? (estPnl / (selectedPosition.size / selectedPosition.leverage)) * 100 : 0;
           const invalid = triggerPrice > 0 && (isLong ? triggerPrice >= entry : triggerPrice <= entry);
-          const decimals = selectedPosition.asset === 'XLM' ? 4 : 2;
+          const decimals = priceDecimals(selectedPosition.asset);
           const slQuickPcts = isLong ? [-2, -5, -10] : [2, 5, 10];
 
           return (
@@ -546,7 +546,7 @@ export function PositionsList({
           const estPnl = entry > 0 ? selectedPosition.size * (isLong ? (triggerPrice - entry) / entry : (entry - triggerPrice) / entry) : 0;
           const estPnlPct = selectedPosition.size > 0 ? (estPnl / (selectedPosition.size / selectedPosition.leverage)) * 100 : 0;
           const invalid = triggerPrice > 0 && (isLong ? triggerPrice <= entry : triggerPrice >= entry);
-          const decimals = selectedPosition.asset === 'XLM' ? 4 : 2;
+          const decimals = priceDecimals(selectedPosition.asset);
           const tpQuickPcts = isLong ? [5, 10, 15] : [-5, -10, -15];
 
           return (

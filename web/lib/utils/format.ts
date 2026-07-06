@@ -12,6 +12,15 @@ function isMissing(value: number | null | undefined): value is null | undefined 
 }
 
 /**
+ * Price display decimals per asset: sub-dollar assets need 4dp to be
+ * readable (e.g. DOGE at $0.0792); majors read fine at 2dp.
+ */
+const SUB_DOLLAR_ASSETS = new Set(['XLM', 'XRP', 'ADA', 'TRX', 'DOGE']);
+export function priceDecimals(asset: string): number {
+  return SUB_DOLLAR_ASSETS.has(asset) ? 4 : 2;
+}
+
+/**
  * Format a number as USD currency. Locale pinned to en-US.
  * null/undefined/NaN → '—'.
  */
@@ -51,23 +60,15 @@ export function formatPrice(price: number | null | undefined): string {
   return formatUSD(price, 2);
 }
 
-/** Fixed display decimals per supported pair (pro-venue convention). */
-const PAIR_PRICE_DECIMALS: Record<string, number> = {
-  BTC: 2,
-  ETH: 2,
-  XLM: 4,
-};
-
 /**
- * Per-pair price formatter: BTC/ETH at 2dp, XLM at 4dp, unknown assets fall
- * back to magnitude-based decimals. Accepts 'BTC' or 'BTC-PERP' forms.
- * Returns a $-prefixed en-US string; null/undefined/NaN → '—'.
+ * Per-pair price formatter: delegates to priceDecimals so every supported pair
+ * (including sub-dollar assets like DOGE/XRP at 4dp) formats consistently.
+ * Accepts 'BTC' or 'BTC-PERP' forms. $-prefixed en-US; null/undefined/NaN → '—'.
  */
 export function formatPairPrice(asset: string, price: number | null | undefined): string {
   if (isMissing(price)) return EM_DASH;
   const key = asset.toUpperCase().replace(/-PERP$/, '');
-  const decimals = PAIR_PRICE_DECIMALS[key];
-  return decimals != null ? formatUSD(price, decimals) : formatPrice(price);
+  return formatUSD(price, priceDecimals(key));
 }
 
 /**

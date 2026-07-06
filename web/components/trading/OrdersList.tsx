@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Clock, X, RefreshCw, Shield, Target, ArrowDownCircle } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
-import { formatUSD, formatRelativeTime } from '@/lib/utils';
+import { formatUSD, formatRelativeTime, priceDecimals } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayOrder } from '@/types';
 
@@ -242,7 +242,7 @@ export function OrdersList({
         ) : order.orderType === 'StopLimit' && order.stopLimitPhase === 1 ? (
           <>
             <div className="font-mono text-foreground">
-              {formatUSD(order.limitPrice, order.asset === 'XLM' ? 4 : 2)}
+              {formatUSD(order.limitPrice, priceDecimals(order.asset))}
             </div>
             <div className="text-[10px] text-blue-400">
               Limit active
@@ -251,16 +251,16 @@ export function OrdersList({
         ) : order.orderType === 'StopLimit' ? (
           <>
             <div className="font-mono text-foreground">
-              {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
+              {formatUSD(order.triggerPrice, priceDecimals(order.asset))}
             </div>
             <div className="text-[10px] text-muted-foreground">
-              Stop → {formatUSD(order.limitPrice, order.asset === 'XLM' ? 4 : 2)}
+              Stop → {formatUSD(order.limitPrice, priceDecimals(order.asset))}
             </div>
           </>
         ) : (
           <>
             <div className="font-mono text-foreground">
-              {formatUSD(order.triggerPrice, order.asset === 'XLM' ? 4 : 2)}
+              {formatUSD(order.triggerPrice, priceDecimals(order.asset))}
             </div>
             {showActions ? (
               <div className="text-[10px] text-muted-foreground">

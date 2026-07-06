@@ -15,6 +15,7 @@ import {
   formatUSD,
   formatNumber,
   calculateLiquidationPrice,
+  priceDecimals,
   toPrecision,
 } from '@/lib/utils';
 import { formatPairPrice } from '@/lib/utils/format';
@@ -965,7 +966,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   </Tooltip>
                 </label>
                 <span className="text-xs text-muted-foreground">
-                  Current: ${assetPrice.toFixed(asset === 'XLM' ? 4 : 2)}
+                  Current: ${assetPrice.toFixed(priceDecimals(asset))}
                 </span>
               </div>
               <div className="relative">

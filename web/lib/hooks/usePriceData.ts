@@ -5,6 +5,16 @@ const BINANCE_SYMBOLS: Record<string, string> = {
   BTC: 'BTCUSDT',
   ETH: 'ETHUSDT',
   XLM: 'XLMUSDT',
+  SOL: 'SOLUSDT',
+  XRP: 'XRPUSDT',
+  ADA: 'ADAUSDT',
+  BNB: 'BNBUSDT',
+  TRX: 'TRXUSDT',
+  DOGE: 'DOGEUSDT',
+  ZEC: 'ZECUSDT',
+  LINK: 'LINKUSDT',
+  BCH: 'BCHUSDT',
+  LTC: 'LTCUSDT',
 };
 
 /**
