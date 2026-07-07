@@ -10,6 +10,9 @@ const DEFAULT_TRADES_LIMIT = 50;
 const MAX_TRADES_LIMIT = 200;
 const DEFAULT_LEADERBOARD_LIMIT = 50;
 const MAX_LEADERBOARD_LIMIT = 200;
+const DEFAULT_CANDLES_LIMIT = 500;
+const MAX_CANDLES_LIMIT = 1000;
+const PRICE_SCALE = 10_000_000;
 
 export type LeaderboardSort = 'pnl' | 'volume';
 
@@ -45,6 +48,15 @@ export interface RealizedTradeRow {
   txHash: string;
 }
 
+export interface CandlePoint {
+  /** Bucket start, Unix seconds. */
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
 /**
  * Read-side aggregates over the indexer's events_raw log and positions
  * projection: trailing traded notional (fee-tier preview), per-asset open
@@ -55,6 +67,7 @@ export interface RealizedTradeRow {
 export class StatsService {
   private readonly cache = new TtlCache<AssetStats[]>(STATS_TTL_MS);
   private readonly lbCache = new TtlCache<LeaderboardEntry[]>(STATS_TTL_MS);
+  private readonly candleCache = new TtlCache<CandlePoint[]>(STATS_TTL_MS);
 
   constructor(private readonly db: Client) {}
 
@@ -289,6 +302,37 @@ export class StatsService {
     });
     return entries.slice(0, limit);
   }
+
+  /**
+   * Native OHLC candles for one (asset, interval), oldest-first, from the
+   * `candles` projection the indexer aggregator writes. Empty when the venue
+   * has none yet — the route then falls back to Binance reference candles.
+   */
+  async candles(opts: { asset: string; interval: string; limit?: number }): Promise<CandlePoint[]> {
+    const limit = Math.min(MAX_CANDLES_LIMIT, Math.max(1, opts.limit ?? DEFAULT_CANDLES_LIMIT));
+    const key = `${opts.asset}:${opts.interval}:${limit}`;
+    return this.candleCache.getOrLoad(key, () => this.queryCandles(opts.asset, opts.interval, limit));
+  }
+
+  private async queryCandles(asset: string, interval: string, limit: number): Promise<CandlePoint[]> {
+    try {
+      const res = await this.db.execute({
+        sql: `
+          SELECT bucket_ts, open, high, low, close
+          FROM candles
+          WHERE asset = ? AND interval = ?
+          ORDER BY bucket_ts DESC
+          LIMIT ?
+        `,
+        args: [asset, interval, limit],
+      });
+      // Newest-first from SQL → reverse to oldest-first for the chart.
+      return res.rows.reverse().map(candlePointFromRow);
+    } catch (err) {
+      if (isMissingTable(err)) return [];
+      throw err;
+    }
+  }
 }
 
 function mapRealizedRow(row: Row): RealizedTradeRow {
@@ -321,6 +365,16 @@ function mapRealizedRow(row: Row): RealizedTradeRow {
     ledger: Number(row.ledger),
     ts: Number(row.ts),
     txHash: String(row.tx_hash),
+  };
+}
+
+function candlePointFromRow(row: Row): CandlePoint {
+  return {
+    time: Number(row.bucket_ts),
+    open: Number(row.open) / PRICE_SCALE,
+    high: Number(row.high) / PRICE_SCALE,
+    low: Number(row.low) / PRICE_SCALE,
+    close: Number(row.close) / PRICE_SCALE,
   };
 }
 

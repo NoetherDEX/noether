@@ -18,6 +18,7 @@ import { registerReferralRoutes } from './routes/referral.js';
 import { registerPositionsRoutes } from './routes/positions.js';
 import { registerVolumeRoutes } from './routes/volume.js';
 import { registerTradesRoutes } from './routes/trades.js';
+import { registerCandlesRoutes } from './routes/candles.js';
 import { registerLeaderboardRoutes } from './routes/leaderboard.js';
 import { VaultsService } from './services/vaults.js';
 import { ReferralReadService } from './services/referral.js';
@@ -116,6 +117,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerPositionsRoutes(instance, deps.db));
   await app.register((instance) => registerVolumeRoutes(instance, deps.stats));
   await app.register((instance) => registerTradesRoutes(instance, deps.stats));
+  await app.register((instance) => registerCandlesRoutes(instance, deps.stats));
   await app.register((instance) => registerLeaderboardRoutes(instance, deps.stats));
 
   deps.wsManager.attachBus();
