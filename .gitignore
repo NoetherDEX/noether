@@ -2,6 +2,9 @@
 target/
 **/*.rs.bk
 Cargo.lock
+# …but DO track the contracts lock: reproducible WASM builds. Without it, CI
+# floats to newly-published incompatible crates (this break: ed25519-dalek 3.0.0).
+!contracts/Cargo.lock
 # Soroban contract cost-analysis snapshots are tracked in git so the
 # whole team runs against the same baseline. Regenerate locally with
 # `cargo test --release` if the budget shifts.
