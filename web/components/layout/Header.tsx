@@ -6,16 +6,9 @@ import { useEffect, useState } from 'react';
 import { ConnectButton } from '@/components/wallet';
 import { NoetherLogo } from '@/components/landing/NoetherLogo';
 import { cn } from '@/lib/utils/cn';
+import { APP_NAV_ITEMS } from './nav';
 
-const navItems = [
-  { href: '/trade', label: 'Trade' },
-  { href: '/portfolio', label: 'Portfolio' },
-  { href: '/vaults', label: 'Vaults' },
-  { href: '/referrals', label: 'Referrals' },
-  { href: '/leaderboard', label: 'Leaderboard' },
-  { href: '/api-keys', label: 'API Keys' },
-  { href: '/faucet', label: 'Faucet' },
-];
+const navItems = APP_NAV_ITEMS;
 
 export function Header() {
   const pathname = usePathname();
@@ -61,6 +54,9 @@ export function Header() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 flex-shrink-0">
           <NoetherLogo className="h-7 sm:h-8 w-auto" />
+          <span className="px-1.5 py-0.5 rounded-full border border-amber-500/50 text-amber-400 text-[10px] font-semibold uppercase tracking-widest leading-none">
+            Testnet
+          </span>
         </Link>
 
         {/* Desktop Navigation Links */}
@@ -97,6 +93,7 @@ export function Header() {
             className="md:hidden flex flex-col gap-1.5 p-2 -mr-2"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
+            aria-expanded={mobileOpen}
           >
             <span className={cn('block w-5 h-0.5 bg-white transition-all duration-200', mobileOpen && 'rotate-45 translate-y-2')} />
             <span className={cn('block w-5 h-0.5 bg-white transition-all duration-200', mobileOpen && 'opacity-0')} />
@@ -141,6 +138,9 @@ export function Header() {
           </div>
         </div>
       )}
+
+      {/* Skip-link target: sits after all header chrome, so the next Tab lands in page content */}
+      <span id="main-content" tabIndex={-1} className="sr-only" />
     </>
   );
 }

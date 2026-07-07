@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
-import { CreateCodeCard } from './CreateCodeCard';
+import { CreateCodeCard, makeOptimisticReferrerRow } from './CreateCodeCard';
+import { BindCodeCard } from './BindCodeCard';
 import { ReferralStats } from './ReferralStats';
 import { ShareLinkCard } from './ShareLinkCard';
 import { ClaimFeesCard } from './ClaimFeesCard';
@@ -10,6 +11,8 @@ import { useWalletStore, useSessionAuthStore } from '@/lib/store';
 import { exchangeChallenge, requestChallenge } from '@/lib/api/keys';
 import { getReferralInfo } from '@/lib/api/referral';
 import { signChallengeWithWallet } from '@/lib/api/sign';
+import { formatDate } from '@/lib/utils/format';
+import { DISCORD_URL } from '@/lib/utils/constants';
 import type { ReferrerRow, ReferralBindingRow } from '@/types/referral';
 import toast from 'react-hot-toast';
 
@@ -21,6 +24,7 @@ import toast from 'react-hot-toast';
  *  3. Wallet present, code already registered → ShareLinkCard +
  *     ClaimFeesCard + ReferralStats. All read from the public
  *     /v1/referral/info endpoint — no API key needed.
+ *     Wallets not yet referred also get a manual BindCodeCard.
  *  4. Optional "Advanced — full dashboard" collapsible. Sign-in
  *     unlocks trade-by-trade activity tables; 403 closed-beta cases
  *     surface as an inline amber notice instead of a toast error.
@@ -30,6 +34,12 @@ export function ReferralSignIn() {
   const setAuth = useSessionAuthStore((s) => s.setAuth);
   const [self, setSelf] = useState<ReferrerRow | null>(null);
   const [binding, setBinding] = useState<ReferralBindingRow | null>(null);
+  // Optimistic copies of just-confirmed on-chain writes: the indexer behind
+  // getReferralInfo lags a confirmed tx by seconds, so an instant re-read
+  // would show the register form again as if creation failed. These bridge
+  // the gap until the indexer catches up (they never override real data).
+  const [optimisticSelf, setOptimisticSelf] = useState<ReferrerRow | null>(null);
+  const [optimisticBinding, setOptimisticBinding] = useState<ReferralBindingRow | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [betaBlocked, setBetaBlocked] = useState(false);
@@ -37,6 +47,12 @@ export function ReferralSignIn() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  // Optimistic state belongs to one wallet — drop it when the wallet changes.
+  useEffect(() => {
+    setOptimisticSelf(null);
+    setOptimisticBinding(null);
+  }, [wallet.address]);
 
   // Load on-chain referral state whenever the wallet changes.
   useEffect(() => {
@@ -111,32 +127,61 @@ export function ReferralSignIn() {
     );
   }
 
+  // Real indexer data wins; optimistic bridges the indexing lag.
+  const shownSelf = self ?? optimisticSelf;
+  const shownBinding = binding ?? optimisticBinding;
+
   return (
     <div className="space-y-4 md:space-y-6">
-      {loading && !self && (
+      {loading && !shownSelf && (
         <div className="rounded-2xl border border-white/10 bg-card p-6 text-sm text-muted-foreground">
           Loading your referral state from chain…
         </div>
       )}
 
       {/* Has a registered code → show stats + share + claim */}
-      {self && (
+      {shownSelf && (
         <>
-          <ReferralStats row={self} />
-          <ClaimFeesCard claimable={self.claimable} onClaimed={refresh} />
-          <ShareLinkCard code={self.code} />
+          <ReferralStats row={shownSelf} />
+          <ClaimFeesCard claimable={shownSelf.claimable} onClaimed={refresh} />
+          <ShareLinkCard code={shownSelf.code} />
         </>
       )}
 
       {/* No code yet → register form */}
-      {!loading && !self && <CreateCodeCard onCreated={refresh} />}
+      {!loading && !shownSelf && (
+        <CreateCodeCard
+          onCreated={(newCode) => {
+            setOptimisticSelf(makeOptimisticReferrerRow(wallet.address ?? '', newCode));
+            // Re-read once after the indexer has certainly caught up,
+            // instead of instantly (and near-certainly) missing.
+            window.setTimeout(refresh, 30_000);
+          }}
+        />
+      )}
+
+      {/* Not referred yet → manual code redemption (covers dismissed banner) */}
+      {!loading && !shownBinding && (
+        <BindCodeCard
+          onBound={(boundCode) => {
+            setOptimisticBinding({
+              referee: wallet.address ?? '',
+              referrer: '',
+              code: boundCode,
+              boundAt: Math.floor(Date.now() / 1000),
+              txHash: '',
+            });
+            window.setTimeout(refresh, 30_000);
+          }}
+        />
+      )}
 
       {/* Referee binding hint (you were referred by …) */}
-      {binding && (
+      {shownBinding && (
         <div className="rounded-2xl border border-white/10 bg-card p-5 text-xs text-muted-foreground">
           You were referred by code{' '}
-          <code className="text-foreground font-mono">{binding.code}</code>{' '}
-          on {new Date(binding.boundAt * 1000).toLocaleDateString()}.
+          <code className="text-foreground font-mono">{shownBinding.code}</code>{' '}
+          on {formatDate(shownBinding.boundAt)}.
         </div>
       )}
 
@@ -184,7 +229,7 @@ export function ReferralSignIn() {
                   </a>{' '}
                   or{' '}
                   <a
-                    href="https://discord.gg/2BxYv6Uc"
+                    href={DISCORD_URL}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-amber-400 hover:text-amber-300"

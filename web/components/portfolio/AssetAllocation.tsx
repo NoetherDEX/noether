@@ -6,8 +6,11 @@ import { TokenIcon } from '@/components/ui/TokenIcon';
 import type { DisplayPosition } from '@/types';
 
 interface AssetAllocationProps {
+  /** Positions with a known price (fresh or last-good) — the page excludes unpriced ones. */
   positions: DisplayPosition[];
   usdcBalance: number;
+  /** A8: assets whose value uses a last-good (stale) price — rows get a badge. */
+  staleAssets?: string[];
 }
 
 // Asset colors mapping
@@ -18,7 +21,7 @@ const assetColors: Record<string, string> = {
   ETH: '#627eea',
 };
 
-export function AssetAllocation({ positions, usdcBalance }: AssetAllocationProps) {
+export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: AssetAllocationProps) {
   // Calculate allocation from positions and USDC balance
   const allocations: { asset: string; value: number; color: string; type: string }[] = [];
 
@@ -32,12 +35,13 @@ export function AssetAllocation({ positions, usdcBalance }: AssetAllocationProps
     });
   }
 
-  // Add position collateral by asset
+  // Add position collateral by asset (positions are pre-filtered by the page
+  // to those with a known price, so pnl is always a real number here)
   const positionsByAsset = positions.reduce((acc, p) => {
     if (!acc[p.asset]) {
       acc[p.asset] = 0;
     }
-    acc[p.asset] += p.collateral + p.pnl;
+    acc[p.asset] += p.collateral + (Number.isFinite(p.pnl) ? p.pnl : 0);
     return acc;
   }, {} as Record<string, number>);
 
@@ -126,7 +130,17 @@ export function AssetAllocation({ positions, usdcBalance }: AssetAllocationProps
               {/* Asset Icon */}
               <TokenIcon symbol={item.asset} size={32} />
               <div>
-                <div className="font-medium text-foreground">{item.asset}</div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-medium text-foreground">{item.asset}</span>
+                  {staleAssets.includes(item.asset) && (
+                    <span
+                      className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20"
+                      title="Live price read failed — value uses the last known price"
+                    >
+                      Stale
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-muted-foreground">{item.type}</div>
               </div>
             </div>

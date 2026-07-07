@@ -9,7 +9,16 @@ import {
   leaderOpenPosition,
 } from '@/lib/stellar/vaultFactory';
 import { VAULT_PRECISION } from '@/types/vault';
+import { decodeContractError } from '@/lib/utils/contractErrors';
 import toast from 'react-hot-toast';
+
+/** Factory-aware error decode (A26): #6 is "not the vault leader" here, not
+ *  the market's "arithmetic overflow"; codes ≥ 20 still fall through to the
+ *  market table for errors the leader-trade proxies bubble up. */
+function humanize(err: unknown): string {
+  const msg = decodeContractError(err, { contract: 'vault_factory' });
+  return msg.length > 200 ? `${msg.slice(0, 200)}…` : msg;
+}
 
 interface Props {
   vaultId: number;
@@ -63,8 +72,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
       toast.success(`Opened ${direction} ${asset} position`);
       setCollateral('');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Open failed: ${msg.slice(0, 200)}`);
+      toast.error(`Open failed: ${humanize(err)}`);
     } finally {
       setBusy(false);
     }
@@ -79,8 +87,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
       toast.success(`Closed position #${id}`);
       setClosePositionId('');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Close failed: ${msg.slice(0, 200)}`);
+      toast.error(`Close failed: ${humanize(err)}`);
     } finally {
       setBusy(false);
     }
@@ -92,8 +99,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
       await claimLeaderFees(wallet.address!, wallet.walletId!, vaultId);
       toast.success(`Claimed leader fees from ${vaultName}`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Claim failed: ${msg.slice(0, 200)}`);
+      toast.error(`Claim failed: ${humanize(err)}`);
     } finally {
       setBusy(false);
     }
@@ -193,8 +199,9 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
           <CardContent className="p-5 space-y-3">
             <h3 className="font-medium">Claim profit share</h3>
             <p className="text-xs text-zinc-400">
-              Pulls 10% of any NAV gain above the high-water mark to your
-              wallet. HWM resets afterward — no double-claiming the same gain.
+              Pulls this vault&apos;s profit share of any liquid-NAV gain above the
+              high-water mark to your wallet. HWM resets afterward — no
+              double-claiming the same gain.
             </p>
             <Button onClick={claim} disabled={busy} className="w-full">
               {busy ? 'Signing…' : 'Claim'}

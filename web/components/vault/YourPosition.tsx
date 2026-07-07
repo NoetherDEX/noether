@@ -4,9 +4,10 @@ import { formatUSD, formatNumber, formatPercent } from '@/lib/utils';
 import { TrustlineWarning } from './TrustlineWarning';
 
 interface YourPositionProps {
-  noeBalance: number;
-  noePrice: number;
-  tvl: number;
+  noeBalance: number | null;
+  /** null = price read failed/unavailable — value rows render '—' */
+  noePrice: number | null;
+  tvl: number | null;
   apy: number | null;
   isConnected: boolean;
   isLoading?: boolean;
@@ -46,11 +47,12 @@ export function YourPosition({
     return <YourPositionSkeleton />;
   }
 
-  const value = noeBalance * noePrice;
-  const poolShare = tvl > 0 ? (value / tvl) * 100 : 0;
-  const dailyEarnings = apy != null ? (value * apy / 100) / 365 : null;
+  // Unknown price/TVL propagate as null and render '—' — never a fake $0
+  const value = noePrice != null && noeBalance != null ? noeBalance * noePrice : null;
+  const poolShare = value != null && tvl != null && tvl > 0 ? (value / tvl) * 100 : null;
+  const dailyEarnings = apy != null && value != null ? (value * apy / 100) / 365 : null;
 
-  const hasPosition = noeBalance > 0;
+  const hasPosition = noeBalance != null && noeBalance > 0;
 
   return (
     <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
@@ -62,6 +64,11 @@ export function YourPosition({
         {!isConnected ? (
           <div className="py-8 text-center">
             <p className="text-sm text-muted-foreground">Connect your wallet to view your position</p>
+          </div>
+        ) : noeBalance === null ? (
+          <div className="py-8 text-center">
+            <p className="text-sm text-foreground mb-1">Couldn&apos;t load your position</p>
+            <p className="text-xs text-muted-foreground">Balance read failed — refresh to try again.</p>
           </div>
         ) : hasPosition ? (
           <div className="space-y-4">
@@ -108,7 +115,8 @@ export function YourPosition({
           <div className="py-8 text-center">
             <p className="text-sm text-foreground mb-1">No liquidity provided yet</p>
             <p className="text-xs text-muted-foreground mb-4">
-              Deposit USDC to receive NOE tokens and earn trading fees.
+              Deposit USDC to receive NOE tokens and earn trading fees. The pool is the traders&apos;
+              counterparty — principal is at risk.
             </p>
 
             {!hasTrustline && (

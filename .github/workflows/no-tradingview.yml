@@ -1,0 +1,21 @@
+name: no-tradingview-library
+
+# Server-side backstop for the local pre-commit guard (which `git commit
+# --no-verify` can skip, and which only runs on machines that ran `npm install`).
+# The Free Advanced Charts Agreement forbids the TradingView library in a public
+# repo (Section 2.5); breach = US$50,000 (Section 7.5).
+#
+# Make this a REQUIRED status check on `main` and `staging` in branch protection
+# so a PR carrying the library can never merge.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan the whole tree for TradingView Advanced Charts files
+        run: sh scripts/guard-no-tradingview.sh --all

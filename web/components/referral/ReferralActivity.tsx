@@ -3,6 +3,8 @@
 import { Card, CardContent } from '@/components/ui';
 import type { ReferralTradeRow, ReferralClaimRow } from '@/types/referral';
 import { fmtReferralUsdc } from '@/types/referral';
+import { formatDateTimeFull } from '@/lib/utils/format';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 
 function shortAddr(addr: string): string {
   return addr.length > 12 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
@@ -10,10 +12,6 @@ function shortAddr(addr: string): string {
 
 function shortHash(h: string): string {
   return h.length > 14 ? `${h.slice(0, 6)}…${h.slice(-4)}` : h;
-}
-
-function fmtTs(ts: number): string {
-  return new Date(ts * 1000).toLocaleString();
 }
 
 export function ReferralTradesTable({ rows }: { rows: ReferralTradeRow[] }) {
@@ -45,14 +43,14 @@ export function ReferralTradesTable({ rows }: { rows: ReferralTradeRow[] }) {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className="border-b border-zinc-800/30 last:border-0">
-                    <td className="px-5 py-3 text-zinc-400">{fmtTs(r.ts)}</td>
+                    <td className="px-5 py-3 text-zinc-400">{formatDateTimeFull(r.ts)}</td>
                     <td className="px-5 py-3 font-mono text-xs">{shortAddr(r.referee)}</td>
                     <td className="px-5 py-3 text-right tabular-nums">${fmtReferralUsdc(r.originalFee)}</td>
                     <td className="px-5 py-3 text-right tabular-nums text-zinc-400">${fmtReferralUsdc(r.discount)}</td>
                     <td className="px-5 py-3 text-right tabular-nums text-emerald-400">${fmtReferralUsdc(r.payout)}</td>
                     <td className="px-5 py-3 text-right font-mono text-xs">
                       <a
-                        href={`https://stellar.expert/explorer/testnet/tx/${r.txHash}`}
+                        href={`${STELLAR_EXPERT_BASE}/tx/${r.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-zinc-500 hover:text-amber-400 transition-colors"
@@ -97,11 +95,11 @@ export function ReferralClaimsTable({ rows }: { rows: ReferralClaimRow[] }) {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className="border-b border-zinc-800/30 last:border-0">
-                    <td className="px-5 py-3 text-zinc-400">{fmtTs(r.ts)}</td>
+                    <td className="px-5 py-3 text-zinc-400">{formatDateTimeFull(r.ts)}</td>
                     <td className="px-5 py-3 text-right tabular-nums">${fmtReferralUsdc(r.amount)}</td>
                     <td className="px-5 py-3 text-right font-mono text-xs">
                       <a
-                        href={`https://stellar.expert/explorer/testnet/tx/${r.txHash}`}
+                        href={`${STELLAR_EXPERT_BASE}/tx/${r.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-zinc-500 hover:text-amber-400 transition-colors"

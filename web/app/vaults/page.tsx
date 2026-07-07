@@ -6,9 +6,11 @@ import { Header } from '@/components/layout';
 import { VaultCard } from '@/components/vault/VaultCard';
 import { CreateVaultButton } from '@/components/vault/CreateVaultButton';
 import { listAllVaultsOnChain } from '@/lib/stellar/vaultFactory';
+import { getNoePrice } from '@/lib/stellar/vault';
 import { listVaults } from '@/lib/api/vaults';
 import { vaultRowFromOnChain, type VaultRow } from '@/types/vault';
 import { CONTRACTS } from '@/lib/utils/constants';
+import { fmtUsdc7 } from '@/lib/utils/format';
 
 /**
  * Marketplace page. Base list (id / leader / name / TVL / NAV /
@@ -23,6 +25,19 @@ export default function VaultsPage() {
   const [vaults, setVaults] = useState<VaultRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // Live NOE price for the hero tile — null means "unknown", rendered as '—'
+  // (never a fabricated $1.000).
+  const [noePrice, setNoePrice] = useState<bigint | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNoePrice().then((price) => {
+      if (!cancelled) setNoePrice(price);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,8 +103,10 @@ export default function VaultsPage() {
                 <h1 className="mt-3 text-2xl md:text-4xl font-bold">Noether Vault</h1>
                 <p className="mt-3 text-sm md:text-base text-muted-foreground max-w-2xl">
                   Protocol-managed liquidity. Deposit USDC, get NOE tokens that
-                  accrue trading fees from every market trade, withdraw any time.
-                  No leader, no opt-in — this is the simplest way to earn on Noether.
+                  accrue trading fees from every market trade, withdraw any time
+                  the pool has free liquidity. The pool takes the other side of
+                  every trade — its value falls when traders profit, so principal
+                  is at risk.
                 </p>
 
                 <div className="mt-6 grid grid-cols-3 gap-4 md:gap-6 max-w-lg">
@@ -102,12 +119,12 @@ export default function VaultsPage() {
                   <div>
                     <div className="text-xs text-muted-foreground">NOE Price</div>
                     <div className="mt-1 text-lg md:text-2xl font-bold font-mono">
-                      $1.000
+                      {noePrice != null ? `$${fmtUsdc7(noePrice, 3)}` : '—'}
                     </div>
                   </div>
                   <div>
                     <div className="text-xs text-muted-foreground">Withdrawals</div>
-                    <div className="mt-1 text-lg md:text-2xl font-bold">Instant</div>
+                    <div className="mt-1 text-lg md:text-2xl font-bold">Anytime</div>
                   </div>
                 </div>
               </div>
@@ -134,6 +151,16 @@ export default function VaultsPage() {
                 </p>
               </div>
               <CreateVaultButton />
+            </div>
+
+            {/* Beta caveat (A20) — until the V-1 accounting fix lands, vault
+                numbers count only liquid USDC. Mirrors the detail-page banner. */}
+            <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs md:text-sm text-amber-400/90">
+              <span className="font-semibold">Beta:</span> leader-vault accounting
+              counts only the USDC sitting in the vault. While a leader has open
+              positions, TVL, NAV and P&amp;L exclude the deployed capital — and
+              withdrawing mid-trade forfeits your share of it. A contract fix is
+              scheduled before mainnet.
             </div>
 
             {loading && (

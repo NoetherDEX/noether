@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings, Clock } from 'lucide-react';
-import { Card, Tabs } from '@/components/ui';
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
+import { Card, Tabs, Tooltip } from '@/components/ui';
 import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import {
@@ -20,6 +19,8 @@ import {
   MobileTradeBar,
 } from '@/components/trading';
 import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
+import type { ChartType } from '@/components/trading/TradingChart';
+import type { CandleSource } from '@/lib/api/candles';
 import { useLeaderModeStore } from '@/lib/store';
 import { leaderClosePosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
@@ -44,8 +45,8 @@ import { listOpenPositions } from '@/lib/api/positions';
 import { getMarketsStats, statToUsd, type AssetMarketStats } from '@/lib/api/markets';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { subscribeLivePrices } from '@/lib/stellar/noeracle';
-import { toPrecision } from '@/lib/utils';
-import { formatCompactUsd } from '@/lib/utils/format';
+import { toPrecision, fromPrecision } from '@/lib/utils';
+import { formatCompactUsd, formatUSD, formatPercent } from '@/lib/utils/format';
 import { decodeContractError } from '@/lib/utils/contractErrors';
 import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
@@ -53,6 +54,8 @@ import toast from 'react-hot-toast';
 function TradePage() {
   const [selectedAsset, setSelectedAsset] = useState('BTC');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
+  const [chartType, setChartType] = useState<ChartType>('candles');
+  const [chartSource, setChartSource] = useState<CandleSource>('binance');
   // Raw contract positions. Refreshed on connect / vault-swap / explicit
   // trade actions / 60 s safety tick — NOT on every price update. The
   // displayed PnL / Mark / Net Value comes from currentPrices below.
@@ -62,7 +65,9 @@ function TradePage() {
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
-  const [fundingRate, setFundingRate] = useState<number>(0);
+  // null = unknown (RPC failure / entry absent) — rendered as '—', never a
+  // healthy-looking +0.0000% (A14).
+  const [fundingRate, setFundingRate] = useState<number | null>(null);
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const [pricesStale, setPricesStale] = useState(false);
   const [assetStats, setAssetStats] = useState<AssetMarketStats | null>(null);
@@ -368,10 +373,16 @@ function TradePage() {
     };
   }, [isConnected, publicKey, positionAssetKey]);
 
+  // A10: closing — the risk-off action — gets the same toast.promise
+  // lifecycle as open/SL/TP: loading state, PnL on success, decoded errors,
+  // and wallet rejection made distinct from a contract revert.
   const handleClosePosition = async (positionId: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
 
-    try {
+    const pos = positions.find(p => p.id === positionId);
+    const label = pos ? `${pos.asset} ${pos.direction}` : `position #${positionId}`;
+
+    const closePromise = (async (): Promise<bigint | null> => {
       // Leader mode: close through vault_factory so PnL settles back
       // into the vault's USDC balance, not the wallet's.
       if (leaderVault) {
@@ -381,31 +392,36 @@ function TradePage() {
         getVault(leaderVault.id).then((v) => {
           if (v) setLeaderVault(v);
         }).catch(() => {});
-        // Soroban RPC needs a moment for the close to be visible to
-        // simulateTransaction (otherwise the closed position lingers
-        // in the list until the next manual refresh).
-        setTimeout(() => fetchPositions(false), 2000);
-        refreshBalances();
-        return;
+        return null; // vault_factory proxy doesn't surface the PnL
       }
-      // Check if this is a cross-margin position
-      const pos = positions.find(p => p.id === positionId);
       if (pos?.marginMode === 'Cross') {
         const result = await closePositionCross(publicKey, sign, positionId);
-        console.log('Cross position closed:', result);
-      } else {
-        const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? selectedAsset);
-        console.log('Position closed:', result);
+        return result.pnl;
       }
+      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? selectedAsset);
+      return result.pnl;
+    })();
 
-      // Refresh positions and balances. The staggered refetch covers the
-      // indexer lag so the closed position drops without a manual refresh.
-      refreshPositionsAfterTrade();
-      refreshBalances();
-    } catch (error) {
-      console.error('Failed to close position:', error);
-      throw error;
-    }
+    toast.promise(closePromise, {
+      loading: `Closing ${label}…`,
+      success: (pnl) => {
+        // Refresh positions and balances. The staggered refetch covers the
+        // indexer lag so the closed position drops without a manual refresh.
+        refreshPositionsAfterTrade();
+        refreshBalances();
+        if (pnl === null) return `${label} closed`;
+        const pnlUsd = fromPrecision(pnl);
+        return `${label} closed — PnL ${pnlUsd >= 0 ? '+' : ''}${formatUSD(pnlUsd)}`;
+      },
+      error: (err) => {
+        const msg = err instanceof Error ? err.message : String(err ?? '');
+        if (/reject|declin|denied|cancel/i.test(msg)) return 'Transaction rejected in wallet';
+        return decodeContractError(err) || 'Failed to close position';
+      },
+    });
+
+    // Propagate the result so PositionsList closes its modal on success only.
+    await closePromise;
   };
 
   const handleSetStopLoss = async (positionId: number, triggerPrice: number, slippageBps: number): Promise<void> => {
@@ -494,6 +510,21 @@ function TradePage() {
     await promise;
   };
 
+  // A13: "Start Trading" in the positions empty state focuses the desktop
+  // OrderPanel's collateral input when it's on screen; below lg (panel
+  // hidden) it opens the mobile trade sheet instead.
+  const [mobileSheetRequest, setMobileSheetRequest] = useState(0);
+  const handleStartTrading = useCallback(() => {
+    const inputs = document.querySelectorAll<HTMLInputElement>('input[data-collateral-input]');
+    const visible = Array.from(inputs).find((el) => el.offsetParent !== null);
+    if (visible) {
+      visible.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      visible.focus({ preventScroll: true });
+    } else {
+      setMobileSheetRequest((n) => n + 1);
+    }
+  }, []);
+
   // Count only pending orders for the badge
   const pendingOrdersCount = orders.filter(o => o.status === 'Pending').length;
 
@@ -516,6 +547,7 @@ function TradePage() {
             onSetStopLoss={leaderVault ? undefined : handleSetStopLoss}
             onSetTakeProfit={leaderVault ? undefined : handleSetTakeProfit}
             onRefresh={handleRefreshPositions}
+            onStartTrading={handleStartTrading}
           />
         </>
       ),
@@ -592,22 +624,42 @@ function TradePage() {
                   </div>
                 </div>
 
-                {/* Timeframe Selector */}
-                <div className="flex items-center gap-1 px-3 sm:px-4 py-2 border-b border-white/5 overflow-x-auto scrollbar-none">
-                  {TIMEFRAMES.map((tf) => (
-                    <button
-                      key={tf.value}
-                      onClick={() => setSelectedTimeframe(tf.value)}
-                      className={cn(
-                        'px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap',
-                        selectedTimeframe === tf.value
-                          ? 'bg-white text-black'
-                          : 'text-neutral-400 hover:text-white hover:bg-white/5'
-                      )}
-                    >
-                      {tf.label}
-                    </button>
-                  ))}
+                {/* Timeframe + chart-type toolbar */}
+                <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2 border-b border-white/5">
+                  <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
+                    {TIMEFRAMES.map((tf) => (
+                      <button
+                        key={tf.value}
+                        onClick={() => setSelectedTimeframe(tf.value)}
+                        className={cn(
+                          'px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap',
+                          selectedTimeframe === tf.value
+                            ? 'bg-white text-black'
+                            : 'text-neutral-400 hover:text-white hover:bg-white/5'
+                        )}
+                      >
+                        {tf.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0 rounded-lg bg-white/5 p-0.5">
+                    {(['candles', 'line', 'area'] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setChartType(t)}
+                        aria-pressed={chartType === t}
+                        title={t === 'candles' ? 'Candlesticks' : t === 'line' ? 'Line' : 'Area'}
+                        className={cn(
+                          'px-2 py-1 text-xs font-medium rounded-md capitalize transition-colors',
+                          chartType === t
+                            ? 'bg-white/10 text-white'
+                            : 'text-neutral-500 hover:text-white'
+                        )}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Chart */}
@@ -615,7 +667,24 @@ function TradePage() {
                   <TradingChart
                     asset={selectedAsset}
                     interval={selectedTimeframe}
+                    chartType={chartType}
+                    markPrice={currentPrices[selectedAsset] || 0}
+                    stale={pricesStale}
+                    positions={positions.filter((p) => p.asset === selectedAsset)}
+                    orders={orders.filter((o) => o.asset === selectedAsset && o.status === 'Pending')}
+                    onSource={setChartSource}
                   />
+                </div>
+
+                {/* Price-source disclosure (A16): native Noeracle candles when
+                    the venue has them, else Binance reference. Execution is
+                    always the Noeracle mark. */}
+                <div className="px-4 py-1.5 border-t border-white/5">
+                  <p className="text-[10px] text-neutral-400">
+                    {chartSource === 'noeracle'
+                      ? 'Chart: Noether candles (Noeracle) · Execution: Noeracle mark'
+                      : 'Chart: Binance reference · Execution: Noeracle mark'}
+                  </p>
                 </div>
               </Card>
 
@@ -658,8 +727,8 @@ function TradePage() {
                   <h3 className="text-sm font-medium text-neutral-400 mb-4">Market Info</h3>
                   <div className="space-y-3">
                     <div className="flex justify-between text-sm">
-                      <span className="text-neutral-500">Open Interest</span>
-                      <span className="text-white">
+                      <span className="text-neutral-400">Open Interest</span>
+                      <span className="text-white tabular-nums">
                         {assetStats
                           ? formatCompactUsd(
                               statToUsd(assetStats.openInterestLong) +
@@ -669,19 +738,37 @@ function TradePage() {
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-neutral-500">24h Volume</span>
-                      <span className="text-white">
+                      <span className="text-neutral-400">24h Volume (Noether)</span>
+                      <span className="text-white tabular-nums">
                         {assetStats ? formatCompactUsd(statToUsd(assetStats.volume24h)) : '—'}
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-neutral-500">Funding Rate</span>
-                      <span className={fundingRate >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                        {fundingRate >= 0 ? '+' : ''}{fundingRate.toFixed(4)}%
+                      <span className="text-neutral-400">
+                        <Tooltip content="Positive: longs pay shorts; negative: shorts pay longs. Accrues hourly and is settled when a position closes or is liquidated.">
+                          <span className="cursor-help border-b border-dotted border-neutral-600">
+                            Funding / 1h
+                          </span>
+                        </Tooltip>{' '}
+                        · settles on close
+                      </span>
+                      <span
+                        className={cn(
+                          'tabular-nums',
+                          fundingRate === null
+                            ? 'text-neutral-400'
+                            : Number(fundingRate.toFixed(4)) === 0
+                            ? 'text-white'
+                            : fundingRate > 0
+                            ? 'text-emerald-400'
+                            : 'text-red-400',
+                        )}
+                      >
+                        {fundingRate === null ? '—' : formatPercent(fundingRate, 4)}
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-neutral-500">Max Leverage</span>
+                      <span className="text-neutral-400">Max Leverage</span>
                       <span className="text-white">10x</span>
                     </div>
                   </div>
@@ -696,6 +783,7 @@ function TradePage() {
           asset={selectedAsset}
           markPrice={currentPrices[selectedAsset] || 0}
           positions={positions}
+          openRequest={mobileSheetRequest}
           onPositionOpened={() => {
             refreshPositionsAfterTrade();
             refreshBalances();
@@ -706,8 +794,44 @@ function TradePage() {
   );
 }
 
+// Branded loading shell shown while the client bundle hydrates. Pure
+// presentational markup — it must NOT touch useSearchParams (that's the
+// hook the Suspense boundary below exists to isolate).
+function TradePageSkeleton() {
+  return (
+    <div className="min-h-screen bg-[#0a0a0a]">
+      <div className="h-16 border-b border-white/5 flex items-center px-4 lg:px-6">
+        <div className="h-5 w-28 rounded bg-[#eab308]/20 animate-pulse" />
+      </div>
+      <main>
+        <div className="max-w-[1800px] mx-auto p-4 lg:p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
+            <div className="hidden xl:block xl:col-span-2 space-y-4">
+              <div className="h-[44vh] rounded-lg border border-white/10 bg-white/[0.03] animate-pulse" />
+              <div className="h-[44vh] rounded-lg border border-white/10 bg-white/[0.03] animate-pulse" />
+            </div>
+            <div className="lg:col-span-8 xl:col-span-7 space-y-4">
+              <div className="h-[400px] lg:h-[500px] rounded-lg border border-white/10 bg-white/[0.03] animate-pulse" />
+              <div className="h-64 rounded-lg border border-white/10 bg-white/[0.03] animate-pulse" />
+            </div>
+            <div className="lg:col-span-4 xl:col-span-3">
+              <div className="h-[500px] rounded-lg border border-[#eab308]/15 bg-white/[0.03] animate-pulse" />
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// A34: TradePage consumes useSearchParams(), which without a Suspense
+// boundary forces the whole route into the __next_error__ CSR shell
+// (blank first paint + auto-injected noindex). The boundary keeps the
+// static shell server-renderable.
 export default function TradePageWrapper() {
   return (
-    <TradePage />
+    <Suspense fallback={<TradePageSkeleton />}>
+      <TradePage />
+    </Suspense>
   );
 }

@@ -57,7 +57,7 @@ export const PnlShareCard = forwardRef<HTMLDivElement, { data: PnlShareData }>(
                 className="text-sm font-mono mt-0.5"
                 style={{ color: `${accentColor}bb` }}
               >
-                {sign}{formatPercent(data.pnlPercent)}
+                {formatPercent(data.pnlPercent)}
               </div>
             </div>
 

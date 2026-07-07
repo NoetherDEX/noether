@@ -5,7 +5,7 @@ import type {
   ReferrerRow,
 } from '@/types/referral';
 
-const API_BASE = process.env.NEXT_PUBLIC_NOETHER_API_URL ?? 'http://localhost:4000';
+import { apiBase } from './base';
 
 interface AuthHeaders {
   keyId: string;
@@ -18,7 +18,7 @@ async function fetchJson<T>(path: string, auth?: AuthHeaders): Promise<T> {
     headers.authorization = `Bearer ${auth.keyId}:${auth.secret}`;
     headers['x-timestamp'] = String(Math.floor(Date.now() / 1000));
   }
-  const res = await fetch(`${API_BASE}${path}`, { headers, cache: 'no-store' });
+  const res = await fetch(`${apiBase()}${path}`, { headers, cache: 'no-store' });
   if (!res.ok) {
     if (res.status === 404) throw new Error('not_found');
     const text = await res.text();

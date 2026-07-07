@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Skeleton } from '@/components/ui';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
+import { formatUSD } from '@/lib/utils';
 import { rpc, xdr, scValToNative } from '@stellar/stellar-sdk';
 
 interface GlobalTrade {
@@ -78,7 +79,12 @@ export function RecentTradesSkeleton() {
 export function RecentTrades() {
   const [trades, setTrades] = useState<GlobalTrade[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [, setLastUpdate] = useState<Date>(new Date());
+  // Honest liveness (A14): timestamp of the last SUCCESSFUL poll (null until
+  // one lands) + whether the most recent poll failed. Rendered as
+  // "Updated Xs ago" — never a permanent LIVE pulse the data can't back.
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [fetchFailed, setFetchFailed] = useState(false);
+  const [, setNowTick] = useState(0); // 1s re-render tick for relative times
 
   // Parse a single event into a GlobalTrade
   const parseEventToTrade = useCallback((
@@ -171,8 +177,10 @@ export function RecentTrades() {
 
       return trades;
     } catch (error) {
+      // Rethrow so the poll marks itself failed — an RPC error must render
+      // as an error/stale state, not as a fake-empty "No trades yet".
       console.error(`[RecentTrades] Failed to fetch ${eventType} events:`, error);
-      return [];
+      throw error;
     }
   }, [parseEventToTrade]);
 
@@ -201,9 +209,12 @@ export function RecentTrades() {
 
       // Keep only the 20 most recent
       setTrades(allTrades.slice(0, 20));
-      setLastUpdate(new Date());
+      setLastUpdatedAt(new Date());
+      setFetchFailed(false);
     } catch (error) {
       console.error('[RecentTrades] Fetch error:', error);
+      // Keep last-good rows on screen; the header flips to a stale state.
+      setFetchFailed(true);
     } finally {
       setIsLoading(false);
     }
@@ -223,27 +234,42 @@ export function RecentTrades() {
     };
   }, [fetchRecentTrades]);
 
-  // Update relative times every second
+  // Re-render every second so the relative times ("5s", "Updated 12s ago")
+  // stay current between polls.
   useEffect(() => {
     const interval = setInterval(() => {
-      setLastUpdate(new Date());
+      setNowTick((t) => t + 1);
     }, 1000);
 
     return () => clearInterval(interval);
   }, []);
+
+  // Header liveness chip: "Updated Xs ago" tied to actual poll health (A14) —
+  // never a permanent LIVE pulse.
+  const liveness = (
+    <div className="flex items-center gap-1.5">
+      <span
+        className={cn(
+          'inline-flex h-1.5 w-1.5 rounded-full',
+          fetchFailed ? 'bg-amber-400' : lastUpdatedAt ? 'bg-emerald-500' : 'bg-neutral-600',
+        )}
+      />
+      <span className={cn('text-[10px]', fetchFailed ? 'text-amber-400' : 'text-neutral-500')}>
+        {fetchFailed
+          ? 'Stale — retrying'
+          : lastUpdatedAt
+          ? `Updated ${formatCompactTime(lastUpdatedAt)} ago`
+          : 'Loading…'}
+      </span>
+    </div>
+  );
 
   if (isLoading && trades.length === 0) {
     return (
       <div className="flex flex-col h-full">
         <div className="flex items-center justify-between mb-3 flex-shrink-0">
           <h3 className="text-sm font-medium text-neutral-400">Recent Trades</h3>
-          <div className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-xs text-neutral-500">LIVE</span>
-          </div>
+          {liveness}
         </div>
         <RecentTradesSkeleton />
       </div>
@@ -255,56 +281,74 @@ export function RecentTrades() {
       {/* Header */}
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <h3 className="text-sm font-medium text-neutral-400">Recent Trades</h3>
-        <div className="flex items-center gap-1.5">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <span className="text-xs text-neutral-500">LIVE</span>
-        </div>
+        {liveness}
       </div>
 
       {/* Trade List */}
       <div className="flex-1 overflow-y-auto -mx-4 px-4 custom-scrollbar">
         {trades.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-xs text-neutral-500">No trades yet</p>
-            <p className="text-xs text-neutral-600 mt-1">
-              Trades will appear here as users interact with the protocol.
-            </p>
-          </div>
+          fetchFailed ? (
+            // Explicit, retryable error state — an RPC failure must not
+            // masquerade as an empty market (A14).
+            <div className="text-center py-8">
+              <p className="text-xs text-neutral-400">Couldn&apos;t load recent trades</p>
+              <button
+                onClick={fetchRecentTrades}
+                className="mt-2 text-xs text-[#eab308] underline hover:opacity-80"
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-xs text-neutral-400">No trades yet</p>
+              <p className="text-xs text-neutral-500 mt-1">
+                Trades will appear here as users interact with the protocol.
+              </p>
+            </div>
+          )
         ) : (
           <div className="space-y-0.5">
-            {trades.map((trade, index) => (
-              <a
-                key={trade.id}
-                href={trade.txHash ? `https://stellar.expert/explorer/${NETWORK.NAME}/tx/${trade.txHash}` : '#'}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(
-                  'flex items-center justify-between py-1.5 px-2 -mx-2 rounded transition-colors',
-                  'hover:bg-white/5',
-                  index === 0 && 'animate-pulse bg-white/5'
-                )}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-xs font-medium text-white w-8 flex-shrink-0">
-                    {trade.asset}
-                  </span>
-                  <span className={cn('text-xs font-medium w-10', sideColors[trade.side])}>
-                    {trade.side}
-                  </span>
+            {trades.map((trade) => {
+              const rowContent = (
+                <>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs font-medium text-white w-8 flex-shrink-0">
+                      {trade.asset}
+                    </span>
+                    <span className={cn('text-xs font-medium w-10', sideColors[trade.side])}>
+                      {trade.side}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-xs text-neutral-300 tabular-nums">
+                      {formatUSD(trade.size, 0)}
+                    </span>
+                    <span className="text-xs text-neutral-500 w-6 text-right">
+                      {formatCompactTime(trade.timestamp)}
+                    </span>
+                  </div>
+                </>
+              );
+              const rowClass =
+                'flex items-center justify-between py-1.5 px-2 -mx-2 rounded transition-colors hover:bg-white/5';
+              // No href="#" affordances: rows without a tx hash are plain rows (A13).
+              return trade.txHash ? (
+                <a
+                  key={trade.id}
+                  href={`https://stellar.expert/explorer/${NETWORK.NAME}/tx/${trade.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={rowClass}
+                >
+                  {rowContent}
+                </a>
+              ) : (
+                <div key={trade.id} className={rowClass}>
+                  {rowContent}
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-xs text-neutral-300">
-                    ${trade.size > 0 ? Math.round(trade.size).toLocaleString() : '0'}
-                  </span>
-                  <span className="text-xs text-neutral-500 w-6 text-right">
-                    {formatCompactTime(trade.timestamp)}
-                  </span>
-                </div>
-              </a>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

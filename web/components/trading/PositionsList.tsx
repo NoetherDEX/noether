@@ -4,6 +4,7 @@ import { memo, useState } from 'react';
 import { TrendingUp, X, RefreshCw, Share2, AlertTriangle, Shield, Target } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPrice, formatPercent, formatDateTime, priceDecimals } from '@/lib/utils';
+import { formatPairPrice } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayPosition, PnlShareData } from '@/types';
 import { PnlShareModal } from '@/components/share/PnlShareModal';
@@ -36,6 +37,8 @@ interface PositionsListProps {
   onSetStopLoss?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
   onSetTakeProfit?: (id: number, triggerPrice: number, slippageBps: number, limitPrice?: number) => Promise<void>;
   onRefresh?: () => void;
+  /** Empty-state "Start Trading" action (A13) — the button only renders when wired. */
+  onStartTrading?: () => void;
 }
 
 export function PositionsList({
@@ -46,6 +49,7 @@ export function PositionsList({
   onSetStopLoss,
   onSetTakeProfit,
   onRefresh,
+  onStartTrading,
 }: PositionsListProps) {
   const [selectedPosition, setSelectedPosition] = useState<DisplayPosition | null>(null);
   const [actionModal, setActionModal] = useState<'close' | 'stop-loss' | 'take-profit' | null>(null);
@@ -103,9 +107,14 @@ export function PositionsList({
         <p className="text-muted-foreground text-sm text-center max-w-xs">
           Open a position to start trading. Your active trades will appear here.
         </p>
-        <button className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-[#eab308] text-black hover:opacity-90 transition-opacity">
-          Start Trading
-        </button>
+        {onStartTrading && (
+          <button
+            onClick={onStartTrading}
+            className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-[#eab308] text-black hover:opacity-90 transition-opacity"
+          >
+            Start Trading
+          </button>
+        )}
       </div>
     );
   }
@@ -765,7 +774,10 @@ const PositionRow = memo(function PositionRow({
   hasSlTpCallbacks: boolean;
   onShare: () => void;
 }) {
-  const isPositive = position.pnl >= 0;
+  // NaN pnl = mark price unknown — render '—' in neutral color, never a
+  // signed/colored fabrication (formatters dash NaN automatically).
+  const hasPnl = Number.isFinite(position.pnl);
+  const isPositive = hasPnl && position.pnl >= 0;
   // M-3 interim guard: SL/TP orders on cross positions execute via the
   // isolated close path on-chain, corrupting the shared pool. Disabled
   // until the contract fix deploys.
@@ -802,7 +814,7 @@ const PositionRow = memo(function PositionRow({
 
       <td className="px-3 py-3 text-right">
         <div className="font-mono text-foreground">
-          ${position.size.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          {formatUSD(position.size, 0)}
         </div>
         <div className="font-mono text-muted-foreground text-[10px]">
           {position.collateral.toFixed(2)} USDC
@@ -811,16 +823,16 @@ const PositionRow = memo(function PositionRow({
 
       <td className="px-3 py-3 text-right">
         <span className="font-mono text-foreground">
-          ${(position.collateral + position.pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          {formatUSD(position.collateral + position.pnl, 0)}
         </span>
       </td>
 
       <td className="px-3 py-3 text-right">
         <div className="font-mono text-muted-foreground text-[10px]">
-          {formatPrice(position.entryPrice)}
+          {formatPairPrice(position.asset, position.entryPrice)}
         </div>
         <div className="font-mono text-foreground">
-          {formatPrice(position.currentPrice)}
+          {position.currentPrice > 0 ? formatPairPrice(position.asset, position.currentPrice) : '—'}
         </div>
       </td>
 
@@ -835,17 +847,18 @@ const PositionRow = memo(function PositionRow({
           >
             {position.marginMode === 'Cross'
               ? <span className="text-amber-500 text-xs">Account Level</span>
-              : formatPrice(position.liquidationPrice)}
+              : formatPairPrice(position.asset, position.liquidationPrice)}
           </span>
         </div>
       </td>
 
       <td className="px-3 py-3 text-right">
-        <div className={cn('font-mono font-medium', isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]')}>
+        {/* formatPercent owns the sign (fixes the '++2.34%' double sign, A32). */}
+        <div className={cn('font-mono font-medium', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]')}>
           {isPositive ? '+' : ''}{formatUSD(position.pnl)}
         </div>
-        <div className={cn('font-mono text-[10px]', isPositive ? 'text-[#22c55e]/70' : 'text-[#ef4444]/70')}>
-          {isPositive ? '+' : ''}{formatPercent(position.pnlPercent)}
+        <div className={cn('font-mono text-[10px]', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-[#22c55e]/70' : 'text-[#ef4444]/70')}>
+          {formatPercent(position.pnlPercent)}
         </div>
       </td>
 
@@ -920,7 +933,9 @@ const PositionCard = memo(function PositionCard({
   hasSlTpCallbacks: boolean;
   onShare: () => void;
 }) {
-  const isPositive = position.pnl >= 0;
+  // NaN pnl = mark price unknown → '—' in neutral color (see PositionRow).
+  const hasPnl = Number.isFinite(position.pnl);
+  const isPositive = hasPnl && position.pnl >= 0;
 
   return (
     <Card padding="md">
@@ -938,11 +953,12 @@ const PositionCard = memo(function PositionCard({
         </div>
         <div className="flex items-start gap-2">
           <div className="text-right">
-            <div className={cn('text-lg font-semibold font-mono', isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]')}>
+            <div className={cn('text-lg font-semibold font-mono', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]')}>
               {isPositive ? '+' : ''}{formatUSD(position.pnl)}
             </div>
-            <div className={cn('text-sm font-mono', isPositive ? 'text-[#22c55e]/70' : 'text-[#ef4444]/70')}>
-              {isPositive ? '+' : ''}{formatPercent(position.pnlPercent)}
+            {/* formatPercent owns the sign (fixes '++2.34%', A32). */}
+            <div className={cn('text-sm font-mono', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-[#22c55e]/70' : 'text-[#ef4444]/70')}>
+              {formatPercent(position.pnlPercent)}
             </div>
           </div>
           <button
@@ -962,18 +978,20 @@ const PositionCard = memo(function PositionCard({
         </div>
         <div>
           <p className="text-muted-foreground mb-1">Entry</p>
-          <p className="text-foreground font-mono">{formatPrice(position.entryPrice)}</p>
+          <p className="text-foreground font-mono">{formatPairPrice(position.asset, position.entryPrice)}</p>
         </div>
         <div>
           <p className="text-muted-foreground mb-1">Mark</p>
-          <p className="text-foreground font-mono">{formatPrice(position.currentPrice)}</p>
+          <p className="text-foreground font-mono">
+            {position.currentPrice > 0 ? formatPairPrice(position.asset, position.currentPrice) : '—'}
+          </p>
         </div>
         <div>
           <p className="text-muted-foreground mb-1">Liq. Price</p>
           <p className="text-[#f97316]/70 font-mono">
             {position.marginMode === 'Cross'
               ? <span className="text-amber-500">Account Level</span>
-              : formatPrice(position.liquidationPrice)}
+              : formatPairPrice(position.asset, position.liquidationPrice)}
           </p>
         </div>
       </div>

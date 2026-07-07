@@ -2,6 +2,9 @@
 target/
 **/*.rs.bk
 Cargo.lock
+# …but DO track the contracts lock: reproducible WASM builds. Without it, CI
+# floats to newly-published incompatible crates (this break: ed25519-dalek 3.0.0).
+!contracts/Cargo.lock
 # Soroban contract cost-analysis snapshots are tracked in git so the
 # whole team runs against the same baseline. Regenerate locally with
 # `cargo test --release` if the budget shifts.
@@ -95,3 +98,17 @@ KNOWN_ISSUES.md
 !.env.staging.example
 # Production deploy state (resumable PROD_* contract ids; from deploy_production.sh)
 .env.production
+
+# ── TradingView Advanced Charts / Trading Platform (PROPRIETARY) ─────────────
+# The Free Advanced Charts Agreement (Section 2.5) forbids the library from
+# living in a public repo. Breach = US$50,000 per Section 7.5. Vendor it
+# privately and copy the static files in at BUILD time only — never commit them.
+# Also enforced loudly by scripts/guard-no-tradingview.sh (pre-commit + CI).
+**/charting_library/
+**/datafeeds/
+**/charting_library.standalone.js
+**/charting_library.min.js
+**/charting_library.esm.js
+# NOTE: your OWN wrapper + datafeed ARE meant to be committed — just keep them
+# out of the paths above, e.g. web/components/trading/AdvancedChart.tsx and
+# web/lib/tvchart/datafeed.ts (a folder literally named datafeeds/ is ignored).

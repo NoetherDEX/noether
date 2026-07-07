@@ -37,10 +37,11 @@ export default function ApiKeysPage() {
               open to everyone.
             </p>
 
-            <div className="mt-6 grid grid-cols-3 gap-4 md:gap-6 max-w-2xl">
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6 max-w-2xl">
               <Pill label="Auth model" value="Wallet-bound" />
               <Pill label="Rate limit" value="600/min" />
-              <Pill label="Replay protection" value="60s" />
+              {/* Matches TIMESTAMP_TOLERANCE_SEC in api/src/plugins/auth.ts */}
+              <Pill label="Replay protection" value="30s" />
             </div>
           </div>
 
@@ -85,9 +86,11 @@ export default function ApiKeysPage() {
                       <code className="text-xs px-1 py-0.5 rounded bg-zinc-900">
                         Authorization: Bearer keyId:secret
                       </code>{' '}
-                      and an{' '}
+                      on every authenticated call. An{' '}
                       <code className="text-xs px-1 py-0.5 rounded bg-zinc-900">X-Timestamp</code>{' '}
-                      header on every authenticated call.
+                      header (unix seconds) is recommended for replay
+                      protection — when present, the gateway rejects
+                      timestamps more than 30s off.
                     </>
                   }
                 />

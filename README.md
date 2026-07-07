@@ -15,7 +15,7 @@
     Trade crypto perpetuals with up to 10x leverage — fully on-chain, powered by Soroban smart contracts.
     <br />
     <br />
-    <a href="https://testnet.noether.exchange/trade"><strong>Trade on Testnet »</strong></a>
+    <a href="https://noether.exchange/trade"><strong>Trade on Testnet »</strong></a>
     <br />
     <br />
     <a href="https://noether.exchange">Website</a>
@@ -37,6 +37,8 @@
 [![Stellar Testnet][stellar-shield]][stellar-url]
 [![Built with Soroban][soroban-shield]][soroban-url]
 [![Funded by SCF #41][scf-shield]][scf-url]
+[![npm][npm-shield]][npm-url]
+[![PyPI][pypi-shield]][pypi-url]
 [![Twitter Follow][twitter-shield]][twitter-url]
 [![Discord][discord-shield]][discord-url]
 [![Telegram][telegram-shield]][telegram-url]
@@ -123,17 +125,17 @@ The protocol is funded by [Stellar Community Fund #41](https://communityfund.ste
 - **Earn a 10% profit share** above the high-water mark on depositor PnL
 - **Trade on shared collateral** via proxied `leader_trade` calls — depositors keep custody of their share token, you keep the upside
 - **5% min-holding invariant** — leaders are required to keep their own skin in the game, enforced on-chain
-- **Browse the marketplace** at [`/vaults`](https://testnet.noether.exchange/vaults); manage your vault at `/vaults/[id]/manage`
+- **Browse the marketplace** at [`/vaults`](https://noether.exchange/vaults); manage your vault at `/vaults/[id]/manage`
 
 ### For Developers
 
 - **Public REST + WebSocket API** — [Fastify](https://fastify.dev/) gateway, OpenAPI auto-served at `/docs`. Wallet-challenge authentication issues bearer keys (currently closed-beta — see [Security](#security))
-- **TypeScript SDK** — `@noether/sdk` ships every endpoint plus `WsClient` with auto-reconnect and subscription replay
-- **Python SDK** — `noether-sdk` mirrors the TS surface (httpx + websockets), publishable on PyPI
+- **TypeScript SDK** — [`noether-sdk` on npm](https://www.npmjs.com/package/noether-sdk) ships every endpoint plus `WsClient` with auto-reconnect and subscription replay
+- **Python SDK** — [`noether-sdk` on PyPI](https://pypi.org/project/noether-sdk/) mirrors the TS surface (httpx + websockets)
 - **Soroban event indexer** — captures every contract event into a [libSQL/Turso](https://turso.tech/) projection table, ready for analytics
 - **Shared `@noether/tx-builders`** — single source of truth for Soroban transaction assembly across api + sdk-ts
 - **Fully open source** (MIT) — npm-workspace monorepo (`api/`, `indexer/`, `sdk-ts/`, `packages/*`) with vitest, CI, and Docker images for Railway
-- **Single-command deploy** to Stellar testnet via `setup_and_deploy.sh`
+- **Blue-green testnet deploys** via `scripts/deploy_staging.sh` (deploy → verify → promote)
 - **On-chain events** — documented schemas matched exactly by the frontend parser
 - **Optimized WASM** — `opt-level = "z"`, LTO, panic = abort, stripped symbols
 - **Shared math crate** — fixed-point arithmetic in `noether_common`, no floating point anywhere
@@ -147,8 +149,8 @@ The protocol is funded by [Stellar Community Fund #41](https://communityfund.ste
 Trade on testnet in under a minute:
 
 1. Install [Freighter Wallet](https://freighter.app/) and switch to **Testnet**
-2. Visit [testnet.noether.exchange/faucet](https://testnet.noether.exchange/faucet) and claim USDC (up to 1,000/day)
-3. Head to [testnet.noether.exchange/trade](https://testnet.noether.exchange/trade) and open your first position
+2. Visit [noether.exchange/faucet](https://noether.exchange/faucet) and claim USDC (up to 1,000/day)
+3. Head to [noether.exchange/trade](https://noether.exchange/trade) and open your first position
 
 No signup. No KYC. No custody. Just a browser and a wallet.
 
@@ -194,7 +196,7 @@ Noether consists of six Soroban smart contracts on Stellar, a Next.js trading fr
                               ┌────────────────────────────────┼────────────────────┐
                               ▼                                ▼                    ▼
                     ┌─────────────────────┐           ┌────────────────┐  ┌────────────────┐
-                    │  Next.js Frontend   │           │  @noether/sdk  │  │  noether-sdk   │
+                    │  Next.js Frontend   │           │  noether-sdk   │  │  noether-sdk   │
                     │      (Vercel)       │           │  (TypeScript)  │  │    (Python)    │
                     │  Trade · Vaults ·   │           └────────────────┘  └────────────────┘
                     │  Referrals · Faucet │
@@ -378,7 +380,7 @@ Anyone can deploy a new trading vault via `vault_factory.create_vault(leader, na
   Invariant    : leader's own deposit ≥ 5% of total shares   (checked every withdraw)
 ```
 
-The 5% min-holding invariant is enforced on every withdraw — leaders cannot drain below it while depositors remain. Browse the marketplace at [`/vaults`](https://testnet.noether.exchange/vaults).
+The 5% min-holding invariant is enforced on every withdraw — leaders cannot drain below it while depositors remain. Browse the marketplace at [`/vaults`](https://noether.exchange/vaults).
 
 ### Referral System (Tranche 2)
 
@@ -423,7 +425,7 @@ The `referral` contract lets traders mint a short code, share it via `?ref=CODE`
 > contract-level path is fully implemented and tested (13 tests) — it's a
 > deploy-time step, not new code.
 
-Browse and claim at [`/referrals`](https://testnet.noether.exchange/referrals).
+Browse and claim at [`/referrals`](https://noether.exchange/referrals).
 
 ### Oracle (Noeracle, pull-based + signed)
 
@@ -491,7 +493,7 @@ Tranche 2 introduced a Soroban event indexer feeding a Fastify REST + WebSocket 
 
 - **Indexer** (`indexer/`) polls `getEvents` from a persistent ledger cursor, dispatches by contract address (`router.ts`), runs per-contract decoders, and writes structured projections to libSQL.
 - **API Gateway** (`api/`) reads projections, serves REST routes (`/v1/markets, /v1/oracle, /v1/account, /v1/orders, /v1/vaults, /v1/referral, /v1/events, …`), and broadcasts 4 WebSocket channel families. OpenAPI auto-served at `/docs`. Wallet-challenge auth issues bearer keys hashed at rest with an HMAC pepper.
-- **SDKs** ship sub-clients matching the API surface 1:1 plus an auto-reconnecting `WsClient` (TS: `@noether/sdk`, Py: `noether-sdk`).
+- **SDKs** ship sub-clients matching the API surface 1:1 plus an auto-reconnecting `WsClient` (`noether-sdk` on both npm and PyPI).
 - **Frontend** uses the SDKs for indexed data (vault marketplace, referral stats, leaderboard) and reads the chain directly via `@stellar/stellar-sdk` for trading + oracle prices.
 
 > **Closed beta.** API-key issuance is gated by an `API_KEY_ALLOWLIST` while
@@ -565,8 +567,8 @@ Soroban `getEvents` polling · per-contract decoders → libSQL/Turso projection
 
 ### SDKs (Tranche 2)
 
-- **`@noether/sdk` (TypeScript)** — tsup-bundled, full REST + WsClient surface, `executeTrade` helper, 25 vitest tests.
-- **`noether-sdk` (Python)** — httpx + websockets, mirrors the TS sub-clients, 12 pytest tests.
+- **[`noether-sdk` (TypeScript, npm)](https://www.npmjs.com/package/noether-sdk)** — tsup-bundled, full REST + WsClient surface, `executeTrade` helper, 25 vitest tests.
+- **[`noether-sdk` (Python, PyPI)](https://pypi.org/project/noether-sdk/)** — httpx + websockets, mirrors the TS sub-clients, 12 pytest tests.
 
 ### Infrastructure
 
@@ -818,7 +820,7 @@ Noether is being delivered in three tranches under [Stellar Community Fund #41](
 ### Tranche 2 — Developer Tooling & Vault Ecosystem · $25,800 · **Code Complete · Operator steps pending**
 
 - [x] Public REST + WebSocket APIs (`api/` — Fastify, OpenAPI at `/docs`, 4 WS channel families, 37 vitest tests)
-- [x] TypeScript SDK — `@noether/sdk` with `WsClient` (25 tests)
+- [x] TypeScript SDK — `noether-sdk` with `WsClient` (25 tests)
 - [x] Python SDK — `noether-sdk` mirroring the TS surface (12 tests)
 - [x] User-created trading vaults — `vault_factory` contract (37 tests) + `/vaults` marketplace + leader manage panel
 - [x] Multi-wallet support — Freighter, LOBSTR, xBull, Albedo, Ledger via Stellar Wallets Kit
@@ -828,8 +830,8 @@ Noether is being delivered in three tranches under [Stellar Community Fund #41](
 Pending operator steps:
 
 - [ ] Market WASM-optimise + redeploy with the on-chain referral discount hook (currently applied off-chain at the gateway — see [Referral System](#referral-system-tranche-2))
-- [ ] `npm publish @noether/sdk` (currently `private: true`)
-- [ ] PyPI publish `noether-sdk`
+- [x] npm publish — [`noether-sdk`](https://www.npmjs.com/package/noether-sdk) live on npm
+- [x] PyPI publish — [`noether-sdk`](https://pypi.org/project/noether-sdk/) live on PyPI
 - [ ] Paid Soroban RPC endpoint (`SOROBAN_RPC_URLS`) for keeper + indexer — see [`docs/RPC.md`](./docs/RPC.md)
 
 ### Tranche 3 — Mainnet Launch · $34,480 · **Future**
@@ -930,6 +932,10 @@ Einstein called her *"the most significant creative mathematical genius thus far
 [soroban-url]: https://soroban.stellar.org
 [scf-shield]: https://img.shields.io/badge/Funded%20by-SCF%20%2341-0d1117?style=flat-square
 [scf-url]: https://communityfund.stellar.org/
+[npm-shield]: https://img.shields.io/npm/v/noether-sdk?style=flat-square&logo=npm&label=noether-sdk
+[npm-url]: https://www.npmjs.com/package/noether-sdk
+[pypi-shield]: https://img.shields.io/pypi/v/noether-sdk?style=flat-square&logo=pypi&logoColor=white&label=noether-sdk
+[pypi-url]: https://pypi.org/project/noether-sdk/
 [twitter-shield]: https://img.shields.io/twitter/follow/Noetherdex?style=flat-square&logo=x&logoColor=white&label=%40Noetherdex
 [twitter-url]: https://twitter.com/Noetherdex
 [discord-shield]: https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white

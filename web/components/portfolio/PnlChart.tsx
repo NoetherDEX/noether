@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { formatPercent } from '@/lib/utils/format';
 import type { Trade } from '@/types';
 
 const timeframes = ['1D', '1W', '1M', 'All'] as const;
@@ -78,9 +79,11 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
     // Calculate initial cumulative PnL up to startTime
     let currentCumulativePnl = 0;
     // For 'All', we start at 0. For others, we start with PnL accumulated before the window
+    // A15: fee may be null/undefined (unknown until the contract emits it) —
+    // skip it in the sum rather than assert a $0 charge.
     if (timeframe !== 'All') {
       const tradesBefore = sortedTrades.filter(t => t.timestamp.getTime() < startTime);
-      currentCumulativePnl = tradesBefore.reduce((acc, t) => acc + (t.pnl || 0) - (t.fee || 0), 0);
+      currentCumulativePnl = tradesBefore.reduce((acc, t) => acc + (t.pnl ?? 0) - (t.fee ?? 0), 0);
     }
 
     // 4. Fill buckets
@@ -96,8 +99,8 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
       // Process all trades within this bucket (from previous bucketTime to current bucketTime)
       while (tradeIndex < sortedTrades.length && sortedTrades[tradeIndex].timestamp.getTime() <= bucketTime) {
         const t = sortedTrades[tradeIndex];
-        // Add Net PnL (Gross PnL - Fees)
-        const netPnl = (t.pnl || 0) - (t.fee || 0);
+        // Add Net PnL (Gross PnL - Fees); an unknown fee is skipped, not zero-asserted (A15)
+        const netPnl = (t.pnl ?? 0) - (t.fee ?? 0);
         currentCumulativePnl += netPnl;
         tradeIndex++;
       }
@@ -115,11 +118,11 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
   const startValue = data[0]?.pnl || 0;
   const endValue = data[data.length - 1]?.pnl || 0;
   const change = endValue - startValue;
-  // If startValue is 0, we can't calculate percentage change normally.
-  // If both are 0, it's 0%. If start is 0 and end is != 0, it's 100% (or technically infinity).
-  const changePercent = startValue !== 0
-    ? ((change / Math.abs(startValue)) * 100).toFixed(2)
-    : endValue !== 0 ? '100.00' : '0.00';
+  // Percent change off a $0 baseline is undefined — hide it rather than
+  // fabricate a "100.00%" (money-display honesty).
+  const changePercent: number | null = startValue !== 0
+    ? (change / Math.abs(startValue)) * 100
+    : endValue !== 0 ? null : 0;
 
   const isPositive = change >= 0;
 
@@ -162,12 +165,14 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
             )}>
               {isPositive ? '+' : ''}${change.toFixed(2)}
             </span>
-            <span className={cn(
-              'text-sm font-mono',
-              isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
-            )}>
-              ({isPositive ? '+' : ''}{changePercent}%)
-            </span>
+            {changePercent !== null && (
+              <span className={cn(
+                'text-sm font-mono',
+                isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
+              )}>
+                ({formatPercent(changePercent)})
+              </span>
+            )}
           </div>
         </div>
 

@@ -147,7 +147,7 @@ export interface Trade {
   entryPrice?: number; // Entry price (for close trades)
   pnl?: number;
   pnlPercent?: number; // PnL as percentage of size
-  fee: number;
+  fee?: number | null; // deployed position_closed event carries no fee field — unknown renders '—'
   timestamp: Date;
 }
 

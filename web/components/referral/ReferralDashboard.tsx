@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ReferralStats } from './ReferralStats';
 import { ShareLinkCard } from './ShareLinkCard';
 import { ReferralTradesTable, ReferralClaimsTable } from './ReferralActivity';
-import { CreateCodeCard } from './CreateCodeCard';
+import { CreateCodeCard, makeOptimisticReferrerRow } from './CreateCodeCard';
 import { ClaimFeesCard } from './ClaimFeesCard';
 import { useSessionAuthStore } from '@/lib/store';
 import {
@@ -12,6 +12,7 @@ import {
   getReferralTrades,
   getReferralClaims,
 } from '@/lib/api/referral';
+import { formatDate } from '@/lib/utils/format';
 import type {
   ReferrerRow,
   ReferralTradeRow,
@@ -41,6 +42,8 @@ export function ReferralDashboard() {
   const auth = useSessionAuthStore();
   const clearAuth = useSessionAuthStore((s) => s.clearAuth);
   const [state, setState] = useState<DashboardState>(INITIAL);
+  // Bridges the indexer lag after create_code — see ReferralSignIn.
+  const [optimisticSelf, setOptimisticSelf] = useState<ReferrerRow | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -88,7 +91,10 @@ export function ReferralDashboard() {
     };
   }, [auth.keyId, auth.secret, refreshKey]);
 
-  if (state.loading && !state.self) {
+  // Real indexer data wins; optimistic bridges the indexing lag.
+  const self = state.self ?? optimisticSelf;
+
+  if (state.loading && !self) {
     return (
       <div className="rounded-2xl border border-white/10 bg-card p-8 text-center text-sm text-muted-foreground">
         Loading dashboard…
@@ -111,16 +117,22 @@ export function ReferralDashboard() {
     );
   }
 
-  if (!state.self) {
+  if (!self) {
     return (
       <div className="space-y-6">
-        <CreateCodeCard onCreated={refresh} />
+        <CreateCodeCard
+          onCreated={(newCode) => {
+            if (auth.owner) setOptimisticSelf(makeOptimisticReferrerRow(auth.owner, newCode));
+            // Re-read once the eventually-consistent indexer has caught up.
+            window.setTimeout(refresh, 30_000);
+          }}
+        />
 
         {state.binding && (
           <div className="rounded-2xl border border-white/10 bg-card p-5 text-xs text-muted-foreground">
             You were referred by code{' '}
             <code className="text-foreground font-mono">{state.binding.code}</code>{' '}
-            on {new Date(state.binding.boundAt * 1000).toLocaleDateString()}.
+            on {formatDate(state.binding.boundAt)}.
           </div>
         )}
 
@@ -139,9 +151,9 @@ export function ReferralDashboard() {
 
   return (
     <div className="space-y-6 md:space-y-8">
-      <ReferralStats row={state.self} />
-      <ClaimFeesCard claimable={state.self.claimable} onClaimed={refresh} />
-      <ShareLinkCard code={state.self.code} />
+      <ReferralStats row={self} />
+      <ClaimFeesCard claimable={self.claimable} onClaimed={refresh} />
+      <ShareLinkCard code={self.code} />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         <ReferralTradesTable rows={state.trades} />
         <ReferralClaimsTable rows={state.claims} />

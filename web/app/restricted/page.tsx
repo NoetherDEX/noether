@@ -2,7 +2,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Access Restricted | Noether',
+  title: 'Access Restricted', // root layout template appends '| Noether Testnet'
   robots: { index: false, follow: false },
 };
 

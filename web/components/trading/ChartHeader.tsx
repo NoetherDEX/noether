@@ -98,7 +98,9 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
             </div>
 
             <div className="hidden lg:block">
-              <p className="text-[10px] text-neutral-500 mb-0.5">24h Volume</p>
+              {/* Binance reference stat — distinct from the venue's own
+                  "24h Volume (Noether)" in Market Info (A16). */}
+              <p className="text-[10px] text-neutral-500 mb-0.5">24h Volume (Binance)</p>
               <p className="text-xs font-medium text-white font-mono">
                 ${formatNumber(ticker.volume24h / 1_000_000, 2)}M
               </p>
@@ -166,7 +168,7 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
           </div>
 
           <div className="hidden md:block">
-            <p className="text-xs text-neutral-500 mb-1">24h Volume</p>
+            <p className="text-xs text-neutral-500 mb-1">24h Volume (Binance)</p>
             <p className="text-sm font-medium text-white">
               ${formatNumber(ticker.volume24h / 1_000_000, 2)}M
             </p>

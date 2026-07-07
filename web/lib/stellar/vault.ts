@@ -1,7 +1,13 @@
 import { vaultContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
 import type { PoolInfo } from '@/types';
 import { Contract, rpc, scValToNative } from '@stellar/stellar-sdk';
-import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
+import { NETWORK, CONTRACTS, NULL_ACCOUNT } from '@/lib/utils/constants';
+
+// NOE trustline check (Horizon read) — re-exported here so the vault deposit
+// gate (A28) finds it next to the deposit/withdraw flow it gates. NOTE its
+// error semantics: returns false both for "no trustline" AND when the Horizon
+// read itself fails — treat false as "not confirmed", not proof of absence.
+export { hasNoeTrustline } from './trustline';
 
 /**
  * Deposit USDC and receive NOE tokens
@@ -89,10 +95,29 @@ export async function withdraw(
 }
 
 /**
+ * Full LP withdraw flow — TWO transactions (= two wallet popups): approve the
+ * vault to pull NOE, then withdraw. `onPhase` fires before each signature so
+ * the UI can narrate "1/2 Approving NOE…" / "2/2 Withdrawing…" instead of
+ * springing a surprise second popup mid-flow (A28).
+ * Returns the USDC amount withdrawn (7-decimal bigint).
+ */
+export async function approveAndWithdraw(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  noeAmount: bigint,
+  onPhase?: (phase: 1 | 2) => void
+): Promise<bigint> {
+  onPhase?.(1);
+  await approveNoeForWithdraw(signerPublicKey, signTransaction, noeAmount);
+  onPhase?.(2);
+  return withdraw(signerPublicKey, signTransaction, noeAmount);
+}
+
+/**
  * Get actual USDC token balance held by the vault contract (read-only)
  * Uses the user's account as transaction source for simulation
  */
-export async function getVaultUsdcBalance(publicKey: string): Promise<number> {
+export async function getVaultUsdcBalance(publicKey: string): Promise<number | null> {
   try {
     const { TransactionBuilder, BASE_FEE, Address } = await import('@stellar/stellar-sdk');
 
@@ -114,10 +139,11 @@ export async function getVaultUsdcBalance(publicKey: string): Promise<number> {
       const balance = scValToNative(result.result.retval) as bigint;
       return Number(balance) / 10_000_000;
     }
-    return 0;
+    // Read failed / sim non-success: unknown, not zero — callers render '—'.
+    return null;
   } catch (error) {
     console.error('Error fetching vault USDC balance:', error);
-    return 0;
+    return null;
   }
 }
 
@@ -153,13 +179,21 @@ export async function getPoolInfo(publicKey: string): Promise<PoolInfo | null> {
 }
 
 /**
- * Get NOE price in USDC (read-only)
+ * Get NOE price in USDC (read-only, 7-decimal bigint).
+ *
+ * Returns NULL when the read fails — never a fabricated $1.00 (a fake
+ * exchange rate in the deposit/withdraw preview is a money-display lie).
+ * Callers render '—' with a retry, or keep last-good with a stale badge.
+ * `publicKey` is only the simulation source; pass null/undefined for
+ * logged-out reads (uses NULL_ACCOUNT, no getAccount fetch).
  */
-export async function getNoePrice(publicKey: string): Promise<bigint> {
+export async function getNoePrice(publicKey?: string | null): Promise<bigint | null> {
   try {
-    const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
+    const { TransactionBuilder, BASE_FEE, Account } = await import('@stellar/stellar-sdk');
 
-    const account = await sorobanRpc.getAccount(publicKey);
+    const account = publicKey
+      ? await sorobanRpc.getAccount(publicKey)
+      : new Account(NULL_ACCOUNT, '0');
     const operation = vaultContract.call('get_noe_price');
 
     const transaction = new TransactionBuilder(account, {
@@ -176,9 +210,59 @@ export async function getNoePrice(publicKey: string): Promise<bigint> {
       return scValToNative(result.result.retval) as bigint;
     }
 
-    return BigInt(10_000_000); // Default to $1.00
+    return null;
   } catch {
-    return BigInt(10_000_000);
+    return null;
+  }
+}
+
+/**
+ * Read the vault's deposit fee in basis points from the contract
+ * (`get_deposit_fee`) — replaces the hardcoded "0.3%" UI literals (A31).
+ * Returns null on failure (render '—', never assume a rate).
+ * Works logged-out: omit `publicKey` to simulate from NULL_ACCOUNT.
+ */
+export async function getVaultDepositFeeBps(publicKey?: string | null): Promise<number | null> {
+  return readVaultFeeBps('get_deposit_fee', publicKey);
+}
+
+/**
+ * Read the vault's withdrawal fee in basis points from the contract
+ * (`get_withdraw_fee`). Same contract as getVaultDepositFeeBps.
+ */
+export async function getVaultWithdrawFeeBps(publicKey?: string | null): Promise<number | null> {
+  return readVaultFeeBps('get_withdraw_fee', publicKey);
+}
+
+async function readVaultFeeBps(
+  method: 'get_deposit_fee' | 'get_withdraw_fee',
+  publicKey?: string | null
+): Promise<number | null> {
+  try {
+    const { TransactionBuilder, BASE_FEE, Account } = await import('@stellar/stellar-sdk');
+
+    const account = publicKey
+      ? await sorobanRpc.getAccount(publicKey)
+      : new Account(NULL_ACCOUNT, '0');
+    const operation = vaultContract.call(method);
+
+    const transaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK.PASSPHRASE,
+    })
+      .addOperation(operation)
+      .setTimeout(300)
+      .build();
+
+    const result = await sorobanRpc.simulateTransaction(transaction);
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      return Number(scValToNative(result.result.retval));
+    }
+
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -189,7 +273,7 @@ export async function getNoePrice(publicKey: string): Promise<bigint> {
 export async function getNoeBalance(
   publicKey: string,
   userAddress: string
-): Promise<bigint> {
+): Promise<bigint | null> {
   try {
     const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
 
@@ -210,9 +294,10 @@ export async function getNoeBalance(
       return scValToNative(result.result.retval) as bigint;
     }
 
-    return BigInt(0);
+    // Read failed / sim non-success: unknown, not zero.
+    return null;
   } catch {
-    return BigInt(0);
+    return null;
   }
 }
 

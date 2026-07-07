@@ -4,7 +4,7 @@
  * iterate-all-positions loop and hit the right ids directly.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_NOETHER_API_URL ?? 'http://localhost:4000';
+import { apiBase } from './base';
 
 export interface OpenPositionRow {
   positionId: number;
@@ -19,7 +19,7 @@ export interface OpenPositionRow {
 
 export async function listOpenPositions(trader: string): Promise<OpenPositionRow[]> {
   const res = await fetch(
-    `${API_BASE}/v1/positions/open?trader=${encodeURIComponent(trader)}`,
+    `${apiBase()}/v1/positions/open?trader=${encodeURIComponent(trader)}`,
     { headers: { accept: 'application/json' }, cache: 'no-store' },
   );
   if (!res.ok) {

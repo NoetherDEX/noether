@@ -2,6 +2,7 @@
 
 import type { ReferrerRow } from '@/types/referral';
 import { fmtReferralUsdc } from '@/types/referral';
+import { formatDate } from '@/lib/utils/format';
 
 interface Stat {
   label: string;
@@ -42,7 +43,7 @@ export function ReferralStats({ row }: { row: ReferrerRow }) {
     },
     {
       label: 'Registered',
-      value: new Date(row.createdAt * 1000).toLocaleDateString(),
+      value: formatDate(row.createdAt),
     },
   ];
 

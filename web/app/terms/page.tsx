@@ -2,7 +2,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Terms of Service | Noether',
+  title: 'Terms of Service', // root layout template appends '| Noether Testnet'
 };
 
 const UPDATED = 'July 4, 2026';

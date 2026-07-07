@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Clock, ExternalLink, RefreshCw, Share2 } from 'lucide-react';
-import { Badge } from '@/components/ui';
+import { Clock, ExternalLink, Info, RefreshCw, Share2 } from 'lucide-react';
+import { Badge, Tooltip } from '@/components/ui';
 import { formatUSD, formatDateTime, shortenTxHash, priceDecimals } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { getTradeHistory } from '@/lib/stellar/market';
 import { PnlShareModal } from '@/components/share/PnlShareModal';
@@ -22,6 +23,8 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
   const [showShareModal, setShowShareModal] = useState(false);
 
   const handleShare = (trade: Trade) => {
+    // The deployed event carries no fee, so the shared figure is the GROSS
+    // PnL (fee ?? 0 only feeds arithmetic here — no fee value is displayed).
     const grossPnl = trade.pnl ?? 0;
     const fee = trade.fee ?? 0;
     const netPnl = grossPnl - Math.abs(fee);
@@ -105,8 +108,22 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
               <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Entry</th>
               <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Exit</th>
               <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Gross PnL</th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Fees</th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Net PnL</th>
+              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">
+                <span className="inline-flex items-center gap-1">
+                  Fees
+                  <Tooltip content="Fee breakdown ships with the next contract deploy — the current on-chain event doesn't report it." position="bottom">
+                    <Info className="w-3 h-3 opacity-50" />
+                  </Tooltip>
+                </span>
+              </th>
+              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">
+                <span className="inline-flex items-center gap-1">
+                  Net PnL
+                  <Tooltip content="Net PnL needs the fee, which the current on-chain event doesn't report — coming with the next contract deploy." position="bottom">
+                    <Info className="w-3 h-3 opacity-50" />
+                  </Tooltip>
+                </span>
+              </th>
               <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Date</th>
               <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Tx</th>
               <th className="text-center py-3 px-3 font-medium whitespace-nowrap"></th>
@@ -146,9 +163,11 @@ function TradeRow({
   onShare?: () => void;
 }) {
   const grossPnl = trade.pnl ?? 0;
-  const fee = trade.fee ?? 0;
-  const netPnl = grossPnl - Math.abs(fee);
-  const isPositive = netPnl >= 0;
+  // fee == null → UNKNOWN (the deployed event doesn't emit it): Fees and
+  // Net PnL render '—' — never assert the venue charged $0.00 (A15).
+  const fee = trade.fee != null && Number.isFinite(trade.fee) ? trade.fee : null;
+  const netPnl = fee != null ? grossPnl - Math.abs(fee) : null;
+  const isPositive = (netPnl ?? grossPnl) >= 0;
   const isLong = trade.direction === 'Long';
 
   return (
@@ -188,20 +207,28 @@ function TradeRow({
           {grossPnl >= 0 ? '+' : ''}{formatUSD(grossPnl)}
         </span>
       </td>
-      {/* Fees */}
+      {/* Fees — unknown until the contract emits it */}
       <td className="py-3 px-3 text-right">
-        <span className="text-orange-400">
-          -{formatUSD(Math.abs(fee))}
-        </span>
+        {fee != null ? (
+          <span className="text-orange-400">
+            -{formatUSD(Math.abs(fee))}
+          </span>
+        ) : (
+          <span className="text-neutral-500">—</span>
+        )}
       </td>
-      {/* Net PnL */}
+      {/* Net PnL — needs the fee */}
       <td className="py-3 px-3 text-right">
-        <span className={cn(
-          'font-semibold',
-          isPositive ? 'text-emerald-400' : 'text-red-400'
-        )}>
-          {isPositive ? '+' : ''}{formatUSD(netPnl)}
-        </span>
+        {netPnl != null ? (
+          <span className={cn(
+            'font-semibold',
+            isPositive ? 'text-emerald-400' : 'text-red-400'
+          )}>
+            {isPositive ? '+' : ''}{formatUSD(netPnl)}
+          </span>
+        ) : (
+          <span className="text-neutral-500">—</span>
+        )}
       </td>
       {/* Date */}
       <td className="py-3 px-3 text-right text-neutral-400 whitespace-nowrap">
@@ -211,7 +238,7 @@ function TradeRow({
       <td className="py-3 px-3 text-right">
         {trade.txHash ? (
           <a
-            href={`https://stellar.expert/explorer/testnet/tx/${trade.txHash}`}
+            href={`${STELLAR_EXPERT_BASE}/tx/${trade.txHash}`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-neutral-400 hover:text-white transition-colors font-mono text-xs"

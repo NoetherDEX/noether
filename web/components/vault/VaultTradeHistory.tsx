@@ -1,21 +1,8 @@
 'use client';
 
-import { Card, CardContent } from '@/components/ui';
-import { VAULT_PRECISION } from '@/types/vault';
 import type { VaultTradeRow } from '@/types/vault';
-
-function fmtUsdc(raw: string, dp = 2): string {
-  const value = BigInt(raw);
-  const negative = value < 0n;
-  const abs = negative ? -value : value;
-  const whole = abs / VAULT_PRECISION;
-  const frac = abs % VAULT_PRECISION;
-  return `${negative ? '-' : ''}${whole}.${frac.toString().padStart(7, '0').slice(0, dp)}`;
-}
-
-function fmtTs(ts: number): string {
-  return new Date(ts * 1000).toLocaleString();
-}
+import { fmtUsdc7, formatDateTimeFull } from '@/lib/utils/format';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 
 function shortHash(h: string): string {
   return h.length > 14 ? `${h.slice(0, 6)}…${h.slice(-4)}` : h;
@@ -56,18 +43,33 @@ export function VaultTradeHistory({ trades }: { trades: VaultTradeRow[] }) {
             </thead>
             <tbody>
               {trades.map((t) => {
-                const pnlNum = t.pnl != null ? Number(t.pnl) : null;
+                // Sign lives OUTSIDE the '$' ('+$12.34' / '-$12.34'); exact
+                // zero renders neutral and unsigned.
+                let pnlRaw: bigint | null = null;
+                if (t.action === 'close' && t.pnl != null) {
+                  try {
+                    pnlRaw = BigInt(t.pnl);
+                  } catch {
+                    pnlRaw = null;
+                  }
+                }
+                const pnlDisplay =
+                  pnlRaw == null
+                    ? '—'
+                    : pnlRaw === 0n
+                    ? `$${fmtUsdc7(pnlRaw)}`
+                    : `${pnlRaw < 0n ? '-' : '+'}$${fmtUsdc7(pnlRaw < 0n ? -pnlRaw : pnlRaw)}`;
                 const pnlClass =
-                  pnlNum == null
+                  pnlRaw == null
                     ? 'text-muted-foreground'
-                    : pnlNum > 0
+                    : pnlRaw > 0n
                     ? 'text-[#22c55e]'
-                    : pnlNum < 0
+                    : pnlRaw < 0n
                     ? 'text-red-400'
                     : 'text-muted-foreground';
                 return (
                   <tr key={t.id} className="border-b border-white/5 last:border-0">
-                    <td className="px-6 py-3 text-muted-foreground">{fmtTs(t.ts)}</td>
+                    <td className="px-6 py-3 text-muted-foreground">{formatDateTimeFull(t.ts)}</td>
                     <td className="px-6 py-3">
                       <span
                         className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium ${
@@ -83,16 +85,14 @@ export function VaultTradeHistory({ trades }: { trades: VaultTradeRow[] }) {
                       #{t.positionId}
                     </td>
                     <td className="px-6 py-3 text-right font-mono tabular-nums">
-                      {t.action === 'open' ? `$${fmtUsdc(t.collateral)}` : '—'}
+                      {t.action === 'open' ? `$${fmtUsdc7(t.collateral)}` : '—'}
                     </td>
                     <td className={`px-6 py-3 text-right font-mono tabular-nums ${pnlClass}`}>
-                      {t.action === 'close' && pnlNum != null
-                        ? `${pnlNum >= 0 ? '+' : ''}$${fmtUsdc(t.pnl ?? '0')}`
-                        : '—'}
+                      {pnlDisplay}
                     </td>
                     <td className="px-6 py-3 text-right text-xs">
                       <a
-                        href={`https://stellar.expert/explorer/testnet/tx/${t.txHash}`}
+                        href={`${STELLAR_EXPERT_BASE}/tx/${t.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-mono text-muted-foreground hover:text-amber-400"
