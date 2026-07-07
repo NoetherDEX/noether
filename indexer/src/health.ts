@@ -13,6 +13,7 @@ import type { Client } from '@libsql/client';
 import type { Logger } from 'pino';
 import { readCursor, type PollCursor } from './cursor.js';
 import type { PollerHealth } from './poll.js';
+import type { CandleAggregatorStatus } from './candles/aggregator.js';
 
 export interface HealthServerOpts {
   port: number;
@@ -20,6 +21,8 @@ export interface HealthServerOpts {
   log: Logger;
   maxPollAgeMs: number;
   source: { health(): PollerHealth };
+  /** Optional candle aggregator, surfaced under `candleAggregator` in the body. */
+  aggregator?: { status(): CandleAggregatorStatus };
 }
 
 export interface HealthPayload {
@@ -72,8 +75,9 @@ export function startHealthServer(opts: HealthServerOpts): Server {
       try {
         const cursor = await readCursor(opts.db).catch(() => null);
         const payload = buildHealthPayload(opts.source.health(), cursor, Date.now(), opts.maxPollAgeMs);
+        const body = { ...payload.body, candleAggregator: opts.aggregator?.status() ?? null };
         res.writeHead(payload.statusCode, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(payload.body));
+        res.end(JSON.stringify(body));
       } catch {
         res.writeHead(500, { 'content-type': 'application/json' });
         res.end('{"status":"error"}');
