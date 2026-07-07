@@ -8,6 +8,7 @@ import { useWalletContext } from './WalletProvider';
 import { WalletModal } from './WalletModal';
 import { truncateAddress, formatNumber } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useSessionAuthStore } from '@/lib/store';
 
 export function ConnectButton() {
@@ -101,6 +102,8 @@ export function ConnectButton() {
       <button
         className={cn(buttonBaseClass, 'pr-4')}
         onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+        aria-expanded={isDropdownOpen}
+        aria-haspopup="menu"
       >
         <div className="relative flex items-center justify-center">
           <div className="w-2 h-2 rounded-full bg-[#22c55e]" />
@@ -153,12 +156,13 @@ export function ConnectButton() {
                   </code>
                   <button
                     onClick={handleCopyAddress}
+                    aria-label={copied ? 'Address copied' : 'Copy address'}
                     className="p-1 text-neutral-500 hover:text-white transition-colors"
                   >
                     {copied ? (
-                      <Check className="w-3.5 h-3.5 text-[#22c55e]" />
+                      <Check className="w-3.5 h-3.5 text-[#22c55e]" aria-hidden="true" />
                     ) : (
-                      <Copy className="w-3.5 h-3.5" />
+                      <Copy className="w-3.5 h-3.5" aria-hidden="true" />
                     )}
                   </button>
                 </div>
@@ -191,7 +195,7 @@ export function ConnectButton() {
                   Switch Wallet
                 </button>
                 <a
-                  href={`https://stellar.expert/explorer/testnet/account/${address}`}
+                  href={`${STELLAR_EXPERT_BASE}/account/${address}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"

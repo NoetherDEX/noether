@@ -127,14 +127,30 @@ export function SlideContainer({ children }: { children: React.ReactNode }) {
 
     /* ── Touch ── */
     let touchStartY = 0;
+    // Multi-touch (pinch-zoom) must never be intercepted, or zoom is impossible
+    let isMultiTouch = false;
     const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        isMultiTouch = true;
+        return;
+      }
+      isMultiTouch = false;
       touchStartY = e.touches[0].clientY;
     };
     const handleTouchMove = (e: TouchEvent) => {
-      // Prevent native scroll on touch devices
+      if (e.touches.length > 1) {
+        isMultiTouch = true;
+        return; // let the browser handle pinch-zoom natively
+      }
+      if (isMultiTouch) return; // tail of a pinch — don't hijack
+      // Prevent native scroll on single-finger swipes
       e.preventDefault();
     };
     const handleTouchEnd = (e: TouchEvent) => {
+      if (isMultiTouch) {
+        if (e.touches.length === 0) isMultiTouch = false;
+        return; // never navigate off the end of a pinch
+      }
       if (isLocked.current) return;
       const deltaY = touchStartY - e.changedTouches[0].clientY;
       if (Math.abs(deltaY) < 40) return;

@@ -88,7 +88,7 @@ function FeatureCard({
   return (
     <div className={`${isRight ? 'text-right' : ''}`}>
       <h3 className="text-lg font-semibold mb-1">{feature.title}</h3>
-      <p className="text-sm text-black/50 leading-relaxed">{feature.description}</p>
+      <p className="text-sm text-black/75 leading-relaxed">{feature.description}</p>
     </div>
   );
 }

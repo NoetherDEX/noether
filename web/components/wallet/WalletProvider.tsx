@@ -3,9 +3,7 @@
 import { ReactNode, createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useWalletStore } from '@/lib/store';
 import { initWalletKit, getWalletAddress, restoreWalletSession, setupWalletModule, WALLETCONNECT_ID } from '@/lib/stellar/walletKit';
-
-// Horizon Testnet URL for balance fetching
-const HORIZON_TESTNET_URL = 'https://horizon-testnet.stellar.org';
+import { NETWORK, NOE_ASSET } from '@/lib/utils/constants';
 
 interface WalletContextType {
   isReady: boolean;
@@ -26,35 +24,43 @@ interface WalletProviderProps {
 }
 
 /**
- * Fetches XLM balance from Horizon Testnet API
- * Returns balance in XLM (not stroops)
+ * Fetches the XLM balance AND the NOE trustline balance from one Horizon
+ * account payload (NOE is a classic asset, so its line is in `balances`).
+ * Fixes the "NOE balance always written as 0" bug — the real value was in
+ * the payload we already fetched. No trustline genuinely means 0.
  */
-async function fetchXLMBalance(publicKey: string): Promise<number> {
+async function fetchHorizonBalances(publicKey: string): Promise<{ xlm: number; noe: number }> {
   try {
-    const response = await fetch(`${HORIZON_TESTNET_URL}/accounts/${publicKey}`);
+    const response = await fetch(`${NETWORK.HORIZON_URL}/accounts/${publicKey}`);
 
     if (!response.ok) {
       if (response.status === 404) {
-        console.log('Account not found on testnet - may need to be funded');
-        return 0;
+        // Account not funded on testnet yet — both balances are genuinely 0.
+        return { xlm: 0, noe: 0 };
       }
       throw new Error(`Horizon API error: ${response.status}`);
     }
 
     const data = await response.json();
+    const balances: Array<{
+      asset_type: string;
+      asset_code?: string;
+      asset_issuer?: string;
+      balance: string;
+    }> = data.balances ?? [];
 
-    const nativeBalance = data.balances?.find(
-      (b: { asset_type: string; balance: string }) => b.asset_type === 'native'
+    const nativeBalance = balances.find((b) => b.asset_type === 'native');
+    const noeBalance = balances.find(
+      (b) => b.asset_code === NOE_ASSET.CODE && b.asset_issuer === NOE_ASSET.ISSUER
     );
 
-    if (nativeBalance) {
-      return parseFloat(nativeBalance.balance);
-    }
-
-    return 0;
+    return {
+      xlm: nativeBalance ? parseFloat(nativeBalance.balance) : 0,
+      noe: noeBalance ? parseFloat(noeBalance.balance) : 0,
+    };
   } catch (error) {
-    console.error('Failed to fetch XLM balance:', error);
-    return 0;
+    console.error('Failed to fetch Horizon balances:', error);
+    return { xlm: 0, noe: 0 };
   }
 }
 
@@ -78,11 +84,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
     const currentPublicKey = useWalletStore.getState().publicKey;
     if (!currentPublicKey) return;
 
-    const [xlmBalance, usdcBalance] = await Promise.all([
-      fetchXLMBalance(currentPublicKey),
+    const [horizonBalances, usdcBalance] = await Promise.all([
+      fetchHorizonBalances(currentPublicKey),
       fetchUSDCBalance(currentPublicKey),
     ]);
-    setBalances(xlmBalance, usdcBalance, 0);
+    setBalances(horizonBalances.xlm, usdcBalance, horizonBalances.noe);
   }, [setBalances]);
 
   // Initialize wallet kit and attempt auto-reconnect from persisted state
@@ -100,11 +106,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
       // Background: fetch balances + init kit for future signing
       (async () => {
         try {
-          const [xlmBalance, usdcBalance] = await Promise.all([
-            fetchXLMBalance(storedKey),
+          const [horizonBalances, usdcBalance] = await Promise.all([
+            fetchHorizonBalances(storedKey),
             fetchUSDCBalance(storedKey),
           ]);
-          if (!cancelled) setBalances(xlmBalance, usdcBalance, 0);
+          if (!cancelled) setBalances(horizonBalances.xlm, usdcBalance, horizonBalances.noe);
         } catch {}
 
         // Set up wallet module so signing works later
@@ -135,11 +141,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
             setConnected(result.address, result.address, storedWalletId);
 
-            const [xlmBalance, usdcBalance] = await Promise.all([
-              fetchXLMBalance(result.address),
+            const [horizonBalances, usdcBalance] = await Promise.all([
+              fetchHorizonBalances(result.address),
               fetchUSDCBalance(result.address),
             ]);
-            if (!cancelled) setBalances(xlmBalance, usdcBalance, 0);
+            if (!cancelled) setBalances(horizonBalances.xlm, usdcBalance, horizonBalances.noe);
           } catch {
             if (!cancelled) setDisconnected();
           }

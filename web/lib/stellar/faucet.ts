@@ -6,14 +6,18 @@ import {
   Operation,
   BASE_FEE,
 } from '@stellar/stellar-sdk';
-import { NETWORK, TRADING } from '@/lib/utils/constants';
+import {
+  NETWORK,
+  USDC_ASSET as USDC_ASSET_CONFIG,
+  FAUCET_DAILY_LIMIT_USDC,
+} from '@/lib/utils/constants';
 
-// USDC Issuer (also the admin account that mints)
-const USDC_ISSUER = 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
-const USDC_ASSET = new Asset('USDC', USDC_ISSUER);
+// USDC Issuer (also the admin account that mints) — single-sourced from constants
+const USDC_ISSUER = USDC_ASSET_CONFIG.ISSUER;
+const USDC_ASSET = new Asset(USDC_ASSET_CONFIG.CODE, USDC_ISSUER);
 
-// Daily limit in USDC (human-readable)
-export const DAILY_LIMIT_USDC = 1000;
+// Daily limit in USDC (human-readable) — single-sourced from constants
+export const DAILY_LIMIT_USDC = FAUCET_DAILY_LIMIT_USDC;
 
 // Valid claim amounts
 export const CLAIM_AMOUNTS = [100, 500, 1000] as const;
@@ -53,7 +57,7 @@ export async function hasTrustline(publicKey: string): Promise<boolean> {
     return account.balances.some(
       (balance) =>
         balance.asset_type === 'credit_alphanum4' &&
-        balance.asset_code === 'USDC' &&
+        balance.asset_code === USDC_ASSET_CONFIG.CODE &&
         balance.asset_issuer === USDC_ISSUER
     );
   } catch (error: unknown) {
@@ -125,7 +129,7 @@ export async function getClaimHistory(
         'from' in record &&
         record.from === USDC_ISSUER &&
         'asset_code' in record &&
-        record.asset_code === 'USDC' &&
+        record.asset_code === USDC_ASSET_CONFIG.CODE &&
         'asset_issuer' in record &&
         record.asset_issuer === USDC_ISSUER
       ) {

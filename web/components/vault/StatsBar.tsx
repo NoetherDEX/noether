@@ -3,8 +3,10 @@
 import { formatUSD } from '@/lib/utils';
 
 interface StatsBarProps {
-  tvl: number;
-  noePrice: number;
+  /** null = unknown (read failed or wallet-gated) — renders '—', never a fake $0 */
+  tvl: number | null;
+  /** null = price read failed — renders '—', never a fabricated $1.00 */
+  noePrice: number | null;
   /** null until real fee-revenue-based APR can be computed (W-3/P4-15). */
   apy: number | null;
   isLoading?: boolean;

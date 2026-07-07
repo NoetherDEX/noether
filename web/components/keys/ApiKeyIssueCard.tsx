@@ -10,9 +10,9 @@ import {
 } from '@/lib/api/keys';
 import type { BetaStatus, IssuedApiKey } from '@/lib/api/keys';
 import { signChallengeWithWallet } from '@/lib/api/sign';
+import { apiBaseOrNull } from '@/lib/api/base';
+import { DISCORD_URL } from '@/lib/utils/constants';
 import toast from 'react-hot-toast';
-
-const API_BASE = process.env.NEXT_PUBLIC_NOETHER_API_URL ?? 'http://localhost:4000';
 
 function humanize(raw: string): string {
   if (/403/.test(raw) && /not_in_beta|not in beta/i.test(raw)) {
@@ -24,6 +24,37 @@ function humanize(raw: string): string {
   return raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
 }
 
+type CopyKind = 'keyId' | 'secret' | 'header';
+
+// One-time credential display: value + a copy button with copied feedback.
+function CopyableField({
+  label,
+  value,
+  copied,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </label>
+      <div className="flex items-start gap-2">
+        <code className="flex-1 block px-4 py-3 bg-zinc-900/60 border border-white/10 rounded-xl text-xs font-mono break-all">
+          {value}
+        </code>
+        <Button variant="ghost" size="sm" onClick={onCopy} className="flex-none">
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function ApiKeyIssueCard({ onIssued }: { onIssued?: (key: IssuedApiKey) => void }) {
   const wallet = useWalletStore();
   const [label, setLabel] = useState('');
@@ -31,6 +62,18 @@ export function ApiKeyIssueCard({ onIssued }: { onIssued?: (key: IssuedApiKey) =
   const [issued, setIssued] = useState<IssuedApiKey | null>(null);
   const [beta, setBeta] = useState<BetaStatus | null>(null);
   const [betaErr, setBetaErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState<CopyKind | null>(null);
+  const [ackStored, setAckStored] = useState(false);
+
+  async function copyValue(text: string, kind: CopyKind) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      setTimeout(() => setCopied((prev) => (prev === kind ? null : prev)), 2000);
+    } catch {
+      toast.error('Clipboard unavailable — select the text and copy manually.');
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +113,8 @@ export function ApiKeyIssueCard({ onIssued }: { onIssued?: (key: IssuedApiKey) =
         label: label || undefined,
       });
       setIssued(key);
+      setAckStored(false);
+      setCopied(null);
       onIssued?.(key);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -80,6 +125,8 @@ export function ApiKeyIssueCard({ onIssued }: { onIssued?: (key: IssuedApiKey) =
   }
 
   if (issued) {
+    const authHeader = `Authorization: Bearer ${issued.keyId}:${issued.secret}`;
+    const apiBase = apiBaseOrNull();
     return (
       <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 overflow-hidden">
         <div className="px-6 py-4 border-b border-emerald-500/20">
@@ -90,31 +137,49 @@ export function ApiKeyIssueCard({ onIssued }: { onIssued?: (key: IssuedApiKey) =
             Store the secret immediately — it cannot be retrieved again. The
             gateway only keeps a SHA-256 hash.
           </p>
-          <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Key id
+          <CopyableField
+            label="Key id"
+            value={issued.keyId}
+            copied={copied === 'keyId'}
+            onCopy={() => copyValue(issued.keyId, 'keyId')}
+          />
+          <CopyableField
+            label="Secret"
+            value={issued.secret}
+            copied={copied === 'secret'}
+            onCopy={() => copyValue(issued.secret, 'secret')}
+          />
+          <CopyableField
+            label="Authorization header"
+            value={authHeader}
+            copied={copied === 'header'}
+            onCopy={() => copyValue(authHeader, 'header')}
+          />
+          {apiBase && (
+            <p className="text-xs text-muted-foreground">
+              Use against{' '}
+              <code className="text-xs px-1 py-0.5 rounded bg-zinc-900">{apiBase}</code>
+            </p>
+          )}
+          <div className="pt-2 space-y-3">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={ackStored}
+                onChange={(e) => setAckStored(e.target.checked)}
+                className="accent-[#eab308]"
+              />
+              I have stored the secret
             </label>
-            <code className="block px-4 py-3 bg-zinc-900/60 border border-white/10 rounded-xl text-xs font-mono break-all">
-              {issued.keyId}
-            </code>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!ackStored}
+              onClick={() => setIssued(null)}
+            >
+              Dismiss
+            </Button>
           </div>
-          <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Secret
-            </label>
-            <code className="block px-4 py-3 bg-zinc-900/60 border border-white/10 rounded-xl text-xs font-mono break-all">
-              {issued.secret}
-            </code>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Use against {API_BASE} with{' '}
-            <code className="text-xs px-1 py-0.5 rounded bg-zinc-900">
-              Authorization: Bearer {issued.keyId}:{'<secret>'}
-            </code>
-          </p>
-          <Button variant="ghost" size="sm" onClick={() => setIssued(null)}>
-            Dismiss
-          </Button>
         </div>
       </div>
     );
@@ -153,7 +218,7 @@ export function ApiKeyIssueCard({ onIssued }: { onIssued?: (key: IssuedApiKey) =
             </a>{' '}
             or{' '}
             <a
-              href="https://discord.gg/2BxYv6Uc"
+              href={DISCORD_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="text-amber-400 hover:text-amber-300"

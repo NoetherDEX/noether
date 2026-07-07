@@ -23,8 +23,9 @@ export default function ReferralsPage() {
               live in v1.1: <span className="text-foreground font-medium">10%</span> of
               every fee your referees pay to you, and{' '}
               <span className="text-foreground font-medium">4% off</span> every trade
-              for them. Codes are on-chain and bind referees to you on their first
-              authed call — no off-chain bookkeeping, no rugpulls.
+              for them. Codes are on-chain: your referees accept the invite with
+              one signed transaction and the binding is permanent — no off-chain
+              bookkeeping, no rugpulls.
             </p>
 
             <div className="mt-6 grid grid-cols-3 gap-4 md:gap-6 max-w-2xl">
@@ -37,7 +38,7 @@ export default function ReferralsPage() {
           {/* Dashboard or sign-in (handles code creation, claim, stats) */}
           <ReferralDashboardOrSignIn signInSlot={<ReferralSignIn />} />
 
-          {/* How it works (kompakt, eski /vault'tan) */}
+          {/* How it works */}
           <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
             <div className="px-6 py-4 border-b border-white/10">
               <h3 className="text-base font-semibold text-foreground">How does it work?</h3>
@@ -55,8 +56,10 @@ export default function ReferralsPage() {
                   body={
                     <>
                       Send <code className="text-xs px-1 py-0.5 rounded bg-zinc-900 text-amber-400">?ref=YOURCODE</code>{' '}
-                      to friends. The contract binds them to you on their first
-                      authed call — permanent, on-chain.
+                      to friends. They accept the invite with one signed
+                      transaction — from the invitation banner, or by entering
+                      your code on this page. The binding is permanent,
+                      on-chain.
                     </>
                   }
                 />

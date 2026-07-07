@@ -13,7 +13,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 import { debugLog, debugError } from '@/lib/utils/debug';
-import { decodeContractError } from '@/lib/utils/contractErrors';
+import { decodeContractError, type ContractErrorContext } from '@/lib/utils/contractErrors';
 
 // Horizon server for account queries (balances, etc.)
 const horizonServer = new Horizon.Server(NETWORK.HORIZON_URL);
@@ -30,6 +30,20 @@ export const usdcTokenContract = new Contract(CONTRACTS.USDC_TOKEN);
 export const routerContract = CONTRACTS.NOETHER_ROUTER
   ? new Contract(CONTRACTS.NOETHER_ROUTER)
   : null;
+
+/**
+ * Resolve which error table a contract's failures decode through. Error
+ * codes are per-contract enums — decoding a vault_factory/referral failure
+ * through the market table produces factually wrong messages (A26).
+ * Unknown/unset addresses (tokens, router) keep the default market table.
+ */
+function contractErrorContext(contract: Contract): ContractErrorContext | undefined {
+  const id = contract.contractId();
+  if (CONTRACTS.VAULT_FACTORY && id === CONTRACTS.VAULT_FACTORY) return 'vault_factory';
+  if (CONTRACTS.REFERRAL && id === CONTRACTS.REFERRAL) return 'referral';
+  if (CONTRACTS.VAULT && id === CONTRACTS.VAULT) return 'vault';
+  return undefined;
+}
 
 /**
  * Build a transaction for a contract call
@@ -56,7 +70,11 @@ export async function buildTransaction(
   const simulated = await sorobanRpc.simulateTransaction(transaction);
 
   if (rpc.Api.isSimulationError(simulated)) {
-    throw new Error(decodeContractError(`Simulation failed: ${simulated.error}`));
+    throw new Error(
+      decodeContractError(`Simulation failed: ${simulated.error}`, {
+        contract: contractErrorContext(contract),
+      })
+    );
   }
 
   // Prepare the transaction with the simulation results

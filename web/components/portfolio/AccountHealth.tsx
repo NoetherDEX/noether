@@ -2,35 +2,77 @@
 
 import { ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, Shield } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { formatUSD, formatPercent } from '@/lib/utils/format';
 import type { DisplayPosition } from '@/types';
 
 interface AccountHealthProps {
+  /** Positions with a known price (fresh or last-good) — the page excludes unpriced ones. */
   positions: DisplayPosition[];
   usdcBalance: number;
   isConnected: boolean;
+  /** A9: cross-margin pool balance in display units; null = not read yet (renders '—'). */
+  crossMarginBalance?: number | null;
+  /** A8: collateral locked in positions whose price is unknown (still real money). */
+  unpricedCollateral?: number;
+  /** A8: positions excluded for lack of a price — PnL and net worth render '—'. */
+  unpricedCount?: number;
+  /** A8: true when any displayed price is a last-good (stale) oracle read. */
+  pricesStale?: boolean;
   onDeposit?: () => void;
   onWithdraw?: () => void;
+}
+
+function StaleBadge() {
+  return (
+    <span
+      className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20"
+      title="Live price read failed — values use the last known price"
+    >
+      Stale
+    </span>
+  );
 }
 
 export function AccountHealth({
   positions,
   usdcBalance,
   isConnected,
+  crossMarginBalance = null,
+  unpricedCollateral = 0,
+  unpricedCount = 0,
+  pricesStale = false,
 }: AccountHealthProps) {
-  // Calculate totals from positions
-  const totalCollateral = positions.reduce((sum, p) => sum + p.collateral, 0);
-  const totalUnrealizedPnl = positions.reduce((sum, p) => sum + p.pnl, 0);
-  const netWorth = usdcBalance + totalCollateral + totalUnrealizedPnl;
+  // Calculate totals from positions. Collateral is price-independent, so
+  // unpriced positions still count toward it; their PnL is unknown.
+  const totalCollateral = positions.reduce((sum, p) => sum + p.collateral, 0) + unpricedCollateral;
+  const pnlKnown = unpricedCount === 0;
+  const totalUnrealizedPnl = positions.reduce((sum, p) => sum + (Number.isFinite(p.pnl) ? p.pnl : 0), 0);
+  // Net worth mirrors CrossMarginBanner's proven equity formula (pool balance
+  // + collateral + unrealized PnL) plus the wallet balance. An unknown part
+  // makes the whole unknown — render '—', never a fabricated number.
+  const netWorth =
+    pnlKnown && crossMarginBalance !== null
+      ? usdcBalance + crossMarginBalance + totalCollateral + totalUnrealizedPnl
+      : null;
   const buyingPower = usdcBalance;
 
   // Calculate margin usage (collateral used / total value)
   const marginUsed = totalCollateral;
-  const marginUsagePercent = netWorth > 0 ? (marginUsed / netWorth) * 100 : 0;
+  const marginUsagePercent =
+    netWorth === null ? null : netWorth > 0 ? (marginUsed / netWorth) * 100 : 0;
 
   // Calculate monthly change (mock for now - would need historical data)
-  const monthlyChangePercent = totalUnrealizedPnl !== 0 ? ((totalUnrealizedPnl / (netWorth - totalUnrealizedPnl)) * 100) : 0;
-  const isPositiveMonth = monthlyChangePercent >= 0;
+  const monthlyChangePercent =
+    netWorth !== null && netWorth - totalUnrealizedPnl !== 0
+      ? (totalUnrealizedPnl / (netWorth - totalUnrealizedPnl)) * 100
+      : null;
+  const isPositiveMonth = (monthlyChangePercent ?? 0) >= 0;
   const isPnlPositive = totalUnrealizedPnl >= 0;
+  const pnlPercent = !pnlKnown
+    ? null
+    : totalCollateral > 0
+    ? (totalUnrealizedPnl / totalCollateral) * 100
+    : 0;
 
   if (!isConnected) {
     return (
@@ -58,23 +100,34 @@ export function AccountHealth({
           <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
             <Wallet className="h-4 w-4" />
             <span>Net Worth</span>
+            {pricesStale && <StaleBadge />}
           </div>
-          <div className="font-mono text-2xl sm:text-4xl font-bold text-foreground tracking-tight">
-            ${netWorth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <div
+            className="font-mono text-2xl sm:text-4xl font-bold text-foreground tracking-tight"
+            title={netWorth === null ? 'Unavailable — a price or balance read is missing' : undefined}
+          >
+            {formatUSD(netWorth)}
           </div>
-          <div className={cn(
-            'flex items-center gap-1 mt-2 text-sm',
-            isPositiveMonth ? 'text-[#22c55e]' : 'text-[#ef4444]'
-          )}>
-            {isPositiveMonth ? (
-              <ArrowUpRight className="h-4 w-4" />
-            ) : (
-              <ArrowDownRight className="h-4 w-4" />
-            )}
-            <span className="font-mono">
-              {isPositiveMonth ? '+' : ''}{monthlyChangePercent.toFixed(2)}%
-            </span>
-            <span className="text-muted-foreground ml-1">this month</span>
+          {monthlyChangePercent !== null && (
+            <div className={cn(
+              'flex items-center gap-1 mt-2 text-sm',
+              isPositiveMonth ? 'text-[#22c55e]' : 'text-[#ef4444]'
+            )}>
+              {isPositiveMonth ? (
+                <ArrowUpRight className="h-4 w-4" />
+              ) : (
+                <ArrowDownRight className="h-4 w-4" />
+              )}
+              <span className="font-mono">
+                {formatPercent(monthlyChangePercent)}
+              </span>
+              <span className="text-muted-foreground ml-1">this month</span>
+            </div>
+          )}
+          {/* A9: reconcilable breakdown line — funds parked in the cross-margin pool */}
+          <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Cross-Margin Balance</span>
+            <span className="font-mono text-foreground">{formatUSD(crossMarginBalance)}</span>
           </div>
         </div>
       </div>
@@ -86,24 +139,32 @@ export function AccountHealth({
           <div className="flex items-center gap-2 text-muted-foreground text-xs mb-2">
             <TrendingUp className="h-3.5 w-3.5" />
             <span>Unrealized PnL</span>
+            {pricesStale && <StaleBadge />}
           </div>
-          <div className={cn(
-            'font-mono text-xl font-bold',
-            isPnlPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
-          )}>
-            {isPnlPositive ? '+' : '-'}${Math.abs(totalUnrealizedPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <div
+            className={cn(
+              'font-mono text-xl font-bold',
+              !pnlKnown ? 'text-foreground' : isPnlPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
+            )}
+            title={!pnlKnown ? 'Price unavailable for some positions — PnL unknown' : undefined}
+          >
+            {pnlKnown
+              ? `${isPnlPositive ? '+' : '-'}${formatUSD(Math.abs(totalUnrealizedPnl))}`
+              : '—'}
           </div>
           <div className={cn(
             'flex items-center gap-1 mt-1 text-xs',
-            isPnlPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
+            !pnlKnown ? 'text-muted-foreground' : isPnlPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
           )}>
-            {isPnlPositive ? (
-              <ArrowUpRight className="h-3 w-3" />
-            ) : (
-              <ArrowDownRight className="h-3 w-3" />
+            {pnlKnown && (
+              isPnlPositive ? (
+                <ArrowUpRight className="h-3 w-3" />
+              ) : (
+                <ArrowDownRight className="h-3 w-3" />
+              )
             )}
             <span className="font-mono">
-              {totalCollateral > 0 ? `${isPnlPositive ? '+' : ''}${((totalUnrealizedPnl / totalCollateral) * 100).toFixed(1)}%` : '0%'}
+              {formatPercent(pnlPercent, 1)}
             </span>
           </div>
         </div>
@@ -115,7 +176,7 @@ export function AccountHealth({
             <span>Buying Power</span>
           </div>
           <div className="font-mono text-xl font-bold text-foreground">
-            ${buyingPower.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {formatUSD(buyingPower)}
           </div>
           <div className="text-xs text-muted-foreground mt-1">Available to trade</div>
         </div>
@@ -124,21 +185,31 @@ export function AccountHealth({
         <div className="rounded-xl border border-white/10 bg-card p-4 flex flex-col justify-center">
           <div className="flex items-center justify-between text-muted-foreground text-xs mb-2">
             <span>Margin Usage</span>
-            <span className="font-mono text-foreground">{marginUsagePercent.toFixed(0)}%</span>
+            <span className="font-mono text-foreground">
+              {marginUsagePercent === null ? '—' : `${marginUsagePercent.toFixed(0)}%`}
+            </span>
           </div>
           {/* Progress bar */}
           <div className="h-2 bg-secondary rounded-full overflow-hidden">
             <div
               className={cn(
                 'h-full rounded-full transition-all',
-                marginUsagePercent > 80 ? 'bg-[#ef4444]' : marginUsagePercent > 50 ? 'bg-[#f59e0b]' : 'bg-gradient-to-r from-[#22c55e] to-[#eab308]'
+                (marginUsagePercent ?? 0) > 80 ? 'bg-[#ef4444]' : (marginUsagePercent ?? 0) > 50 ? 'bg-[#f59e0b]' : 'bg-gradient-to-r from-[#22c55e] to-[#eab308]'
               )}
-              style={{ width: `${Math.min(marginUsagePercent, 100)}%` }}
+              style={{ width: `${Math.min(marginUsagePercent ?? 0, 100)}%` }}
             />
           </div>
           <div className="flex justify-between text-xs text-muted-foreground mt-2">
-            <span>{marginUsagePercent < 30 ? 'Safe' : marginUsagePercent < 60 ? 'Moderate' : 'High'}</span>
-            <span>${marginUsed.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+            <span>
+              {marginUsagePercent === null
+                ? '—'
+                : marginUsagePercent < 30
+                ? 'Safe'
+                : marginUsagePercent < 60
+                ? 'Moderate'
+                : 'High'}
+            </span>
+            <span>{formatUSD(marginUsed, 0)}</span>
           </div>
         </div>
       </div>

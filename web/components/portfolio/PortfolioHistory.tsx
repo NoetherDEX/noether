@@ -1,12 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowUpRight, ArrowDownRight, Download, Filter, ExternalLink } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Download, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import type { Trade } from '@/types';
 
 const tabs = ['Trade History', 'Transfers'] as const;
 type Tab = (typeof tabs)[number];
+
+// Quote a CSV field when it contains a delimiter, quote, or newline.
+function csvField(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
 
 interface PortfolioHistoryProps {
   trades: Trade[];
@@ -24,6 +30,12 @@ interface PortfolioHistoryProps {
 export function PortfolioHistory({ trades, transfers = [], isLoading }: PortfolioHistoryProps) {
   const [activeTab, setActiveTab] = useState<Tab>('Trade History');
 
+  // A13: the Transfers tab is hidden until a real transfer feed exists —
+  // a permanently empty tab is a dead affordance.
+  const showTransfers = transfers.length > 0;
+  const visibleTabs: readonly Tab[] = showTransfers ? tabs : (['Trade History'] as const);
+  const currentTab: Tab = showTransfers ? activeTab : 'Trade History';
+
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('en-US', {
       year: 'numeric',
@@ -36,7 +48,33 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
   };
 
   const getStellarExpertUrl = (txHash: string) => {
-    return `https://stellar.expert/explorer/testnet/tx/${txHash}`;
+    return `${STELLAR_EXPERT_BASE}/tx/${txHash}`;
+  };
+
+  // A13: client-side CSV export of the in-memory trade list.
+  // Unknown values (fee/PnL pending the next contract deploy) export as
+  // empty fields, never as 0.
+  const handleExport = () => {
+    if (trades.length === 0) return;
+    const header = ['Date (UTC)', 'Market', 'Side', 'Size (USD)', 'Entry Price', 'Exit Price', 'Realized PnL', 'Fee', 'Tx Hash'];
+    const rows = trades.map((t) => [
+      t.timestamp.toISOString(),
+      `${t.asset}-PERP`,
+      t.direction,
+      t.size.toFixed(2),
+      t.entryPrice == null ? '' : t.entryPrice.toFixed(2),
+      t.price.toFixed(2),
+      t.pnl == null ? '' : t.pnl.toFixed(2),
+      t.fee == null ? '' : t.fee.toFixed(2),
+      t.txHash,
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(csvField).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `noether-trades-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -45,13 +83,13 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
       <div className="flex items-center justify-between p-4 border-b border-white/10">
         {/* Tabs */}
         <div className="flex items-center gap-1">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
                 'px-4 py-2 text-sm font-medium rounded-lg transition-all',
-                activeTab === tab
+                currentTab === tab
                   ? 'bg-[#eab308]/20 text-[#eab308]'
                   : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
               )}
@@ -63,11 +101,11 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
 
         {/* Actions */}
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <Filter className="h-4 w-4" />
-            Filter
-          </button>
-          <button className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <button
+            onClick={handleExport}
+            disabled={isLoading || trades.length === 0 || currentTab !== 'Trade History'}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
+          >
             <Download className="h-4 w-4" />
             Export
           </button>
@@ -84,7 +122,7 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
               ))}
             </div>
           </div>
-        ) : activeTab === 'Trade History' ? (
+        ) : currentTab === 'Trade History' ? (
           trades.length === 0 ? (
             <div className="p-8 text-center">
               <p className="text-muted-foreground">No trade history yet</p>
@@ -144,17 +182,31 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span
-                        className={cn(
-                          'font-mono text-sm font-semibold',
-                          (trade.pnl || 0) >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
-                        )}
-                      >
-                        {(trade.pnl || 0) >= 0 ? '+' : '-'}${Math.abs(trade.pnl || 0).toFixed(2)}
-                      </span>
+                      {/* A15: unknown PnL/fee render '—', never a fabricated $0 */}
+                      {trade.pnl == null ? (
+                        <span className="font-mono text-sm text-muted-foreground">—</span>
+                      ) : (
+                        <span
+                          className={cn(
+                            'font-mono text-sm font-semibold',
+                            trade.pnl >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
+                          )}
+                        >
+                          {trade.pnl >= 0 ? '+' : '-'}${Math.abs(trade.pnl).toFixed(2)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-xs text-muted-foreground">-${trade.fee.toFixed(2)}</span>
+                      {trade.fee == null ? (
+                        <span
+                          className="font-mono text-xs text-muted-foreground"
+                          title="Fee breakdown ships with the next contract deploy"
+                        >
+                          —
+                        </span>
+                      ) : (
+                        <span className="font-mono text-xs text-muted-foreground">-${trade.fee.toFixed(2)}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <a

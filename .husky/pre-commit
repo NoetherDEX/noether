@@ -4,6 +4,11 @@
 # Override: ALLOW_PROTECTED_COMMIT=1 git commit ...
 # See docs/GIT_WORKFLOW.md.
 
+# --- TradingView Advanced Charts guard -------------------------------------
+# The Free Advanced Charts Agreement forbids the library in a public repo
+# (Section 2.5); breach = US$50,000 (Section 7.5). Runs first, on every branch.
+sh scripts/guard-no-tradingview.sh || exit 1
+
 branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 
 case "$branch" in

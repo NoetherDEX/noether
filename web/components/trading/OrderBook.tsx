@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils/cn';
 import { formatUSD, formatPrice } from '@/lib/utils';
 import { getAllPendingOrders, toDisplayOrder } from '@/lib/stellar/market';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useWallet } from '@/lib/hooks/useWallet';
 import type { DisplayOrder } from '@/types';
 
@@ -43,7 +44,7 @@ export function OrderBook({ asset }: OrderBookProps) {
           const displayOrder = toDisplayOrder(order);
           return {
             ...displayOrder,
-            stellarExpertUrl: `https://stellar.expert/explorer/testnet/account/${order.trader}`,
+            stellarExpertUrl: `${STELLAR_EXPERT_BASE}/account/${order.trader}`,
           };
         });
 

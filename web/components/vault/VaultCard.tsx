@@ -3,18 +3,12 @@
 import Link from 'next/link';
 import { Card, CardContent, Badge } from '@/components/ui';
 import type { VaultRow } from '@/types/vault';
-import { vaultNav, VAULT_PRECISION } from '@/types/vault';
+import { vaultNav } from '@/types/vault';
+import { fmtUsdc7 } from '@/lib/utils/format';
 
 function shortenAddress(addr: string): string {
   if (addr.length <= 12) return addr;
   return `${addr.slice(0, 4)}…${addr.slice(-4)}`;
-}
-
-function fmtUsdc(raw: string, dp = 2): string {
-  const value = BigInt(raw);
-  const whole = value / VAULT_PRECISION;
-  const frac = value % VAULT_PRECISION;
-  return `${whole}.${frac.toString().padStart(7, '0').slice(0, dp)}`;
 }
 
 function fmtBps(bps: number | undefined, signed = false): string {
@@ -32,7 +26,6 @@ function fmtBps(bps: number | undefined, signed = false): string {
  */
 export function VaultCard({ vault }: { vault: VaultRow }) {
   const nav = vaultNav(vault);
-  const navFloat = Number(nav) / 1e7;
 
   const apyValue = vault.apyBps;
   const apyClass =
@@ -63,7 +56,7 @@ export function VaultCard({ vault }: { vault: VaultRow }) {
 
           {/* Primary stats — 5 SCF-required metrics on two rows */}
           <div className="grid grid-cols-3 gap-3 pt-3 border-t border-white/5">
-            <Metric label="TVL" value={`$${fmtUsdc(vault.totalUsdc)}`} />
+            <Metric label="TVL (liquid)" value={`$${fmtUsdc7(vault.totalUsdc)}`} />
             <Metric label="APY" value={fmtBps(apyValue, true)} valueClass={apyClass} />
             <Metric label="Drawdown" value={fmtBps(vault.drawdownBps)} />
           </div>
@@ -78,7 +71,7 @@ export function VaultCard({ vault }: { vault: VaultRow }) {
               value={String(vault.openPositions ?? '—')}
               compact
             />
-            <Metric label="NAV" value={navFloat.toFixed(4)} compact />
+            <Metric label="Liquid NAV" value={fmtUsdc7(nav, 4)} compact />
           </div>
         </CardContent>
       </Card>

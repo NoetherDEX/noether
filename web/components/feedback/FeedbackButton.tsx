@@ -26,6 +26,11 @@ export function FeedbackButton() {
 
   if (pathname === '/') return null;
 
+  // On /trade below lg the fixed MobileTradeBar owns the bottom edge — hide the
+  // FAB there so it can never cover the Short button's tap zone (bottom-chrome
+  // coordination; the banner half is handled in ReferralBanner).
+  const hideOnMobileTrade = pathname === '/trade';
+
   const handleSubmit = () => {
     if (!message.trim()) {
       toast.error('Please enter a message');
@@ -59,10 +64,10 @@ export function FeedbackButton() {
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 260, damping: 20 }}
             onClick={() => setIsOpen(true)}
-            className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-3
+            className={`fixed bottom-6 right-6 z-40 ${hideOnMobileTrade ? 'hidden lg:flex' : 'flex'} items-center gap-2 px-4 py-3
                        bg-[#0a0a0c] border border-white/10 rounded-full shadow-lg
                        hover:border-[#eab308]/40 hover:shadow-[0_0_20px_rgba(234,179,8,0.15)]
-                       transition-all duration-300 group cursor-pointer"
+                       transition-all duration-300 group cursor-pointer`}
             aria-label="Send feedback"
           >
             <MessageSquare className="w-5 h-5 text-[#eab308] group-hover:scale-110 transition-transform" />
@@ -113,7 +118,7 @@ export function FeedbackButton() {
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="Brief summary..."
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-neutral-600
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/60
                          focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/20
                          transition-all duration-200"
             />
@@ -129,7 +134,7 @@ export function FeedbackButton() {
               onChange={(e) => setMessage(e.target.value)}
               placeholder="Tell us what's on your mind..."
               rows={4}
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-neutral-600
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/60
                          focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/20
                          transition-all duration-200 resize-none"
             />

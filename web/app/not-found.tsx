@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { NoetherLogo } from '@/components/landing/NoetherLogo';
-
-const DISCORD_URL = 'https://discord.com/invite/WJh8hQNDbU';
+import { DISCORD_URL } from '@/lib/utils/constants';
 
 function DiscordIcon() {
   return (

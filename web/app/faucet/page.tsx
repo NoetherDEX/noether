@@ -50,7 +50,8 @@ function FaucetPage() {
                 Connect Your Wallet
               </h2>
               <p className="text-muted-foreground mb-6 max-w-sm mx-auto">
-                Connect your Freighter wallet to claim test USDC tokens.
+                Connect your Stellar wallet (Freighter, LOBSTR, …) to claim
+                test USDC tokens.
               </p>
               <p className="text-sm text-muted-foreground/70">
                 Click &quot;Connect Wallet&quot; in the top right corner to get started.

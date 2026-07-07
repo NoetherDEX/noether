@@ -5,12 +5,11 @@ import { Button, Card, CardContent } from '@/components/ui';
 import { useSessionAuthStore } from '@/lib/store';
 import { listApiKeys, revokeApiKey } from '@/lib/api/keys';
 import type { ApiKeyRecord, IssuedApiKey } from '@/lib/api/keys';
+import { formatDateTimeFull } from '@/lib/utils/format';
 import toast from 'react-hot-toast';
 
-function fmtTs(ts: number | null): string {
-  if (!ts) return '—';
-  return new Date(ts * 1000).toLocaleString();
-}
+// Epoch seconds → pinned en-US datetime; 0/null → '—'.
+const fmtTs = (ts: number | null): string => (ts ? formatDateTimeFull(ts) : '—');
 
 export function ApiKeysList({ refreshKey }: { refreshKey: IssuedApiKey | null }) {
   const auth = useSessionAuthStore();

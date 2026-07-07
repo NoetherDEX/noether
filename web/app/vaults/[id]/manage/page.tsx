@@ -43,8 +43,9 @@ export default async function VaultManagePage({
                 the on-chain USDC balance.</li>
             <li>Leader minimum 5% invariant is enforced after each trade —
                 a position that would push your share below 5% reverts.</li>
-            <li>Profit share (10% of NAV gain above HWM) is paid out via
-                the Claim button. HWM resets afterward.</li>
+            <li>Profit share ({vault.profitShareBps / 100}% of liquid-NAV gain
+                above HWM) is paid out via the Claim button. HWM resets
+                afterward.</li>
           </ul>
         </CardContent>
       </Card>

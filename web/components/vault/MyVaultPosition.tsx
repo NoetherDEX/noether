@@ -3,19 +3,12 @@
 import { useWalletStore } from '@/lib/store';
 import { VAULT_PRECISION, vaultNav } from '@/types/vault';
 import type { VaultActivityRow, VaultRow } from '@/types/vault';
+import { fmtUsdc7 } from '@/lib/utils/format';
 
 interface Props {
   vault: VaultRow;
   deposits: VaultActivityRow[];
   withdraws: VaultActivityRow[];
-}
-
-function fmtUsdc(raw: bigint, dp = 2): string {
-  const negative = raw < 0n;
-  const abs = negative ? -raw : raw;
-  const whole = abs / VAULT_PRECISION;
-  const frac = abs % VAULT_PRECISION;
-  return `${negative ? '-' : ''}${whole}.${frac.toString().padStart(7, '0').slice(0, dp)}`;
 }
 
 function sumSharesFor(rows: VaultActivityRow[], principal: string): bigint {
@@ -77,7 +70,20 @@ export function MyVaultPosition({ vault, deposits, withdraws }: Props) {
   const usdcIn = sumUsdcFor(deposits, address);
   const usdcOut = sumUsdcFor(withdraws, address);
   const pnl = value + usdcOut - usdcIn;
-  const pnlPos = pnl >= 0n;
+  // While the leader has capital deployed, the liquid NAV understates the
+  // vault by the deployed amount — the "loss" is (mostly) an accounting dip,
+  // not a realized one. Don't paint it red/green; explain instead (A20).
+  const capitalDeployed = (vault.openPositions ?? 0) > 0;
+  const pnlAbs = pnl < 0n ? -pnl : pnl;
+  const pnlDisplay =
+    pnl === 0n ? `$${fmtUsdc7(pnl)}` : `${pnl < 0n ? '-' : '+'}$${fmtUsdc7(pnlAbs)}`;
+  const pnlTone: 'success' | 'danger' | undefined = capitalDeployed
+    ? undefined
+    : pnl > 0n
+    ? 'success'
+    : pnl < 0n
+    ? 'danger'
+    : undefined;
 
   return (
     <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
@@ -91,15 +97,19 @@ export function MyVaultPosition({ vault, deposits, withdraws }: Props) {
 
       <div className="p-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-          <Cell label="Your Shares" value={fmtUsdc(netShares, 4)} />
-          <Cell label="Value at NAV" value={`$${fmtUsdc(value)}`} />
+          <Cell label="Your Shares" value={fmtUsdc7(netShares, 4)} />
+          <Cell label="Value at liquid NAV" value={`$${fmtUsdc7(value)}`} />
           <Cell label="Pool Share" value={`${poolPct.toFixed(2)}%`} />
-          <Cell
-            label="Unrealised P&L"
-            value={`${pnlPos ? '+' : ''}$${fmtUsdc(pnl)}`}
-            tone={pnlPos ? 'success' : 'danger'}
-          />
+          <Cell label="Net P&L (est.)" value={pnlDisplay} tone={pnlTone} />
         </div>
+        {capitalDeployed && (
+          <p className="mt-4 text-xs text-amber-400/90">
+            The leader has {vault.openPositions} open position
+            {vault.openPositions === 1 ? '' : 's'} — value and P&amp;L above count
+            only liquid capital and exclude your share of what is deployed in
+            trades. They settle when the positions close.
+          </p>
+        )}
       </div>
     </div>
   );

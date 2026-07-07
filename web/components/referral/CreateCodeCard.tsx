@@ -4,10 +4,33 @@ import { useState } from 'react';
 import { Button, Input } from '@/components/ui';
 import { useWalletStore } from '@/lib/store';
 import { createReferralCode, lookupCode, type CodeAvailability } from '@/lib/stellar/referral';
+import { DISCORD_URL } from '@/lib/utils/constants';
+import type { ReferrerRow } from '@/types/referral';
 import toast from 'react-hot-toast';
 
 const MIN = 3;
 const MAX = 16;
+
+/**
+ * Zeroed ReferrerRow for a just-registered code. The indexer that backs
+ * `getReferralInfo` is eventually consistent (~2s poll + ledger close), so an
+ * instant re-read after `create_code` almost always misses — render this
+ * optimistically instead. All-zero money fields are truthful for a brand-new
+ * code.
+ */
+export function makeOptimisticReferrerRow(address: string, code: string): ReferrerRow {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    referrer: address,
+    code,
+    createdAt: now,
+    referredCount: 0,
+    totalVolumeGenerated: '0',
+    totalEarned: '0',
+    claimable: '0',
+    updatedAt: now,
+  };
+}
 
 /** Pretty-print common on-chain referral errors. */
 function humanize(raw: string): string {
@@ -38,7 +61,8 @@ const ALLOWLIST = (() => {
 })();
 
 interface Props {
-  onCreated: () => void;
+  /** Fired with the registered code after `create_code` confirms on-chain. */
+  onCreated: (code: string) => void;
 }
 
 export function CreateCodeCard({ onCreated }: Props) {
@@ -74,7 +98,6 @@ export function CreateCodeCard({ onCreated }: Props) {
     if (!VALID_RE.test(trimmed)) return toast.error('Only letters, digits, _ and - allowed');
 
     setBusy(true);
-    console.log('[referral] register start', { trimmed, wallet: wallet.address });
     try {
       const availability = await lookupCode(wallet.address, trimmed);
       setAvailable(availability);
@@ -86,7 +109,7 @@ export function CreateCodeCard({ onCreated }: Props) {
       toast.success(`Code "${trimmed}" registered on-chain`);
       setCode('');
       setAvailable(null);
-      onCreated();
+      onCreated(trimmed);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[referral] register failed', err);
@@ -113,9 +136,9 @@ export function CreateCodeCard({ onCreated }: Props) {
           <h3 className="text-base font-semibold">Referral codes are invite-only right now</h3>
           <p className="text-sm text-muted-foreground">
             During the test phase we&apos;re hand-picking the first creators.
-            You can still bind as a referee — clicking somebody else&apos;s
-            referral link links you to them on-chain on your first authed
-            call. Referee fee discounts activate in v1.1.
+            You can still bind as a referee — open somebody&apos;s referral
+            link (or enter their code below) and accept the invite with one
+            signed transaction. Referee fee discounts activate in v1.1.
           </p>
           <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4 text-xs space-y-1">
             <p className="text-muted-foreground">Your wallet</p>
@@ -133,7 +156,7 @@ export function CreateCodeCard({ onCreated }: Props) {
             </a>{' '}
             or{' '}
             <a
-              href="https://discord.gg/2BxYv6Uc"
+              href={DISCORD_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="text-amber-400 hover:text-amber-300"

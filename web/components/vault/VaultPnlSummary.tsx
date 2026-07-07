@@ -1,17 +1,8 @@
 'use client';
 
 import { Card, CardContent } from '@/components/ui';
-import { VAULT_PRECISION } from '@/types/vault';
+import { fmtUsdc7 } from '@/lib/utils/format';
 import type { VaultActivityRow, VaultRow, VaultTradeRow } from '@/types/vault';
-
-function fmtUsdc(raw: bigint | string, dp = 2): string {
-  const value = typeof raw === 'bigint' ? raw : BigInt(raw);
-  const negative = value < 0n;
-  const abs = negative ? -value : value;
-  const whole = abs / VAULT_PRECISION;
-  const frac = abs % VAULT_PRECISION;
-  return `${negative ? '-' : ''}${whole}.${frac.toString().padStart(7, '0').slice(0, dp)}`;
-}
 
 function fmtBps(bps: number | undefined, signed = false): string {
   if (bps == null) return '—';
@@ -98,7 +89,7 @@ export function VaultPnlSummary({
                 positive ? 'text-[#22c55e]' : 'text-red-400'
               }`}
             >
-              {positive ? '+' : ''}${fmtUsdc(realized)}
+              {positive ? '+' : '-'}${fmtUsdc7(realized < 0n ? -realized : realized)}
             </p>
           </div>
         </div>
@@ -127,8 +118,8 @@ export function VaultPnlSummary({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 border-t border-white/5 mt-4">
           <Tile label="APY" value={fmtBps(vault.apyBps, true)} />
           <Tile label="Max drawdown" value={fmtBps(vault.drawdownBps)} />
-          <Tile label="Inflow" value={`$${fmtUsdc(totalDeposits)}`} />
-          <Tile label="Outflow" value={`$${fmtUsdc(totalWithdraws + totalFees)}`} />
+          <Tile label="Inflow" value={`$${fmtUsdc7(totalDeposits)}`} />
+          <Tile label="Outflow" value={`$${fmtUsdc7(totalWithdraws + totalFees)}`} />
         </div>
       </CardContent>
     </Card>

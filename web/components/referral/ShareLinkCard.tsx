@@ -31,9 +31,10 @@ export function ShareLinkCard({ code }: { code: string }) {
       <div className="px-6 py-4 border-b border-white/10">
         <h3 className="text-base font-semibold text-foreground">Share your code</h3>
         <p className="text-xs md:text-sm text-muted-foreground mt-1">
-          Anyone signing up with your code binds to you on-chain today. From
-          v1.1 they get a 4% fee discount and you earn 10% of every fee they
-          pay.
+          Your invitees accept with one signed transaction (from the link
+          banner or the code box on the Referrals page) — the binding is
+          on-chain today. From v1.1 they get a 4% fee discount and you earn
+          10% of every fee they pay.
         </p>
       </div>
 

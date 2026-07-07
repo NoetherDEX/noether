@@ -19,6 +19,7 @@ import { buildMarketRegistrations } from './handlers/market.js';
 import { buildVaultRegistrations } from './handlers/vault.js';
 import { buildReferralRegistrations } from './handlers/referral.js';
 import { IndexerPoller } from './poll.js';
+import { CandleAggregator } from './candles/aggregator.js';
 import { reconcileAllVaults } from './vaultSync.js';
 import { getContract, getNetworkPassphrase, hasContract, resolvedContracts } from '@noether/shared';
 
@@ -67,6 +68,20 @@ async function main(): Promise<void> {
   } else {
     log.info('Schema up to date');
   }
+
+  // Native Noeracle candle aggregator (independent of the market address — it
+  // polls the Noeracle price API, not on-chain events). Writes the candles
+  // projection read by the api's /v1/candles.
+  const aggregator = config.candles.enabled
+    ? new CandleAggregator({
+        db,
+        log,
+        noeracleApiUrl: config.noeracleApiUrl,
+        assets: config.candles.assets,
+        pollIntervalMs: config.candles.pollIntervalMs,
+        seedBars: config.candles.seedBars,
+      })
+    : undefined;
 
   const rpcPool = createRpcPool(config.rpcUrls);
   const rpc = rpcPool.current();
@@ -119,17 +134,29 @@ async function main(): Promise<void> {
     log,
     maxPollAgeMs: Math.max(60_000, config.pollIntervalMs * 10),
     source: poller,
+    aggregator,
   });
 
   const shutdown = async (signal: string): Promise<void> => {
     log.info({ signal }, 'Shutting down');
     poller.stop();
+    aggregator?.stop();
     healthServer.close();
     db.close();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  if (aggregator) {
+    void aggregator.start();
+    log.info(
+      { assets: config.candles.assets.length, pollIntervalMs: config.candles.pollIntervalMs },
+      'Candle aggregator started',
+    );
+  } else {
+    log.info('Candle aggregator disabled (CANDLE_AGGREGATOR_ENABLED=false)');
+  }
 
   await poller.start();
   await new Promise(() => {});

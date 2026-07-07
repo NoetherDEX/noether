@@ -78,6 +78,8 @@ export function Slider({
           max={max}
           step={step}
           value={value}
+          aria-label={label}
+          aria-valuetext={formatValue(value)}
           onChange={handleChange}
           onMouseDown={() => setIsDragging(true)}
           onMouseUp={() => setIsDragging(false)}
@@ -111,6 +113,7 @@ export function Slider({
           {marks.map((mark) => (
             <button
               key={mark}
+              type="button"
               onClick={() => onChange(mark)}
               className={cn(
                 'text-xs transition-colors',

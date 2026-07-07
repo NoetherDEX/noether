@@ -1,33 +1,46 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowDownUp, Loader2 } from 'lucide-react';
-import { formatNumber } from '@/lib/utils';
+import { ArrowDownUp, Loader2, Wallet } from 'lucide-react';
+import { formatNumber, bpsToPercent } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import { TokenIcon } from '@/components/ui/TokenIcon';
+import { TrustlineWarning } from './TrustlineWarning';
 
 interface DepositWithdrawCardProps {
-  // Deposit state
+  // Deposit state — null preview values mean "unknown" and render as '—'
   depositAmount: string;
   onDepositAmountChange: (value: string) => void;
   onDeposit: () => void;
   isDepositing: boolean;
   usdcBalance: number;
-  noeToReceive: number;
-  depositFee: number;
+  noeToReceive: number | null;
+  depositFee: number | null;
+  /** On-chain deposit fee in basis points (30 = 0.30%); null = read failed */
+  depositFeeBps: number | null;
 
   // Withdraw state
   withdrawAmount: string;
   onWithdrawAmountChange: (value: string) => void;
   onWithdraw: () => void;
   isWithdrawing: boolean;
+  /** Which of the two withdraw signatures is in flight (1 = approve, 2 = withdraw) */
+  withdrawPhase: 1 | 2 | null;
   noeBalance: number;
-  usdcToReceive: number;
-  withdrawFee: number;
+  usdcToReceive: number | null;
+  withdrawFee: number | null;
+  /** On-chain withdraw fee in basis points; null = read failed */
+  withdrawFeeBps: number | null;
+
+  // Trustline gate — depositing without a NOE trustline is a guaranteed failure
+  hasTrustline: boolean;
+  onAddTrustline: () => Promise<void>;
+  isAddingTrustline?: boolean;
 
   // Common
   isConnected: boolean;
-  noePrice: number;
+  onConnectWallet: () => void;
+  noePrice: number | null;
   isLoading?: boolean;
 }
 
@@ -62,14 +75,21 @@ export function DepositWithdrawCard({
   usdcBalance,
   noeToReceive,
   depositFee,
+  depositFeeBps,
   withdrawAmount,
   onWithdrawAmountChange,
   onWithdraw,
   isWithdrawing,
+  withdrawPhase,
   noeBalance,
   usdcToReceive,
   withdrawFee,
+  withdrawFeeBps,
+  hasTrustline,
+  onAddTrustline,
+  isAddingTrustline,
   isConnected,
+  onConnectWallet,
   noePrice,
   isLoading,
 }: DepositWithdrawCardProps) {
@@ -81,6 +101,21 @@ export function DepositWithdrawCard({
 
   const depositNum = parseFloat(depositAmount) || 0;
   const withdrawNum = parseFloat(withdrawAmount) || 0;
+
+  // Live Connect Wallet CTA (brand gold) — replaces the old dead disabled button
+  const connectButton = (
+    <button
+      onClick={onConnectWallet}
+      className={cn(
+        'w-full h-12 text-sm font-bold rounded-lg transition-all',
+        'flex items-center justify-center gap-2',
+        'bg-[#eab308] hover:bg-[#eab308]/90 text-black'
+      )}
+    >
+      <Wallet className="w-4 h-4" />
+      Connect Wallet
+    </button>
+  );
 
   return (
     <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
@@ -167,28 +202,45 @@ export function DepositWithdrawCard({
             <div className="space-y-2 p-3 bg-secondary/20 rounded-lg border border-white/5">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Exchange Rate</span>
-                <span className="font-mono text-foreground">1 NOE = {formatNumber(noePrice, 3)} USDC</span>
+                <span className="font-mono text-foreground">
+                  {noePrice != null ? `1 NOE = ${formatNumber(noePrice, 3)} USDC` : '—'}
+                </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Fee (0.3%)</span>
-                <span className="font-mono text-muted-foreground">{formatNumber(depositFee)} USDC</span>
+                <span className="text-muted-foreground">
+                  Fee{depositFeeBps != null ? ` (${bpsToPercent(depositFeeBps)}%)` : ''}
+                </span>
+                <span className="font-mono text-muted-foreground">
+                  {depositFee != null ? `${formatNumber(depositFee)} USDC` : '—'}
+                </span>
               </div>
             </div>
 
-            {/* Action Button */}
-            <button
-              onClick={onDeposit}
-              disabled={!isConnected || depositNum <= 0 || depositNum > usdcBalance || isDepositing}
-              className={cn(
-                'w-full h-12 text-sm font-bold rounded-lg transition-all',
-                'flex items-center justify-center gap-2',
-                'disabled:opacity-40 disabled:cursor-not-allowed',
-                'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
-              )}
-            >
-              {isDepositing && <Loader2 className="w-4 h-4 animate-spin" />}
-              {!isConnected ? 'Connect Wallet' : 'Deposit USDC'}
-            </button>
+            {/* Action Button — connect, then trustline gate, then deposit */}
+            {!isConnected ? (
+              connectButton
+            ) : !hasTrustline ? (
+              <TrustlineWarning onAddTrustline={onAddTrustline} isLoading={isAddingTrustline} />
+            ) : (
+              <button
+                onClick={onDeposit}
+                disabled={depositNum <= 0 || depositNum > usdcBalance || isDepositing}
+                className={cn(
+                  'w-full h-12 text-sm font-bold rounded-lg transition-all',
+                  'flex items-center justify-center gap-2',
+                  'disabled:opacity-40 disabled:cursor-not-allowed',
+                  'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
+                )}
+              >
+                {isDepositing && <Loader2 className="w-4 h-4 animate-spin" />}
+                Deposit USDC
+              </button>
+            )}
+
+            {/* Plain-language risk line at the point of deposit */}
+            <p className="text-xs text-muted-foreground">
+              Pool value falls when traders profit — principal at risk.
+            </p>
           </div>
         ) : (
           <div className="space-y-5">
@@ -246,28 +298,48 @@ export function DepositWithdrawCard({
             <div className="space-y-2 p-3 bg-secondary/20 rounded-lg border border-white/5">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Exchange Rate</span>
-                <span className="font-mono text-foreground">1 NOE = {formatNumber(noePrice, 3)} USDC</span>
+                <span className="font-mono text-foreground">
+                  {noePrice != null ? `1 NOE = ${formatNumber(noePrice, 3)} USDC` : '—'}
+                </span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Fee (0.3%)</span>
-                <span className="font-mono text-muted-foreground">{formatNumber(withdrawFee)} USDC</span>
+                <span className="text-muted-foreground">
+                  Fee{withdrawFeeBps != null ? ` (${bpsToPercent(withdrawFeeBps)}%)` : ''}
+                </span>
+                <span className="font-mono text-muted-foreground">
+                  {withdrawFee != null ? `${formatNumber(withdrawFee)} USDC` : '—'}
+                </span>
               </div>
             </div>
 
             {/* Action Button */}
-            <button
-              onClick={onWithdraw}
-              disabled={!isConnected || withdrawNum <= 0 || withdrawNum > noeBalance || isWithdrawing}
-              className={cn(
-                'w-full h-12 text-sm font-bold rounded-lg transition-all',
-                'flex items-center justify-center gap-2',
-                'disabled:opacity-40 disabled:cursor-not-allowed',
-                'bg-secondary hover:bg-secondary/80 text-foreground border border-white/10'
-              )}
-            >
-              {isWithdrawing && <Loader2 className="w-4 h-4 animate-spin" />}
-              {!isConnected ? 'Connect Wallet' : 'Withdraw USDC'}
-            </button>
+            {!isConnected ? (
+              connectButton
+            ) : (
+              <button
+                onClick={onWithdraw}
+                disabled={withdrawNum <= 0 || withdrawNum > noeBalance || isWithdrawing}
+                className={cn(
+                  'w-full h-12 text-sm font-bold rounded-lg transition-all',
+                  'flex items-center justify-center gap-2',
+                  'disabled:opacity-40 disabled:cursor-not-allowed',
+                  'bg-secondary hover:bg-secondary/80 text-foreground border border-white/10'
+                )}
+              >
+                {isWithdrawing && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isWithdrawing
+                  ? withdrawPhase === 2
+                    ? '2/2 Withdrawing…'
+                    : '1/2 Approving NOE…'
+                  : 'Withdraw USDC'}
+              </button>
+            )}
+
+            {/* Pre-announce the double signature — no surprise second popup */}
+            <p className="text-xs text-muted-foreground">
+              Withdrawing takes two wallet signatures — first approve NOE, then withdraw. Up to
+              ~40s total.
+            </p>
           </div>
         )}
       </div>

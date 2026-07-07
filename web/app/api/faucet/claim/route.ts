@@ -15,10 +15,10 @@ import {
   CLAIM_AMOUNTS,
   ClaimAmount,
 } from '@/lib/stellar/faucet';
-import { NETWORK } from '@/lib/utils/constants';
+import { NETWORK, USDC_ASSET as USDC_ASSET_CONFIG } from '@/lib/utils/constants';
 
-const USDC_ISSUER = 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
-const USDC_ASSET = new Asset('USDC', USDC_ISSUER);
+// Issuer single-sourced from constants (was a duplicated hardcoded literal)
+const USDC_ASSET = new Asset(USDC_ASSET_CONFIG.CODE, USDC_ASSET_CONFIG.ISSUER);
 
 export async function POST(request: NextRequest) {
   try {

@@ -1,7 +1,7 @@
 import { toScVal, rpc as sorobanRpc } from './client';
 import type { PriceData } from '@/types';
-import { rpc, scValToNative, TransactionBuilder, BASE_FEE, Contract } from '@stellar/stellar-sdk';
-import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
+import { rpc, scValToNative, TransactionBuilder, BASE_FEE, Contract, Account } from '@stellar/stellar-sdk';
+import { NETWORK, CONTRACTS, NULL_ACCOUNT } from '@/lib/utils/constants';
 
 // On-chain price reads go through the Noeracle SEP-40 shim, which exposes
 // `lastprice(asset: Symbol) -> (i128, u64)` by translating to Noeracle's
@@ -13,13 +13,24 @@ const oracleContract = new Contract(CONTRACTS.NOERACLE_SHIM);
 /**
  * Get the latest on-chain price for an asset via the Noeracle shim (read-only).
  * Calls `lastprice(asset)` → (price: i128 @ 7-decimals, timestamp: u64).
+ *
+ * Returns NULL when the price is unavailable (RPC failure, unknown feed,
+ * simulation error). Money-display honesty: callers MUST treat null as
+ * "unknown" — render '—' or keep the last good price with a stale badge.
+ * NEVER coerce a null price to 0 (`priceMap[asset] || 0` paints an open long
+ * as a −100% loss on one flaky RPC response).
+ *
+ * `publicKey` is only the simulation source; pass null/undefined for
+ * logged-out reads (uses the well-known NULL_ACCOUNT, no getAccount fetch).
  */
 export async function getPrice(
-  publicKey: string,
+  publicKey: string | null | undefined,
   asset: string
 ): Promise<PriceData | null> {
   try {
-    const account = await sorobanRpc.getAccount(publicKey);
+    const account = publicKey
+      ? await sorobanRpc.getAccount(publicKey)
+      : new Account(NULL_ACCOUNT, '0');
     const operation = oracleContract.call('lastprice', toScVal(asset, 'symbol'));
 
     const transaction = new TransactionBuilder(account, {

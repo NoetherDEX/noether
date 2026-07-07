@@ -4,7 +4,7 @@
  * (W-3/P4-6). Prices are i128 strings with 7-decimal precision.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_NOETHER_API_URL ?? 'http://localhost:4000';
+import { apiBase } from './base';
 
 const PRECISION = 10_000_000;
 
@@ -25,7 +25,8 @@ export interface MarketsStats {
  *  callers can fall back to a neutral placeholder rather than crash. */
 export async function getMarketsStats(): Promise<MarketsStats | null> {
   try {
-    const res = await fetch(`${API_BASE}/v1/markets/stats`, {
+    // apiBase() may throw on a misconfigured prod deploy — caught below → null.
+    const res = await fetch(`${apiBase()}/v1/markets/stats`, {
       headers: { accept: 'application/json' },
       cache: 'no-store',
     });

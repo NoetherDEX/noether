@@ -5,10 +5,10 @@
 
 import type { VaultActivityRow, VaultRow, VaultTradeRow } from '@/types/vault';
 
-const API_BASE = process.env.NEXT_PUBLIC_NOETHER_API_URL ?? 'http://localhost:4000';
+import { apiBase } from './base';
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${apiBase()}${path}`, {
     ...init,
     headers: { accept: 'application/json', ...(init?.headers ?? {}) },
     cache: 'no-store',

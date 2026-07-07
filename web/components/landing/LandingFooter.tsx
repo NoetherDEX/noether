@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { DISCORD_URL } from '@/lib/utils/constants';
+import { APP_NAV_ITEMS, DOCS_URL } from '@/components/layout/nav';
 
 /* Social icon SVGs */
 function XIcon() {
@@ -56,7 +58,7 @@ export function LandingFooter() {
         <a href="https://x.com/Noetherdex" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="X (Twitter)">
           <XIcon />
         </a>
-        <a href="https://discord.gg/wzR6pmGH" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="Discord">
+        <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="Discord">
           <DiscordIcon />
         </a>
         <a href="https://github.com/orgs/NoetherDEX/repositories" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="GitHub">
@@ -69,27 +71,24 @@ export function LandingFooter() {
 
       {/* Bottom bar */}
       <div className="relative z-10 border-t border-white/[0.04] px-8 md:px-16 py-5">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-[11px] text-white/15">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-white/60">
           <div className="flex items-center gap-4 flex-wrap justify-center">
             <span>© 2026 Noether</span>
-            <Link href="#" className="hover:text-white/30 transition-colors">
+            <Link href="/terms" className="hover:text-white/90 transition-colors">
               Terms of Service
             </Link>
-            <Link href="#" className="hover:text-white/30 transition-colors">
-              Privacy Policy
-            </Link>
-            <a href="https://drive.google.com/drive/folders/1_W3c5DZy2b4Aj8hQVcCkvObZSqCDBzmv" target="_blank" rel="noopener noreferrer" className="hover:text-white/30 transition-colors">
+            <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className="hover:text-white/90 transition-colors">
               Technical Architecture
             </a>
           </div>
           <div className="flex items-center gap-4 flex-wrap justify-center">
-            {['Trade', 'Vault', 'Portfolio', 'Leaderboard', 'Faucet'].map((link) => (
+            {APP_NAV_ITEMS.map((item) => (
               <Link
-                key={link}
-                href={`/${link.toLowerCase()}`}
-                className="hover:text-white/30 transition-colors"
+                key={item.href}
+                href={item.href}
+                className="hover:text-white/90 transition-colors"
               >
-                {link}
+                {item.label}
               </Link>
             ))}
           </div>

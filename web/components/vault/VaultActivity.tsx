@@ -2,7 +2,8 @@
 
 import { Card, CardContent } from '@/components/ui';
 import type { VaultActivityRow } from '@/types/vault';
-import { VAULT_PRECISION } from '@/types/vault';
+import { fmtUsdc7, formatDateTimeFull } from '@/lib/utils/format';
+import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 
 function shortAddr(addr: string): string {
   return addr.length > 12 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
@@ -10,17 +11,6 @@ function shortAddr(addr: string): string {
 
 function shortHash(h: string): string {
   return h.length > 14 ? `${h.slice(0, 6)}…${h.slice(-4)}` : h;
-}
-
-function fmtUsdc(raw: string): string {
-  const value = BigInt(raw);
-  const whole = value / VAULT_PRECISION;
-  const frac = value % VAULT_PRECISION;
-  return `${whole}.${frac.toString().padStart(7, '0').slice(0, 2)}`;
-}
-
-function fmtTs(ts: number): string {
-  return new Date(ts * 1000).toLocaleString();
 }
 
 export interface VaultActivityProps {
@@ -64,17 +54,17 @@ export function VaultActivity({
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className="border-b border-zinc-800/30 last:border-0">
-                    <td className="px-5 py-3 text-zinc-400">{fmtTs(r.ts)}</td>
+                    <td className="px-5 py-3 text-zinc-400">{formatDateTimeFull(r.ts)}</td>
                     <td className="px-5 py-3 font-mono text-xs">{shortAddr(r.principal)}</td>
-                    <td className="px-5 py-3 text-right tabular-nums">${fmtUsdc(r.amount)}</td>
+                    <td className="px-5 py-3 text-right tabular-nums">${fmtUsdc7(r.amount)}</td>
                     {showShares && (
                       <td className="px-5 py-3 text-right tabular-nums">
-                        {r.shares ? fmtUsdc(r.shares) : '—'}
+                        {r.shares ? fmtUsdc7(r.shares) : '—'}
                       </td>
                     )}
                     <td className="px-5 py-3 text-right font-mono text-xs">
                       <a
-                        href={`https://stellar.expert/explorer/testnet/tx/${r.txHash}`}
+                        href={`${STELLAR_EXPERT_BASE}/tx/${r.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-zinc-500 hover:text-amber-400 transition-colors"
