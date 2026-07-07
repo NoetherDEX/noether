@@ -150,8 +150,10 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
             onClick={() => setIsOpen(false)}
           />
 
-          {/* Menu */}
-          <div className="absolute top-full left-0 mt-1 z-50 min-w-[220px] bg-card border border-white/10 rounded-lg shadow-xl overflow-hidden">
+          {/* Menu — height-capped so all 13 pairs stay reachable by scrolling
+              on short/mobile viewports; overscroll-contain stops the page
+              behind from scrolling when the list hits its edge. */}
+          <div className="absolute top-full left-0 mt-1 z-50 min-w-[220px] max-h-[min(60vh,480px)] bg-card border border-white/10 rounded-lg shadow-xl overflow-y-auto overscroll-contain">
             {displayAssets.map((asset) => (
               <button
                 key={asset.symbol}
