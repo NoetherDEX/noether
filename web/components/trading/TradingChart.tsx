@@ -16,6 +16,8 @@ import { fetchCandles, toBinanceInterval } from '@/lib/hooks/usePriceData';
 import { formatUSD, priceDecimals } from '@/lib/utils';
 import { cn } from '@/lib/utils/cn';
 import { CHART_COLORS, baseChartOptions } from '@/lib/chart/theme';
+import { getCandles, type CandleSource } from '@/lib/api/candles';
+import { bucketStartSec } from '@/lib/chart/intervals';
 import type { Candle, DisplayOrder, DisplayPosition } from '@/types';
 
 export type ChartType = 'candles' | 'line' | 'area';
@@ -32,6 +34,8 @@ interface TradingChartProps {
   positions?: DisplayPosition[];
   /** Pending orders for THIS asset — trigger/limit overlays. */
   orders?: DisplayOrder[];
+  /** Reports which source served the candles (native Noeracle vs Binance fallback). */
+  onSource?: (source: CandleSource) => void;
   className?: string;
 }
 
@@ -93,6 +97,7 @@ export function TradingChart({
   stale = false,
   positions = [],
   orders = [],
+  onSource,
   className,
 }: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -100,6 +105,9 @@ export function TradingChart({
   const seriesRef = useRef<AnySeries | null>(null);
   const markLineRef = useRef<IPriceLine | null>(null);
   const overlayRef = useRef<IPriceLine[]>([]);
+  const liveBarRef = useRef<Candle | null>(null);
+  const onSourceRef = useRef(onSource);
+  onSourceRef.current = onSource;
   const disposedRef = useRef(false);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -230,13 +238,27 @@ export function TradingChart({
     if (!series || disposedRef.current) return;
     setIsLoading(true);
     setError(null);
+    liveBarRef.current = null; // rebuild the forming bar for the new context
     try {
-      const candles = await fetchCandles(asset, toBinanceInterval(interval));
+      let candles: Candle[];
+      let source: CandleSource;
+      try {
+        const native = await getCandles(asset, interval, 500);
+        if (native.candles.length === 0) throw new Error('empty');
+        candles = native.candles;
+        source = native.source;
+      } catch {
+        // Gateway unreachable / route not deployed / empty → direct Binance proxy.
+        candles = await fetchCandles(asset, toBinanceInterval(interval));
+        source = 'binance';
+      }
       if (disposedRef.current || seriesRef.current !== series) return;
       setSeriesData(series, candles, chartType);
       const last = candles[candles.length - 1];
       setLatest(last ? toBar(last, chartType) : null);
+      liveBarRef.current = last ? { ...last } : null;
       chartRef.current?.timeScale().fitContent();
+      onSourceRef.current?.(source);
     } catch (err) {
       if (!disposedRef.current) {
         setError('Failed to load chart data');
@@ -251,30 +273,33 @@ export function TradingChart({
     loadData();
   }, [loadData]);
 
-  // 4) Real-time last-candle poll (Binance; WS is geo-blocked)
+  // 4) Live forming candle — fold the SSE Noeracle mark into the current
+  //    bucket. History (closed candles) comes from loadData; the in-progress
+  //    bar is built client-side since the backend only persists closed candles.
   useEffect(() => {
-    let active = true;
-    const poll = async () => {
-      while (active && !disposedRef.current) {
-        try {
-          const candles = await fetchCandles(asset, toBinanceInterval(interval), 2);
-          const series = seriesRef.current;
-          const last = candles[candles.length - 1];
-          if (active && !disposedRef.current && series && last) {
-            updateSeriesPoint(series, last, chartType);
-            setLatest(toBar(last, chartType));
-          }
-        } catch {
-          /* transient — retry next tick */
-        }
-        await new Promise((r) => setTimeout(r, 5000));
-      }
-    };
-    poll();
-    return () => {
-      active = false;
-    };
-  }, [asset, interval, chartType]);
+    const series = seriesRef.current;
+    if (isLoading || !series || !markPrice || markPrice <= 0) return;
+
+    const bucket = bucketStartSec(Math.floor(Date.now() / 1000), interval);
+    const prev = liveBarRef.current;
+    let bar: Candle;
+    if (!prev || bucket > prev.time) {
+      bar = { time: bucket, open: markPrice, high: markPrice, low: markPrice, close: markPrice };
+    } else if (bucket === prev.time) {
+      bar = {
+        time: prev.time,
+        open: prev.open,
+        high: Math.max(prev.high, markPrice),
+        low: Math.min(prev.low, markPrice),
+        close: markPrice,
+      };
+    } else {
+      return; // out-of-order bucket
+    }
+    liveBarRef.current = bar;
+    updateSeriesPoint(series, bar, chartType);
+    setLatest(toBar(bar, chartType));
+  }, [markPrice, interval, chartType, seriesEpoch, isLoading]);
 
   // 5) Live Noeracle mark line — gold, dims + dashes when stale
   useEffect(() => {

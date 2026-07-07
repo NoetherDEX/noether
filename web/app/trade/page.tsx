@@ -20,6 +20,7 @@ import {
 } from '@/components/trading';
 import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
 import type { ChartType } from '@/components/trading/TradingChart';
+import type { CandleSource } from '@/lib/api/candles';
 import { useLeaderModeStore } from '@/lib/store';
 import { leaderClosePosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
@@ -54,6 +55,7 @@ function TradePage() {
   const [selectedAsset, setSelectedAsset] = useState('BTC');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
   const [chartType, setChartType] = useState<ChartType>('candles');
+  const [chartSource, setChartSource] = useState<CandleSource>('binance');
   // Raw contract positions. Refreshed on connect / vault-swap / explicit
   // trade actions / 60 s safety tick — NOT on every price update. The
   // displayed PnL / Mark / Net Value comes from currentPrices below.
@@ -670,14 +672,18 @@ function TradePage() {
                     stale={pricesStale}
                     positions={positions.filter((p) => p.asset === selectedAsset)}
                     orders={orders.filter((o) => o.asset === selectedAsset && o.status === 'Pending')}
+                    onSource={setChartSource}
                   />
                 </div>
 
-                {/* Price-source disclosure (A16): the candles are Binance
-                    reference data; the venue executes at the Noeracle mark. */}
+                {/* Price-source disclosure (A16): native Noeracle candles when
+                    the venue has them, else Binance reference. Execution is
+                    always the Noeracle mark. */}
                 <div className="px-4 py-1.5 border-t border-white/5">
                   <p className="text-[10px] text-neutral-400">
-                    Chart: Binance reference · Execution: Noeracle mark
+                    {chartSource === 'noeracle'
+                      ? 'Chart: Noether candles (Noeracle) · Execution: Noeracle mark'
+                      : 'Chart: Binance reference · Execution: Noeracle mark'}
                   </p>
                 </div>
               </Card>
