@@ -6,6 +6,16 @@ const TOKEN_LOGOS: Record<string, string> = {
   XLM: '/xlmlogo.svg',
   USDC: '/usdclogo.png',
   NOE: '/favicon.svg',
+  SOL: '/sollogo.svg',
+  XRP: '/xrplogo.svg',
+  ADA: '/adalogo.svg',
+  BNB: '/bnblogo.svg',
+  TRX: '/trxlogo.svg',
+  DOGE: '/dogelogo.svg',
+  ZEC: '/zeclogo.svg',
+  LINK: '/linklogo.svg',
+  BCH: '/bchlogo.svg',
+  LTC: '/ltclogo.svg',
 };
 
 interface TokenIconProps {
