@@ -5,7 +5,7 @@ import type {
   ReferrerRow,
 } from '@/types/referral';
 
-import { apiBase } from './base';
+import { apiBase, apiError } from './base';
 
 interface AuthHeaders {
   keyId: string;
@@ -21,8 +21,7 @@ async function fetchJson<T>(path: string, auth?: AuthHeaders): Promise<T> {
   const res = await fetch(`${apiBase()}${path}`, { headers, cache: 'no-store' });
   if (!res.ok) {
     if (res.status === 404) throw new Error('not_found');
-    const text = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${text || path}`);
+    throw await apiError(res, path);
   }
   return (await res.json()) as T;
 }

@@ -3,7 +3,7 @@
  * Targets the @noether/api gateway via NEXT_PUBLIC_NOETHER_API_URL.
  */
 
-import { apiBase } from './base';
+import { apiBase, apiError } from './base';
 
 export interface IssuedChallenge {
   challengeHex: string;
@@ -42,7 +42,7 @@ async function postJson<T>(path: string, body: unknown, auth?: { keyId: string; 
     headers,
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
+  if (!res.ok) throw await apiError(res);
   return (await res.json()) as T;
 }
 
@@ -53,7 +53,7 @@ async function getJson<T>(path: string, auth?: { keyId: string; secret: string }
     headers['x-timestamp'] = String(Math.floor(Date.now() / 1000));
   }
   const res = await fetch(`${apiBase()}${path}`, { headers, cache: 'no-store' });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
+  if (!res.ok) throw await apiError(res);
   return (await res.json()) as T;
 }
 
@@ -64,7 +64,7 @@ async function deleteJson(path: string, auth: { keyId: string; secret: string })
     'x-timestamp': String(Math.floor(Date.now() / 1000)),
   };
   const res = await fetch(`${apiBase()}${path}`, { method: 'DELETE', headers });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
+  if (!res.ok) throw await apiError(res);
 }
 
 export async function requestChallenge(address: string): Promise<IssuedChallenge> {

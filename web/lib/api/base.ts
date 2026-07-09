@@ -52,3 +52,69 @@ export function apiBaseOrNull(): string | null {
     return null;
   }
 }
+
+/** Error carrying the gateway's HTTP status + machine code alongside a
+ *  user-readable message, so callers can branch on `.status` / `.code`
+ *  instead of string-matching the message. */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/**
+ * Build an ApiError from a non-OK gateway Response with user-readable copy.
+ *
+ * Remaps the two statuses that previously surfaced as raw
+ * "<status> <statusText>: <body>" toasts — 429 (rate limit) and 5xx (server) —
+ * to friendly text. Every other status keeps its original raw string so
+ * existing component-level handling (e.g. 403 `not_in_beta`, 401
+ * `invalid_signature`, 404) that matches on that string is unaffected. Reads
+ * the response body exactly once.
+ */
+export async function apiError(res: Response, fallbackPath?: string): Promise<ApiError> {
+  let bodyText = '';
+  try {
+    bodyText = await res.text();
+  } catch {
+    // body unavailable / already consumed — fall through with empty text
+  }
+
+  let envelope: { error?: string; message?: string; retry_after_sec?: number } | null = null;
+  try {
+    envelope = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    // non-JSON body (e.g. Fastify plain-text default) — leave envelope null
+  }
+  const code = envelope?.error;
+
+  if (res.status === 429) {
+    const secs = envelope?.retry_after_sec ?? retryAfterSeconds(res);
+    const when = secs && secs > 0 ? `try again in ${secs}s` : 'please wait a moment and try again';
+    return new ApiError(429, `You're sending requests too quickly — ${when}`, code);
+  }
+  if (res.status >= 500) {
+    return new ApiError(
+      res.status,
+      'The Noether API is temporarily unavailable — please try again in a moment',
+      code
+    );
+  }
+  return new ApiError(
+    res.status,
+    `${res.status} ${res.statusText}: ${bodyText || fallbackPath || ''}`.trim(),
+    code
+  );
+}
+
+function retryAfterSeconds(res: Response): number | undefined {
+  const raw = res.headers.get('retry-after');
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}

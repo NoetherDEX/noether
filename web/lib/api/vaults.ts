@@ -5,7 +5,7 @@
 
 import type { VaultActivityRow, VaultRow, VaultTradeRow } from '@/types/vault';
 
-import { apiBase } from './base';
+import { apiBase, apiError, ApiError } from './base';
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${apiBase()}${path}`, {
@@ -13,10 +13,7 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { accept: 'application/json', ...(init?.headers ?? {}) },
     cache: 'no-store',
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${text || path}`);
-  }
+  if (!res.ok) throw await apiError(res, path);
   return (await res.json()) as T;
 }
 
@@ -33,7 +30,7 @@ export async function getVault(id: number): Promise<VaultRow | null> {
   try {
     return await fetchJson<VaultRow>(`/v1/vaults/${id}`);
   } catch (err) {
-    if (err instanceof Error && err.message.includes('404')) return null;
+    if (err instanceof ApiError && err.status === 404) return null;
     throw err;
   }
 }

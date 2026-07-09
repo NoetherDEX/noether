@@ -13,7 +13,12 @@ import {
 } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 import { debugLog, debugError } from '@/lib/utils/debug';
-import { decodeContractError, type ContractErrorContext } from '@/lib/utils/contractErrors';
+import {
+  decodeContractError,
+  messageForCode,
+  txResultCodeMessage,
+  type ContractErrorContext,
+} from '@/lib/utils/contractErrors';
 
 // Horizon server for account queries (balances, etc.)
 const horizonServer = new Horizon.Server(NETWORK.HORIZON_URL);
@@ -90,6 +95,57 @@ export async function buildTransaction(
 }
 
 /**
+ * Scan Soroban diagnostic events for an `Error(Contract, #N)` and return its
+ * human-readable message. Ported from the api gateway's findContractError
+ * (api/src/services/contractErrors.ts) — the proven server-side decoder.
+ *
+ * This is where post-simulation reverts get decoded: a trade that trips the
+ * deviation guard (#81) or staleness (#30) because the price moved between
+ * simulate and submit only carries its contract code on the on-chain result,
+ * not at simulation time. Decodes against the NoetherError (market/vault)
+ * table — every error that can reach on-chain execution is a market/vault one.
+ */
+function contractErrorFromDiagnostics(
+  events: xdr.DiagnosticEvent[] | undefined | null
+): string | null {
+  for (const ev of events ?? []) {
+    try {
+      const body = ev.event().body().v0();
+      for (const val of [...body.topics(), body.data()]) {
+        const code = scErrorContractCode(val);
+        if (code !== null) return messageForCode(code) ?? `Contract error #${code}`;
+      }
+    } catch {
+      // malformed / unexpected event shape — keep scanning
+    }
+  }
+  return null;
+}
+
+function scErrorContractCode(val: xdr.ScVal): number | null {
+  try {
+    if (val.switch() !== xdr.ScValType.scvError()) return null;
+    const err = val.error();
+    if (err.switch() !== xdr.ScErrorType.sceContract()) return null;
+    return err.contractCode();
+  } catch {
+    return null;
+  }
+}
+
+/** Translate an outer transaction result (txBadSeq, txInsufficientBalance, …)
+ *  into a friendly line; null for uninformative codes so the caller can fall
+ *  back to a contract-error message or a generic. */
+function txResultMessage(txResult: xdr.TransactionResult | undefined | null): string | null {
+  if (!txResult) return null;
+  try {
+    return txResultCodeMessage(txResult.result().switch().name);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Submit a signed transaction
  */
 export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetTransactionResponse> {
@@ -105,17 +161,14 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
   debugLog('[DEBUG] Send response:', response.status, response.hash);
 
   if (response.status === 'ERROR') {
-    debugError('[DEBUG] Transaction error:', response.errorResult);
-    // Try to extract meaningful error message
-    let errorMessage = 'Transaction submission failed';
-    try {
-      if (response.errorResult) {
-        errorMessage = JSON.stringify(response.errorResult, null, 2);
-      }
-    } catch {
-      errorMessage = 'Unknown error during submission';
-    }
-    throw new Error(errorMessage);
+    debugError('[submitTransaction] send ERROR:', response.errorResult, response.diagnosticEvents);
+    // Prefer a decoded contract error, then a transaction-level reason, then a
+    // clean generic. Never surface the raw errorResult JSON to the user.
+    const message =
+      contractErrorFromDiagnostics(response.diagnosticEvents) ??
+      txResultMessage(response.errorResult) ??
+      'Transaction could not be submitted — please try again';
+    throw new Error(message);
   }
 
   // Wait for confirmation - poll until we get a final status
@@ -130,22 +183,28 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
   }
 
   if (result.status === 'FAILED') {
-    debugError('[DEBUG] Transaction failed on-chain:', result);
-    // Try to extract the error from resultXdr
-    let errorMessage = 'Transaction failed on-chain';
-    try {
-      if ('resultXdr' in result && result.resultXdr) {
-        const resultXdr = result.resultXdr;
-        errorMessage = `Transaction failed: ${resultXdr.result().switch().name}`;
-      }
-    } catch {
-      // Keep default message
-    }
-    throw new Error(errorMessage);
+    debugError('[submitTransaction] FAILED on-chain:', result);
+    // A contract revert that slipped past simulation (e.g. #81 deviation, #30
+    // staleness after the price moved) carries its code in the diagnostic
+    // events, not the outer result — decode that first, then the tx-level code,
+    // then a clean generic. Replaces the old bare "Transaction failed: txFailed".
+    const events =
+      'diagnosticEventsXdr' in result
+        ? (result.diagnosticEventsXdr as xdr.DiagnosticEvent[] | undefined)
+        : undefined;
+    const txResult =
+      'resultXdr' in result ? (result.resultXdr as xdr.TransactionResult) : undefined;
+    const message =
+      contractErrorFromDiagnostics(events) ??
+      txResultMessage(txResult) ??
+      'Transaction failed on-chain — please try again';
+    throw new Error(message);
   }
 
   if (result.status !== 'SUCCESS') {
-    throw new Error(`Transaction did not complete: ${result.status}`);
+    throw new Error(
+      'Transaction is taking longer than usual to confirm — check your history before retrying'
+    );
   }
 
   debugLog('[DEBUG] Transaction successful!');
