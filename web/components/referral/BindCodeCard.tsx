@@ -5,17 +5,10 @@ import { Button, Input } from '@/components/ui';
 import { useWalletStore } from '@/lib/store';
 import { setReferrer } from '@/lib/stellar/referral';
 import { clearPendingReferral, getPendingReferral } from '@/lib/referralCode';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
 
 const CODE_RE = /^[A-Za-z0-9_-]{3,16}$/;
-
-/** Pretty-print common on-chain `set_referrer` errors (same map as the banner). */
-function humanize(raw: string): string {
-  if (/Error\(Contract, #10\)/.test(raw)) return 'That referral code does not exist.';
-  if (/Error\(Contract, #11\)/.test(raw)) return 'You already have a referrer bound to your wallet.';
-  if (/Error\(Contract, #12\)/.test(raw)) return "You can't refer yourself.";
-  return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
-}
 
 interface Props {
   /** Fired with the bound code after a successful on-chain `set_referrer`. */
@@ -52,8 +45,7 @@ export function BindCodeCard({ onBound }: Props) {
       setCode('');
       onBound(trimmed);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(humanize(msg));
+      toast.error(toUserMessage(err, { contract: 'referral' }));
     } finally {
       setBusy(false);
     }

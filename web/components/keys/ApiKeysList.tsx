@@ -6,6 +6,7 @@ import { useSessionAuthStore } from '@/lib/store';
 import { listApiKeys, revokeApiKey } from '@/lib/api/keys';
 import type { ApiKeyRecord, IssuedApiKey } from '@/lib/api/keys';
 import { formatDateTimeFull } from '@/lib/utils/format';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
 
 // Epoch seconds → pinned en-US datetime; 0/null → '—'.
@@ -32,7 +33,7 @@ export function ApiKeysList({ refreshKey }: { refreshKey: IssuedApiKey | null })
         if (!cancelled) setRows(data);
       })
       .catch((e) => {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setErr(toUserMessage(e));
       });
     return () => {
       cancelled = true;
@@ -78,7 +79,7 @@ export function ApiKeysList({ refreshKey }: { refreshKey: IssuedApiKey | null })
       toast.success('Revoked');
       setRows((prev) => prev?.map((k) => (k.keyId === keyId ? { ...k, revokedAt: Math.floor(Date.now() / 1000) } : k)) ?? null);
     } catch (e) {
-      toast.error(`Revoke failed: ${e instanceof Error ? e.message : String(e)}`);
+      toast.error(`Revoke failed: ${toUserMessage(e)}`);
     } finally {
       setBusy(null);
     }

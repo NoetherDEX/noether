@@ -12,17 +12,8 @@ import type { BetaStatus, IssuedApiKey } from '@/lib/api/keys';
 import { signChallengeWithWallet } from '@/lib/api/sign';
 import { apiBaseOrNull } from '@/lib/api/base';
 import { DISCORD_URL } from '@/lib/utils/constants';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
-
-function humanize(raw: string): string {
-  if (/403/.test(raw) && /not_in_beta|not in beta/i.test(raw)) {
-    return 'This wallet is not on the early-access list yet.';
-  }
-  if (/401/.test(raw) && /invalid_signature/.test(raw)) {
-    return 'Wallet signature could not be verified.';
-  }
-  return raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
-}
 
 type CopyKind = 'keyId' | 'secret' | 'header';
 
@@ -84,7 +75,7 @@ export function ApiKeyIssueCard({ onIssued }: { onIssued?: (key: IssuedApiKey) =
         const s = await getBetaStatus(wallet.address ?? undefined);
         if (!cancelled) setBeta(s);
       } catch (err) {
-        if (!cancelled) setBetaErr(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setBetaErr(toUserMessage(err));
       }
     })();
     return () => {
@@ -117,8 +108,7 @@ export function ApiKeyIssueCard({ onIssued }: { onIssued?: (key: IssuedApiKey) =
       setCopied(null);
       onIssued?.(key);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed: ${humanize(msg)}`);
+      toast.error(`Failed: ${toUserMessage(err)}`);
     } finally {
       setBusy(false);
     }

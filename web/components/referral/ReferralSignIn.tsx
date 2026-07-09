@@ -14,6 +14,8 @@ import { signChallengeWithWallet } from '@/lib/api/sign';
 import { formatDate } from '@/lib/utils/format';
 import { DISCORD_URL } from '@/lib/utils/constants';
 import type { ReferrerRow, ReferralBindingRow } from '@/types/referral';
+import { ApiError } from '@/lib/api/base';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
 
 /**
@@ -100,11 +102,10 @@ export function ReferralSignIn() {
       setAuth({ keyId: key.keyId, secret: key.secret, owner: key.owner });
       toast.success('Signed in');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/403/.test(msg) && /not_in_beta|not in beta/i.test(msg)) {
+      if (err instanceof ApiError && err.code === 'not_in_beta') {
         setBetaBlocked(true);
       } else {
-        toast.error(`Sign-in failed: ${msg.slice(0, 200)}`);
+        toast.error(`Sign-in failed: ${toUserMessage(err)}`);
       }
     } finally {
       setBusy(false);

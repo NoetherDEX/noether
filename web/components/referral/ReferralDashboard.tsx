@@ -13,6 +13,7 @@ import {
   getReferralClaims,
 } from '@/lib/api/referral';
 import { formatDate } from '@/lib/utils/format';
+import { toUserMessage } from '@/lib/utils/userError';
 import type {
   ReferrerRow,
   ReferralTradeRow,
@@ -81,7 +82,7 @@ export function ReferralDashboard() {
         setState({
           ...INITIAL,
           loading: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: toUserMessage(err),
         });
       }
     })();

@@ -13,7 +13,7 @@ import { getVaultTrades } from '@/lib/api/vaults';
 import { VAULT_PRECISION, vaultNav } from '@/types/vault';
 import type { VaultRow } from '@/types/vault';
 import { fmtUsdc7 } from '@/lib/utils/format';
-import { decodeContractError } from '@/lib/utils/contractErrors';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
 
 interface Props {
@@ -62,8 +62,7 @@ function humanizeError(err: unknown, mode: Mode): string {
   ) {
     return 'USDC transfer failed — insufficient USDC balance for this deposit.';
   }
-  const decoded = decodeContractError(err, { contract: 'vault_factory' });
-  return decoded.length > 200 ? `${decoded.slice(0, 200)}…` : decoded;
+  return toUserMessage(err, { contract: 'vault_factory' });
 }
 
 export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props) {

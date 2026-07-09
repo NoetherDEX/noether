@@ -11,6 +11,7 @@ import { listVaults } from '@/lib/api/vaults';
 import { vaultRowFromOnChain, type VaultRow } from '@/types/vault';
 import { CONTRACTS } from '@/lib/utils/constants';
 import { fmtUsdc7 } from '@/lib/utils/format';
+import { toUserMessage } from '@/lib/utils/userError';
 
 /**
  * Marketplace page. Base list (id / leader / name / TVL / NAV /
@@ -77,7 +78,7 @@ export default function VaultsPage() {
         setErr(null);
       } catch (e) {
         if (cancelled) return;
-        setErr(e instanceof Error ? e.message : String(e));
+        setErr(toUserMessage(e));
       } finally {
         if (!cancelled) setLoading(false);
       }

@@ -9,16 +9,8 @@ import {
   leaderOpenPosition,
 } from '@/lib/stellar/vaultFactory';
 import { VAULT_PRECISION } from '@/types/vault';
-import { decodeContractError } from '@/lib/utils/contractErrors';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
-
-/** Factory-aware error decode (A26): #6 is "not the vault leader" here, not
- *  the market's "arithmetic overflow"; codes ≥ 20 still fall through to the
- *  market table for errors the leader-trade proxies bubble up. */
-function humanize(err: unknown): string {
-  const msg = decodeContractError(err, { contract: 'vault_factory' });
-  return msg.length > 200 ? `${msg.slice(0, 200)}…` : msg;
-}
 
 interface Props {
   vaultId: number;
@@ -72,7 +64,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
       toast.success(`Opened ${direction} ${asset} position`);
       setCollateral('');
     } catch (err) {
-      toast.error(`Open failed: ${humanize(err)}`);
+      toast.error(`Open failed: ${toUserMessage(err, { contract: 'vault_factory' })}`);
     } finally {
       setBusy(false);
     }
@@ -87,7 +79,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
       toast.success(`Closed position #${id}`);
       setClosePositionId('');
     } catch (err) {
-      toast.error(`Close failed: ${humanize(err)}`);
+      toast.error(`Close failed: ${toUserMessage(err, { contract: 'vault_factory' })}`);
     } finally {
       setBusy(false);
     }
@@ -99,7 +91,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
       await claimLeaderFees(wallet.address!, wallet.walletId!, vaultId);
       toast.success(`Claimed leader fees from ${vaultName}`);
     } catch (err) {
-      toast.error(`Claim failed: ${humanize(err)}`);
+      toast.error(`Claim failed: ${toUserMessage(err, { contract: 'vault_factory' })}`);
     } finally {
       setBusy(false);
     }
