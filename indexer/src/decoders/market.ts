@@ -19,6 +19,7 @@ import type {
   PositionClosedEvent,
   PositionLiquidatedEvent,
   PositionOpenedEvent,
+  PositionPartialLiqEvent,
 } from '../types/events.js';
 import { decodeEventValue, decodeTopics, asBigInt, asNumber, asString } from './scval.js';
 
@@ -54,6 +55,8 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
       return decodePositionClosed(raw, value);
     case 'position_liquidated':
       return decodePositionLiquidated(raw, value);
+    case 'position_partial_liq':
+      return decodePositionPartialLiq(raw, value);
     case 'cross_liq':
       return decodeCrossLiq(raw, value);
     case 'order_placed':
@@ -119,6 +122,23 @@ function decodePositionLiquidated(raw: RawEvent, v: unknown[]): PositionLiquidat
     size: asBigInt(v[4], 'position_liquidated.size'),
     keeperReward: asBigInt(v[5], 'position_liquidated.keeper_reward'),
     closePrice: asBigInt(v[6], 'position_liquidated.close_price'),
+  };
+}
+
+// position_partial_liq: (id, trader, asset, direction, closed_size,
+// keeper_reward, current_price) — same tuple shape as position_liquidated,
+// but the position SURVIVES with reduced size (T3-D4).
+function decodePositionPartialLiq(raw: RawEvent, v: unknown[]): PositionPartialLiqEvent {
+  return {
+    ...envelope(raw, 'position_partial_liq'),
+    topic: 'position_partial_liq',
+    positionId: asNumber(v[0], 'position_partial_liq.position_id'),
+    trader: asString(v[1], 'position_partial_liq.trader'),
+    asset: asString(v[2], 'position_partial_liq.asset'),
+    direction: asNumber(v[3], 'position_partial_liq.direction'),
+    size: asBigInt(v[4], 'position_partial_liq.closed_size'),
+    keeperReward: asBigInt(v[5], 'position_partial_liq.keeper_reward'),
+    closePrice: asBigInt(v[6], 'position_partial_liq.close_price'),
   };
 }
 

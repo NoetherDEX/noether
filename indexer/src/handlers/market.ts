@@ -91,6 +91,19 @@ function emitBus(ctx: HandlerContext, event: DecodedMarketEvent): void {
         asset: event.asset,
       });
       break;
+    case 'position_partial_liq':
+      // The position SURVIVES (T3-D4) — no position-removal fan-out; the
+      // closed tranche is still a liquidation fill for trade consumers.
+      ctx.bus.emit('trade', {
+        kind: 'liquidation',
+        positionId: event.positionId,
+        trader: event.trader,
+        price: event.closePrice,
+        size: event.size,
+        ts: event.ledgerCloseTs,
+        asset: event.asset,
+      });
+      break;
     case 'order_placed':
       ctx.bus.emit('order', { orderId: event.orderId, state: 'placed' });
       break;
@@ -150,6 +163,18 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
         args: [event.positionId],
       });
       return;
+    case 'position_partial_liq':
+      // Shrink the surviving position by the closed tranche. size is stored
+      // as TEXT; values are 7-decimal notional well inside SQLite's i64.
+      await db.execute({
+        sql: `
+          UPDATE positions
+          SET size = CAST(CAST(size AS INTEGER) - ? AS TEXT)
+          WHERE position_id = ?
+        `,
+        args: [event.size.toString(), event.positionId],
+      });
+      return;
     default:
       return;
   }
@@ -163,7 +188,13 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
  * a live redelivery or a `reindex` replay writes exactly once.
  */
 async function recordRealizedTrade(db: DbConn, event: DecodedMarketEvent): Promise<void> {
-  if (event.topic !== 'position_closed' && event.topic !== 'position_liquidated') return;
+  if (
+    event.topic !== 'position_closed' &&
+    event.topic !== 'position_liquidated' &&
+    event.topic !== 'position_partial_liq'
+  ) {
+    return;
+  }
   const isClose = event.topic === 'position_closed';
   await db.execute({
     sql: `
@@ -234,6 +265,7 @@ const MARKET_TOPICS: DecodedMarketEvent['topic'][] = [
   'position_opened',
   'position_closed',
   'position_liquidated',
+  'position_partial_liq',
   'cross_liq',
   'order_placed',
   'order_cancelled',

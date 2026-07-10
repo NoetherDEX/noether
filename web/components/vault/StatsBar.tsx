@@ -9,13 +9,15 @@ interface StatsBarProps {
   noePrice: number | null;
   /** null until real fee-revenue-based APR can be computed (W-3/P4-15). */
   apy: number | null;
+  /** Insurance buffer balance (T3-D4); null = read failed — renders '—'. */
+  insuranceFund: number | null;
   isLoading?: boolean;
 }
 
 export function StatsBarSkeleton() {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
-      {[1, 2, 3].map((i) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+      {[1, 2, 3, 4].map((i) => (
         <div key={i} className="rounded-2xl border border-white/10 bg-card p-4 md:p-6">
           <div className="h-4 w-24 bg-white/5 rounded animate-pulse mb-3" />
           <div className="h-8 w-32 bg-white/5 rounded animate-pulse" />
@@ -25,13 +27,13 @@ export function StatsBarSkeleton() {
   );
 }
 
-export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
+export function StatsBar({ tvl, noePrice, apy, insuranceFund, isLoading }: StatsBarProps) {
   if (isLoading) {
     return <StatsBarSkeleton />;
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 items-stretch gap-4 md:gap-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 items-stretch gap-4 md:gap-6">
       {/* TVL Card */}
       <div className="rounded-2xl border border-white/10 bg-card p-4 md:p-6">
         <span className="text-xs md:text-sm text-muted-foreground">Total Value Locked</span>
@@ -63,6 +65,17 @@ export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
           <span className="text-xl md:text-3xl font-bold font-mono text-foreground">{formatUSD(noePrice, 3)}</span>
         </div>
         <p className="mt-2 text-xs text-muted-foreground hidden md:block">Current market price of NOE token</p>
+      </div>
+
+      {/* Insurance Fund Card (T3-D4) */}
+      <div className="rounded-2xl border border-white/10 bg-card p-4 md:p-6">
+        <span className="text-xs md:text-sm text-muted-foreground">Insurance Fund</span>
+        <div className="mt-2">
+          <span className="text-xl md:text-3xl font-bold font-mono text-foreground">{formatUSD(insuranceFund)}</span>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground hidden md:block">
+          Pays winning traders before LP funds; fed by liquidation proceeds
+        </p>
       </div>
     </div>
   );

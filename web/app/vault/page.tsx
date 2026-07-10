@@ -24,6 +24,7 @@ import {
   getNoePrice,
   getVaultDepositFeeBps,
   getVaultWithdrawFeeBps,
+  getInsuranceFundBalance,
 } from '@/lib/stellar/vault';
 import {
   hasNoeTrustline,
@@ -44,11 +45,13 @@ function VaultPage() {
     noePrice: number | null;
     apy: number | null;
     noeBalance: number | null;
+    insuranceFund: number | null;
   }>({
     tvl: null,
     noePrice: null,
     apy: null, // real APR needs fee-revenue history (P4-15); hidden until then
     noeBalance: 0,
+    insuranceFund: null,
   });
 
   // On-chain deposit/withdraw fees in basis points (30 = 0.30%); null = unknown
@@ -75,15 +78,17 @@ function VaultPage() {
       getNoePrice(publicKey),
       getVaultDepositFeeBps(publicKey),
       getVaultWithdrawFeeBps(publicKey),
+      getInsuranceFundBalance(publicKey),
     ]);
 
     if (!publicKey) {
-      const [noePrice, depFeeBps, wdFeeBps] = await publicReads;
+      const [noePrice, depFeeBps, wdFeeBps, insuranceFund] = await publicReads;
       setPoolStats({
         tvl: null,
         noePrice: noePrice != null ? fromPrecision(noePrice) : null,
         apy: null,
         noeBalance: 0,
+        insuranceFund: insuranceFund != null ? fromPrecision(insuranceFund) : null,
       });
       setDepositFeeBps(depFeeBps);
       setWithdrawFeeBps(wdFeeBps);
@@ -93,7 +98,7 @@ function VaultPage() {
 
     setIsLoading(true);
     try {
-      const [[noePrice, depFeeBps, wdFeeBps], vaultBalance, noeBalance, trustlineStatus] =
+      const [[noePrice, depFeeBps, wdFeeBps, insuranceFund], vaultBalance, noeBalance, trustlineStatus] =
         await Promise.all([
           publicReads,
           getVaultUsdcBalance(publicKey),
@@ -113,6 +118,7 @@ function VaultPage() {
         noePrice: noePriceNum != null && isNaN(noePriceNum) ? null : noePriceNum,
         apy: null, // real APR needs fee-revenue history (P4-15); hidden until then
         noeBalance: noeBalanceNum,
+        insuranceFund: insuranceFund != null ? fromPrecision(insuranceFund) : null,
       });
       setDepositFeeBps(depFeeBps);
       setWithdrawFeeBps(wdFeeBps);
@@ -231,6 +237,7 @@ function VaultPage() {
             tvl={poolStats.tvl}
             noePrice={poolStats.noePrice}
             apy={poolStats.apy}
+            insuranceFund={poolStats.insuranceFund}
             isLoading={isLoading && isConnected}
           />
 
