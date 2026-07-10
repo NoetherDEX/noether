@@ -1,12 +1,12 @@
 /**
- * One-shot Noeracle path validator.
+ * One-shot Noeracle path validator (post-S-1, batch entrypoint).
  *
- * Fetches one fresh signed BTC/USD attestation, pushes it to the Noeracle
- * contract's persistent storage via the (fixed) update_ed25519_persistent arg
- * order, then reads it straight back through get_price_pers. This proves the
- * whole keeper -> Noeracle -> get_price_pers chain (and the 3-field PriceEntry
- * decode) WITHOUT running the full keeper loop or touching Mock Oracle — so it
- * is safe to run before the heartbeat cutover.
+ * Fetches one fresh signed BTC/USD attestation, pushes it as a batch of one
+ * through the HARDENED update_batch_ed25519_persistent, reads it straight
+ * back through get_price_pers, then proves the hardening actually bites:
+ * an unregistered publisher key and a stale timestamp must BOTH be
+ * rejected. This validates the whole keeper -> Noeracle -> get_price_pers
+ * chain without running the full keeper loop — safe before a cutover.
  *
  *   cd scripts/keeper && npm run noeracle:check
  *
@@ -46,10 +46,10 @@ async function main(): Promise<void> {
   }
   console.log(`Fetched ${PAIR}: $${att.price_human} round=${att.round_id} ts=${att.timestamp}`);
 
-  // 2) Push it via the FIXED updateNoeraclePersistent (validates the arg order).
-  const pushed = await stellar.updateNoeraclePersistent(att);
+  // 2) Push it as a batch of one via the hardened entrypoint.
+  const pushed = await stellar.updateNoeracleBatchPersistent([att]);
   if (!pushed.success) {
-    throw new Error(`update_ed25519_persistent failed: ${pushed.error}`);
+    throw new Error(`update_batch_ed25519_persistent failed: ${pushed.error}`);
   }
   console.log(`✅ Pushed to Noeracle persistent storage. tx: ${pushed.txHash}`);
 
@@ -89,8 +89,33 @@ async function main(): Promise<void> {
     timestamp: Number(entry.timestamp),
     round_id: Number(entry.round_id),
   });
+
+  // 4) Negative checks — the S-1 hardening must actually bite. Both pushes
+  //    MUST fail (publisher gate runs before signature verification, and
+  //    staleness runs before both, so the exact contract errors are
+  //    UnknownPublisher / StalePrice).
+  const rogue = await stellar.updateNoeracleBatchPersistent([
+    { ...att, publisher: '11'.repeat(32) },
+  ]);
+  if (rogue.success) {
+    throw new Error(
+      'SECURITY: unregistered publisher key was ACCEPTED — hardened entrypoint not active on this deployment',
+    );
+  }
+  console.log('✅ Unregistered publisher rejected (publisher gate active)');
+
+  const stale = await stellar.updateNoeracleBatchPersistent([
+    { ...att, timestamp: att.timestamp - 3_600 },
+  ]);
+  if (stale.success) {
+    throw new Error(
+      'SECURITY: hour-old timestamp was ACCEPTED — staleness bound not active on this deployment',
+    );
+  }
+  console.log('✅ Stale round rejected (staleness bound active)');
+
   console.log('');
-  console.log('Path OK. The shim lastprice will now return a price too:');
+  console.log('Path OK (happy path + hardening). The shim lastprice will now return a price too:');
   console.log(
     '  stellar contract invoke --id <shim> --source noether_admin --network testnet -- lastprice --asset BTC',
   );

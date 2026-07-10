@@ -273,31 +273,52 @@ export class StellarClient {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Publish a signed Noeracle attestation to the contract's persistent
-   * storage. Args order matches the contract's `update_ed25519_persistent`
-   * signature: (asset, price, timestamp, round_id, pubkeys, sigs).
+   * Publish a whole round of signed Noeracle attestations in ONE transaction
+   * via the HARDENED `update_batch_ed25519_persistent` (S-1): Noeracle
+   * enforces the registered-publisher gate, a 60s staleness bound, and
+   * monotonic round_ids on-chain (a lagging round is a silent no-op).
+   *
+   * Every attestation in the batch MUST share (timestamp, round_id,
+   * publisher): the contract verifies each per-asset signature over those
+   * shared round fields with ONE publisher key. The attestation service
+   * signs every pair per round, so a normal fetch is already one group —
+   * the mixed-round guard here is a safety net, not a hot path.
    *
    * The attestation message is laid out as [tag(8) || price(16) || ts(8) || …],
-   * so the first 8 bytes give us the BytesN<8> asset tag the contract
-   * expects. We don't need to map symbols ourselves — Noeracle's publisher
-   * already encoded the right tag into the signed message.
+   * so the first 8 bytes give us each BytesN<8> asset tag — Noeracle's
+   * publisher already encoded the right tag into every signed message.
    */
-  async updateNoeraclePersistent(attestation: Attestation): Promise<ExecutionResult> {
-    const messageBuf = Buffer.from(attestation.message, 'hex');
-    const tag = messageBuf.subarray(0, 8);
-    const pubkey = Buffer.from(attestation.publisher, 'hex');
-    const sig = Buffer.from(attestation.signature, 'hex');
+  async updateNoeracleBatchPersistent(attestations: Attestation[]): Promise<ExecutionResult> {
+    if (attestations.length === 0) {
+      return { success: false, error: 'empty attestation batch' };
+    }
+    const first = attestations[0];
+    const mixed = attestations.some(
+      (a) =>
+        a.timestamp !== first.timestamp ||
+        a.round_id !== first.round_id ||
+        a.publisher !== first.publisher,
+    );
+    if (mixed) {
+      return { success: false, error: 'attestation batch mixes rounds or publishers' };
+    }
+
+    const assets = attestations.map((a) =>
+      xdr.ScVal.scvBytes(Buffer.from(a.message, 'hex').subarray(0, 8)),
+    );
+    const prices = attestations.map((a) => nativeToScVal(BigInt(a.price), { type: 'i128' }));
+    const sigs = attestations.map((a) => xdr.ScVal.scvBytes(Buffer.from(a.signature, 'hex')));
 
     return this.invokeContractWriteWithRetry(
       this.noeracleContract,
-      'update_ed25519_persistent',
+      'update_batch_ed25519_persistent',
       [
-        xdr.ScVal.scvBytes(tag),                                       // asset:     BytesN<8>
-        nativeToScVal(BigInt(attestation.price), { type: 'i128' }),    // price:     i128
-        nativeToScVal(BigInt(attestation.timestamp), { type: 'u64' }), // timestamp: u64
-        nativeToScVal(BigInt(attestation.round_id), { type: 'u64' }),  // round_id:  u64
-        xdr.ScVal.scvVec([xdr.ScVal.scvBytes(pubkey)]),                // pubkeys:   Vec<BytesN<32>>
-        xdr.ScVal.scvVec([xdr.ScVal.scvBytes(sig)]),                   // sigs:      Vec<BytesN<64>>
+        xdr.ScVal.scvVec(assets),                                  // assets:    Vec<BytesN<8>>
+        xdr.ScVal.scvVec(prices),                                  // prices:    Vec<i128>
+        nativeToScVal(BigInt(first.timestamp), { type: 'u64' }),   // timestamp: u64
+        nativeToScVal(BigInt(first.round_id), { type: 'u64' }),    // round_id:  u64
+        xdr.ScVal.scvBytes(Buffer.from(first.publisher, 'hex')),   // pubkey:    BytesN<32>
+        xdr.ScVal.scvVec(sigs),                                    // sigs:      Vec<BytesN<64>>
       ],
     );
   }

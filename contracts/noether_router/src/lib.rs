@@ -21,14 +21,16 @@
 //! its own funds, so it needs no auth gymnastics. It is a transparent
 //! pass-through; the market remains the real authorisation gate.
 //!
-//! ## Security (testnet)
+//! ## Security
 //!
-//! The persistent slot is written via Noeracle `update_ed25519_persistent`,
-//! which in `oracle_v0` does NOT enforce registered-publisher / staleness /
-//! monotonic-round checks (see `docs/noeracle-feature-requests.md`, S-1). On
-//! testnet (valueless tokens) this is acceptable. Before mainnet, Noeracle must
-//! harden that path, or this router inherits the "anyone can set the price"
-//! weakness.
+//! The persistent slot is written via Noeracle's HARDENED
+//! `update_batch_ed25519_persistent` (S-1 fixed upstream 2026-07-10):
+//! Noeracle itself enforces the registered-publisher gate, a 60s staleness
+//! bound, and monotonic round_ids (lagging rounds are a silent no-op so a
+//! trade is never reverted by cross-consumer ordering). The router's own
+//! publisher allowlist (O-2) and coarse price bands (O-7) stay in front of it
+//! as defense-in-depth. Requires a Noeracle deployment that exports the
+//! hardened entrypoint — the pre-hardening instance does not.
 
 #![no_std]
 // Soroban entry points carrying full oracle attestations exceed clippy's 7-arg heuristic
@@ -343,11 +345,18 @@ impl NoetherRouterContract {
 
         let noeracle = Self::noeracle_addr(env)?;
         let tag = symbol_to_tag(env, asset)?;
+        // Hardened batch entrypoint: one registered publisher key signs the
+        // whole batch (here a single asset). Noeracle re-checks the publisher
+        // gate, staleness, and round monotonicity on-chain; an Err there
+        // traps and reverts the whole trade (fail-closed).
+        let assets: Vec<BytesN<8>> = soroban_sdk::vec![env, tag];
+        let prices: Vec<i128> = soroban_sdk::vec![env, price];
+        let pubkey = pubkeys.get_unchecked(0);
         let update_args: Vec<Val> =
-            (tag, price, timestamp, round_id, pubkeys, sigs).into_val(env);
+            (assets, prices, timestamp, round_id, pubkey, sigs).into_val(env);
         env.invoke_contract::<()>(
             &noeracle,
-            &Symbol::new(env, "update_ed25519_persistent"),
+            &Symbol::new(env, "update_batch_ed25519_persistent"),
             update_args,
         );
         Ok(())
@@ -438,20 +447,24 @@ mod tests {
 
         #[contractimpl]
         impl MockNoeracle {
-            pub fn update_ed25519_persistent(
+            pub fn update_batch_ed25519_persistent(
                 env: Env,
-                asset: BytesN<8>,
-                price: i128,
+                assets: Vec<BytesN<8>>,
+                prices: Vec<i128>,
                 timestamp: u64,
                 round_id: u64,
-                pubkeys: Vec<BytesN<32>>,
+                pubkey: BytesN<32>,
                 sigs: Vec<BytesN<64>>,
             ) {
-                env.storage().instance().set(&symbol_short!("PRICE"), &price);
-                env.storage().instance().set(&symbol_short!("TAG"), &asset);
-                // per-tag map for multi-asset tests
-                env.storage().instance().set(&asset, &price);
-                let _ = (timestamp, round_id, pubkeys, sigs);
+                for i in 0..assets.len() {
+                    let asset = assets.get_unchecked(i);
+                    let price = prices.get_unchecked(i);
+                    env.storage().instance().set(&symbol_short!("PRICE"), &price);
+                    env.storage().instance().set(&symbol_short!("TAG"), &asset);
+                    // per-tag map for multi-asset tests
+                    env.storage().instance().set(&asset, &price);
+                }
+                let _ = (timestamp, round_id, pubkey, sigs);
             }
 
             pub fn recorded_price(env: Env) -> i128 {

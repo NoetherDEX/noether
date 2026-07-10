@@ -135,7 +135,7 @@ export interface KeeperConfig {
 
   // Contract addresses
   marketContractId: string;
-  /** Noeracle on-chain contract — destination for update_ed25519_persistent. */
+  /** Noeracle on-chain contract — destination for update_batch_ed25519_persistent. */
   noeracleContractId: string;
   vaultContractId: string;
   /** Router — extended by the TTL job (P3-9). */

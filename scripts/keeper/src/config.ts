@@ -146,9 +146,11 @@ export function loadConfig(): KeeperConfig {
       process.env.NEXT_PUBLIC_MARKET_ID ||
       contracts.contracts?.market ||
       '',
-    // Noeracle on-chain contract — keeper publishes signed attestations
-    // here via update_ed25519_persistent. Defaults to the live testnet
-    // deployment so the bot works out-of-the-box.
+    // Noeracle on-chain contract — keeper publishes signed attestation
+    // batches here via the hardened update_batch_ed25519_persistent.
+    // NOTE: requires a post-S-1 Noeracle deployment that exports the
+    // hardened entrypoint; the legacy default below (CAYIP67…) predates
+    // it and must be repointed at cutover.
     noeracleContractId:
       process.env.NEXT_PUBLIC_NOERACLE_ID ||
       contracts.contracts?.noeracle ||
