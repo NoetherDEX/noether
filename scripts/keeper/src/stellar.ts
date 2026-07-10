@@ -65,7 +65,7 @@ const READ_FEE = '100';
  * 80 CrossMarginOrderNotSupported, 81 PriceDeviationTooHigh,
  * 82 OpenInterestCapExceeded.
  */
-const NON_RETRYABLE_CODES = new Set([20, 50, 55, 60, 61, 62, 63, 78, 80, 81, 82]);
+const NON_RETRYABLE_CODES = new Set([20, 50, 55, 60, 61, 62, 63, 78, 80, 81, 82, 83]);
 
 const NON_RETRYABLE_NAMES = [
   'SlippageExceeded',

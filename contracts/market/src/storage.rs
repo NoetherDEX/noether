@@ -80,6 +80,9 @@ pub enum DataKey {
     /// where k = sum of size*PRECISION/entry — lets unrealized PnL at mark P
     /// be computed incrementally without iterating positions
     AssetExposure(Symbol),
+    /// Ledger timestamp of the last partial liquidation of a position
+    /// (T3-D4 grace period). Removed with the position.
+    PartialLiqTs(u64),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -292,9 +295,20 @@ pub fn save_position(env: &Env, position: &Position) {
     }
 }
 
+pub fn get_partial_liq_ts(env: &Env, position_id: u64) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::PartialLiqTs(position_id))
+}
+
+pub fn set_partial_liq_ts(env: &Env, position_id: u64, ts: u64) {
+    let key = DataKey::PartialLiqTs(position_id);
+    env.storage().persistent().set(&key, &ts);
+    extend_persistent_ttl(env, &key);
+}
+
 pub fn delete_position(env: &Env, id: u64, trader: &Address) {
-    // Remove from storage
+    // Remove from storage (incl. any partial-liquidation grace marker)
     env.storage().persistent().remove(&DataKey::Position(id));
+    env.storage().persistent().remove(&DataKey::PartialLiqTs(id));
 
     // Remove from trader's list
     let trader_key = DataKey::TraderPositions(trader.clone());

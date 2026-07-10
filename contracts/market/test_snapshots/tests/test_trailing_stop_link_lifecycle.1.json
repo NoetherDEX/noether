@@ -228,6 +228,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "insurance_buffer_share_bps"
+                      },
+                      "val": {
+                        "u32": 1000
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "liquidation_fee_bps"
                       },
                       "val": {
@@ -286,6 +294,33 @@
                           "hi": 0,
                           "lo": 100000000
                         }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_cooldown_secs"
+                      },
+                      "val": {
+                        "u64": 30
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_min_notional"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 10000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_tranche_bps"
+                      },
+                      "val": {
+                        "u32": 2000
                       }
                     },
                     {
@@ -2368,6 +2403,14 @@
                             },
                             {
                               "key": {
+                                "symbol": "insurance_buffer_share_bps"
+                              },
+                              "val": {
+                                "u32": 1000
+                              }
+                            },
+                            {
+                              "key": {
                                 "symbol": "liquidation_fee_bps"
                               },
                               "val": {
@@ -2426,6 +2469,33 @@
                                   "hi": 0,
                                   "lo": 100000000
                                 }
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "partial_liq_cooldown_secs"
+                              },
+                              "val": {
+                                "u64": 30
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "partial_liq_min_notional"
+                              },
+                              "val": {
+                                "i128": {
+                                  "hi": 0,
+                                  "lo": 10000000000
+                                }
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "partial_liq_tranche_bps"
+                              },
+                              "val": {
+                                "u32": 2000
                               }
                             },
                             {
@@ -4968,6 +5038,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "insurance_buffer_share_bps"
+                      },
+                      "val": {
+                        "u32": 1000
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "liquidation_fee_bps"
                       },
                       "val": {
@@ -5026,6 +5104,33 @@
                           "hi": 0,
                           "lo": 100000000
                         }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_cooldown_secs"
+                      },
+                      "val": {
+                        "u64": 30
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_min_notional"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 10000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_tranche_bps"
+                      },
+                      "val": {
+                        "u32": 2000
                       }
                     },
                     {

@@ -182,6 +182,19 @@ pub struct MarketConfig {
     /// Base taker fee in basis points (e.g., 5 = 0.05%)
     /// Taker = market orders, immediate fills
     pub base_taker_fee_bps: u32,
+    /// Partial liquidation (T3-D4): isolated positions with entry notional
+    /// above this get a tranche closed first instead of a full liquidation
+    /// (7 decimals). 0 disables partial liquidation entirely.
+    pub partial_liq_min_notional: i128,
+    /// Fraction of position size closed per partial-liquidation round (bps).
+    pub partial_liq_tranche_bps: u32,
+    /// Grace period after a partial liquidation during which further
+    /// liquidation of that position is blocked (seconds). Bankruptcy
+    /// (equity <= 0) overrides the grace period.
+    pub partial_liq_cooldown_secs: u64,
+    /// Share of liquidation proceeds routed to the vault's insurance
+    /// buffer instead of LP value (bps).
+    pub insurance_buffer_share_bps: u32,
 }
 
 impl Default for MarketConfig {
@@ -198,6 +211,10 @@ impl Default for MarketConfig {
             max_oracle_deviation_bps: 100,            // 1% max oracle deviation
             base_maker_fee_bps: 2,                    // 0.02% maker fee
             base_taker_fee_bps: 5,                    // 0.05% taker fee
+            partial_liq_min_notional: 1_000 * PRECISION, // partial-liq above $1,000 notional
+            partial_liq_tranche_bps: 2_000,           // close 20% per round
+            partial_liq_cooldown_secs: 30,            // 30s grace before the next round
+            insurance_buffer_share_bps: 1_000,        // 10% of proceeds -> insurance buffer
         }
     }
 }

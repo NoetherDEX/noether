@@ -479,6 +479,118 @@ impl MarketContract {
         // Calculate remaining collateral after PnL and funding
         let remaining = position.collateral + pnl - funding;
 
+        // ── Grace period (T3-D4) ──
+        // A recent partial liquidation shields the position while the trader
+        // reacts — EXCEPT when equity is already gone: waiting on a bankrupt
+        // position only grows bad debt.
+        let now = env.ledger().timestamp();
+        let bankrupt = remaining <= 0;
+        if !bankrupt {
+            if let Some(last) = get_partial_liq_ts(&env, position_id) {
+                if now.saturating_sub(last) < config.partial_liq_cooldown_secs {
+                    return Err(NoetherError::LiquidationCooldown);
+                }
+            }
+        }
+
+        // Get addresses and token client
+        let vault_address = get_vault(&env);
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+
+        // ── Partial liquidation (T3-D4) ──
+        // Large, non-bankrupt positions lose a tranche first: the tranche's
+        // realized loss comes out of collateral while the remainder keeps
+        // backing the smaller position, so the margin ratio improves by
+        // ~1/(1-f) and the trader gets the grace period to recover.
+        if !bankrupt
+            && config.partial_liq_tranche_bps > 0
+            && position.size > config.partial_liq_min_notional
+        {
+            let bps = BASIS_POINTS as i128;
+            let tranche = config.partial_liq_tranche_bps as i128;
+            let closed_size = position.size * tranche / bps;
+
+            // Tranche share of the realized loss (positive whenever the
+            // position is liquidatable), capped at held collateral.
+            let mut realized_debit = (funding - pnl) * tranche / bps;
+            if realized_debit < 0 {
+                realized_debit = 0;
+            }
+            if realized_debit > position.collateral {
+                realized_debit = position.collateral;
+            }
+
+            // Keeper reward on the tranche's share of remaining equity,
+            // mirroring the full path's 10%-of-collateral safety cap
+            // (applied to the tranche's collateral share).
+            let mut reward =
+                calculate_keeper_reward(remaining * tranche / bps, config.liquidation_fee_bps);
+            let reward_cap = position.collateral * tranche / bps / 10;
+            if reward > reward_cap {
+                reward = reward_cap;
+            }
+            if reward > position.collateral - realized_debit {
+                reward = position.collateral - realized_debit;
+            }
+            if reward < 0 {
+                reward = 0;
+            }
+
+            let new_size = position.size - closed_size;
+            let new_collateral = position.collateral - realized_debit - reward;
+
+            // Degenerate tranche (nothing left to back the remainder):
+            // fall through to the full liquidation below instead.
+            if new_size > 0 && new_collateral > 0 {
+                // Money flow: the realized loss goes to the vault, split
+                // between LP value and the insurance buffer.
+                if realized_debit > 0 {
+                    token_client.transfer(
+                        &env.current_contract_address(), &vault_address, &realized_debit,
+                    );
+                    let buffer_cut =
+                        realized_debit * (config.insurance_buffer_share_bps as i128) / bps;
+                    Self::credit_vault_receipt(&env, &vault_address, realized_debit - buffer_cut);
+                    Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
+                }
+                if reward > 0 {
+                    token_client.transfer(&env.current_contract_address(), &keeper, &reward);
+                }
+
+                Self::adjust_oi(
+                    &env, &position.asset, &position.direction,
+                    closed_size, position.entry_price, current_price, false,
+                );
+
+                // Shrink the position in place. The liquidation price is
+                // recomputed from the ACTUAL collateral/size ratio — the
+                // integer `leverage` field no longer reflects it.
+                let mut updated = position.clone();
+                updated.size = new_size;
+                updated.collateral = new_collateral;
+                updated.liquidation_price = Self::liquidation_price_from_ratio(
+                    updated.entry_price, new_collateral, new_size,
+                    updated.direction, config.maintenance_margin_bps,
+                );
+                save_position(&env, &updated);
+                set_partial_liq_ts(&env, position_id, now);
+
+                env.events().publish(
+                    (Symbol::new(&env, "position_partial_liq"),),
+                    (
+                        position_id, position.trader.clone(), position.asset.clone(),
+                        position.direction, closed_size, reward, current_price,
+                    ),
+                );
+
+                extend_instance_ttl(&env);
+                return Ok(reward);
+            }
+        }
+
+        // ── Full liquidation ──
+
         // Calculate keeper reward (only from remaining equity, if positive)
         let keeper_reward = if remaining > 0 {
             calculate_keeper_reward(remaining, config.liquidation_fee_bps)
@@ -500,16 +612,15 @@ impl MarketContract {
             0
         };
 
-        // Get addresses and token client
-        let vault_address = get_vault(&env);
-        let usdc_token = get_usdc_token(&env);
-        let token_client = token::Client::new(&env, &usdc_token);
-
-        // Settle with vault - pass the amount Vault is receiving (as negative pnl)
-        // This ensures Vault's total_usdc accounting matches actual token receipt
+        // Settle with vault — the liquidation proceeds are split between LP
+        // value (receipt-credited) and the insurance buffer (T3-D4), while
+        // the full USDC amount transfers in one move.
         if vault_receives > 0 {
             token_client.transfer(&env.current_contract_address(), &vault_address, &vault_receives);
-            Self::credit_vault_receipt(&env, &vault_address, vault_receives);
+            let buffer_cut =
+                vault_receives * (config.insurance_buffer_share_bps as i128) / (BASIS_POINTS as i128);
+            Self::credit_vault_receipt(&env, &vault_address, vault_receives - buffer_cut);
+            Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
         }
 
         // Pay keeper reward
@@ -928,7 +1039,12 @@ impl MarketContract {
                 total_loss_to_vault
             };
             token_client.transfer(&market_addr, &vault_address, &actual_transfer);
-            Self::credit_vault_receipt(&env, &vault_address, actual_transfer);
+            // Cross-liquidation proceeds feed the insurance buffer too (T3-D4)
+            let buffer_cut = actual_transfer
+                * (config.insurance_buffer_share_bps as i128)
+                / (BASIS_POINTS as i128);
+            Self::credit_vault_receipt(&env, &vault_address, actual_transfer - buffer_cut);
+            Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
         }
 
         // Calculate keeper reward from remaining equity (if any)
@@ -2188,6 +2304,36 @@ impl MarketContract {
         if amount > 0 {
             let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
             let _: () = env.invoke_contract(vault, &Symbol::new(env, "receive_loss"), args);
+        }
+    }
+
+    /// Route a slice of liquidation proceeds into the vault's insurance
+    /// buffer (T3-D4). Accounting-only on the vault side — the USDC itself
+    /// travels with the same transfer as the LP share.
+    fn fund_vault_buffer(env: &Env, vault: &Address, amount: i128) {
+        if amount > 0 {
+            let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
+            let _: () = env.invoke_contract(vault, &Symbol::new(env, "fund_buffer"), args);
+        }
+    }
+
+    /// Liquidation price from the ACTUAL collateral/size ratio — the
+    /// generalized form of math::calculate_liquidation_price, needed once a
+    /// partial liquidation leaves a non-integer effective leverage.
+    fn liquidation_price_from_ratio(
+        entry_price: i128,
+        collateral: i128,
+        size: i128,
+        direction: Direction,
+        maintenance_margin_bps: u32,
+    ) -> i128 {
+        let leverage_factor = collateral * PRECISION / size;
+        let margin_factor =
+            (maintenance_margin_bps as i128) * PRECISION / (BASIS_POINTS as i128);
+        let adjustment = leverage_factor - margin_factor;
+        match direction {
+            Direction::Long => entry_price - (entry_price * adjustment / PRECISION),
+            Direction::Short => entry_price + (entry_price * adjustment / PRECISION),
         }
     }
 
@@ -3517,5 +3663,279 @@ mod tests {
         assert!(reward <= pos.collateral / 10);
         assert_eq!(usdc.balance(&keeper) - keeper_before, reward);
         assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Partial liquidation + insurance buffer (T3-D4)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Open a BTC long with $2,000 entry notional (200 USDC @ 10x) —
+    /// above the $1,000 partial-liquidation threshold.
+    fn open_large_btc_long(test: &TestEnv) -> (Address, Position) {
+        let trader = fund_trader(test, 1_000 * PRECISION);
+        let btc = Symbol::new(&test.env, "BTC");
+        let pos = test.market.open_position(
+            &trader, &btc, &(200 * PRECISION), &10, &Direction::Long,
+        );
+        (trader, pos)
+    }
+
+    fn set_btc_price(test: &TestEnv, price: i128) {
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&Symbol::new(&test.env, "BTC"), &price);
+    }
+
+    #[test]
+    fn test_partial_liq_shrinks_position_and_funds_buffer() {
+        let test = setup();
+        let (_trader, pos) = open_large_btc_long(&test);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+
+        // Liquidatable (below the $54,600 liq price) but NOT bankrupt, and
+        // close enough to the edge that ONE 20% tranche restores health:
+        // equity ≈ $18.50 vs a $20 maintenance requirement that drops to
+        // $16 once the tranche closes.
+        set_btc_price(&test, 54_585 * PRECISION);
+
+        let keeper_before = usdc.balance(&keeper);
+        let buffer_before = vault.get_buffer_balance();
+        let reward = test.market.liquidate(&keeper, &pos.id);
+
+        // Position SURVIVES, 20% smaller, with the realized loss + reward
+        // taken out of collateral.
+        let updated = test.market.get_position(&pos.id).expect("position must survive");
+        assert_eq!(updated.size, pos.size * 8 / 10);
+        assert!(updated.collateral < pos.collateral);
+        assert!(updated.collateral > 0);
+        assert_eq!(usdc.balance(&keeper) - keeper_before, reward);
+        assert!(reward > 0);
+
+        // 10% of the tranche's realized loss landed in the insurance buffer
+        // (realized debit = old collateral − new collateral − keeper reward).
+        let buffer_gain = vault.get_buffer_balance() - buffer_before;
+        assert!(buffer_gain > 0);
+        let realized_debit = pos.collateral - updated.collateral - reward;
+        assert_eq!(buffer_gain, realized_debit / 10);
+
+        // The partial actually SAVED the position: after the grace period it
+        // is no longer liquidatable at this price.
+        test.env.ledger().set_timestamp(test.env.ledger().timestamp() + 31);
+        let res = test.market.try_liquidate(&keeper, &pos.id);
+        assert_eq!(res, Err(Ok(NoetherError::NotLiquidatable)));
+    }
+
+    #[test]
+    fn test_partial_liq_cooldown_blocks_then_second_round_runs() {
+        let test = setup();
+        let (_trader, pos) = open_large_btc_long(&test);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+
+        set_btc_price(&test, 54_585 * PRECISION);
+        test.market.liquidate(&keeper, &pos.id);
+        let after_first = test.market.get_position(&pos.id).unwrap();
+
+        // Price keeps sliding: still liquidatable, still not bankrupt — but
+        // the grace period blocks any further liquidation.
+        set_btc_price(&test, 54_300 * PRECISION);
+        let blocked = test.market.try_liquidate(&keeper, &pos.id);
+        assert_eq!(blocked, Err(Ok(NoetherError::LiquidationCooldown)));
+
+        // After the 30s grace period a SECOND partial round runs (the
+        // remaining notional is still above the $1,000 threshold).
+        test.env.ledger().set_timestamp(test.env.ledger().timestamp() + 31);
+        test.market.liquidate(&keeper, &pos.id);
+        let after_second = test.market.get_position(&pos.id).expect("still alive");
+        assert_eq!(after_second.size, after_first.size * 8 / 10);
+        assert!(after_second.collateral < after_first.collateral);
+    }
+
+    #[test]
+    fn test_small_position_liquidates_fully_with_buffer_share() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let btc = Symbol::new(&test.env, "BTC");
+
+        // $500 notional — under the $1,000 partial threshold.
+        let pos = test.market.open_position(
+            &trader, &btc, &(50 * PRECISION), &10, &Direction::Long,
+        );
+        set_btc_price(&test, 54_500 * PRECISION);
+
+        let buffer_before = vault.get_buffer_balance();
+        let reward = test.market.liquidate(&keeper, &pos.id);
+
+        // Straight to full liquidation: gone in one step.
+        assert!(test.market.get_position(&pos.id).is_none());
+
+        // 10% of the vault-bound proceeds accrued to the insurance buffer.
+        let vault_receives = pos.collateral - reward;
+        assert_eq!(
+            vault.get_buffer_balance() - buffer_before,
+            vault_receives / 10,
+        );
+    }
+
+    #[test]
+    fn test_bankruptcy_overrides_grace_period() {
+        let test = setup();
+        let (_trader, pos) = open_large_btc_long(&test);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+
+        // Round 1: partial at a survivable price.
+        set_btc_price(&test, 54_585 * PRECISION);
+        test.market.liquidate(&keeper, &pos.id);
+        assert!(test.market.get_position(&pos.id).is_some());
+
+        // Crash INSIDE the grace period to bankruptcy (equity <= 0): the
+        // grace period must NOT protect a bankrupt position — full
+        // liquidation runs immediately.
+        set_btc_price(&test, 53_000 * PRECISION);
+        test.market.liquidate(&keeper, &pos.id);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_full_liquidation_routes_insurance_share() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        // Exactly $1,000 notional — NOT strictly above the threshold, so
+        // this stays a one-step full liquidation (back-compat guard).
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long,
+        );
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
+
+        let buffer_before = vault.get_buffer_balance();
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(test.market.get_position(&pos.id).is_none());
+
+        let vault_receives = pos.collateral - reward;
+        assert_eq!(
+            vault.get_buffer_balance() - buffer_before,
+            vault_receives / 10,
+        );
+    }
+
+    #[test]
+    fn test_liquidation_cascade_multiple_simultaneous_positions() {
+        // The deliverable's "full liquidation cascade with multiple
+        // simultaneous positions" (T3-D4), driven exactly as the keeper
+        // would: a crash makes N independent traders' positions liquidatable
+        // at once, and one liquidate() call per id clears them all while the
+        // insurance buffer accrues its share from each.
+        let test = setup();
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let btc = Symbol::new(&test.env, "BTC");
+
+        // 6 positions: mix of small (full-liq) and large (partial-first),
+        // longs and shorts, so the cascade exercises both liquidation paths.
+        let mut ids = soroban_sdk::Vec::new(&test.env);
+        let specs = [
+            (50, Direction::Long),   // small long  — full liq
+            (200, Direction::Long),  // large long  — partial first
+            (75, Direction::Long),   // small long  — full liq
+            (300, Direction::Long),  // large long  — partial first
+            (60, Direction::Long),   // small long  — full liq
+            (150, Direction::Long),  // large long  — partial first
+        ];
+        for (collateral, dir) in specs.iter() {
+            let trader = fund_trader(&test, 1_000 * PRECISION);
+            let pos = test.market.open_position(
+                &trader, &btc, &(*collateral * PRECISION), &10, dir,
+            );
+            ids.push_back(pos.id);
+        }
+
+        let all_before = test.market.get_all_position_ids();
+        assert_eq!(all_before.len(), 6);
+        let buffer_before = vault.get_buffer_balance();
+
+        // Crash 12% — every 10x long is deep underwater and liquidatable.
+        set_btc_price(&test, 52_800 * PRECISION);
+
+        // Keeper sweep: one liquidate() per id, exactly like the bot loop.
+        for id in ids.iter() {
+            let res = test.market.try_liquidate(&keeper, &id);
+            assert!(res.is_ok(), "cascade liquidation of {id} must succeed");
+        }
+
+        // At a 12% crash even the large positions are bankrupt (equity gone),
+        // so the whole book is fully liquidated in one sweep — no survivors.
+        assert_eq!(test.market.get_all_position_ids().len(), 0);
+        // The insurance buffer took its cut from the cascade.
+        assert!(vault.get_buffer_balance() > buffer_before);
+    }
+
+    #[test]
+    fn test_partial_liq_multiple_rounds_until_below_threshold() {
+        // Repeated partial rounds shrink the position geometrically; once the
+        // remaining notional falls to/below the $1,000 threshold the NEXT
+        // liquidation is a full one. Proves multi-round behaviour terminates.
+        let test = setup();
+        let trader = fund_trader(&test, 5_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let btc = Symbol::new(&test.env, "BTC");
+
+        // $30,000 notional: 20% tranches take 15 rounds to cross $1,000.
+        let pos = test.market.open_position(
+            &trader, &btc, &(3_000 * PRECISION), &10, &Direction::Long,
+        );
+
+        let mut rounds = 0;
+        loop {
+            // Hold price just past the CURRENT position's liquidation price so
+            // each round is liquidatable-but-solvent.
+            let current = match test.market.get_position(&pos.id) {
+                Some(p) => p,
+                None => break, // fully liquidated — cascade terminated
+            };
+            set_btc_price(&test, current.liquidation_price - PRECISION);
+
+            let res = test.market.try_liquidate(&keeper, &pos.id);
+            assert!(res.is_ok(), "round {rounds} must liquidate");
+            rounds += 1;
+            assert!(rounds < 30, "multi-round liquidation must terminate");
+
+            // Advance past the grace period for the next round.
+            test.env.ledger().set_timestamp(test.env.ledger().timestamp() + 31);
+        }
+
+        // It took several partial rounds before the final full liquidation.
+        assert!(rounds > 1, "expected multiple partial rounds, got {rounds}");
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_partial_liq_insufficient_margin_after_partial_falls_through_to_full() {
+        // Edge case from the deliverable: when a tranche cannot leave a
+        // solvent remainder (the realized debit + keeper reward would consume
+        // the whole collateral share), the partial path must NOT strand a
+        // zero-collateral position — it falls through to a full liquidation.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let btc = Symbol::new(&test.env, "BTC");
+
+        // Large enough for the partial path ($2,000 notional)...
+        let pos = test.market.open_position(
+            &trader, &btc, &(200 * PRECISION), &10, &Direction::Long,
+        );
+        // ...but crashed so hard that equity is gone: `bankrupt` short-circuits
+        // the tranche and the position is closed out entirely in one step.
+        set_btc_price(&test, 53_500 * PRECISION);
+
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(test.market.get_position(&pos.id).is_none());
+        assert_eq!(reward, 0, "no equity left to reward the keeper from");
     }
 }

@@ -228,6 +228,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "insurance_buffer_share_bps"
+                      },
+                      "val": {
+                        "u32": 1000
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "liquidation_fee_bps"
                       },
                       "val": {
@@ -286,6 +294,33 @@
                           "hi": 0,
                           "lo": 100000000
                         }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_cooldown_secs"
+                      },
+                      "val": {
+                        "u64": 30
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_min_notional"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 10000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_tranche_bps"
+                      },
+                      "val": {
+                        "u32": 2000
                       }
                     },
                     {
@@ -1982,6 +2017,14 @@
                             },
                             {
                               "key": {
+                                "symbol": "insurance_buffer_share_bps"
+                              },
+                              "val": {
+                                "u32": 1000
+                              }
+                            },
+                            {
+                              "key": {
                                 "symbol": "liquidation_fee_bps"
                               },
                               "val": {
@@ -2040,6 +2083,33 @@
                                   "hi": 0,
                                   "lo": 100000000
                                 }
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "partial_liq_cooldown_secs"
+                              },
+                              "val": {
+                                "u64": 30
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "partial_liq_min_notional"
+                              },
+                              "val": {
+                                "i128": {
+                                  "hi": 0,
+                                  "lo": 10000000000
+                                }
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "partial_liq_tranche_bps"
+                              },
+                              "val": {
+                                "u32": 2000
                               }
                             },
                             {
@@ -2277,6 +2347,48 @@
             "key": {
               "vec": [
                 {
+                  "symbol": "BufferBalance"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CA36FQITV33RO5SJFPTNLRQBD6ZNAEJG7F7J5KWCV4OP7SQHDMIZCT33",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "BufferBalance"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 94500000
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CA36FQITV33RO5SJFPTNLRQBD6ZNAEJG7F7J5KWCV4OP7SQHDMIZCT33",
+            "key": {
+              "vec": [
+                {
                   "symbol": "Deposited"
                 },
                 {
@@ -2476,7 +2588,7 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 100000997475000
+                    "lo": 100000902975000
                   }
                 }
               }
@@ -4589,6 +4701,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "insurance_buffer_share_bps"
+                      },
+                      "val": {
+                        "u32": 1000
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "liquidation_fee_bps"
                       },
                       "val": {
@@ -4647,6 +4767,33 @@
                           "hi": 0,
                           "lo": 100000000
                         }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_cooldown_secs"
+                      },
+                      "val": {
+                        "u64": 30
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_min_notional"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 10000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "partial_liq_tranche_bps"
+                      },
+                      "val": {
+                        "u32": 2000
                       }
                     },
                     {
@@ -6336,7 +6483,7 @@
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 945000000
+                "lo": 850500000
               }
             }
           }
@@ -6361,7 +6508,7 @@
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 945000000
+                    "lo": 850500000
                   }
                 }
               ]
@@ -6384,6 +6531,83 @@
               },
               {
                 "symbol": "receive_loss"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "37e2c113aef71776492be6d5c6011fb2d01126f97e9eaac2af1cffca071b1191"
+              },
+              {
+                "symbol": "fund_buffer"
+              }
+            ],
+            "data": {
+              "i128": {
+                "hi": 0,
+                "lo": 94500000
+              }
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "37e2c113aef71776492be6d5c6011fb2d01126f97e9eaac2af1cffca071b1191",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "buffer_funded"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 94500000
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "37e2c113aef71776492be6d5c6011fb2d01126f97e9eaac2af1cffca071b1191",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "fund_buffer"
               }
             ],
             "data": "void"

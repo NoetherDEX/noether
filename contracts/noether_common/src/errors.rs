@@ -135,4 +135,8 @@ pub enum NoetherError {
     /// Open would exceed the per-asset-side OI cap or the aggregate
     /// payout-reservation cap (both sized against vault AUM)
     OpenInterestCapExceeded = 82,
+    /// A partial liquidation ran recently: this position is inside its
+    /// grace period and cannot be liquidated again yet (bankruptcy
+    /// overrides the grace period)
+    LiquidationCooldown = 83,
 }
