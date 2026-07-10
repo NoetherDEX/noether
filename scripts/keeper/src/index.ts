@@ -43,7 +43,8 @@ import { initAlerts, sendAlert } from './alerts';
 import { loadKeeperState, saveKeeperState } from './state';
 import { isCrossLiquidationCandidate, isLiquidationCandidate } from './health';
 import { getReferencePrice } from './reference';
-import { getStorkPrice, refreshStorkPrices } from './stork';
+import { getStorkPrice, getStorkStatus, refreshStorkPrices } from './stork';
+import { sendHeartbeat } from './heartbeat';
 
 // Type-only imports — the @noeracle/sdk package is ESM-only, so the runtime
 // load happens via dynamic import() inside getNoeracle().
@@ -349,6 +350,20 @@ class KeeperBot {
       } finally {
         this.oracleUpdateInProgress = false;
       }
+
+      // Oracle-health heartbeat (T3-D1): one self-report per oracle cycle,
+      // fire-and-forget, including cycles that pushed nothing — a silent
+      // keeper is exactly what the health endpoint needs to expose.
+      sendHeartbeat(this.config, {
+        ts: Date.now(),
+        pushed: pushedAssets,
+        stork: getStorkStatus(this.config),
+        stats: {
+          oracleUpdates: this.stats.oracleUpdates,
+          priceSkips: this.stats.priceSkips,
+          errors: this.stats.errors,
+        },
+      });
     }
 
     // 2. One market snapshot per cycle, shared across all scan phases (K-4).

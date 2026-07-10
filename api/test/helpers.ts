@@ -151,6 +151,8 @@ export async function setupTestServer(opts?: {
   }[];
   ordersOverride?: import('../src/routes/orders.js').OrdersRouteDeps;
   txOverride?: import('../src/routes/tx.js').TxRoutesDeps;
+  /** Enables POST /v1/oracle/heartbeat with this shared secret. */
+  keeperHeartbeatSecret?: string;
 }) {
   const reader = {
     async read<T>(_contractId: string, _method: string, args: unknown[] = []): Promise<T> {
@@ -225,7 +227,10 @@ export async function setupTestServer(opts?: {
     oracle, markets, events, apiKeys, walletAuth, rateLimiter, db,
     orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats,
   };
-  const app = await buildServer(TEST_CONFIG, deps);
+  const app = await buildServer(
+    { ...TEST_CONFIG, keeperHeartbeatSecret: opts?.keeperHeartbeatSecret },
+    deps,
+  );
   return { app, db, deps };
 }
 

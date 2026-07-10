@@ -17,6 +17,13 @@ export interface ApiConfig {
   libsqlAuthToken: string | undefined;
   contracts: ContractsManifest;
   ws: WsLimits;
+  /**
+   * Shared secret the keeper presents on POST /v1/oracle/heartbeat.
+   * Optional: unset disables the heartbeat ingest (oracle health then
+   * serves the on-chain-only view) — deliberately NOT a fail-closed boot
+   * requirement.
+   */
+  keeperHeartbeatSecret?: string;
 }
 
 /** WebSocket abuse controls (audit A-5). All overridable via env. */
@@ -49,6 +56,7 @@ export function loadConfig(): ApiConfig {
     sourceAccount: process.env.API_SOURCE_ACCOUNT ?? contracts.admin,
     libsqlUrl: process.env.LIBSQL_URL ?? 'file:../indexer/data/indexer.db',
     libsqlAuthToken: process.env.LIBSQL_AUTH_TOKEN || undefined,
+    keeperHeartbeatSecret: process.env.KEEPER_HEARTBEAT_SECRET || undefined,
     contracts,
     ws: {
       maxConnections: Number(process.env.WS_MAX_CONNECTIONS ?? 1000),

@@ -179,6 +179,12 @@ export interface KeeperConfig {
   /** Ignore cached Stork prices older than this (stale data must not veto). */
   storkMaxAgeMs: number;
 
+  // Oracle-health heartbeat (T3-D1) — fail-open: empty URL disables it.
+  /** api gateway heartbeat ingest URL (…/v1/oracle/heartbeat). */
+  heartbeatUrl: string;
+  /** Shared secret sent as x-keeper-secret. */
+  heartbeatSecret: string;
+
   // Alerting (K-1)
   discordWebhookUrl?: string;
   telegramBotToken?: string;

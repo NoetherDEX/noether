@@ -201,6 +201,11 @@ export function loadConfig(): KeeperConfig {
     storkMaxDivergencePct: envFloat('STORK_MAX_DIVERGENCE_PCT', 1.5),
     storkMaxAgeMs: envInt('STORK_MAX_AGE_MS', 120_000),
 
+    // Oracle-health heartbeat (T3-D1): POSTed to the api gateway after
+    // every oracle cycle. Empty URL = disabled — fire-and-forget either way.
+    heartbeatUrl: process.env.KEEPER_HEARTBEAT_URL || '',
+    heartbeatSecret: process.env.KEEPER_HEARTBEAT_SECRET || '',
+
     // Alerting (K-1)
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || undefined,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,

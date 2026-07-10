@@ -8,6 +8,7 @@ import { DEFAULT_HMAC_PEPPER, type ApiConfig } from './config.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerMarketsRoutes } from './routes/markets.js';
 import { registerOracleRoutes } from './routes/oracle.js';
+import { registerOracleHealthRoutes } from './routes/oracleHealth.js';
 import { registerEventsRoutes } from './routes/events.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerAccountRoutes } from './routes/account.js';
@@ -107,6 +108,12 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   );
   await app.register((instance) => registerMarketsRoutes(instance, deps.markets, deps.stats));
   await app.register((instance) => registerOracleRoutes(instance, deps.oracle));
+  await app.register((instance) =>
+    registerOracleHealthRoutes(instance, {
+      oracle: deps.oracle,
+      heartbeatSecret: config.keeperHeartbeatSecret,
+    }),
+  );
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
   await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth));
   await app.register((instance) => registerAccountRoutes(instance, deps.db));
