@@ -24,6 +24,12 @@
 //!   trading halts loudly rather than serving stale prices silently.
 //! - Admin can rotate the underlying Noeracle address without
 //!   redeploying the shim.
+//! - **Swappable backend (T3-D1 "Chainlink-ready"):** `set_backend` lets the
+//!   admin repoint the shim at a STANDARD SEP-40 oracle (`lastprice(Asset)
+//!   -> Option<PriceData>`, e.g. Reflector today or Chainlink when it ships
+//!   on Stellar) instead of Noeracle's native interface — one admin call,
+//!   with automatic decimal rescaling to Noether's 7. The market's oracle
+//!   slot (this shim's address) never changes.
 
 #![no_std]
 
@@ -43,6 +49,39 @@ pub enum DataKey {
     Admin,
     NoeracleOracle,
     Initialized,
+    /// Backend interface mode (u32): absent/0 = Noeracle native
+    /// `get_price_pers`, 1 = standard SEP-40 `lastprice(Asset)`.
+    BackendMode,
+    /// Backend price decimals (u32): absent = 7. Prices are rescaled to
+    /// Noether's 7-decimal fixed point when this differs.
+    BackendDecimals,
+}
+
+/// Backend interface modes for `set_backend`.
+pub const BACKEND_NOERACLE: u32 = 0;
+pub const BACKEND_SEP40: u32 = 1;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEP-40 types (for the passthrough backend mode)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Mirrors the standard SEP-40 oracle interface (Reflector today, Chainlink
+// when it ships on Stellar): `lastprice(asset: Asset) -> Option<PriceData>`.
+// Variant/field names must match the standard or cross-contract decoding
+// fails.
+
+#[contracttype]
+#[derive(Clone)]
+pub enum Sep40Asset {
+    Stellar(Address),
+    Other(Symbol),
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Sep40PriceData {
+    pub price: i128,
+    pub timestamp: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -98,29 +137,47 @@ impl NoeracleShimContract {
     pub fn lastprice(env: Env, asset: Symbol) -> (i128, u64) {
         Self::require_initialized(&env);
 
-        let noeracle: Address = env
+        let backend: Address = env
             .storage()
             .instance()
             .get(&DataKey::NoeracleOracle)
             .unwrap_or_else(|| panic_with_error!(&env, NoetherError::NotInitialized));
 
-        let tag = match noether_common::assets::symbol_to_tag(&env, &asset) {
-            Ok(t) => t,
-            Err(e) => panic_with_error!(&env, e),
+        let mode: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::BackendMode)
+            .unwrap_or(BACKEND_NOERACLE);
+
+        let (price, timestamp) = if mode == BACKEND_SEP40 {
+            // Standard SEP-40 passthrough: lastprice(Asset::Other(sym)).
+            let args: Vec<soroban_sdk::Val> =
+                (Sep40Asset::Other(asset.clone()),).into_val(&env);
+            let data: Option<Sep40PriceData> =
+                env.invoke_contract(&backend, &Symbol::new(&env, "lastprice"), args);
+            match data {
+                Some(d) => (d.price, d.timestamp),
+                None => panic_with_error!(&env, NoetherError::OracleUnavailable),
+            }
+        } else {
+            // Noeracle native path (default).
+            let tag = match noether_common::assets::symbol_to_tag(&env, &asset) {
+                Ok(t) => t,
+                Err(e) => panic_with_error!(&env, e),
+            };
+            let args: Vec<soroban_sdk::Val> = (tag,).into_val(&env);
+            let entry: Option<NoeraclePriceEntry> = env.invoke_contract(
+                &backend,
+                &Symbol::new(&env, "get_price_pers"),
+                args,
+            );
+            match entry {
+                Some(e) => (e.price, e.timestamp),
+                None => panic_with_error!(&env, NoetherError::OracleUnavailable),
+            }
         };
 
-        // Build the args Vec the way Soroban expects for invoke_contract.
-        let args: Vec<soroban_sdk::Val> = (tag,).into_val(&env);
-        let entry: Option<NoeraclePriceEntry> = env.invoke_contract(
-            &noeracle,
-            &Symbol::new(&env, "get_price_pers"),
-            args,
-        );
-
-        match entry {
-            Some(e) => (e.price, e.timestamp),
-            None => panic_with_error!(&env, NoetherError::OracleUnavailable),
-        }
+        (Self::rescale(&env, price), timestamp)
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -128,10 +185,37 @@ impl NoeracleShimContract {
     // ───────────────────────────────────────────────────────────────────────
 
     /// Point the shim at a different Noeracle deployment (e.g. mainnet
-    /// migration, or testnet redeploy). Admin-authenticated.
+    /// migration, or testnet redeploy). Admin-authenticated. Rotates the
+    /// address only — the backend mode/decimals are untouched, so this is
+    /// for Noeracle→Noeracle moves; use `set_backend` to change vendor.
     pub fn set_noeracle_oracle(env: Env, new_oracle: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::NoeracleOracle, &new_oracle);
+        Ok(())
+    }
+
+    /// Swap the price backend in ONE admin call (T3-D1 "Chainlink-ready"):
+    /// `mode` 0 = Noeracle native (`decimals` must be 7), 1 = standard
+    /// SEP-40 `lastprice(Asset)` (e.g. Reflector at 14 decimals, Chainlink
+    /// when it ships on Stellar). Prices from a backend with different
+    /// decimals are rescaled to Noether's 7 on every read. The market keeps
+    /// reading this shim's address throughout — no market change, ever.
+    pub fn set_backend(
+        env: Env,
+        mode: u32,
+        oracle: Address,
+        decimals: u32,
+    ) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        if mode > BACKEND_SEP40 || decimals > 18 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        if mode == BACKEND_NOERACLE && decimals != 7 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        env.storage().instance().set(&DataKey::NoeracleOracle, &oracle);
+        env.storage().instance().set(&DataKey::BackendMode, &mode);
+        env.storage().instance().set(&DataKey::BackendDecimals, &decimals);
         Ok(())
     }
 
@@ -178,6 +262,27 @@ impl NoeracleShimContract {
         7
     }
 
+    /// Current backend: (mode, oracle address, backend decimals).
+    pub fn get_backend(env: Env) -> Result<(u32, Address, u32), NoetherError> {
+        Self::require_initialized(&env);
+        let oracle: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::NoeracleOracle)
+            .ok_or(NoetherError::NotInitialized)?;
+        let mode: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::BackendMode)
+            .unwrap_or(BACKEND_NOERACLE);
+        let decimals: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::BackendDecimals)
+            .unwrap_or(7);
+        Ok((mode, oracle, decimals))
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Internal helpers
     // ───────────────────────────────────────────────────────────────────────
@@ -185,6 +290,31 @@ impl NoeracleShimContract {
     fn require_initialized(env: &Env) {
         if !env.storage().instance().has(&DataKey::Initialized) {
             panic_with_error!(env, NoetherError::NotInitialized);
+        }
+    }
+
+    /// Rescale a backend price to Noether's 7-decimal fixed point. A wrong
+    /// or overflowing scale panics InvalidPrice — never serve a mis-scaled
+    /// price to the market.
+    fn rescale(env: &Env, price: i128) -> i128 {
+        let decimals: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::BackendDecimals)
+            .unwrap_or(7);
+        if price <= 0 {
+            panic_with_error!(env, NoetherError::InvalidPrice);
+        }
+        if decimals == 7 {
+            return price;
+        }
+        if decimals > 7 {
+            price / 10i128.pow(decimals - 7)
+        } else {
+            match price.checked_mul(10i128.pow(7 - decimals)) {
+                Some(p) => p,
+                None => panic_with_error!(env, NoetherError::InvalidPrice),
+            }
         }
     }
 
@@ -313,5 +443,105 @@ mod tests {
     fn decimals_is_seven() {
         let (_, _, _, client) = setup();
         assert_eq!(client.decimals(), 7);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Swappable backend (T3-D1 "Chainlink-ready")
+    // ═══════════════════════════════════════════════════════════════════
+
+    // Mock standard SEP-40 oracle (Reflector-style, 14 decimals): returns a
+    // fixed price for Asset::Other("BTC"), None otherwise.
+    mod mock_sep40 {
+        use super::{Sep40Asset, Sep40PriceData};
+        use soroban_sdk::{contract, contractimpl, Env, Symbol};
+
+        #[contract]
+        pub struct MockSep40Contract;
+
+        #[contractimpl]
+        impl MockSep40Contract {
+            pub fn lastprice(env: Env, asset: Sep40Asset) -> Option<Sep40PriceData> {
+                match asset {
+                    Sep40Asset::Other(sym) if sym == Symbol::new(&env, "BTC") => {
+                        Some(Sep40PriceData {
+                            // $70,000 at 14 decimals
+                            price: 7_000_000_000_000_000_000,
+                            timestamp: 1_700_000_100,
+                        })
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn set_backend_swaps_to_sep40_and_rescales() {
+        let (env, _, _, client) = setup();
+        let sep40_id = env.register_contract(None, mock_sep40::MockSep40Contract);
+
+        // One admin call: vendor swap to a standard SEP-40 feed at 14 dp.
+        client.set_backend(&BACKEND_SEP40, &sep40_id, &14u32);
+
+        let (price, ts) = client.lastprice(&Symbol::new(&env, "BTC"));
+        // 7e18 (14 dp) → 7e11 (7 dp) = $70,000.0000000
+        assert_eq!(price, 700_000_000_000);
+        assert_eq!(ts, 1_700_000_100);
+        assert_eq!(client.get_backend(), (BACKEND_SEP40, sep40_id, 14u32));
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #32)")] // OracleUnavailable
+    fn sep40_backend_none_panics_unavailable() {
+        let (env, _, _, client) = setup();
+        let sep40_id = env.register_contract(None, mock_sep40::MockSep40Contract);
+        client.set_backend(&BACKEND_SEP40, &sep40_id, &14u32);
+        // Mock returns None for ETH — must halt loudly, same as Noeracle path.
+        let _ = client.lastprice(&Symbol::new(&env, "ETH"));
+    }
+
+    #[test]
+    fn set_backend_swaps_back_to_noeracle() {
+        let (env, _, noeracle, client) = setup();
+        let sep40_id = env.register_contract(None, mock_sep40::MockSep40Contract);
+        client.set_backend(&BACKEND_SEP40, &sep40_id, &14u32);
+
+        // And back — the reversibility half of the Chainlink-ready story.
+        client.set_backend(&BACKEND_NOERACLE, &noeracle, &7u32);
+        let (price, ts) = client.lastprice(&Symbol::new(&env, "BTC"));
+        assert_eq!(price, 700_000_000_000_000);
+        assert_eq!(ts, 1_700_000_000);
+    }
+
+    #[test]
+    fn set_backend_rejects_bad_params() {
+        let (env, _, noeracle, client) = setup();
+        // Unknown mode
+        assert_eq!(
+            client.try_set_backend(&2u32, &noeracle, &7u32),
+            Err(Ok(NoetherError::InvalidParameter))
+        );
+        // Absurd decimals
+        assert_eq!(
+            client.try_set_backend(&BACKEND_SEP40, &noeracle, &19u32),
+            Err(Ok(NoetherError::InvalidParameter))
+        );
+        // Noeracle mode must stay at 7 decimals
+        assert_eq!(
+            client.try_set_backend(&BACKEND_NOERACLE, &noeracle, &14u32),
+            Err(Ok(NoetherError::InvalidParameter))
+        );
+        let _ = env;
+    }
+
+    #[test]
+    fn default_backend_is_noeracle_native() {
+        // A shim deployed/initialized without ever calling set_backend must
+        // behave exactly as before the feature existed (storage-compatible
+        // with the live instance).
+        let (env, _, noeracle, client) = setup();
+        assert_eq!(client.get_backend(), (BACKEND_NOERACLE, noeracle, 7u32));
+        let (price, _) = client.lastprice(&Symbol::new(&env, "BTC"));
+        assert_eq!(price, 700_000_000_000_000);
     }
 }
