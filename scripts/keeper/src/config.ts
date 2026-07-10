@@ -194,6 +194,13 @@ export function loadConfig(): KeeperConfig {
       process.env.REFERENCE_TICKER_URL || 'https://api.binance.com/api/v3/ticker/price',
     referenceDivergencePct: envFloat('REFERENCE_DIVERGENCE_PCT', 5),
 
+    // Stork secondary oracle (T3-D1). Empty key = disabled = the keeper
+    // runs Noeracle-only, exactly as before — fail-open by design.
+    storkApiKey: process.env.STORK_API_KEY || '',
+    storkRestUrl: process.env.STORK_REST_URL || 'https://rest.jp.stork-oracle.network',
+    storkMaxDivergencePct: envFloat('STORK_MAX_DIVERGENCE_PCT', 1.5),
+    storkMaxAgeMs: envInt('STORK_MAX_AGE_MS', 120_000),
+
     // Alerting (K-1)
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || undefined,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,
@@ -209,6 +216,11 @@ export function loadConfig(): KeeperConfig {
   }
   if (!config.noeracleContractId) {
     console.warn('⚠️  Warning: NOERACLE_CONTRACT_ID not set. Price publishing will not work.');
+  }
+  if (config.storkApiKey) {
+    console.log('🔐 Stork secondary oracle ENABLED (dual-source cross-validation active)');
+  } else {
+    console.log('ℹ️  Stork secondary oracle disabled (no STORK_API_KEY) — running Noeracle-only');
   }
 
   return config;

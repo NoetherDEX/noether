@@ -169,6 +169,16 @@ export interface KeeperConfig {
   /** Skip the push when attestation vs reference diverges more than this %. */
   referenceDivergencePct: number;
 
+  // Stork secondary oracle (T3-D1) — fail-open: empty key disables it.
+  /** Stork API token (Authorization: Basic <token>). Empty = disabled. */
+  storkApiKey: string;
+  /** Stork Core REST base URL. */
+  storkRestUrl: string;
+  /** Skip the push when attestation vs Stork diverges more than this %. */
+  storkMaxDivergencePct: number;
+  /** Ignore cached Stork prices older than this (stale data must not veto). */
+  storkMaxAgeMs: number;
+
   // Alerting (K-1)
   discordWebhookUrl?: string;
   telegramBotToken?: string;

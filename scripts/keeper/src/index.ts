@@ -43,6 +43,7 @@ import { initAlerts, sendAlert } from './alerts';
 import { loadKeeperState, saveKeeperState } from './state';
 import { isCrossLiquidationCandidate, isLiquidationCandidate } from './health';
 import { getReferencePrice } from './reference';
+import { getStorkPrice, refreshStorkPrices } from './stork';
 
 // Type-only imports — the @noeracle/sdk package is ESM-only, so the runtime
 // load happens via dynamic import() inside getNoeracle().
@@ -439,6 +440,11 @@ class KeeperBot {
       return pushed;
     }
 
+    // Stork secondary oracle (T3-D1): one batched fetch per cycle so the
+    // per-asset defense below can cross-check. No key / unreachable →
+    // no-op (fail-open); the defense simply sees "no data".
+    await refreshStorkPrices(this.config, this.config.assets.map(a => a.symbol));
+
     // Validate every asset first (K-2 defenses unchanged, per asset), then
     // push the survivors as ONE batched transaction per cycle — the hardened
     // update_batch_ed25519_persistent takes a whole round in one call, so
@@ -608,6 +614,27 @@ class KeeperBot {
       }
     } else {
       console.warn(`\n⚠️  ${symbol}: independent reference unreachable — pushing without cross-check`);
+    }
+
+    // 4. Stork secondary oracle (T3-D1). Fail-open when absent, stale, or
+    //    unreachable — the system must run without it — but an AVAILABLE
+    //    and strongly-divergent Stork blocks this asset's push: two
+    //    independent oracles disagreeing is a compromise signal, not noise.
+    //    Persistent disagreement drives the market stale (#30) for the
+    //    asset: opens halt, closes keep working — the safe failure mode.
+    const stork = getStorkPrice(symbol, this.config.storkMaxAgeMs);
+    if (stork !== null) {
+      const storkDivergencePct = (Math.abs(priceHuman - stork) / stork) * 100;
+      if (storkDivergencePct > this.config.storkMaxDivergencePct) {
+        this.stats.priceSkips++;
+        console.warn(`\n🛑 ${symbol} attestation $${priceHuman} diverges ${storkDivergencePct.toFixed(2)}% from Stork $${stork} — skipping push`);
+        void sendAlert(
+          'critical',
+          `DUAL-SOURCE DISAGREEMENT: ${symbol} Noeracle vs Stork`,
+          `attestation $${priceHuman} vs Stork $${stork} (${storkDivergencePct.toFixed(2)}% > ${this.config.storkMaxDivergencePct}%). One of the two feeds is wrong — investigate before unblocking.`,
+        );
+        return false;
+      }
     }
 
     return true;

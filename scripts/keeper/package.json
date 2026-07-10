@@ -10,7 +10,8 @@
     "start:ts": "ts-node src/index.ts",
     "dev": "ts-node-dev --respawn src/index.ts",
     "smoke": "ts-node src/smoke.ts",
-    "noeracle:check": "ts-node src/check-noeracle.ts"
+    "noeracle:check": "ts-node src/check-noeracle.ts",
+    "stork:check": "ts-node src/stork-check.ts"
   },
   "dependencies": {
     "@noeracle/sdk": "^0.2.1",
