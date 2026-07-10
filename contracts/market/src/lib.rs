@@ -202,9 +202,38 @@ impl MarketContract {
 
     /// Swap the running WASM in place; all storage (positions, orders,
     /// cross balances) is preserved across the upgrade.
+    ///
+    /// ⚠️ When the new wasm's `MarketConfig` has MORE fields than the stored
+    /// one, every config-reading entry point traps until `migrate_config`
+    /// rewrites it (Soroban decodes structs by exact field set). Pause →
+    /// upgrade → migrate_config → unpause. See `migrate_config`.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
         require_admin(&env)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
+    /// Overwrite the stored `MarketConfig` WITHOUT reading the old value.
+    ///
+    /// A Soroban struct is stored as an exact field map, so after an
+    /// `upgrade` that adds config fields the old value no longer decodes:
+    /// `get_config` traps with `UnexpectedSize` and the market is bricked
+    /// until this runs. This entry point never reads the old config, so it
+    /// is callable in that state — the one-way door out of a config-shape
+    /// upgrade. Admin-only; validated like `initialize`.
+    pub fn migrate_config(env: Env, config: MarketConfig) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if config.max_leverage == 0
+            || config.min_collateral <= 0
+            || config.maintenance_margin_bps >= BASIS_POINTS
+            || config.liquidation_fee_bps >= BASIS_POINTS
+            || config.partial_liq_tranche_bps >= BASIS_POINTS
+            || config.insurance_buffer_share_bps > BASIS_POINTS
+        {
+            return Err(NoetherError::InvalidParameter);
+        }
+        set_config(&env, &config);
+        extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -3913,6 +3942,108 @@ mod tests {
         // It took several partial rounds before the final full liquidation.
         assert!(rounds > 1, "expected multiple partial rounds, got {rounds}");
         assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Config-shape upgrade path (deploy safety)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// The MarketConfig as stored by the currently-DEPLOYED wasm (11 fields,
+    /// pre-T3-D4). Soroban stores a struct as an exact field map, so this is
+    /// what an in-place `upgrade()` leaves behind.
+    #[soroban_sdk::contracttype]
+    #[derive(Clone)]
+    pub struct PreT3MarketConfig {
+        pub min_collateral: i128,
+        pub max_leverage: u32,
+        pub maintenance_margin_bps: u32,
+        pub liquidation_fee_bps: u32,
+        pub trading_fee_bps: u32,
+        pub base_funding_rate_bps: u32,
+        pub max_position_size: i128,
+        pub max_price_staleness: u64,
+        pub max_oracle_deviation_bps: u32,
+        pub base_maker_fee_bps: u32,
+        pub base_taker_fee_bps: u32,
+    }
+
+    fn write_pre_t3_config(test: &TestEnv) {
+        test.env.as_contract(&test.market_id, || {
+            let old = PreT3MarketConfig {
+                min_collateral: 10 * PRECISION,
+                max_leverage: 10,
+                maintenance_margin_bps: 100,
+                liquidation_fee_bps: 500,
+                trading_fee_bps: 10,
+                base_funding_rate_bps: 1,
+                max_position_size: 100_000 * PRECISION,
+                max_price_staleness: 60,
+                max_oracle_deviation_bps: 100,
+                base_maker_fee_bps: 2,
+                base_taker_fee_bps: 5,
+            };
+            test.env.storage().instance().set(&DataKey::Config, &old);
+        });
+    }
+
+    #[test]
+    #[should_panic] // HostError: Error(Object, UnexpectedSize)
+    fn test_pre_upgrade_config_cannot_be_read_by_new_wasm() {
+        // Documents WHY migrate_config exists: after an in-place upgrade the
+        // old config no longer decodes, and every config-reading entry point
+        // traps. `unwrap_or_default()` does NOT rescue this — the trap
+        // happens inside the storage read.
+        let test = setup();
+        write_pre_t3_config(&test);
+        let _ = test.env.as_contract(&test.market_id, || get_config(&test.env));
+    }
+
+    #[test]
+    fn test_migrate_config_recovers_a_bricked_upgrade() {
+        let test = setup();
+        write_pre_t3_config(&test);
+
+        // migrate_config never reads the old value, so it works from the
+        // bricked state — the one-way door out.
+        let fresh = MarketConfig::default();
+        test.market.migrate_config(&fresh);
+
+        let cfg = test.env.as_contract(&test.market_id, || get_config(&test.env));
+        assert_eq!(cfg.partial_liq_min_notional, 1_000 * PRECISION);
+        assert_eq!(cfg.partial_liq_tranche_bps, 2_000);
+        assert_eq!(cfg.partial_liq_cooldown_secs, 30);
+        assert_eq!(cfg.insurance_buffer_share_bps, 1_000);
+
+        // ...and trading works again.
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let pos = test.market.open_position(
+            &trader, &Symbol::new(&test.env, "BTC"), &(50 * PRECISION), &5, &Direction::Long,
+        );
+        assert!(pos.id > 0);
+    }
+
+    #[test]
+    fn test_migrate_config_rejects_nonsense() {
+        let test = setup();
+        // 100% tranche would be a full liquidation wearing a partial's clothes
+        let bad = MarketConfig {
+            partial_liq_tranche_bps: BASIS_POINTS,
+            ..MarketConfig::default()
+        };
+        assert_eq!(
+            test.market.try_migrate_config(&bad),
+            Err(Ok(NoetherError::InvalidParameter))
+        );
+
+        // >100% of proceeds to the buffer would starve LPs entirely
+        let bad2 = MarketConfig {
+            insurance_buffer_share_bps: BASIS_POINTS + 1,
+            ..MarketConfig::default()
+        };
+        assert_eq!(
+            test.market.try_migrate_config(&bad2),
+            Err(Ok(NoetherError::InvalidParameter))
+        );
     }
 
     #[test]

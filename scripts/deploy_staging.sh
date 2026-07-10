@@ -175,9 +175,13 @@ init_contract "market (oracle → shim)" --id "$GREEN_MARKET_ID" --source "$ADMI
   --usdc_token "$NEXT_PUBLIC_USDC_TOKEN_ID" --config-file-path "$MKTCFG"
 rm -f "$MKTCFG"
 
-# Router: initialize(admin, market, noeracle)
+# Router: initialize(admin, market, noeracle, publishers) — the publisher
+# allowlist (O-2/P2-4) is REQUIRED and must be non-empty; default is the live
+# Noeracle attestation-service Ed25519 key (confirmed via api.noeracle.org).
+ROUTER_PUBLISHERS_JSON="${ROUTER_PUBLISHERS_JSON:-[\"8f8650ca5cb1bc7491b68e02f4d89e54da1f1996e161897b0eabadc28534e17a\"]}"
 init_contract "router" --id "$GREEN_ROUTER_ID" --source "$ADMIN" --network testnet -- initialize \
-  --admin "$ADMIN_PK" --market "$GREEN_MARKET_ID" --noeracle "$NEXT_PUBLIC_NOERACLE_ID"
+  --admin "$ADMIN_PK" --market "$GREEN_MARKET_ID" --noeracle "$NEXT_PUBLIC_NOERACLE_ID" \
+  --publishers "$ROUTER_PUBLISHERS_JSON"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
