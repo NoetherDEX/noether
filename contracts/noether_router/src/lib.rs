@@ -31,6 +31,17 @@
 //! publisher allowlist (O-2) and coarse price bands (O-7) stay in front of it
 //! as defense-in-depth. Requires a Noeracle deployment that exports the
 //! hardened entrypoint — the pre-hardening instance does not.
+//!
+//! ## Stork second source (T3-D1)
+//!
+//! An optional, admin-enabled dual-source layer: anyone may `relay_stork` a
+//! Stork Fast `signed_ecdsa` payload (secp256k1-verified on-chain against
+//! the pinned aggregator address), and risk-increasing paths (open,
+//! execute) then cross-check the Noeracle attestation against the fresh
+//! Stork price — halting opens (#81) on divergence while closes and
+//! liquidations stay ungated. Fail-open by design: unconfigured, disabled,
+//! or Stork-missing/stale (with `require_fresh` off) all mean the router
+//! behaves exactly as single-source.
 
 #![no_std]
 // Soroban entry points carrying full oracle attestations exceed clippy's 7-arg heuristic
@@ -38,7 +49,7 @@
 
 use noether_common::{assets::symbol_to_tag, ttl::{TTL_EXTEND_TO, TTL_THRESHOLD}, Direction, NoetherError, Position};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
+    contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec,
 };
 
 #[contracttype]
@@ -50,7 +61,59 @@ pub enum DataKey {
     Initialized,
     /// Publisher pubkeys whose attestations refresh_price will relay
     Publishers,
+    /// Stork second-source configuration (T3-D1); absent = feature off
+    Stork,
+    /// Stork taxonomy asset_id → Noether 8-byte tag mapping
+    StorkAssets,
+    /// Last verified Stork price per tag (temporary storage)
+    StorkPrice(BytesN<8>),
 }
+
+/// Stork second-source configuration (T3-D1). The feature is inert until an
+/// admin stores this with `enabled = true` — with it absent or disabled the
+/// router behaves exactly as a single-source (Noeracle) deployment.
+#[contracttype]
+#[derive(Clone)]
+pub struct StorkConfig {
+    pub enabled: bool,
+    /// Strict mode: opens REQUIRE fresh Stork data. Off = fail-open — a
+    /// missing/stale Stork price skips the cross-check (the system must
+    /// run when Stork doesn't).
+    pub require_fresh: bool,
+    /// EVM-style address of Stork's aggregator key:
+    /// keccak256(uncompressed_pubkey[1..65])[12..32].
+    pub signer: BytesN<20>,
+    /// Stork Fast taxonomy id this deployment consumes.
+    pub taxonomy: u32,
+    /// Ignore Stork prices older than this many seconds.
+    pub max_age_secs: u64,
+    /// Halt opens when |noeracle − stork| exceeds this many bps of stork.
+    pub max_dev_bps: u32,
+}
+
+/// One verified Stork price (7-decimal fixed point + signing time in ns).
+#[contracttype]
+#[derive(Clone)]
+pub struct StorkPriceEntry {
+    pub price: i128,
+    pub timestamp_ns: u64,
+}
+
+// Stork payload layout (Stork Fast `signed_ecdsa`, all big-endian):
+//   [0..64)  signature r ‖ s
+//   [64]     recovery byte (0/1 — raw, NOT the EVM +27 form)
+//   [65..67) taxonomy id, u16
+//   [67..75) timestamp, u64 UNIX NANOSECONDS (one per batch)
+//   [75..)   N × (asset_id u16 ‖ quantized_value i128, 10^18-scaled)
+// Verification is raw keccak256 over payload[65..] — no EIP-191 prefix.
+const STORK_HEADER_LEN: u32 = 75;
+const STORK_ENTRY_LEN: u32 = 18;
+// 10^18 (Stork quantization) → 10^7 (Noether PRECISION)
+const STORK_SCALE_DIVISOR: i128 = 100_000_000_000;
+// Temporary-storage TTL for relayed prices (ledgers, ~5s each): entries
+// only need to outlive max_age_secs, not rent long-term.
+const STORK_TTL_THRESHOLD: u32 = 60;
+const STORK_TTL_EXTEND: u32 = 240;
 
 /// One signed Noeracle price attestation (used by the multi-asset
 /// cross-liquidation entry point).
@@ -123,6 +186,9 @@ impl NoetherRouterContract {
         trader.require_auth();
 
         Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+        // Stork second-source cross-check (T3-D1) — risk-increasing paths
+        // only; closes and liquidations are never gated on Stork.
+        Self::stork_guard(&env, &asset, price)?;
 
         let market = Self::market_addr(&env)?;
         let open_args: Vec<Val> = (trader, asset, collateral, leverage, direction).into_val(&env);
@@ -202,6 +268,9 @@ impl NoetherRouterContract {
         keeper.require_auth();
 
         Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+        // Order execution can open/extend exposure, so it gets the same
+        // Stork cross-check as opens (closes/liquidations are never gated).
+        Self::stork_guard(&env, &asset, price)?;
 
         let market = Self::market_addr(&env)?;
         let args: Vec<Val> = (keeper, order_id).into_val(&env);
@@ -235,9 +304,148 @@ impl NoetherRouterContract {
         Ok(reward)
     }
 
+    /// Relay one Stork Fast `signed_ecdsa` payload: verify the secp256k1
+    /// signature against the configured aggregator address, then store every
+    /// mapped asset's price (converted to 7-decimal fixed point) for the
+    /// open-path cross-check. Permissionless — validity comes from the
+    /// signature, exactly like Noeracle attestation relaying. Returns how
+    /// many asset prices were stored (unmapped taxonomy ids are skipped).
+    pub fn relay_stork(env: Env, payload: Bytes) -> Result<u32, NoetherError> {
+        let cfg: StorkConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::Stork)
+            .ok_or(NoetherError::NotInitialized)?;
+        if !cfg.enabled {
+            return Err(NoetherError::Unauthorized);
+        }
+
+        let len = payload.len();
+        if len < STORK_HEADER_LEN + STORK_ENTRY_LEN
+            || !(len - STORK_HEADER_LEN).is_multiple_of(STORK_ENTRY_LEN)
+        {
+            return Err(NoetherError::InvalidParameter);
+        }
+
+        // Signature: raw keccak256 over payload[65..], recovery byte 0/1.
+        let mut sig = [0u8; 64];
+        payload.slice(0..64).copy_into_slice(&mut sig);
+        let rid = payload.get(64).ok_or(NoetherError::InvalidParameter)?;
+        if rid > 1 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        let digest = env.crypto().keccak256(&payload.slice(65..len));
+        let pk = env
+            .crypto()
+            .secp256k1_recover(&digest, &BytesN::from_array(&env, &sig), rid as u32);
+        // EVM address of the recovered key = keccak256(pubkey[1..65])[12..32]
+        let pk_bytes: Bytes = pk.into();
+        let addr_hash: Bytes = env.crypto().keccak256(&pk_bytes.slice(1..65)).to_bytes().into();
+        let mut signer20 = [0u8; 20];
+        addr_hash.slice(12..32).copy_into_slice(&mut signer20);
+        if BytesN::from_array(&env, &signer20) != cfg.signer {
+            return Err(NoetherError::Unauthorized);
+        }
+
+        // Header: taxonomy must match; one timestamp covers the batch.
+        let mut two = [0u8; 2];
+        payload.slice(65..67).copy_into_slice(&mut two);
+        if u16::from_be_bytes(two) as u32 != cfg.taxonomy {
+            return Err(NoetherError::InvalidParameter);
+        }
+        let mut eight = [0u8; 8];
+        payload.slice(67..75).copy_into_slice(&mut eight);
+        let ts_ns = u64::from_be_bytes(eight);
+        let now = env.ledger().timestamp();
+        if now.saturating_sub(ts_ns / 1_000_000_000) > cfg.max_age_secs {
+            return Err(NoetherError::PriceStale);
+        }
+
+        let map: Vec<(u32, BytesN<8>)> = env
+            .storage()
+            .instance()
+            .get(&DataKey::StorkAssets)
+            .unwrap_or(Vec::new(&env));
+
+        let mut stored: u32 = 0;
+        let mut off = STORK_HEADER_LEN;
+        while off + STORK_ENTRY_LEN <= len {
+            payload.slice(off..off + 2).copy_into_slice(&mut two);
+            let id = u16::from_be_bytes(two) as u32;
+            let mut sixteen = [0u8; 16];
+            payload.slice(off + 2..off + 18).copy_into_slice(&mut sixteen);
+            let value = i128::from_be_bytes(sixteen);
+            off += STORK_ENTRY_LEN;
+
+            let mut tag: Option<BytesN<8>> = None;
+            for pair in map.iter() {
+                if pair.0 == id {
+                    tag = Some(pair.1.clone());
+                    break;
+                }
+            }
+            let Some(tag) = tag else { continue };
+            let price = value / STORK_SCALE_DIVISOR;
+            if price <= 0 {
+                continue;
+            }
+
+            // Monotonic per asset (compared in ns): an older relayed payload
+            // must never overwrite fresher data. A lagging payload is a
+            // silent skip, mirroring Noeracle's round semantics.
+            let key = DataKey::StorkPrice(tag);
+            let prev: Option<StorkPriceEntry> = env.storage().temporary().get(&key);
+            if let Some(prev) = prev {
+                if ts_ns <= prev.timestamp_ns {
+                    continue;
+                }
+            }
+            env.storage().temporary().set(
+                &key,
+                &StorkPriceEntry { price, timestamp_ns: ts_ns },
+            );
+            env.storage()
+                .temporary()
+                .extend_ttl(&key, STORK_TTL_THRESHOLD, STORK_TTL_EXTEND);
+            stored += 1;
+        }
+        Ok(stored)
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Admin
     // ───────────────────────────────────────────────────────────────────────
+
+    /// Store the Stork second-source configuration. Admin-authenticated.
+    /// Storing `enabled = false` (or never calling this) keeps the router
+    /// single-source: every trade path behaves exactly as before.
+    pub fn set_stork_config(env: Env, config: StorkConfig) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        if config.enabled && (config.max_age_secs == 0 || config.max_dev_bps == 0) {
+            return Err(NoetherError::InvalidParameter);
+        }
+        env.storage().instance().set(&DataKey::Stork, &config);
+        Ok(())
+    }
+
+    /// Replace the Stork taxonomy asset_id → Noether tag mapping (full
+    /// replace, parallel vectors). Admin-authenticated.
+    pub fn set_stork_assets(
+        env: Env,
+        ids: Vec<u32>,
+        tags: Vec<BytesN<8>>,
+    ) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        if ids.len() != tags.len() {
+            return Err(NoetherError::InvalidParameter);
+        }
+        let mut map: Vec<(u32, BytesN<8>)> = Vec::new(&env);
+        for i in 0..ids.len() {
+            map.push_back((ids.get_unchecked(i), tags.get_unchecked(i)));
+        }
+        env.storage().instance().set(&DataKey::StorkAssets, &map);
+        Ok(())
+    }
 
     /// Replace the allowed publisher key set. Admin-authenticated.
     pub fn set_publishers(
@@ -300,6 +508,18 @@ impl NoetherRouterContract {
         Self::noeracle_addr(&env)
     }
 
+    pub fn get_stork_config(env: Env) -> Option<StorkConfig> {
+        env.storage().instance().get(&DataKey::Stork)
+    }
+
+    /// Last verified Stork price for a market asset symbol (7-decimal fixed
+    /// point + signing time in ns), or None when never relayed / expired.
+    /// Consumed by the oracle health surface.
+    pub fn get_stork_price(env: Env, asset: Symbol) -> Option<StorkPriceEntry> {
+        let tag = symbol_to_tag(&env, &asset).ok()?;
+        env.storage().temporary().get(&DataKey::StorkPrice(tag))
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Internal helpers
     // ───────────────────────────────────────────────────────────────────────
@@ -359,6 +579,45 @@ impl NoetherRouterContract {
             &Symbol::new(env, "update_batch_ed25519_persistent"),
             update_args,
         );
+        Ok(())
+    }
+
+    /// Stork second-source cross-check for risk-increasing paths (T3-D1).
+    ///
+    /// FAIL-OPEN when the feature is unconfigured/disabled, or when Stork
+    /// data is missing/stale and `require_fresh` is off — the system must
+    /// run without Stork. FAIL-CLOSED when fresh Stork data disagrees with
+    /// the Noeracle attestation beyond `max_dev_bps`: two independent
+    /// sources disagreeing means one of them is wrong, and opens halt
+    /// (#81) until they re-converge. Closes/liquidations never call this.
+    fn stork_guard(env: &Env, asset: &Symbol, noeracle_price: i128) -> Result<(), NoetherError> {
+        let cfg_opt: Option<StorkConfig> = env.storage().instance().get(&DataKey::Stork);
+        let Some(cfg) = cfg_opt else { return Ok(()) };
+        if !cfg.enabled {
+            return Ok(());
+        }
+
+        let tag = symbol_to_tag(env, asset)?;
+        let entry: Option<StorkPriceEntry> =
+            env.storage().temporary().get(&DataKey::StorkPrice(tag));
+        let now = env.ledger().timestamp();
+        let fresh = entry
+            .as_ref()
+            .map(|e| now.saturating_sub(e.timestamp_ns / 1_000_000_000) <= cfg.max_age_secs)
+            .unwrap_or(false);
+        if !fresh {
+            return if cfg.require_fresh {
+                Err(NoetherError::PriceStale)
+            } else {
+                Ok(())
+            };
+        }
+
+        let stork = entry.unwrap().price;
+        let dev_bps = (noeracle_price - stork).abs() * 10_000 / stork;
+        if dev_bps > cfg.max_dev_bps as i128 {
+            return Err(NoetherError::PriceDeviationTooHigh);
+        }
         Ok(())
     }
 
@@ -829,5 +1088,334 @@ mod tests {
             &pubkeys(&f.env),
             &sigs(&f.env),
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Stork second source (T3-D1)
+    // ═══════════════════════════════════════════════════════════════════
+
+    mod stork_helpers {
+        extern crate std;
+        use sha3::{Digest, Keccak256};
+
+        pub const TAXONOMY: u16 = 1;
+
+        /// Deterministic test signing key (Stork aggregator stand-in).
+        pub fn signing_key() -> k256::ecdsa::SigningKey {
+            k256::ecdsa::SigningKey::from_slice(&[0x42u8; 32]).unwrap()
+        }
+
+        pub fn rogue_key() -> k256::ecdsa::SigningKey {
+            k256::ecdsa::SigningKey::from_slice(&[0x24u8; 32]).unwrap()
+        }
+
+        /// EVM-style address of a key: keccak256(uncompressed[1..65])[12..32].
+        pub fn signer_evm_addr(sk: &k256::ecdsa::SigningKey) -> [u8; 20] {
+            let pk = sk.verifying_key().to_encoded_point(false);
+            let hash = Keccak256::digest(&pk.as_bytes()[1..]);
+            hash[12..32].try_into().unwrap()
+        }
+
+        /// Build a signed Stork Fast payload:
+        /// sig(64) ‖ rid(1) ‖ taxonomy(2) ‖ ts_ns(8) ‖ N×(id(2) ‖ value(16)).
+        pub fn payload(
+            sk: &k256::ecdsa::SigningKey,
+            taxonomy: u16,
+            ts_ns: u64,
+            entries: &[(u16, i128)],
+        ) -> std::vec::Vec<u8> {
+            let mut tail = std::vec::Vec::new();
+            tail.extend_from_slice(&taxonomy.to_be_bytes());
+            tail.extend_from_slice(&ts_ns.to_be_bytes());
+            for (id, value) in entries {
+                tail.extend_from_slice(&id.to_be_bytes());
+                tail.extend_from_slice(&value.to_be_bytes());
+            }
+            let digest = Keccak256::digest(&tail);
+            let (sig, rid) = sk.sign_prehash_recoverable(&digest).unwrap();
+            let mut out = sig.to_bytes().to_vec();
+            out.push(rid.to_byte());
+            out.extend_from_slice(&tail);
+            out
+        }
+    }
+
+    use soroban_sdk::testutils::Ledger as _;
+
+    const NS: u64 = 1_000_000_000;
+    const STORK_TS: u64 = 1_700_000_000; // seconds
+    const E18: i128 = 1_000_000_000_000_000_000;
+
+    /// Enable the Stork layer on the fixture: config + BTC/ETH id mapping.
+    /// Returns the aggregator signing key.
+    fn enable_stork(f: &Fixture, require_fresh: bool) -> k256::ecdsa::SigningKey {
+        let sk = stork_helpers::signing_key();
+        f.client.set_stork_config(&StorkConfig {
+            enabled: true,
+            require_fresh,
+            signer: BytesN::from_array(&f.env, &stork_helpers::signer_evm_addr(&sk)),
+            taxonomy: stork_helpers::TAXONOMY as u32,
+            max_age_secs: 60,
+            max_dev_bps: 100, // 1%
+        });
+        f.client.set_stork_assets(
+            &soroban_sdk::vec![&f.env, 0u32, 1u32],
+            &soroban_sdk::vec![
+                &f.env,
+                BytesN::from_array(&f.env, b"BTCUSD\0\0"),
+                BytesN::from_array(&f.env, b"ETHUSD\0\0"),
+            ],
+        );
+        sk
+    }
+
+    fn open_btc_at(f: &Fixture, noeracle_price: i128) -> Result<Position, NoetherError> {
+        f.client
+            .try_open_with_price(
+                &Address::generate(&f.env),
+                &Symbol::new(&f.env, "BTC"),
+                &(100 * PRECISION),
+                &5,
+                &Direction::Long,
+                &noeracle_price,
+                &STORK_TS,
+                &1u64,
+                &pubkeys(&f.env),
+                &sigs(&f.env),
+            )
+            .map_err(|e| e.unwrap())
+            .map(|r| r.unwrap())
+    }
+
+    #[test]
+    fn relay_stork_stores_mapped_assets_at_7dp() {
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        // BTC $70k + ETH $3k at 10^18, plus one unmapped taxonomy id (99).
+        let raw = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 70_000 * E18), (1, 3_000 * E18), (99, 70_000 * E18)],
+        );
+        let stored = f.client.relay_stork(&Bytes::from_slice(&f.env, &raw));
+        assert_eq!(stored, 2);
+
+        let btc = f.client.get_stork_price(&Symbol::new(&f.env, "BTC")).unwrap();
+        assert_eq!(btc.price, 70_000 * PRECISION);
+        assert_eq!(btc.timestamp_ns, STORK_TS * NS);
+        let eth = f.client.get_stork_price(&Symbol::new(&f.env, "ETH")).unwrap();
+        assert_eq!(eth.price, 3_000 * PRECISION);
+    }
+
+    #[test]
+    fn relay_stork_rejects_wrong_signer() {
+        let f = setup();
+        let _ = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let raw = stork_helpers::payload(
+            &stork_helpers::rogue_key(),
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 70_000 * E18)],
+        );
+        let res = f.client.try_relay_stork(&Bytes::from_slice(&f.env, &raw));
+        assert_eq!(res, Err(Ok(NoetherError::Unauthorized)));
+        assert!(f.client.get_stork_price(&Symbol::new(&f.env, "BTC")).is_none());
+    }
+
+    #[test]
+    fn relay_stork_rejects_stale_payload() {
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS + 120); // 2 min past signing
+
+        let raw = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 70_000 * E18)],
+        );
+        let res = f.client.try_relay_stork(&Bytes::from_slice(&f.env, &raw));
+        assert_eq!(res, Err(Ok(NoetherError::PriceStale)));
+    }
+
+    #[test]
+    fn relay_stork_rejects_wrong_taxonomy() {
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let raw = stork_helpers::payload(&sk, 7, STORK_TS * NS, &[(0, 70_000 * E18)]);
+        let res = f.client.try_relay_stork(&Bytes::from_slice(&f.env, &raw));
+        assert_eq!(res, Err(Ok(NoetherError::InvalidParameter)));
+    }
+
+    #[test]
+    fn relay_stork_rejects_malformed_length() {
+        let f = setup();
+        let _ = enable_stork(&f, false);
+        let res = f
+            .client
+            .try_relay_stork(&Bytes::from_slice(&f.env, &[0u8; 80]));
+        assert_eq!(res, Err(Ok(NoetherError::InvalidParameter)));
+    }
+
+    #[test]
+    fn relay_stork_disabled_rejects_relays_but_opens_work() {
+        let f = setup();
+        let sk = stork_helpers::signing_key();
+        f.client.set_stork_config(&StorkConfig {
+            enabled: false,
+            require_fresh: true, // must be irrelevant while disabled
+            signer: BytesN::from_array(&f.env, &stork_helpers::signer_evm_addr(&sk)),
+            taxonomy: stork_helpers::TAXONOMY as u32,
+            max_age_secs: 60,
+            max_dev_bps: 100,
+        });
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let raw = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 70_000 * E18)],
+        );
+        let res = f.client.try_relay_stork(&Bytes::from_slice(&f.env, &raw));
+        assert_eq!(res, Err(Ok(NoetherError::Unauthorized)));
+
+        // The guard is inert too: opens behave single-source.
+        let pos = open_btc_at(&f, 70_000 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+    }
+
+    #[test]
+    fn relay_stork_older_payload_is_silent_skip() {
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let newer = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 70_000 * E18)],
+        );
+        assert_eq!(f.client.relay_stork(&Bytes::from_slice(&f.env, &newer)), 1);
+
+        // An older (but still unexpired) payload must not overwrite.
+        let older = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            (STORK_TS - 10) * NS,
+            &[(0, 60_000 * E18)],
+        );
+        assert_eq!(f.client.relay_stork(&Bytes::from_slice(&f.env, &older)), 0);
+
+        let btc = f.client.get_stork_price(&Symbol::new(&f.env, "BTC")).unwrap();
+        assert_eq!(btc.price, 70_000 * PRECISION);
+    }
+
+    #[test]
+    fn stork_guard_blocks_divergent_open() {
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let raw = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 70_000 * E18)],
+        );
+        f.client.relay_stork(&Bytes::from_slice(&f.env, &raw));
+
+        // Noeracle attestation 3% above Stork — far over the 1% band.
+        let res = open_btc_at(&f, 72_100 * PRECISION);
+        assert!(matches!(res, Err(NoetherError::PriceDeviationTooHigh)));
+    }
+
+    #[test]
+    fn stork_guard_allows_open_within_band() {
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let raw = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 70_000 * E18)],
+        );
+        f.client.relay_stork(&Bytes::from_slice(&f.env, &raw));
+
+        // 0.5% divergence — inside the 1% band.
+        let pos = open_btc_at(&f, 70_350 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+    }
+
+    #[test]
+    fn stork_missing_data_fails_open_by_default() {
+        let f = setup();
+        let _ = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        // Nothing relayed: fail-open — the system must run without Stork.
+        let pos = open_btc_at(&f, 70_000 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+    }
+
+    #[test]
+    fn stork_stale_data_does_not_veto_by_default() {
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let raw = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 60_000 * E18)],
+        );
+        f.client.relay_stork(&Bytes::from_slice(&f.env, &raw));
+
+        // 2 minutes later the Stork entry is stale (max_age 60s): a wildly
+        // divergent open must NOT be vetoed by expired data.
+        f.env.ledger().set_timestamp(STORK_TS + 120);
+        let pos = open_btc_at(&f, 70_000 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+    }
+
+    #[test]
+    fn stork_require_fresh_blocks_open_without_data() {
+        let f = setup();
+        let _ = enable_stork(&f, true); // strict dual-source mode
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let res = open_btc_at(&f, 70_000 * PRECISION);
+        assert!(matches!(res, Err(NoetherError::PriceStale)));
+    }
+
+    #[test]
+    fn close_never_gated_by_stork() {
+        let f = setup();
+        let _ = enable_stork(&f, true); // strict mode, and NO Stork data
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        // Closes must always work regardless of Stork state.
+        let pnl = f.client.close_with_price(
+            &Address::generate(&f.env),
+            &99u64,
+            &Symbol::new(&f.env, "ETH"),
+            &(3_000 * PRECISION),
+            &STORK_TS,
+            &7u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
+        assert_eq!(pnl, 4_321);
     }
 }
