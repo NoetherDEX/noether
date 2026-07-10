@@ -1,11 +1,30 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter, Sora, JetBrains_Mono } from 'next/font/google'
+import localFont from 'next/font/local'
 import { Toaster } from 'react-hot-toast'
 import './globals.css'
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
-const sora = Sora({ subsets: ['latin'], variable: '--font-sora' })
-const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jetbrains-mono' })
+// Self-hosted variable fonts (latin). Previously next/font/google, which
+// fetches from fonts.gstatic.com at BUILD time — a flaky Vercel build machine
+// → Google Fonts connection intermittently ETIMEDOUT and failed the whole
+// build. Local files remove that network dependency entirely.
+const inter = localFont({
+  src: './fonts/Inter.woff2',
+  weight: '100 900',
+  display: 'swap',
+  variable: '--font-inter',
+})
+const sora = localFont({
+  src: './fonts/Sora.woff2',
+  weight: '100 800',
+  display: 'swap',
+  variable: '--font-sora',
+})
+const jetbrainsMono = localFont({
+  src: './fonts/JetBrainsMono.woff2',
+  weight: '100 800',
+  display: 'swap',
+  variable: '--font-jetbrains-mono',
+})
 
 export const viewport: Viewport = {
   width: 'device-width',
