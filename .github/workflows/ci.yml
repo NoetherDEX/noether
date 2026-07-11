@@ -162,7 +162,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Match the web app's engines pin + Vercel/.nvmrc (Node 22 LTS).
+          node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
 
