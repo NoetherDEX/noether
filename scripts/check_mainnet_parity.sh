@@ -54,6 +54,10 @@ check "Faucet daily limit 1000 USDC" 'DAILY_LIMIT_USDC = 1000' 'web/lib/stellar/
 check "Hardcoded OI \$1.2M"          "1\.2M|1_200_000" 'web/app/trade/page.tsx' 'real OI from /v1/markets/stats'
 
 echo
+echo "── Manual env-var flips at mainnet (dashboard, not greppable) ──"
+echo -e "${YEL}~${NC} Vercel Production: set NEXT_PUBLIC_GEOBLOCK_ENABLED=1 — the frontend geo-block is OFF by default (opt-in) and only enforces US/OFAC/Ontario restrictions when this is '1'. The api gateway geo-block is a separate Railway toggle."
+
+echo
 if [[ "$MAINNET" == "1" && "$FAIL" == "1" ]]; then
   echo -e "${RED}PARITY GATE FAILED — testnet values still present. Do not launch.${NC}"
   exit 1
