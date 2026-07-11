@@ -10,8 +10,13 @@ import type { NextRequest } from 'next/server';
  *
  * Enforcement is best-effort at the edge (Vercel provides request.geo); the
  * API gateway applies the same restriction server-side, and the ToS carries
- * the restricted-persons + no-VPN warranties. Toggle off for testnet via
- * NEXT_PUBLIC_GEOBLOCK_DISABLED=1.
+ * the restricted-persons + no-VPN warranties.
+ *
+ * This is a MAINNET compliance control, so it is OFF by default — testnet
+ * (both prod + staging) offers only valueless test tokens, and IP geo is
+ * imperfect enough to false-block legitimate testers. Enable it explicitly
+ * at the mainnet cutover with NEXT_PUBLIC_GEOBLOCK_ENABLED=1 (see
+ * docs/ORACLE_CUTOVER_RUNBOOK.md / the mainnet checklist).
  */
 
 // US, Canada-Ontario, and OFAC-sanctioned jurisdictions.
@@ -30,7 +35,9 @@ const BLOCKED_REGIONS = new Set(['CA-ON']);
 const GUARDED_PREFIXES = ['/trade', '/vault', '/vaults', '/portfolio'];
 
 export function middleware(request: NextRequest): NextResponse {
-  if (process.env.NEXT_PUBLIC_GEOBLOCK_DISABLED === '1') {
+  // Opt-in: geo-block runs only when explicitly enabled (mainnet). Absent or
+  // any value other than '1' → open, so testnet never blocks.
+  if (process.env.NEXT_PUBLIC_GEOBLOCK_ENABLED !== '1') {
     return NextResponse.next();
   }
 
