@@ -11,22 +11,22 @@ interface BadgeProps {
 
 export function Badge({ children, variant = 'default', size = 'sm', className }: BadgeProps) {
   const variants = {
-    default: 'bg-white/10 text-white border-white/20',
-    success: 'bg-emerald-400/10 text-emerald-400 border-emerald-400/20',
-    warning: 'bg-amber-400/10 text-amber-400 border-amber-400/20',
-    danger: 'bg-red-400/10 text-red-400 border-red-400/20',
-    info: 'bg-blue-400/10 text-blue-400 border-blue-400/20',
+    default: 'bg-surface-2 text-muted-foreground border-border-strong',
+    success: 'bg-long/10 text-long border-long/20',
+    warning: 'bg-primary/10 text-primary border-primary/20',
+    danger: 'bg-short/10 text-short border-short/20',
+    info: 'bg-accent/10 text-accent border-accent/20',
   };
 
   const sizes = {
-    sm: 'px-2 py-0.5 text-xs',
-    md: 'px-2.5 py-1 text-sm',
+    sm: 'px-1.5 py-0.5 text-[11px]',
+    md: 'px-2 py-0.5 text-xs',
   };
 
   return (
     <span
       className={cn(
-        'inline-flex items-center font-medium rounded-md border',
+        'inline-flex items-center font-medium rounded-sm border',
         variants[variant],
         sizes[size],
         className

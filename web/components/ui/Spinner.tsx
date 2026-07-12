@@ -17,7 +17,7 @@ export function Spinner({ size = 'md', className }: SpinnerProps) {
   return (
     <div
       className={cn(
-        'animate-spin rounded-full border-white/20 border-t-white',
+        'animate-spin rounded-full border-foreground/20 border-t-foreground',
         sizes[size],
         className
       )}
@@ -34,7 +34,7 @@ export function LoadingSpinner({ size = 'md', text }: LoadingSpinnerProps) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-8">
       <Spinner size={size} />
-      {text && <p className="text-sm text-neutral-400">{text}</p>}
+      {text && <p className="text-sm text-muted-foreground">{text}</p>}
     </div>
   );
 }

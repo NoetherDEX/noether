@@ -141,7 +141,7 @@ export function Modal({
             aria-labelledby={title ? titleId : undefined}
             aria-label={title ? undefined : 'Dialog'}
             className={cn(
-              'relative w-full bg-[#0a0a0c] border border-white/10 rounded-t-2xl sm:rounded-2xl shadow-2xl',
+              'relative w-full bg-surface border border-border-strong rounded-t-lg sm:rounded-lg',
               'max-h-[85dvh] flex flex-col overflow-hidden outline-none',
               'pb-[env(safe-area-inset-bottom)] sm:pb-0',
               sizes[size]
@@ -149,15 +149,15 @@ export function Modal({
           >
             {/* Header — fixed */}
             {(title || showClose) && (
-              <div className="flex items-center justify-between p-6 border-b border-white/5 flex-shrink-0">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
                 {title && (
-                  <h2 id={titleId} className="text-lg font-semibold text-white">{title}</h2>
+                  <h2 id={titleId} className="text-[15px] font-medium text-foreground">{title}</h2>
                 )}
                 {showClose && (
                   <button
                     onClick={onClose}
                     aria-label="Close dialog"
-                    className="p-2 -m-2 text-neutral-400 hover:text-white transition-colors rounded-lg hover:bg-white/5"
+                    className="p-2 -m-2 text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-surface-2"
                   >
                     <X className="w-5 h-5" aria-hidden="true" />
                   </button>
@@ -166,11 +166,11 @@ export function Modal({
             )}
 
             {/* Content — scrolls internally */}
-            <div className="p-6 flex-1 overflow-y-auto overscroll-contain">{children}</div>
+            <div className="p-5 flex-1 overflow-y-auto overscroll-contain">{children}</div>
 
             {/* Sticky footer region */}
             {footer && (
-              <div className="p-6 pt-4 border-t border-white/5 flex-shrink-0">{footer}</div>
+              <div className="p-5 pt-4 border-t border-border flex-shrink-0">{footer}</div>
             )}
           </motion.div>
         </motion.div>
