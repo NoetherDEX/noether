@@ -45,7 +45,10 @@ for (const id of POST_IDS) {
   );
 
   // Body text without the trailing t.co media link.
-  const text = t.text.slice(0, t.display_text_range?.[1] ?? t.text.length).trim();
+  const text = t.text
+    .slice(0, t.display_text_range?.[1] ?? t.text.length)
+    .replace(/(\s*https:\/\/t\.co\/\w+)+\s*$/, '')
+    .trim();
 
   let image = null;
   const photo = t.photos?.[0];

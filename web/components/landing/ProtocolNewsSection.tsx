@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import { FadeIn } from './animations';
 import realPosts from './x-posts.json';
 
@@ -42,6 +43,12 @@ function XLogo() {
 }
 
 export function ProtocolNewsSection() {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const page = (dir: number) => {
+    const el = scrollerRef.current;
+    if (el) el.scrollBy({ left: dir * el.clientWidth, behavior: 'smooth' });
+  };
+
   return (
     <section className="bg-background border-t border-border px-6 sm:px-14 py-24">
       <div className="flex items-baseline justify-between gap-6 mb-12">
@@ -50,19 +57,47 @@ export function ProtocolNewsSection() {
             Protocol <em className="italic text-primary">news</em>
           </h2>
         </FadeIn>
-        <a
-          href={X_PROFILE}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 font-mono text-xs text-faint hover:text-primary transition-colors"
-        >
-          @Noetherdex ↗
-        </a>
+        <div className="flex shrink-0 items-center gap-4">
+          <a
+            href={X_PROFILE}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-xs text-faint hover:text-primary transition-colors"
+          >
+            @Noetherdex ↗
+          </a>
+          <div className="hidden md:flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => page(-1)}
+              aria-label="Previous posts"
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              ←
+            </button>
+            <button
+              type="button"
+              onClick={() => page(1)}
+              aria-label="Next posts"
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-border-strong transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              →
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-3">
+      {/* Snap slider — three cards per view on desktop, swipe on touch */}
+      <div
+        ref={scrollerRef}
+        className="flex items-stretch gap-3 overflow-x-auto snap-x snap-mandatory overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         {CARDS.map((post, i) => (
-          <FadeIn key={post.id} delay={Math.min(i * 0.06, 0.18)} className="h-full">
+          <FadeIn
+            key={post.id}
+            delay={Math.min(i * 0.06, 0.18)}
+            className="shrink-0 snap-start w-[86%] sm:w-[calc((100%-0.75rem)/2)] lg:w-[calc((100%-1.5rem)/3)]"
+          >
             <a
               href={post.url}
               target="_blank"
@@ -96,13 +131,13 @@ export function ProtocolNewsSection() {
 
               {/* Post media */}
               {post.image && (
-                <div className="mt-5 rounded-md overflow-hidden border border-border bg-surface-2 aspect-[16/9]">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- static card media in a fixed aspect box */}
+                <div className="mt-5 flex items-center justify-center rounded-md overflow-hidden border border-border bg-surface-2 aspect-[16/10]">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- static card media; contain shows the full frame */}
                   <img
                     src={post.image}
                     alt=""
                     loading="lazy"
-                    className="w-full h-full object-cover"
+                    className="max-h-full max-w-full object-contain"
                     aria-hidden="true"
                   />
                 </div>
