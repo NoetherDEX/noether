@@ -8,6 +8,10 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 
 const POST_IDS = [
+  '2073508667962401010',
+  '2074482481487610034',
+  '2046968280154259802',
+  '2044838350092472711', // @BuildOnStellar on Noether
   '2027378525645283349', // From SDEX to Soroban Perps — testnet traction
 ];
 
@@ -33,7 +37,7 @@ const download = async (url, path) => {
 await mkdir('public/media/x', { recursive: true });
 
 const posts = [];
-let avatarSaved = false;
+const avatarsSaved = new Set();
 
 for (const id of POST_IDS) {
   const t = await fetchJson(
@@ -50,12 +54,16 @@ for (const id of POST_IDS) {
     await download(`${photo.url}?name=medium`, `public${image}`);
   }
 
-  if (!avatarSaved && t.user?.profile_image_url_https) {
-    await download(
-      t.user.profile_image_url_https.replace('_normal', '_bigger'),
-      'public/media/x/avatar.jpg',
-    );
-    avatarSaved = true;
+  let avatar = null;
+  if (t.user?.profile_image_url_https) {
+    avatar = `/media/x/avatar-${t.user.screen_name}.jpg`;
+    if (!avatarsSaved.has(t.user.screen_name)) {
+      await download(
+        t.user.profile_image_url_https.replace('_normal', '_bigger'),
+        `public${avatar}`,
+      );
+      avatarsSaved.add(t.user.screen_name);
+    }
   }
 
   posts.push({
@@ -70,6 +78,7 @@ for (const id of POST_IDS) {
       year: 'numeric',
     }),
     image,
+    avatar,
   });
 }
 

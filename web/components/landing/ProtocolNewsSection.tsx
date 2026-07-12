@@ -31,7 +31,7 @@ const CURATED = [
   },
 ];
 
-const CARDS = [...realPosts, ...CURATED].slice(0, 3);
+const CARDS = [...realPosts, ...CURATED].slice(0, Math.max(realPosts.length, 3));
 
 function XLogo() {
   return (
@@ -73,7 +73,7 @@ export function ProtocolNewsSection() {
               <div className="flex items-center gap-3 mb-5">
                 {/* eslint-disable-next-line @next/next/no-img-element -- small static brand avatar */}
                 <img
-                  src="/media/x/avatar.jpg"
+                  src={(post as { avatar?: string }).avatar ?? '/media/x/avatar.jpg'}
                   alt=""
                   width="36"
                   height="36"
@@ -90,7 +90,7 @@ export function ProtocolNewsSection() {
               </div>
 
               {/* Post body */}
-              <p className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-line">
+              <p className="text-[15px] leading-relaxed text-foreground/90 whitespace-pre-line line-clamp-[8]">
                 {post.text}
               </p>
 
