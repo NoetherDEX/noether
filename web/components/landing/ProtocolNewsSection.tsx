@@ -90,7 +90,7 @@ export function ProtocolNewsSection() {
       {/* Snap slider — three cards per view on desktop, swipe on touch */}
       <div
         ref={scrollerRef}
-        className="flex items-stretch gap-3 overflow-x-auto snap-x snap-mandatory overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex items-start gap-3 overflow-x-auto snap-x snap-mandatory overscroll-x-contain pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {CARDS.map((post, i) => (
           <FadeIn
@@ -102,7 +102,7 @@ export function ProtocolNewsSection() {
               href={post.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="group flex h-full flex-col rounded-lg border border-border bg-surface p-6 transition-colors hover:border-border-strong hover:bg-surface-2"
+              className="group flex flex-col rounded-lg border border-border bg-surface p-6 transition-colors hover:border-border-strong hover:bg-surface-2"
             >
               {/* Post header */}
               <div className="flex items-center gap-3 mb-5">
@@ -131,20 +131,20 @@ export function ProtocolNewsSection() {
 
               {/* Post media */}
               {post.image && (
-                <div className="mt-5 flex items-center justify-center rounded-md overflow-hidden border border-border bg-surface-2 aspect-[16/10]">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- static card media; contain shows the full frame */}
+                <div className="mt-5 flex justify-center rounded-md overflow-hidden border border-border bg-surface-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- static card media at its natural ratio, height-capped */}
                   <img
                     src={post.image}
                     alt=""
                     loading="lazy"
-                    className="max-h-full max-w-full object-contain"
+                    className="h-auto w-auto max-w-full max-h-[400px] object-contain"
                     aria-hidden="true"
                   />
                 </div>
               )}
 
               {/* Post footer */}
-              <div className="mt-auto pt-6">
+              <div className="mt-6">
                 <div className="pt-4 border-t border-border flex items-center justify-between">
                   <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-faint">
                     {post.dateLabel}
