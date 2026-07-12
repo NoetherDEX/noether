@@ -278,19 +278,24 @@ export function Hero() {
         <p className="text-center font-mono text-[11px] uppercase tracking-[0.35em] text-black/45 mb-8">
           Backed by Stellar &amp; the Stellar Community Fund
         </p>
-        <div className="flex flex-wrap items-center justify-center gap-x-14 gap-y-6 opacity-70">
-          <span className="flex items-center gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element -- small static brand mark */}
-            <img src="/xlmlogo.svg" alt="" width="28" height="28" className="grayscale" aria-hidden="true" />
-            <span className="text-xl font-semibold tracking-tight">Stellar</span>
-          </span>
-          <span className="flex items-center gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element -- small static brand mark */}
-            <img src="/xlmlogo.svg" alt="" width="28" height="28" className="grayscale" aria-hidden="true" />
-            <span className="text-xl font-semibold tracking-tight">
-              Stellar Community Fund
-            </span>
-          </span>
+        <div className="flex flex-wrap items-center justify-center gap-x-16 gap-y-8 opacity-80">
+          {/* Official press-kit marks — black variants on the bone strip */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- static brand logo */}
+          <img
+            src="/media/brand/stellar-black.png"
+            alt="Stellar"
+            width="128"
+            height="32"
+            className="h-7 w-auto"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element -- static brand logo */}
+          <img
+            src="/media/brand/sdf-black.svg"
+            alt="Stellar Development Foundation"
+            width="180"
+            height="32"
+            className="h-8 w-auto"
+          />
         </div>
       </section>
 
