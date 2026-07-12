@@ -24,11 +24,24 @@ module.exports = {
   				'ui-monospace',
   				'SFMono-Regular',
   				'monospace'
+  			],
+  			display: [
+  				'var(--font-instrument-serif)',
+  				'Georgia',
+  				'serif'
   			]
   		},
   		colors: {
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
+  			surface: {
+  				DEFAULT: 'hsl(var(--surface))',
+  				'2': 'hsl(var(--surface-2))',
+  				'3': 'hsl(var(--surface-3))'
+  			},
+  			faint: 'hsl(var(--faint))',
+  			long: 'hsl(var(--long))',
+  			short: 'hsl(var(--short))',
   			card: {
   				DEFAULT: 'hsl(var(--card))',
   				foreground: 'hsl(var(--card-foreground))'
@@ -57,17 +70,14 @@ module.exports = {
   				DEFAULT: 'hsl(var(--destructive))',
   				foreground: 'hsl(var(--destructive-foreground))'
   			},
-  			border: 'hsl(var(--border))',
+  			border: {
+  				DEFAULT: 'hsl(var(--border))',
+  				strong: 'hsl(var(--border-strong))'
+  			},
   			input: 'hsl(var(--input))',
   			ring: 'hsl(var(--ring))',
   			profit: 'var(--profit)',
   			loss: 'var(--loss)',
-  			noether: {
-  				bg: '#0a0a0a',
-  				violet: '#8b5cf6',
-  				blue: '#3b82f6',
-  				cyan: '#06b6d4'
-  			},
   			chart: {
   				'1': 'hsl(var(--chart-1))',
   				'2': 'hsl(var(--chart-2))',
@@ -98,11 +108,6 @@ module.exports = {
   					height: '0'
   				}
   			},
-  			shimmer: {
-  				'100%': {
-  					transform: 'translateX(100%)'
-  				}
-  			},
   			pulse: {
   				'0%, 100%': {
   					opacity: '1'
@@ -110,33 +115,12 @@ module.exports = {
   				'50%': {
   					opacity: '0.5'
   				}
-  			},
-  			'blob-morph-1': {
-  				'0%':   { borderRadius: '40% 60% 70% 30% / 40% 50% 60% 50%', transform: 'translate(0, 0) rotate(0deg) scale(1)' },
-  				'25%':  { borderRadius: '70% 30% 50% 50% / 30% 30% 70% 70%', transform: 'translate(30px, -40px) rotate(45deg) scale(1.05)' },
-  				'50%':  { borderRadius: '50% 60% 30% 70% / 60% 40% 60% 40%', transform: 'translate(-20px, 20px) rotate(90deg) scale(0.95)' },
-  				'75%':  { borderRadius: '30% 70% 40% 60% / 50% 60% 30% 70%', transform: 'translate(10px, -10px) rotate(135deg) scale(1.02)' },
-  				'100%': { borderRadius: '40% 60% 70% 30% / 40% 50% 60% 50%', transform: 'translate(0, 0) rotate(180deg) scale(1)' },
-  			},
-  			'blob-morph-2': {
-  				'0%':   { borderRadius: '60% 40% 30% 70% / 50% 60% 40% 50%', transform: 'translate(0, 0) rotate(0deg) scale(1)' },
-  				'50%':  { borderRadius: '70% 30% 40% 60% / 60% 50% 30% 70%', transform: 'translate(25px, -15px) rotate(-90deg) scale(0.97)' },
-  				'100%': { borderRadius: '60% 40% 30% 70% / 50% 60% 40% 50%', transform: 'translate(0, 0) rotate(-180deg) scale(1)' },
-  			},
-  			'blob-morph-3': {
-  				'0%':   { borderRadius: '50% 50% 40% 60% / 60% 40% 50% 50%', transform: 'translate(0, 0) rotate(0deg)' },
-  				'50%':  { borderRadius: '40% 60% 50% 50% / 50% 50% 60% 40%', transform: 'translate(-30px, -10px) rotate(120deg)' },
-  				'100%': { borderRadius: '50% 50% 40% 60% / 60% 40% 50% 50%', transform: 'translate(0, 0) rotate(180deg)' },
   			}
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
   			'accordion-up': 'accordion-up 0.2s ease-out',
-  			shimmer: 'shimmer 2s infinite',
-  			pulse: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-  			'blob-1': 'blob-morph-1 18s ease-in-out infinite',
-  			'blob-2': 'blob-morph-2 22s ease-in-out infinite',
-  			'blob-3': 'blob-morph-3 20s ease-in-out infinite'
+  			pulse: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
   		}
   	}
   },

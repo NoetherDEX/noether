@@ -44,13 +44,13 @@ export function ClaimSection({
   const isLimitReached = remainingToday === 0;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden h-full">
-      <div className="px-6 py-4 border-b border-white/10">
-        <h3 className="text-base font-semibold text-foreground">Step 2: Claim USDC</h3>
+    <div className="rounded-lg border border-border bg-surface overflow-hidden h-full">
+      <div className="px-6 py-4 border-b border-border">
+        <h3 className="text-[13px] font-medium text-foreground">Step 2: Claim USDC</h3>
       </div>
       <div className="p-6">
         {disabled ? (
-          <div className="p-4 bg-secondary/30 rounded-lg text-center">
+          <div className="p-4 bg-surface-2 rounded-lg text-center">
             <p className="text-muted-foreground">
               Complete Step 1 to claim USDC
             </p>
@@ -65,13 +65,13 @@ export function ClaimSection({
                   {formatNumber(claimedToday, 0)} / {formatNumber(dailyLimit, 0)} USDC
                 </span>
               </div>
-              <div className="h-2 bg-secondary rounded-full overflow-hidden">
+              <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
                 <div
                   className={cn(
-                    'h-full rounded-full transition-all duration-500',
+                    'h-full rounded-full transition-[width] duration-500',
                     progressPercent >= 100
-                      ? 'bg-[#f59e0b]'
-                      : 'bg-[#eab308] text-black'
+                      ? 'bg-primary/60'
+                      : 'bg-primary'
                   )}
                   style={{ width: `${Math.min(progressPercent, 100)}%` }}
                 />
@@ -81,24 +81,24 @@ export function ClaimSection({
                   Remaining: <span className="font-mono tabular-nums">{formatNumber(remainingToday, 0)}</span> USDC
                 </span>
                 {isLimitReached && (
-                  <span className="flex items-center gap-1 text-[#f59e0b]">
+                  <span className="flex items-center gap-1 text-primary">
                     <Clock className="w-3.5 h-3.5" />
-                    Resets in {timeUntilReset.hours}h {timeUntilReset.minutes}m
+                    Resets in <span className="font-mono tabular-nums">{timeUntilReset.hours}h {timeUntilReset.minutes}m</span>
                   </span>
                 )}
               </div>
             </div>
 
             {isLimitReached ? (
-              <div className="p-6 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded-xl text-center">
-                <Clock className="w-8 h-8 text-[#f59e0b] mx-auto mb-3" />
+              <div className="p-6 bg-primary/5 border border-primary/20 rounded-md text-center">
+                <Clock className="w-8 h-8 text-primary mx-auto mb-3" />
                 <h3 className="text-lg font-medium text-foreground mb-2">
                   Daily Limit Reached
                 </h3>
                 <p className="text-muted-foreground text-sm">
                   You&apos;ve claimed {formatNumber(dailyLimit, 0)} USDC today. Come back tomorrow for more!
                 </p>
-                <p className="text-[#f59e0b] font-medium font-mono mt-4">
+                <p className="text-primary font-medium font-mono tabular-nums mt-4">
                   Resets in {timeUntilReset.hours}h {timeUntilReset.minutes}m {timeUntilReset.seconds}s
                 </p>
               </div>
@@ -125,10 +125,10 @@ export function ClaimSection({
                   onClick={() => selectedAmount && onClaim(selectedAmount)}
                   disabled={!selectedAmount || isClaiming}
                   className={cn(
-                    'w-full h-12 text-sm font-bold rounded-lg transition-all',
+                    'w-full h-12 text-sm font-medium rounded-md transition-colors',
                     'flex items-center justify-center gap-2',
                     'disabled:opacity-40 disabled:cursor-not-allowed',
-                    'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
+                    'bg-primary hover:bg-primary/90 text-primary-foreground'
                   )}
                 >
                   {isClaiming ? (

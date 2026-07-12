@@ -127,20 +127,20 @@ export function ReferralBanner() {
         // safe-area inset), so the Long/Short bar is never covered or
         // tap-blocked; from lg the bar is hidden → bottom-4.
         'fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] lg:bottom-4 right-4 z-50 w-[calc(100%-2rem)] max-w-sm',
-        'transition-all duration-300 ease-out',
+        'transition-[opacity,transform] duration-300 ease-out',
         shown ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none',
       ].join(' ')}
       role="dialog"
       aria-label="Referral invitation"
     >
-      <div className="rounded-2xl border border-white/10 bg-[#0a0a0a]/95 backdrop-blur-md shadow-2xl shadow-black/40 overflow-hidden">
+      <div className="rounded-lg border border-border-strong bg-surface overflow-hidden">
         {/* Top accent bar */}
-        <div className="h-1 bg-gradient-to-r from-amber-500/40 via-amber-400 to-amber-500/40" />
+        <div className="h-0.5 bg-primary/60" />
 
         {done ? (
           <div className="p-5 text-center space-y-3">
-            <div className="mx-auto w-12 h-12 rounded-full bg-emerald-500/15 flex items-center justify-center">
-              <svg className="w-6 h-6 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <div className="mx-auto w-12 h-12 rounded-full bg-long/10 flex items-center justify-center">
+              <svg className="w-6 h-6 text-long" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
@@ -154,10 +154,10 @@ export function ReferralBanner() {
             {/* Header row: dismiss button */}
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
-                <span className="text-[10px] uppercase tracking-[0.18em] text-amber-400 font-medium">
+                <span className="text-[11px] uppercase tracking-wide text-primary font-medium">
                   Referral · Invitation
                 </span>
-                <h3 className="mt-1 text-base font-semibold leading-tight">
+                <h3 className="mt-1 text-sm font-medium leading-tight">
                   You were invited to Noether
                 </h3>
               </div>
@@ -165,7 +165,7 @@ export function ReferralBanner() {
                 onClick={dismiss}
                 disabled={busy}
                 aria-label="Dismiss"
-                className="flex-none -mt-1 -mr-1 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors disabled:opacity-40"
+                className="flex-none -mt-1 -mr-1 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-3 transition-colors disabled:opacity-40"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="6" x2="6" y2="18" />
@@ -175,10 +175,10 @@ export function ReferralBanner() {
             </div>
 
             {/* Referrer details */}
-            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-2">
+            <div className="rounded-md border border-border bg-surface-2 p-3 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Code</span>
-                <code className="px-2 py-0.5 rounded bg-zinc-900 font-mono text-foreground">
+                <code className="px-2 py-0.5 rounded-sm bg-surface-3 font-mono text-foreground">
                   {code}
                 </code>
               </div>
@@ -191,7 +191,7 @@ export function ReferralBanner() {
               {referrer && referrer.referredCount > 0 && (
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Other referees</span>
-                  <span className="text-foreground">{referrer.referredCount}</span>
+                  <span className="text-foreground font-mono tabular-nums">{referrer.referredCount}</span>
                 </div>
               )}
             </div>
@@ -199,7 +199,7 @@ export function ReferralBanner() {
             {/* Benefit + CTA */}
             <div>
               <div className="flex items-baseline gap-2">
-                <span className="text-2xl font-bold font-mono text-amber-400">4%</span>
+                <span className="text-xl font-medium font-mono tabular-nums text-primary">4%</span>
                 <span className="text-sm text-muted-foreground">off every trade — from v1.1</span>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
@@ -216,7 +216,7 @@ export function ReferralBanner() {
                 'w-full',
                 // Brand-gold connect CTA (matches the app's connect treatment).
                 !wallet.address &&
-                  'bg-[#eab308] text-black hover:bg-[#eab308]/90 focus:ring-[#eab308]',
+                  'bg-primary text-primary-foreground hover:bg-primary/90 focus:ring-primary rounded-md',
               )}
             >
               {busy

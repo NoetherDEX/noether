@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Input } from '@/components/ui';
+import { cn } from '@/lib/utils/cn';
 import { useWalletStore } from '@/lib/store';
 import { createReferralCode, lookupCode, type CodeAvailability } from '@/lib/stellar/referral';
 import { DISCORD_URL } from '@/lib/utils/constants';
@@ -126,31 +127,33 @@ export function CreateCodeCard({ onCreated }: Props) {
   // Gated state: allowlist configured + wallet connected + not on list.
   if (gated && wallet.address && !allowed) {
     return (
-      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 overflow-hidden">
-        <div className="px-6 py-4 border-b border-amber-500/20">
-          <span className="text-[10px] uppercase tracking-[0.18em] text-amber-400 font-medium">
+      <div className="rounded-lg border border-border bg-surface overflow-hidden">
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
+          <h3 className="text-[13px] font-medium text-foreground">
+            Referral codes are invite-only right now
+          </h3>
+          <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-primary">
             Closed Beta · Early Access Only
           </span>
         </div>
-        <div className="p-6 space-y-4">
-          <h3 className="text-base font-semibold">Referral codes are invite-only right now</h3>
-          <p className="text-sm text-muted-foreground">
+        <div className="p-5 space-y-3">
+          <p className="text-xs text-muted-foreground">
             During the test phase we&apos;re hand-picking the first creators.
             You can still bind as a referee — open somebody&apos;s referral
             link (or enter their code below) and accept the invite with one
             signed transaction. Referee fee discounts activate in v1.1.
           </p>
-          <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4 text-xs space-y-1">
-            <p className="text-muted-foreground">Your wallet</p>
+          <div className="rounded-md border border-border bg-surface-2 px-3 py-2 text-xs space-y-1">
+            <p className="text-[11px] uppercase tracking-wide text-faint">Your wallet</p>
             <code className="font-mono text-foreground break-all">{wallet.address}</code>
           </div>
-          <p className="text-sm">
+          <p className="text-xs text-muted-foreground">
             Want a code?{' '}
             <a
               href="https://twitter.com/Noetherdex"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-amber-400 hover:text-amber-300"
+              className="text-primary hover:opacity-80"
             >
               DM us on X
             </a>{' '}
@@ -159,7 +162,7 @@ export function CreateCodeCard({ onCreated }: Props) {
               href={DISCORD_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-amber-400 hover:text-amber-300"
+              className="text-primary hover:opacity-80"
             >
               join our Discord
             </a>{' '}
@@ -171,19 +174,19 @@ export function CreateCodeCard({ onCreated }: Props) {
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-2">
-        <h3 className="text-base font-semibold text-foreground">Register your referral code</h3>
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <div className="px-5 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-[13px] font-medium text-foreground">Register your referral code</h3>
         {gated && (
-          <span className="text-[10px] uppercase tracking-[0.18em] text-amber-400 font-medium">
+          <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-primary">
             Closed Beta
           </span>
         )}
       </div>
 
-      <div className="p-6 space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Pick a unique short handle (3–16 characters, letters/digits/<code className="text-xs">_</code>/<code className="text-xs">-</code>).
+      <div className="p-5 space-y-3">
+        <p className="text-xs text-faint">
+          Pick a unique short handle (3–16 characters, letters/digits/<code>_</code>/<code>-</code>).
           You sign the transaction with your wallet and the code lands on-chain
           permanently bound to your address.
         </p>
@@ -201,47 +204,49 @@ export function CreateCodeCard({ onCreated }: Props) {
               maxLength={MAX}
               spellCheck={false}
               autoComplete="off"
-              className="font-mono"
+              className="h-9 font-mono"
             />
             <div className="mt-2 text-xs flex items-center gap-3">
               <span
-                className={
+                className={cn(
+                  'font-mono tabular-nums',
                   trimmed.length === 0
                     ? 'text-muted-foreground'
                     : lengthOk
-                    ? 'text-[#22c55e]'
-                    : 'text-red-400'
-                }
+                    ? 'text-long'
+                    : 'text-short'
+                )}
               >
                 {trimmed.length}/{MAX} chars
               </span>
               {trimmed.length > 0 && !charsOk && (
-                <span className="text-red-400">
+                <span className="text-short">
                   only letters / digits / _ / - allowed
                 </span>
               )}
               {checking && <span className="text-muted-foreground">checking…</span>}
               {!checking && available === 'free' && lengthOk && charsOk && (
-                <span className="text-[#22c55e]">✓ available</span>
+                <span className="text-long">✓ available</span>
               )}
               {!checking && available === 'taken' && (
-                <span className="text-red-400">already taken</span>
+                <span className="text-short">already taken</span>
               )}
               {!checking && available === 'unknown' && lengthOk && charsOk && (
-                <span className="text-amber-400">couldn&apos;t verify availability</span>
+                <span className="text-primary">couldn&apos;t verify availability</span>
               )}
             </div>
           </div>
           <Button
             onClick={submit}
+            size="md"
             disabled={busy || !wallet.address || !lengthOk || !charsOk || available === 'taken'}
           >
             {busy ? 'Signing…' : 'Register code'}
           </Button>
         </div>
 
-        <div className="text-xs text-muted-foreground/80 border-t border-white/5 pt-3 leading-relaxed">
-          <span className="text-foreground/70">On-chain:</span> the code lives in the referral
+        <div className="text-xs text-faint border-t border-border pt-3 leading-relaxed">
+          <span className="text-muted-foreground">On-chain:</span> the code lives in the referral
           contract — anyone with your wallet&apos;s Stellar address can verify
           ownership at any time. One wallet can register one code.
         </div>

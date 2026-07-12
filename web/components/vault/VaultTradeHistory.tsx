@@ -15,9 +15,9 @@ function shortHash(h: string): string {
  */
 export function VaultTradeHistory({ trades }: { trades: VaultTradeRow[] }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b border-white/10">
-        <h3 className="text-base font-semibold text-foreground">Leader Trade History</h3>
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <div className="px-6 py-4 border-b border-border">
+        <h3 className="text-sm font-medium text-foreground">Leader Trade History</h3>
         <p className="text-xs text-muted-foreground mt-1">
           {trades.length === 0
             ? 'No leader trades yet'
@@ -30,8 +30,8 @@ export function VaultTradeHistory({ trades }: { trades: VaultTradeRow[] }) {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs uppercase text-muted-foreground border-b border-white/5">
+          <table className="w-full text-[13px]">
+            <thead className="text-[11px] uppercase tracking-wide text-faint border-b border-border">
               <tr>
                 <th className="text-left px-6 py-2">Time</th>
                 <th className="text-left px-6 py-2">Action</th>
@@ -63,39 +63,42 @@ export function VaultTradeHistory({ trades }: { trades: VaultTradeRow[] }) {
                   pnlRaw == null
                     ? 'text-muted-foreground'
                     : pnlRaw > 0n
-                    ? 'text-[#22c55e]'
+                    ? 'text-long'
                     : pnlRaw < 0n
-                    ? 'text-red-400'
+                    ? 'text-short'
                     : 'text-muted-foreground';
                 return (
-                  <tr key={t.id} className="border-b border-white/5 last:border-0">
-                    <td className="px-6 py-3 text-muted-foreground">{formatDateTimeFull(t.ts)}</td>
-                    <td className="px-6 py-3">
+                  <tr
+                    key={t.id}
+                    className="border-b border-border last:border-0 hover:bg-surface-3/50 transition-colors"
+                  >
+                    <td className="px-6 py-2 text-muted-foreground font-mono tabular-nums">{formatDateTimeFull(t.ts)}</td>
+                    <td className="px-6 py-2">
                       <span
-                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium ${
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-xs font-medium ${
                           t.action === 'open'
-                            ? 'text-[#22c55e] bg-[#22c55e]/10'
-                            : 'text-amber-400 bg-amber-500/10'
+                            ? 'text-long bg-long/10'
+                            : 'text-primary bg-primary/10'
                         }`}
                       >
                         {t.action === 'open' ? '↗ Open' : '↘ Close'}
                       </span>
                     </td>
-                    <td className="px-6 py-3 text-right font-mono tabular-nums">
+                    <td className="px-6 py-2 text-right font-mono tabular-nums">
                       #{t.positionId}
                     </td>
-                    <td className="px-6 py-3 text-right font-mono tabular-nums">
+                    <td className="px-6 py-2 text-right font-mono tabular-nums">
                       {t.action === 'open' ? `$${fmtUsdc7(t.collateral)}` : '—'}
                     </td>
-                    <td className={`px-6 py-3 text-right font-mono tabular-nums ${pnlClass}`}>
+                    <td className={`px-6 py-2 text-right font-mono tabular-nums ${pnlClass}`}>
                       {pnlDisplay}
                     </td>
-                    <td className="px-6 py-3 text-right text-xs">
+                    <td className="px-6 py-2 text-right text-xs">
                       <a
                         href={`${STELLAR_EXPERT_BASE}/tx/${t.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="font-mono text-muted-foreground hover:text-amber-400"
+                        className="font-mono text-faint hover:text-primary transition-colors"
                       >
                         {shortHash(t.txHash)} ↗
                       </a>

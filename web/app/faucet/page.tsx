@@ -36,24 +36,24 @@ function FaucetPage() {
   } = useFaucet(publicKey);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-16 pb-20">
+      <main className="pt-12 pb-16">
         <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
           {!isConnected ? (
-            <div className="rounded-2xl border border-white/10 bg-card p-8 text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/[0.04] border border-white/[0.06] mb-4">
+            <div className="rounded-lg border border-border bg-surface p-8 text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-lg bg-surface-2 border border-border mb-4">
                 <Wallet className="w-8 h-8 text-muted-foreground" />
               </div>
-              <h2 className="text-xl font-semibold text-foreground mb-2">
+              <h2 className="text-lg font-medium text-foreground mb-2">
                 Connect Your Wallet
               </h2>
               <p className="text-muted-foreground mb-6 max-w-sm mx-auto">
                 Connect your Stellar wallet (Freighter, LOBSTR, …) to claim
                 test USDC tokens.
               </p>
-              <p className="text-sm text-muted-foreground/70">
+              <p className="text-sm text-faint">
                 Click &quot;Connect Wallet&quot; in the top right corner to get started.
               </p>
             </div>

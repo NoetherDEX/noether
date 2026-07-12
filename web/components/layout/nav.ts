@@ -7,7 +7,6 @@ export const APP_NAV_ITEMS = [
   { href: '/vaults', label: 'Vaults' },
   { href: '/referrals', label: 'Referrals' },
   { href: '/leaderboard', label: 'Leaderboard' },
-  { href: '/api-keys', label: 'API Keys' },
   { href: '/faucet', label: 'Faucet' },
 ];
 

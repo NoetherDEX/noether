@@ -28,9 +28,9 @@ export function MyVaultPosition({ vault, deposits, withdraws }: Props) {
 
   if (!address) {
     return (
-      <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/10">
-          <h3 className="text-base font-semibold text-foreground">Your Position</h3>
+      <div className="rounded-lg border border-border bg-surface overflow-hidden">
+        <div className="px-6 py-4 border-b border-border">
+          <h3 className="text-sm font-medium text-foreground">Your Position</h3>
         </div>
         <div className="p-6 py-8 text-center">
           <p className="text-sm text-muted-foreground">
@@ -49,9 +49,9 @@ export function MyVaultPosition({ vault, deposits, withdraws }: Props) {
 
   if (netShares <= 0n) {
     return (
-      <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/10">
-          <h3 className="text-base font-semibold text-foreground">Your Position</h3>
+      <div className="rounded-lg border border-border bg-surface overflow-hidden">
+        <div className="px-6 py-4 border-b border-border">
+          <h3 className="text-sm font-medium text-foreground">Your Position</h3>
         </div>
         <div className="p-6 py-8 text-center">
           <p className="text-sm text-foreground mb-1">No position yet</p>
@@ -86,10 +86,10 @@ export function MyVaultPosition({ vault, deposits, withdraws }: Props) {
     : undefined;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-        <h3 className="text-base font-semibold text-foreground">Your Position</h3>
-        <span className="text-xs text-muted-foreground font-mono">
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <div className="px-6 py-4 border-b border-border flex items-center justify-between">
+        <h3 className="text-sm font-medium text-foreground">Your Position</h3>
+        <span className="text-xs text-muted-foreground font-mono tabular-nums">
           {depCount} deposit{depCount !== 1 && 's'} · {wdCount} withdraw{wdCount !== 1 && 's'} ·{' '}
           {address.slice(0, 4)}…{address.slice(-4)}
         </span>
@@ -103,7 +103,7 @@ export function MyVaultPosition({ vault, deposits, withdraws }: Props) {
           <Cell label="Net P&L (est.)" value={pnlDisplay} tone={pnlTone} />
         </div>
         {capitalDeployed && (
-          <p className="mt-4 text-xs text-amber-400/90">
+          <p className="mt-4 border-l-2 border-primary/60 pl-3 text-xs text-muted-foreground">
             The leader has {vault.openPositions} open position
             {vault.openPositions === 1 ? '' : 's'} — value and P&amp;L above count
             only liquid capital and exclude your share of what is deployed in
@@ -125,11 +125,11 @@ function Cell({
   tone?: 'success' | 'danger';
 }) {
   const color =
-    tone === 'success' ? 'text-[#22c55e]' : tone === 'danger' ? 'text-red-400' : 'text-foreground';
+    tone === 'success' ? 'text-long' : tone === 'danger' ? 'text-short' : 'text-foreground';
   return (
     <div>
-      <p className="text-xs md:text-sm text-muted-foreground">{label}</p>
-      <p className={`mt-2 text-xl md:text-2xl font-bold font-mono ${color}`}>{value}</p>
+      <p className="text-[11px] uppercase tracking-wide text-faint">{label}</p>
+      <p className={`mt-2 text-lg md:text-xl font-medium font-mono tabular-nums ${color}`}>{value}</p>
     </div>
   );
 }

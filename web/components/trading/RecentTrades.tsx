@@ -30,10 +30,10 @@ function formatCompactTime(date: Date): string {
 
 // Side color mapping
 const sideColors: Record<GlobalTrade['side'], string> = {
-  Long: 'text-emerald-400',
-  Short: 'text-red-400',
-  Close: 'text-white',
-  Liq: 'text-amber-400',
+  Long: 'text-long',
+  Short: 'text-short',
+  Close: 'text-foreground',
+  Liq: 'text-primary',
 };
 
 // Safely convert BigInt to number with precision (7 decimals)
@@ -251,10 +251,15 @@ export function RecentTrades() {
       <span
         className={cn(
           'inline-flex h-1.5 w-1.5 rounded-full',
-          fetchFailed ? 'bg-amber-400' : lastUpdatedAt ? 'bg-emerald-500' : 'bg-neutral-600',
+          fetchFailed ? 'bg-primary' : lastUpdatedAt ? 'bg-long' : 'bg-faint',
         )}
       />
-      <span className={cn('text-[10px]', fetchFailed ? 'text-amber-400' : 'text-neutral-500')}>
+      <span
+        className={cn(
+          'text-[10px] font-mono tabular-nums',
+          fetchFailed ? 'text-primary' : 'text-faint',
+        )}
+      >
         {fetchFailed
           ? 'Stale — retrying'
           : lastUpdatedAt
@@ -266,9 +271,9 @@ export function RecentTrades() {
 
   if (isLoading && trades.length === 0) {
     return (
-      <div className="flex flex-col h-full">
+      <div className="flex flex-col">
         <div className="flex items-center justify-between mb-3 flex-shrink-0">
-          <h3 className="text-sm font-medium text-neutral-400">Recent Trades</h3>
+          <h3 className="text-[13px] font-medium text-foreground">Recent Trades</h3>
           {liveness}
         </div>
         <RecentTradesSkeleton />
@@ -277,32 +282,32 @@ export function RecentTrades() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <h3 className="text-sm font-medium text-neutral-400">Recent Trades</h3>
+        <h3 className="text-[13px] font-medium text-foreground">Recent Trades</h3>
         {liveness}
       </div>
 
       {/* Trade List */}
-      <div className="flex-1 overflow-y-auto -mx-4 px-4 custom-scrollbar">
+      <div className="max-h-[420px] overflow-y-auto custom-scrollbar">
         {trades.length === 0 ? (
           fetchFailed ? (
             // Explicit, retryable error state — an RPC failure must not
             // masquerade as an empty market (A14).
             <div className="text-center py-8">
-              <p className="text-xs text-neutral-400">Couldn&apos;t load recent trades</p>
+              <p className="text-xs text-muted-foreground">Couldn&apos;t load recent trades</p>
               <button
                 onClick={fetchRecentTrades}
-                className="mt-2 text-xs text-[#eab308] underline hover:opacity-80"
+                className="mt-2 text-xs text-primary underline hover:opacity-80 transition-opacity"
               >
                 Retry
               </button>
             </div>
           ) : (
             <div className="text-center py-8">
-              <p className="text-xs text-neutral-400">No trades yet</p>
-              <p className="text-xs text-neutral-500 mt-1">
+              <p className="text-xs text-muted-foreground">No trades yet</p>
+              <p className="text-xs text-faint mt-1">
                 Trades will appear here as users interact with the protocol.
               </p>
             </div>
@@ -313,7 +318,7 @@ export function RecentTrades() {
               const rowContent = (
                 <>
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs font-medium text-white w-8 flex-shrink-0">
+                    <span className="text-xs font-medium text-foreground w-8 flex-shrink-0">
                       {trade.asset}
                     </span>
                     <span className={cn('text-xs font-medium w-10', sideColors[trade.side])}>
@@ -321,17 +326,17 @@ export function RecentTrades() {
                     </span>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="text-xs text-neutral-300 tabular-nums">
+                    <span className="text-xs text-foreground font-mono tabular-nums">
                       {formatUSD(trade.size, 0)}
                     </span>
-                    <span className="text-xs text-neutral-500 w-6 text-right">
+                    <span className="text-xs text-faint font-mono tabular-nums w-6 text-right">
                       {formatCompactTime(trade.timestamp)}
                     </span>
                   </div>
                 </>
               );
               const rowClass =
-                'flex items-center justify-between py-1.5 px-2 -mx-2 rounded transition-colors hover:bg-white/5';
+                'flex items-center justify-between py-2 px-2 -mx-2 rounded-sm transition-colors hover:bg-surface-3/50';
               // No href="#" affordances: rows without a tx hash are plain rows (A13).
               return trade.txHash ? (
                 <a

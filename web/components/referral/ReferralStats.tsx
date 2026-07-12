@@ -48,38 +48,45 @@ export function ReferralStats({ row }: { row: ReferrerRow }) {
   ];
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <StatRow stats={primary} mono />
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <StatRow stats={primary} large className="border-b border-border" />
       <StatRow stats={secondary} />
     </div>
   );
 }
 
-function StatRow({ stats, mono = false }: { stats: Stat[]; mono?: boolean }) {
+function StatRow({
+  stats,
+  large = false,
+  className = '',
+}: {
+  stats: Stat[];
+  large?: boolean;
+  className?: string;
+}) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 items-stretch gap-4 md:gap-6">
+    <div
+      className={`grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-border ${className}`}
+    >
       {stats.map((s) => {
         const valueColor =
           s.tone === 'success'
-            ? 'text-[#22c55e]'
+            ? 'text-long'
             : s.tone === 'muted'
             ? 'text-muted-foreground'
             : 'text-foreground';
         return (
-          <div
-            key={s.label}
-            className="rounded-2xl border border-white/10 bg-card p-4 md:p-6"
-          >
-            <span className="text-xs md:text-sm text-muted-foreground">{s.label}</span>
-            <div className="mt-2">
+          <div key={s.label} className="min-w-0 px-4 py-3">
+            <span className="text-[11px] uppercase tracking-wide text-faint">{s.label}</span>
+            <div className="mt-1">
               <span
-                className={`text-xl md:text-3xl font-bold ${mono ? 'font-mono' : ''} ${valueColor}`}
+                className={`${large ? 'text-lg' : 'text-sm'} font-medium font-mono tabular-nums ${valueColor} break-all`}
               >
                 {s.value}
               </span>
             </div>
             {s.hint && (
-              <p className="mt-2 text-xs text-muted-foreground hidden md:block">{s.hint}</p>
+              <p className="mt-1 text-[11px] text-faint hidden md:block">{s.hint}</p>
             )}
           </div>
         );

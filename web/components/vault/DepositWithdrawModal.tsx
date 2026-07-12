@@ -257,17 +257,17 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
 
         {/* Vault status row */}
         <div className="grid grid-cols-3 gap-2 text-xs">
-          <div className="rounded-md bg-zinc-900/50 px-3 py-2">
-            <div className="text-zinc-500">Liquid TVL</div>
-            <div className="font-mono mt-0.5">{fmtUsdc7(vault.totalUsdc)} USDC</div>
+          <div className="rounded-md bg-surface-2 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-faint">Liquid TVL</div>
+            <div className="font-mono tabular-nums mt-0.5">{fmtUsdc7(vault.totalUsdc)} USDC</div>
           </div>
-          <div className="rounded-md bg-zinc-900/50 px-3 py-2">
-            <div className="text-zinc-500">Liquid NAV</div>
-            <div className="font-mono mt-0.5">{fmtUsdc7(nav, 4)}</div>
+          <div className="rounded-md bg-surface-2 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-faint">Liquid NAV</div>
+            <div className="font-mono tabular-nums mt-0.5">{fmtUsdc7(nav, 4)}</div>
           </div>
-          <div className="rounded-md bg-zinc-900/50 px-3 py-2">
-            <div className="text-zinc-500">Shares out</div>
-            <div className="font-mono mt-0.5">{fmtUsdc7(vault.circulatingShares)}</div>
+          <div className="rounded-md bg-surface-2 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-faint">Shares out</div>
+            <div className="font-mono tabular-nums mt-0.5">{fmtUsdc7(vault.circulatingShares)}</div>
           </div>
         </div>
 
@@ -275,16 +275,16 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
         <Card>
           <CardContent className="p-4 space-y-2">
             <div className="flex items-end justify-between gap-2">
-              <label className="text-xs text-zinc-500 uppercase tracking-wider">
+              <label className="text-[11px] text-faint uppercase tracking-wide">
                 {mode === 'deposit' ? 'USDC amount' : 'Share amount'}
               </label>
               <button
                 type="button"
                 onClick={setMax}
                 disabled={!connected || maxRaw === 0n}
-                className="text-xs text-amber-400 hover:text-amber-300 disabled:text-zinc-600 disabled:cursor-not-allowed"
+                className="text-xs text-primary hover:text-primary/80 disabled:text-faint disabled:cursor-not-allowed transition-colors"
               >
-                Max ({fmtUsdc7(maxRaw, 4)})
+                Max (<span className="font-mono tabular-nums">{fmtUsdc7(maxRaw, 4)}</span>)
               </button>
             </div>
             <Input
@@ -295,10 +295,10 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
               inputMode="decimal"
             />
             {previewLine && (
-              <p className="text-xs text-zinc-400 font-mono">{previewLine}</p>
+              <p className="text-xs text-muted-foreground font-mono tabular-nums">{previewLine}</p>
             )}
             {exceedsBalance && (
-              <p className="text-xs text-red-400">
+              <p className="text-xs text-short">
                 Amount exceeds {mode === 'deposit' ? 'USDC balance' : 'share balance'}.
               </p>
             )}
@@ -309,9 +309,9 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
             deployed pays out at the collapsed liquid NAV — the depositor
             permanently forfeits their share of the in-flight capital. */}
         {mode === 'withdraw' && openPositionCount > 0 && (
-          <Card className="border-red-500/40 bg-red-500/5">
-            <CardContent className="p-3 text-xs text-red-400 space-y-1">
-              <p className="font-semibold">
+          <Card className="border-short/25 bg-short/10">
+            <CardContent className="p-3 text-xs text-foreground space-y-1">
+              <p className="font-medium text-short">
                 The leader has {openPositionCount} open position
                 {openPositionCount === 1 ? '' : 's'}
                 {deployed && deployed.usdc > 0n
@@ -330,16 +330,16 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
 
         {/* Context banner */}
         {!connected && (
-          <Card className="border-amber-500/40 bg-amber-500/5">
-            <CardContent className="p-3 text-xs text-amber-400">
+          <Card className="border-primary/25 bg-primary/10">
+            <CardContent className="p-3 text-xs text-foreground">
               Connect a wallet from the navbar to sign the transaction.
             </CardContent>
           </Card>
         )}
 
         {connected && mode === 'deposit' && !isLeader && BigInt(vault.leaderShares) === 0n && (
-          <Card className="border-amber-500/40 bg-amber-500/5">
-            <CardContent className="p-3 text-xs text-amber-400">
+          <Card className="border-primary/25 bg-primary/10">
+            <CardContent className="p-3 text-xs text-foreground">
               The leader has not seeded this vault yet — outside deposits would
               break the 5% leader-skin invariant and will fail on-chain. Wait
               for the leader to deposit first.
@@ -348,8 +348,8 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
         )}
 
         {connected && mode === 'withdraw' && userShares === 0n && (
-          <Card className="border-zinc-700 bg-zinc-900/40">
-            <CardContent className="p-3 text-xs text-zinc-400">
+          <Card className="border-border bg-surface-2">
+            <CardContent className="p-3 text-xs text-muted-foreground">
               You have no shares in this vault to withdraw.
             </CardContent>
           </Card>

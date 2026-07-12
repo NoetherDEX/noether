@@ -6,12 +6,12 @@ import { LeaderboardContent } from '@/components/leaderboard';
 
 function LeaderboardPage() {
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-16 pb-20">
+      <main className="pt-12 pb-16">
         <div className="max-w-7xl mx-auto px-4 py-8">
-          <h1 className="text-2xl font-bold mb-6">Leaderboard</h1>
+          <h1 className="text-xl font-medium mb-6">Leaderboard</h1>
           <LeaderboardContent />
         </div>
       </main>

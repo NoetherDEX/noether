@@ -46,22 +46,22 @@ interface DepositWithdrawCardProps {
 
 export function DepositWithdrawCardSkeleton() {
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b border-white/10">
-        <div className="h-5 w-32 bg-white/5 rounded animate-pulse" />
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <div className="px-6 py-4 border-b border-border">
+        <div className="h-5 w-32 bg-surface-2 rounded animate-pulse" />
       </div>
       <div className="p-6 space-y-4">
-        <div className="h-10 w-full bg-white/5 rounded-lg animate-pulse" />
-        <div className="h-14 w-full bg-white/5 rounded-lg animate-pulse" />
+        <div className="h-10 w-full bg-surface-2 rounded-md animate-pulse" />
+        <div className="h-14 w-full bg-surface-2 rounded-md animate-pulse" />
         <div className="space-y-2">
           {[1, 2].map((i) => (
             <div key={i} className="flex justify-between">
-              <div className="h-4 w-24 bg-white/5 rounded animate-pulse" />
-              <div className="h-4 w-20 bg-white/5 rounded animate-pulse" />
+              <div className="h-4 w-24 bg-surface-2 rounded animate-pulse" />
+              <div className="h-4 w-20 bg-surface-2 rounded animate-pulse" />
             </div>
           ))}
         </div>
-        <div className="h-12 w-full bg-white/5 rounded-lg animate-pulse" />
+        <div className="h-12 w-full bg-surface-2 rounded-md animate-pulse" />
       </div>
     </div>
   );
@@ -107,9 +107,9 @@ export function DepositWithdrawCard({
     <button
       onClick={onConnectWallet}
       className={cn(
-        'w-full h-12 text-sm font-bold rounded-lg transition-all',
+        'w-full h-12 text-sm font-medium rounded-md transition-colors',
         'flex items-center justify-center gap-2',
-        'bg-[#eab308] hover:bg-[#eab308]/90 text-black'
+        'bg-primary hover:bg-primary/90 text-primary-foreground'
       )}
     >
       <Wallet className="w-4 h-4" />
@@ -118,9 +118,9 @@ export function DepositWithdrawCard({
   );
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
       {/* Tabs */}
-      <div className="flex border-b border-white/10">
+      <div className="flex border-b border-border">
         <button
           onClick={() => setActiveTab('deposit')}
           className={cn(
@@ -132,7 +132,7 @@ export function DepositWithdrawCard({
         >
           Deposit
           {activeTab === 'deposit' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#eab308]" />
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
         </button>
         <button
@@ -146,7 +146,7 @@ export function DepositWithdrawCard({
         >
           Withdraw
           {activeTab === 'withdraw' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#eab308]" />
+            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
           )}
         </button>
       </div>
@@ -163,7 +163,7 @@ export function DepositWithdrawCard({
                     onClick={() => onDepositAmountChange(Math.floor(usdcBalance * 0.95).toString())}
                     className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   >
-                    Max: <span className="font-mono">{formatNumber(usdcBalance)}</span>
+                    Max: <span className="font-mono tabular-nums">{formatNumber(usdcBalance)}</span>
                   </button>
                 )}
               </div>
@@ -174,7 +174,7 @@ export function DepositWithdrawCard({
                   value={depositAmount}
                   onChange={(e) => onDepositAmountChange(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder="0.00"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
+                  className="w-full bg-surface-2 border border-border rounded-md px-4 py-3.5 font-mono tabular-nums text-lg text-foreground text-right pr-20 placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
                   <TokenIcon symbol="USDC" size={20} />
@@ -188,7 +188,7 @@ export function DepositWithdrawCard({
             <div>
               <label className="text-sm text-muted-foreground mb-2 block">You Receive</label>
               <div className="relative">
-                <div className="w-full bg-zinc-900/50 border border-white/5 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20">
+                <div className="w-full bg-surface-2 border border-border rounded-md px-4 py-3.5 font-mono tabular-nums text-lg text-foreground text-right pr-20">
                   {formatNumber(noeToReceive, 4)}
                 </div>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
@@ -199,10 +199,10 @@ export function DepositWithdrawCard({
             </div>
 
             {/* Details */}
-            <div className="space-y-2 p-3 bg-secondary/20 rounded-lg border border-white/5">
+            <div className="space-y-2 p-3 bg-surface-2 rounded-md border border-border">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Exchange Rate</span>
-                <span className="font-mono text-foreground">
+                <span className="font-mono tabular-nums text-foreground">
                   {noePrice != null ? `1 NOE = ${formatNumber(noePrice, 3)} USDC` : '—'}
                 </span>
               </div>
@@ -210,7 +210,7 @@ export function DepositWithdrawCard({
                 <span className="text-muted-foreground">
                   Fee{depositFeeBps != null ? ` (${bpsToPercent(depositFeeBps)}%)` : ''}
                 </span>
-                <span className="font-mono text-muted-foreground">
+                <span className="font-mono tabular-nums text-muted-foreground">
                   {depositFee != null ? `${formatNumber(depositFee)} USDC` : '—'}
                 </span>
               </div>
@@ -226,10 +226,10 @@ export function DepositWithdrawCard({
                 onClick={onDeposit}
                 disabled={depositNum <= 0 || depositNum > usdcBalance || isDepositing}
                 className={cn(
-                  'w-full h-12 text-sm font-bold rounded-lg transition-all',
+                  'w-full h-12 text-sm font-medium rounded-md transition-colors',
                   'flex items-center justify-center gap-2',
                   'disabled:opacity-40 disabled:cursor-not-allowed',
-                  'bg-[#22c55e] hover:bg-[#22c55e]/90 text-white'
+                  'bg-primary hover:bg-primary/90 text-primary-foreground'
                 )}
               >
                 {isDepositing && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -253,7 +253,7 @@ export function DepositWithdrawCard({
                     onClick={() => onWithdrawAmountChange(noeBalance.toString())}
                     className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   >
-                    Max: <span className="font-mono">{formatNumber(noeBalance, 4)}</span>
+                    Max: <span className="font-mono tabular-nums">{formatNumber(noeBalance, 4)}</span>
                   </button>
                 )}
               </div>
@@ -264,7 +264,7 @@ export function DepositWithdrawCard({
                   value={withdrawAmount}
                   onChange={(e) => onWithdrawAmountChange(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder="0.00"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
+                  className="w-full bg-surface-2 border border-border rounded-md px-4 py-3.5 font-mono tabular-nums text-lg text-foreground text-right pr-20 placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors"
                 />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
                   <TokenIcon symbol="NOE" size={20} />
@@ -275,7 +275,7 @@ export function DepositWithdrawCard({
 
             {/* Arrow */}
             <div className="flex justify-center">
-              <div className="p-2 rounded-lg bg-secondary/50 border border-white/10">
+              <div className="p-2 rounded-md bg-surface-2 border border-border">
                 <ArrowDownUp className="h-4 w-4 text-muted-foreground" />
               </div>
             </div>
@@ -284,7 +284,7 @@ export function DepositWithdrawCard({
             <div>
               <label className="text-sm text-muted-foreground mb-2 block">You Receive</label>
               <div className="relative">
-                <div className="w-full bg-zinc-900/50 border border-white/5 rounded-lg px-4 py-3.5 font-mono text-lg text-foreground text-right pr-20">
+                <div className="w-full bg-surface-2 border border-border rounded-md px-4 py-3.5 font-mono tabular-nums text-lg text-foreground text-right pr-20">
                   {formatNumber(usdcToReceive)}
                 </div>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
@@ -295,10 +295,10 @@ export function DepositWithdrawCard({
             </div>
 
             {/* Details */}
-            <div className="space-y-2 p-3 bg-secondary/20 rounded-lg border border-white/5">
+            <div className="space-y-2 p-3 bg-surface-2 rounded-md border border-border">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Exchange Rate</span>
-                <span className="font-mono text-foreground">
+                <span className="font-mono tabular-nums text-foreground">
                   {noePrice != null ? `1 NOE = ${formatNumber(noePrice, 3)} USDC` : '—'}
                 </span>
               </div>
@@ -306,7 +306,7 @@ export function DepositWithdrawCard({
                 <span className="text-muted-foreground">
                   Fee{withdrawFeeBps != null ? ` (${bpsToPercent(withdrawFeeBps)}%)` : ''}
                 </span>
-                <span className="font-mono text-muted-foreground">
+                <span className="font-mono tabular-nums text-muted-foreground">
                   {withdrawFee != null ? `${formatNumber(withdrawFee)} USDC` : '—'}
                 </span>
               </div>
@@ -320,10 +320,10 @@ export function DepositWithdrawCard({
                 onClick={onWithdraw}
                 disabled={withdrawNum <= 0 || withdrawNum > noeBalance || isWithdrawing}
                 className={cn(
-                  'w-full h-12 text-sm font-bold rounded-lg transition-all',
+                  'w-full h-12 text-sm font-medium rounded-md transition-colors',
                   'flex items-center justify-center gap-2',
                   'disabled:opacity-40 disabled:cursor-not-allowed',
-                  'bg-secondary hover:bg-secondary/80 text-foreground border border-white/10'
+                  'bg-surface-2 hover:bg-surface-3 text-foreground border border-border'
                 )}
               >
                 {isWithdrawing && <Loader2 className="w-4 h-4 animate-spin" />}

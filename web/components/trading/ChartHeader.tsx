@@ -71,7 +71,7 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
     return (
       <div className={cn('flex items-center gap-6', !compact && 'p-4', className)}>
         <div className="animate-pulse">
-          <div className="h-4 w-20 bg-white/10 rounded" />
+          <div className="h-4 w-20 bg-surface-3 rounded-sm" />
         </div>
       </div>
     );
@@ -84,15 +84,15 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
         {ticker && (
           <>
             <div>
-              <p className="text-[10px] text-neutral-500 mb-0.5">24h High</p>
-              <p className="text-xs font-medium text-white font-mono">
+              <p className="text-[10px] uppercase tracking-wide text-faint mb-0.5">24h High</p>
+              <p className="text-xs font-medium text-foreground font-mono tabular-nums">
                 {formatUSD(ticker.high24h, priceDecimals(asset))}
               </p>
             </div>
 
             <div>
-              <p className="text-[10px] text-neutral-500 mb-0.5">24h Low</p>
-              <p className="text-xs font-medium text-white font-mono">
+              <p className="text-[10px] uppercase tracking-wide text-faint mb-0.5">24h Low</p>
+              <p className="text-xs font-medium text-foreground font-mono tabular-nums">
                 {formatUSD(ticker.low24h, priceDecimals(asset))}
               </p>
             </div>
@@ -100,8 +100,8 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
             <div className="hidden lg:block">
               {/* Binance reference stat — distinct from the venue's own
                   "24h Volume (Noether)" in Market Info (A16). */}
-              <p className="text-[10px] text-neutral-500 mb-0.5">24h Volume (Binance)</p>
-              <p className="text-xs font-medium text-white font-mono">
+              <p className="text-[10px] uppercase tracking-wide text-faint mb-0.5">24h Volume (Binance)</p>
+              <p className="text-xs font-medium text-foreground font-mono tabular-nums">
                 ${formatNumber(ticker.volume24h / 1_000_000, 2)}M
               </p>
             </div>
@@ -116,16 +116,16 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
       {/* Asset name and price */}
       <div>
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-lg font-semibold text-white">{asset}/USD</span>
-          <span className="text-xs text-neutral-500">Perpetual</span>
+          <span className="text-[13px] font-semibold text-foreground">{asset}/USD</span>
+          <span className="text-xs text-faint">Perpetual</span>
         </div>
         <div className="flex items-center gap-2">
           <span
             className={cn(
-              'text-3xl font-bold transition-colors duration-200',
-              priceFlash === 'up' && 'text-emerald-400',
-              priceFlash === 'down' && 'text-red-400',
-              !priceFlash && 'text-white'
+              'text-2xl font-semibold font-mono tabular-nums transition-colors duration-200',
+              priceFlash === 'up' && 'text-long',
+              priceFlash === 'down' && 'text-short',
+              !priceFlash && 'text-foreground'
             )}
           >
             {displayPrice > 0 ? formatUSD(displayPrice, priceDecimals(asset)) : '--'}
@@ -133,10 +133,10 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
           {ticker && (
             <div
               className={cn(
-                'flex items-center gap-1 px-2 py-1 rounded-lg text-sm font-medium',
+                'flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium font-mono tabular-nums',
                 isPositive
-                  ? 'bg-emerald-400/10 text-emerald-400'
-                  : 'bg-red-400/10 text-red-400'
+                  ? 'bg-long/10 text-long'
+                  : 'bg-short/10 text-short'
               )}
             >
               {isPositive ? (
@@ -154,22 +154,22 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
       {ticker && (
         <>
           <div className="hidden sm:block">
-            <p className="text-xs text-neutral-500 mb-1">24h High</p>
-            <p className="text-sm font-medium text-white">
+            <p className="text-[11px] uppercase tracking-wide text-faint mb-1">24h High</p>
+            <p className="text-[13px] font-medium text-foreground font-mono tabular-nums">
               {formatUSD(ticker.high24h, priceDecimals(asset))}
             </p>
           </div>
 
           <div className="hidden sm:block">
-            <p className="text-xs text-neutral-500 mb-1">24h Low</p>
-            <p className="text-sm font-medium text-white">
+            <p className="text-[11px] uppercase tracking-wide text-faint mb-1">24h Low</p>
+            <p className="text-[13px] font-medium text-foreground font-mono tabular-nums">
               {formatUSD(ticker.low24h, priceDecimals(asset))}
             </p>
           </div>
 
           <div className="hidden md:block">
-            <p className="text-xs text-neutral-500 mb-1">24h Volume (Binance)</p>
-            <p className="text-sm font-medium text-white">
+            <p className="text-[11px] uppercase tracking-wide text-faint mb-1">24h Volume (Binance)</p>
+            <p className="text-[13px] font-medium text-foreground font-mono tabular-nums">
               ${formatNumber(ticker.volume24h / 1_000_000, 2)}M
             </p>
           </div>

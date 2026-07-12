@@ -3,23 +3,20 @@ import {
   Navbar,
   Hero,
   FlagshipSection,
-  NOEIntroSection,
-  VaultSection,
+  ProtocolNewsSection,
   LandingFooter,
-  SlideContainer,
 } from '@/components/landing';
 
 export default function Home() {
   return (
     <>
       <Navbar />
-      <SlideContainer>
+      <main>
         <Hero />
         <FlagshipSection />
-        <NOEIntroSection />
-        <VaultSection />
+        <ProtocolNewsSection />
         <LandingFooter />
-      </SlideContainer>
+      </main>
     </>
   );
 }

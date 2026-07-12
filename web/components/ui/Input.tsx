@@ -19,14 +19,14 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="w-full">
         {label && (
-          <label htmlFor={inputId} className="block text-sm font-medium text-neutral-400 mb-2">
+          <label htmlFor={inputId} className="block text-xs font-medium text-muted-foreground mb-1.5">
             {label}
           </label>
         )}
         <div className="relative">
           {prefix && (
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <span className="text-neutral-500">{prefix}</span>
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <span className="text-faint text-sm">{prefix}</span>
             </div>
           )}
           <input
@@ -36,28 +36,28 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
             className={cn(
-              'w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/60',
-              'focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/20',
-              'transition-all duration-200',
+              'w-full bg-surface-2 border border-border rounded-md px-3 py-2 text-sm text-foreground placeholder:text-faint',
+              'focus:outline-none focus:border-border-strong focus:ring-1 focus:ring-border-strong',
+              'transition-colors',
               // Remove browser default number input spinners
               '[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
               '[&::-webkit-outer-spin-button]:m-0 [&::-webkit-inner-spin-button]:m-0',
               '[appearance:textfield]', // Firefox
-              prefix && 'pl-10',
-              suffix && 'pr-16',
-              error && 'border-red-500/50 focus:border-red-500',
+              prefix && 'pl-9',
+              suffix && 'pr-14',
+              error && 'border-short/50 focus:border-short',
               className
             )}
             {...props}
           />
           {suffix && (
-            <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
-              <span className="text-neutral-500 text-sm">{suffix}</span>
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+              <span className="text-faint text-xs">{suffix}</span>
             </div>
           )}
         </div>
         {error && (
-          <p id={errorId} className="mt-1 text-sm text-red-400">{error}</p>
+          <p id={errorId} className="mt-1 text-xs text-short">{error}</p>
         )}
       </div>
     );

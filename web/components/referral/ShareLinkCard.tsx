@@ -27,24 +27,25 @@ export function ShareLinkCard({ code }: { code: string }) {
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b border-white/10">
-        <h3 className="text-base font-semibold text-foreground">Share your code</h3>
-        <p className="text-xs md:text-sm text-muted-foreground mt-1">
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <div className="px-5 py-3 border-b border-border">
+        <h3 className="text-[13px] font-medium text-foreground">Share your code</h3>
+      </div>
+
+      <div className="p-5 space-y-4">
+        <p className="text-[11px] text-faint leading-relaxed">
           Your invitees accept with one signed transaction (from the link
           banner or the code box on the Referrals page) — the binding is
           on-chain today. From v1.1 they get a 4% fee discount and you earn
           10% of every fee they pay.
         </p>
-      </div>
 
-      <div className="p-6 space-y-4">
         <div>
-          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+          <p className="text-[11px] uppercase tracking-wide text-faint mb-1.5">
             Code
           </p>
           <div className="flex items-center gap-2">
-            <code className="flex-1 px-4 py-3 bg-zinc-900/60 border border-white/10 rounded-xl text-base font-mono">
+            <code className="flex-1 px-3 py-2 bg-surface-2 border border-border rounded-md text-sm font-mono">
               {code}
             </code>
             <Button onClick={() => copy(code, 'code')} size="sm" variant="ghost">
@@ -54,14 +55,14 @@ export function ShareLinkCard({ code }: { code: string }) {
         </div>
 
         <div>
-          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+          <p className="text-[11px] uppercase tracking-wide text-faint mb-1.5">
             Share link
           </p>
           <div className="flex items-center gap-2">
-            <code className="flex-1 px-4 py-3 bg-zinc-900/60 border border-white/10 rounded-xl text-xs font-mono break-all">
+            <code className="flex-1 px-3 py-2 bg-surface-2 border border-border rounded-md text-xs font-mono break-all">
               {link}
             </code>
-            <Button onClick={() => copy(link, 'link')} size="sm">
+            <Button onClick={() => copy(link, 'link')} size="sm" variant="secondary">
               {copiedLink ? 'Copied' : 'Copy link'}
             </Button>
           </div>

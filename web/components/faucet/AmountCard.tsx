@@ -21,19 +21,19 @@ export function AmountCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'relative p-4 rounded-xl border transition-all text-center',
+        'relative p-4 rounded-md border transition-colors text-center',
         'disabled:opacity-40 disabled:cursor-not-allowed',
         selected
-          ? 'border-[#eab308]/50 bg-[#eab308]/10 ring-1 ring-[#eab308]/50'
-          : 'border-white/10 bg-secondary/30 hover:border-white/20 hover:bg-secondary/50'
+          ? 'border-primary/50 bg-primary/5 ring-1 ring-primary/50'
+          : 'border-border bg-surface-2 hover:border-border-strong hover:bg-surface-3'
       )}
     >
-      <span className="text-xl font-bold font-mono text-foreground">
+      <span className="text-xl font-medium font-mono tabular-nums text-foreground">
         {amount}
       </span>
       <span className="block text-xs text-muted-foreground mt-1">USDC</span>
       {selected && (
-        <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#eab308]" />
+        <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-primary" />
       )}
     </button>
   );

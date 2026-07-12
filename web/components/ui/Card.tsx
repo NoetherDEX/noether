@@ -12,23 +12,23 @@ interface CardProps {
 
 export function Card({ children, className, variant = 'default', padding = 'md' }: CardProps) {
   const variants = {
-    default: 'bg-[#0a0a0a]',
-    glass: 'bg-[#0a0a0a]/90 backdrop-blur-xl',
-    bordered: 'bg-transparent border border-white/10',
-    transparent: 'bg-transparent',
+    default: 'bg-surface',
+    glass: 'bg-surface/90 backdrop-blur-xl',
+    bordered: 'bg-transparent border-border-strong',
+    transparent: 'bg-transparent border-transparent',
   };
 
   const paddings = {
     none: '',
-    sm: 'p-4',
-    md: 'p-6',
-    lg: 'p-8',
+    sm: 'p-3',
+    md: 'p-4',
+    lg: 'p-6',
   };
 
   return (
     <div
       className={cn(
-        'rounded-2xl border border-white/5 hover:border-white/10 transition-colors',
+        'rounded-lg border border-border',
         variants[variant],
         paddings[padding],
         className
@@ -46,7 +46,7 @@ interface CardHeaderProps {
 
 export function CardHeader({ children, className }: CardHeaderProps) {
   return (
-    <div className={cn('mb-4', className)}>
+    <div className={cn('mb-3', className)}>
       {children}
     </div>
   );
@@ -59,7 +59,7 @@ interface CardTitleProps {
 
 export function CardTitle({ children, className }: CardTitleProps) {
   return (
-    <h3 className={cn('text-lg font-semibold text-white', className)}>
+    <h3 className={cn('text-[13px] font-medium text-foreground', className)}>
       {children}
     </h3>
   );

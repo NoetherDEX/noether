@@ -53,22 +53,22 @@ export function CrossMarginBanner({ positions, publicKey }: CrossMarginBannerPro
   const healthColor = pnlUnknown
     ? 'text-muted-foreground'
     : marginRatio === Infinity
-    ? 'text-[#22c55e]'
+    ? 'text-long'
     : marginRatio > 300
-    ? 'text-[#22c55e]'
+    ? 'text-long'
     : marginRatio > 100
-    ? 'text-[#f59e0b]'
-    : 'text-[#ef4444]';
+    ? 'text-primary'
+    : 'text-short';
 
   const healthBg = pnlUnknown
-    ? 'border-white/10 bg-white/[0.03]'
+    ? 'border-border bg-surface-2'
     : marginRatio === Infinity
-    ? 'border-[#22c55e]/20 bg-[#22c55e]/5'
+    ? 'border-long/25 bg-long/10'
     : marginRatio > 300
-    ? 'border-[#22c55e]/20 bg-[#22c55e]/5'
+    ? 'border-long/25 bg-long/10'
     : marginRatio > 100
-    ? 'border-[#f59e0b]/20 bg-[#f59e0b]/5'
-    : 'border-[#ef4444]/20 bg-[#ef4444]/5';
+    ? 'border-primary/25 bg-primary/10'
+    : 'border-short/25 bg-short/10';
 
   const healthLabel = pnlUnknown
     ? 'Mark price unavailable'
@@ -99,7 +99,7 @@ export function CrossMarginBanner({ positions, publicKey }: CrossMarginBannerPro
         </div>
         <div className="flex justify-between sm:flex-col sm:gap-0">
           <span className="text-[11px] text-muted-foreground">Free Margin</span>
-          <span className={cn('text-xs font-mono', Number.isFinite(freeMargin) && freeMargin < 0 ? 'text-[#ef4444]' : 'text-foreground')}>
+          <span className={cn('text-xs font-mono', Number.isFinite(freeMargin) && freeMargin < 0 ? 'text-short' : 'text-foreground')}>
             {formatUSD(freeMargin)}
           </span>
         </div>

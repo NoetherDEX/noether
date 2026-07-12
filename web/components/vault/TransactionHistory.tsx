@@ -30,7 +30,7 @@ export function TransactionHistorySkeleton() {
           {[1, 2, 3].map((i) => (
             <div
               key={i}
-              className="flex items-center justify-between p-4 bg-white/5 rounded-xl"
+              className="flex items-center justify-between px-4 py-2 bg-surface-2 rounded-md"
             >
               <div className="flex items-center gap-3">
                 <Skeleton className="w-4 h-4 rounded" />
@@ -162,51 +162,51 @@ export function TransactionHistory({ publicKey, isConnected }: TransactionHistor
       </CardHeader>
       <CardContent>
         {!isConnected ? (
-          <div className="text-center py-8 text-neutral-500">
+          <div className="text-center py-8 text-sm text-muted-foreground">
             Connect your wallet to view transaction history
           </div>
         ) : transactions.length === 0 ? (
           <div className="text-center py-8">
-            <p className="text-neutral-400 mb-1">No NOE transactions yet</p>
-            <p className="text-sm text-neutral-500">
+            <p className="text-sm text-foreground mb-1">No NOE transactions yet</p>
+            <p className="text-sm text-muted-foreground">
               Your NOE transfer history will appear here.
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {transactions.slice(0, visibleCount).map((tx) => (
               <a
                 key={tx.id}
                 href={getExplorerUrl(tx.txHash)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-between p-4 bg-white/5 rounded-xl hover:bg-white/10 transition-colors group"
+                className="flex items-center justify-between px-4 py-2 bg-surface-2 rounded-md hover:bg-surface-3 transition-colors group"
               >
                 <div className="flex items-center gap-3">
                   {tx.type === 'received' ? (
-                    <ArrowDownLeft className="w-4 h-4 text-[#22c55e]" />
+                    <ArrowDownLeft className="w-4 h-4 text-long" />
                   ) : (
-                    <ArrowUpRight className="w-4 h-4 text-[#f59e0b]" />
+                    <ArrowUpRight className="w-4 h-4 text-short" />
                   )}
                   <div>
-                    <p className="text-sm font-medium text-white">
+                    <p className="text-[13px] font-medium text-foreground">
                       {tx.type === 'received' ? 'Received' : 'Sent'} NOE
                     </p>
-                    <p className="text-xs text-neutral-500">
+                    <p className="text-xs text-faint font-mono tabular-nums">
                       {formatDateTime(new Date(tx.timestamp))}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span
-                    className={`text-sm font-mono font-medium ${
-                      tx.type === 'received' ? 'text-[#22c55e]' : 'text-[#f59e0b]'
+                    className={`text-[13px] font-mono tabular-nums font-medium ${
+                      tx.type === 'received' ? 'text-long' : 'text-short'
                     }`}
                   >
                     {tx.type === 'received' ? '+' : '-'}
                     {formatNumber(tx.amount, 4)} NOE
                   </span>
-                  <ExternalLink className="w-3.5 h-3.5 text-white/20 group-hover:text-white/40 transition-colors" />
+                  <ExternalLink className="w-3.5 h-3.5 text-faint group-hover:text-muted-foreground transition-colors" />
                 </div>
               </a>
             ))}

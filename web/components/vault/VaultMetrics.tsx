@@ -135,18 +135,18 @@ function StatRow({ stats, cols = 3 }: { stats: Stat[]; cols?: 3 | 4 }) {
       {stats.map((s) => {
         const valueColor =
           s.tone === 'success'
-            ? 'text-[#22c55e]'
+            ? 'text-long'
             : s.tone === 'danger'
-            ? 'text-red-400'
+            ? 'text-short'
             : 'text-foreground';
         return (
           <div
             key={s.label}
-            className="rounded-2xl border border-white/10 bg-card p-4 md:p-6"
+            className="rounded-lg border border-border bg-surface p-4 md:p-5"
           >
-            <span className="text-xs md:text-sm text-muted-foreground">{s.label}</span>
+            <span className="text-[11px] uppercase tracking-wide text-faint">{s.label}</span>
             <div className="mt-2">
-              <span className={`text-xl md:text-3xl font-bold font-mono ${valueColor}`}>
+              <span className={`text-lg md:text-xl font-medium font-mono tabular-nums ${valueColor}`}>
                 {s.value}
               </span>
             </div>

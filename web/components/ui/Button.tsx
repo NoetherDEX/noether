@@ -12,21 +12,22 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', isLoading, disabled, children, ...props }, ref) => {
     // Focus indication comes from the global gold :focus-visible outline (globals.css)
-    const baseStyles = 'inline-flex items-center justify-center font-medium transition-all duration-200 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed';
+    const baseStyles = 'inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors rounded-md disabled:opacity-50 disabled:cursor-not-allowed';
 
     const variants = {
-      primary: 'bg-white text-black hover:bg-neutral-200',
-      secondary: 'bg-white/5 text-white hover:bg-white/10 border border-white/10 hover:border-white/20',
-      ghost: 'bg-transparent text-neutral-400 hover:text-white hover:bg-white/5',
-      // Black text on the direction fills — matches MobileTradeBar (9.2:1 vs 2.28:1 white-on-green)
-      success: 'bg-emerald-500 text-black hover:bg-emerald-600',
-      danger: 'bg-red-500 text-black hover:bg-red-600',
+      // Brand gold is the one accent: CTAs only. Near-black text (white on gold is 1.98:1).
+      primary: 'bg-primary text-primary-foreground hover:bg-primary/90',
+      secondary: 'bg-surface-2 text-foreground border border-border-strong hover:bg-surface-3',
+      ghost: 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-surface-2',
+      // Near-black text on the direction fills — matches MobileTradeBar (9.2:1 vs 2.28:1 white-on-green)
+      success: 'bg-long text-background hover:bg-long/90',
+      danger: 'bg-short text-background hover:bg-short/90',
     };
 
     const sizes = {
-      sm: 'px-3 py-1.5 text-sm',
-      md: 'px-4 py-2.5 text-sm',
-      lg: 'px-6 py-3 text-base',
+      sm: 'h-8 px-3 text-xs',
+      md: 'h-9 px-4 text-sm',
+      lg: 'h-11 px-6 text-sm',
     };
 
     return (
@@ -58,7 +59,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
               />
             </svg>
-            Loading...
+            Loading…
           </>
         ) : (
           children

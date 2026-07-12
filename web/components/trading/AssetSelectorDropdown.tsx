@@ -96,12 +96,12 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
   // and rendered nowhere (A13).
   const changeBadge = (change: number | null, className?: string) =>
     change == null ? (
-      <span className={cn('font-mono text-muted-foreground', className)}>—</span>
+      <span className={cn('font-mono tabular-nums text-muted-foreground', className)}>—</span>
     ) : (
       <span
         className={cn(
-          'font-mono',
-          change > 0 ? 'text-[#22c55e]' : change < 0 ? 'text-[#ef4444]' : 'text-muted-foreground',
+          'font-mono tabular-nums',
+          change > 0 ? 'text-long' : change < 0 ? 'text-short' : 'text-muted-foreground',
           className,
         )}
       >
@@ -115,20 +115,18 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          'flex items-center gap-2 px-3 py-2 rounded-lg border transition-all',
-          'bg-zinc-900/50 border-white/10 hover:border-white/20',
+          'flex h-9 items-center gap-2 px-2.5 rounded-md border transition-colors',
+          'bg-surface-2 border-border hover:bg-surface-3 hover:border-border-strong',
           isOpen && 'border-primary/50 ring-1 ring-primary/20'
         )}
       >
         {/* Asset Icon */}
-        <TokenIcon symbol={selectedAsset} size={24} />
+        <TokenIcon symbol={selectedAsset} size={20} />
 
         {/* Asset Info */}
-        <div className="text-left">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-semibold text-foreground">{selectedAsset}-PERP</span>
-          </div>
-          <span className="text-xs text-muted-foreground font-mono">
+        <div className="flex items-baseline gap-2 text-left">
+          <span className="text-[13px] font-semibold text-foreground">{selectedAsset}-PERP</span>
+          <span className="text-xs text-muted-foreground font-mono tabular-nums">
             {selectedAssetData.price > 0 ? formatPrice(selectedAssetData.price) : '—'}
           </span>{' '}
           {changeBadge(selectedAssetData.changePercent24h, 'text-[10px]')}
@@ -153,7 +151,7 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
           {/* Menu — height-capped so all 13 pairs stay reachable by scrolling
               on short/mobile viewports; overscroll-contain stops the page
               behind from scrolling when the list hits its edge. */}
-          <div className="absolute top-full left-0 mt-1 z-50 min-w-[220px] max-h-[min(60vh,480px)] bg-card border border-white/10 rounded-lg shadow-xl overflow-y-auto overscroll-contain">
+          <div className="absolute top-full left-0 mt-1 z-50 min-w-[220px] max-h-[min(60vh,480px)] bg-surface-2 border border-border-strong rounded-md overflow-y-auto overscroll-contain custom-scrollbar divide-y divide-border">
             {displayAssets.map((asset) => (
               <button
                 key={asset.symbol}
@@ -162,20 +160,20 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
                   setIsOpen(false);
                 }}
                 className={cn(
-                  'w-full flex items-center gap-3 px-3 py-2.5 hover:bg-zinc-900/50 transition-colors',
+                  'w-full flex items-center gap-3 px-3 py-2 hover:bg-surface-3 transition-colors',
                   asset.symbol === selectedAsset && 'bg-primary/10'
                 )}
               >
                 {/* Asset Icon */}
-                <TokenIcon symbol={asset.symbol} size={32} />
+                <TokenIcon symbol={asset.symbol} size={24} />
 
                 {/* Asset Info */}
                 <div className="flex-1 text-left">
                   <div className="flex items-center gap-1">
-                    <span className="text-sm font-medium text-foreground">{asset.symbol}-PERP</span>
-                    <span className="text-xs text-muted-foreground">{asset.name}</span>
+                    <span className="text-[13px] font-medium text-foreground">{asset.symbol}-PERP</span>
+                    <span className="text-xs text-faint">{asset.name}</span>
                   </div>
-                  <span className="text-xs text-muted-foreground font-mono">
+                  <span className="text-xs text-muted-foreground font-mono tabular-nums">
                     {asset.price > 0 ? formatPrice(asset.price) : '—'}
                   </span>
                 </div>

@@ -25,6 +25,15 @@ const jetbrainsMono = localFont({
   display: 'swap',
   variable: '--font-jetbrains-mono',
 })
+// Editorial display serif (landing hero / display headings only).
+const instrumentSerif = localFont({
+  src: [
+    { path: './fonts/InstrumentSerif.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/InstrumentSerifItalic.woff2', weight: '400', style: 'italic' },
+  ],
+  display: 'swap',
+  variable: '--font-instrument-serif',
+})
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -68,7 +77,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark scroll-smooth">
-      <body className={`${inter.variable} ${sora.variable} ${jetbrainsMono.variable} font-sans antialiased bg-background text-foreground`}>
+      <body className={`${inter.variable} ${sora.variable} ${jetbrainsMono.variable} ${instrumentSerif.variable} font-sans antialiased bg-background text-foreground`}>
         <a
           href="#main-content"
           data-noether-chrome

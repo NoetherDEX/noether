@@ -25,7 +25,7 @@ interface AccountHealthProps {
 function StaleBadge() {
   return (
     <span
-      className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20"
+      className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded-sm bg-primary/10 text-primary border border-primary/20"
       title="Live price read failed — values use the last known price"
     >
       Stale
@@ -77,10 +77,9 @@ export function AccountHealth({
   if (!isConnected) {
     return (
       <div className="grid grid-cols-1 gap-4">
-        <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-[#111] to-[#0a0a0a] p-6">
-          <div className="absolute top-0 right-0 h-32 w-32 bg-transparent rounded-bl-full" />
-          <div className="relative text-center py-8">
-            <Wallet className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+        <div className="rounded-lg border border-border bg-surface p-6">
+          <div className="text-center py-8">
+            <Wallet className="w-12 h-12 text-faint mx-auto mb-4" />
             <h3 className="text-lg font-medium text-foreground mb-2">Connect Your Wallet</h3>
             <p className="text-sm text-muted-foreground">
               Connect your wallet to view your portfolio and positions
@@ -92,18 +91,17 @@ export function AccountHealth({
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-8">
+    <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6">
       {/* Net Worth Card - Left Column */}
-      <div className="relative overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-[#111] to-[#0a0a0a] p-6">
-        <div className="absolute top-0 right-0 h-32 w-32 bg-transparent rounded-bl-full" />
-        <div className="relative">
-          <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
-            <Wallet className="h-4 w-4" />
+      <div className="rounded-lg border border-border bg-surface p-6">
+        <div>
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-faint mb-2">
+            <Wallet className="h-3.5 w-3.5" />
             <span>Net Worth</span>
             {pricesStale && <StaleBadge />}
           </div>
           <div
-            className="font-mono text-2xl sm:text-4xl font-bold text-foreground tracking-tight"
+            className="font-mono tabular-nums text-2xl sm:text-3xl font-medium text-foreground tracking-tight"
             title={netWorth === null ? 'Unavailable — a price or balance read is missing' : undefined}
           >
             {formatUSD(netWorth)}
@@ -111,23 +109,23 @@ export function AccountHealth({
           {monthlyChangePercent !== null && (
             <div className={cn(
               'flex items-center gap-1 mt-2 text-sm',
-              isPositiveMonth ? 'text-[#22c55e]' : 'text-[#ef4444]'
+              isPositiveMonth ? 'text-long' : 'text-short'
             )}>
               {isPositiveMonth ? (
                 <ArrowUpRight className="h-4 w-4" />
               ) : (
                 <ArrowDownRight className="h-4 w-4" />
               )}
-              <span className="font-mono">
+              <span className="font-mono tabular-nums">
                 {formatPercent(monthlyChangePercent)}
               </span>
               <span className="text-muted-foreground ml-1">this month</span>
             </div>
           )}
           {/* A9: reconcilable breakdown line — funds parked in the cross-margin pool */}
-          <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-sm">
+          <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Cross-Margin Balance</span>
-            <span className="font-mono text-foreground">{formatUSD(crossMarginBalance)}</span>
+            <span className="font-mono tabular-nums text-foreground">{formatUSD(crossMarginBalance)}</span>
           </div>
         </div>
       </div>
@@ -135,16 +133,16 @@ export function AccountHealth({
       {/* Stats Group - Right Column */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 h-full">
         {/* Unrealized PnL */}
-        <div className="rounded-xl border border-white/10 bg-card p-4 flex flex-col justify-center">
-          <div className="flex items-center gap-2 text-muted-foreground text-xs mb-2">
+        <div className="rounded-lg border border-border bg-surface p-4 flex flex-col justify-center">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-faint mb-2">
             <TrendingUp className="h-3.5 w-3.5" />
             <span>Unrealized PnL</span>
             {pricesStale && <StaleBadge />}
           </div>
           <div
             className={cn(
-              'font-mono text-xl font-bold',
-              !pnlKnown ? 'text-foreground' : isPnlPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
+              'font-mono tabular-nums text-base font-medium',
+              !pnlKnown ? 'text-foreground' : isPnlPositive ? 'text-long' : 'text-short'
             )}
             title={!pnlKnown ? 'Price unavailable for some positions — PnL unknown' : undefined}
           >
@@ -154,7 +152,7 @@ export function AccountHealth({
           </div>
           <div className={cn(
             'flex items-center gap-1 mt-1 text-xs',
-            !pnlKnown ? 'text-muted-foreground' : isPnlPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
+            !pnlKnown ? 'text-muted-foreground' : isPnlPositive ? 'text-long' : 'text-short'
           )}>
             {pnlKnown && (
               isPnlPositive ? (
@@ -163,38 +161,38 @@ export function AccountHealth({
                 <ArrowDownRight className="h-3 w-3" />
               )
             )}
-            <span className="font-mono">
+            <span className="font-mono tabular-nums">
               {formatPercent(pnlPercent, 1)}
             </span>
           </div>
         </div>
 
         {/* Buying Power */}
-        <div className="rounded-xl border border-white/10 bg-card p-4 flex flex-col justify-center">
-          <div className="flex items-center gap-2 text-muted-foreground text-xs mb-2">
+        <div className="rounded-lg border border-border bg-surface p-4 flex flex-col justify-center">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-faint mb-2">
             <Shield className="h-3.5 w-3.5" />
             <span>Buying Power</span>
           </div>
-          <div className="font-mono text-xl font-bold text-foreground">
+          <div className="font-mono tabular-nums text-base font-medium text-foreground">
             {formatUSD(buyingPower)}
           </div>
           <div className="text-xs text-muted-foreground mt-1">Available to trade</div>
         </div>
 
         {/* Margin Usage */}
-        <div className="rounded-xl border border-white/10 bg-card p-4 flex flex-col justify-center">
-          <div className="flex items-center justify-between text-muted-foreground text-xs mb-2">
+        <div className="rounded-lg border border-border bg-surface p-4 flex flex-col justify-center">
+          <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-faint mb-2">
             <span>Margin Usage</span>
-            <span className="font-mono text-foreground">
+            <span className="font-mono tabular-nums text-foreground">
               {marginUsagePercent === null ? '—' : `${marginUsagePercent.toFixed(0)}%`}
             </span>
           </div>
           {/* Progress bar */}
-          <div className="h-2 bg-secondary rounded-full overflow-hidden">
+          <div className="h-1.5 bg-surface-2 rounded-sm overflow-hidden">
             <div
               className={cn(
-                'h-full rounded-full transition-all',
-                (marginUsagePercent ?? 0) > 80 ? 'bg-[#ef4444]' : (marginUsagePercent ?? 0) > 50 ? 'bg-[#f59e0b]' : 'bg-gradient-to-r from-[#22c55e] to-[#eab308]'
+                'h-full rounded-sm transition-colors',
+                (marginUsagePercent ?? 0) > 80 ? 'bg-short' : (marginUsagePercent ?? 0) > 50 ? 'bg-primary' : 'bg-long'
               )}
               style={{ width: `${Math.min(marginUsagePercent ?? 0, 100)}%` }}
             />
@@ -209,7 +207,7 @@ export function AccountHealth({
                 ? 'Moderate'
                 : 'High'}
             </span>
-            <span>{formatUSD(marginUsed, 0)}</span>
+            <span className="font-mono tabular-nums">{formatUSD(marginUsed, 0)}</span>
           </div>
         </div>
       </div>
