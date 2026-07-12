@@ -211,6 +211,8 @@ export function Hero() {
             <video
               className="hero-video absolute inset-0 w-full h-full object-cover blur-[3px] scale-105 brightness-[0.8]"
               src="/media/hero-loop.mp4"
+              poster="/media/hero-poster.jpg"
+              preload="metadata"
               autoPlay
               muted
               loop
