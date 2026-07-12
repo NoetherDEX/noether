@@ -60,15 +60,18 @@ export function ConnectButton() {
     }
   };
 
-  const buttonBaseClass =
-    'inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-2.5 sm:py-3 rounded-lg text-xs sm:text-sm font-semibold border border-[#eab308]/60 text-[#eab308] bg-transparent hover:bg-[#eab308]/10 hover:border-[#eab308] hover:-translate-y-0.5 transition-all';
+  // Disconnected: the one gold CTA in the shell. Connected: quiet surface chip.
+  const ctaClass =
+    'inline-flex items-center gap-1.5 h-8 px-3 sm:px-4 rounded-md text-xs sm:text-[13px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors';
+  const chipClass =
+    'inline-flex items-center gap-2 h-8 px-3 rounded-md text-xs sm:text-[13px] font-medium bg-surface-2 text-foreground border border-border-strong hover:bg-surface-3 transition-colors';
 
   // Loading state
   if (!isReady) {
     return (
-      <button className={cn(buttonBaseClass, 'opacity-70 cursor-wait')} disabled>
-        <Wallet className="w-4 h-4" />
-        <span className="hidden sm:inline">Loading...</span>
+      <button className={cn(ctaClass, 'opacity-70 cursor-wait')} disabled>
+        <Wallet className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">Loading…</span>
       </button>
     );
   }
@@ -78,13 +81,13 @@ export function ConnectButton() {
     return (
       <>
         <button
-          className={cn(buttonBaseClass, isConnecting && 'opacity-70 cursor-wait')}
+          className={cn(ctaClass, isConnecting && 'opacity-70 cursor-wait')}
           onClick={() => setIsModalOpen(true)}
           disabled={isConnecting}
         >
-          <Wallet className="w-4 h-4" />
-          <span className="hidden sm:inline">{isConnecting ? 'Connecting...' : 'Connect Wallet'}</span>
-          <span className="sm:hidden">{isConnecting ? '...' : 'Connect'}</span>
+          <Wallet className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">{isConnecting ? 'Connecting…' : 'Connect Wallet'}</span>
+          <span className="sm:hidden">{isConnecting ? '…' : 'Connect'}</span>
         </button>
 
         <WalletModal
@@ -100,19 +103,16 @@ export function ConnectButton() {
   return (
     <div className="relative">
       <button
-        className={cn(buttonBaseClass, 'pr-4')}
+        className={chipClass}
         onClick={() => setIsDropdownOpen(!isDropdownOpen)}
         aria-expanded={isDropdownOpen}
         aria-haspopup="menu"
       >
-        <div className="relative flex items-center justify-center">
-          <div className="w-2 h-2 rounded-full bg-[#22c55e]" />
-          <div className="absolute w-2 h-2 rounded-full bg-[#22c55e] animate-ping opacity-75" />
-        </div>
-        <span>{truncateAddress(address!, 4, 4)}</span>
+        <div className="w-1.5 h-1.5 rounded-full bg-long" />
+        <span className="font-mono">{truncateAddress(address!, 4, 4)}</span>
         <ChevronDown
           className={cn(
-            'w-4 h-4 transition-transform',
+            'w-3.5 h-3.5 text-muted-foreground transition-transform',
             isDropdownOpen && 'rotate-180'
           )}
         />
@@ -133,15 +133,15 @@ export function ConnectButton() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.95 }}
               transition={{ duration: 0.15 }}
-              className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-72 max-w-72 p-4 bg-[#0a0a0c] border border-white/10 rounded-xl shadow-2xl z-50"
+              className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-72 max-w-72 p-3 bg-surface-2 border border-border-strong rounded-lg z-50"
             >
               {/* Network */}
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs text-neutral-500">Stellar Testnet</span>
+                <span className="text-xs text-faint">Stellar Testnet</span>
                 <button
                   onClick={handleRefreshBalance}
                   disabled={isRefreshing}
-                  className="p-1 text-neutral-500 hover:text-white transition-colors disabled:opacity-50"
+                  className="p-1 text-faint hover:text-foreground transition-colors disabled:opacity-50"
                   title="Refresh balances"
                 >
                   <RefreshCw className={cn('w-3 h-3', isRefreshing && 'animate-spin')} />
@@ -149,18 +149,18 @@ export function ConnectButton() {
               </div>
 
               {/* Address */}
-              <div className="mb-4">
+              <div className="mb-3">
                 <div className="flex items-center gap-2">
-                  <code className="text-sm text-white font-mono">
+                  <code className="text-sm text-foreground font-mono">
                     {truncateAddress(address!, 8, 8)}
                   </code>
                   <button
                     onClick={handleCopyAddress}
                     aria-label={copied ? 'Address copied' : 'Copy address'}
-                    className="p-1 text-neutral-500 hover:text-white transition-colors"
+                    className="p-1 text-faint hover:text-foreground transition-colors"
                   >
                     {copied ? (
-                      <Check className="w-3.5 h-3.5 text-[#22c55e]" aria-hidden="true" />
+                      <Check className="w-3.5 h-3.5 text-long" aria-hidden="true" />
                     ) : (
                       <Copy className="w-3.5 h-3.5" aria-hidden="true" />
                     )}
@@ -169,18 +169,18 @@ export function ConnectButton() {
               </div>
 
               {/* Balances */}
-              <div className="mb-4 space-y-2">
-                <div className="flex items-center justify-between p-3 bg-white/[0.03] border border-white/[0.06] rounded-lg">
-                  <span className="text-sm font-mono text-white">{formatNumber(usdcBalance, 2)} USDC</span>
-                  <span className="text-[10px] text-neutral-500">Collateral</span>
+              <div className="mb-3 space-y-1.5">
+                <div className="flex items-center justify-between px-3 py-2 bg-surface border border-border rounded-md">
+                  <span className="text-sm font-mono text-foreground">{formatNumber(usdcBalance, 2)} USDC</span>
+                  <span className="text-[10px] text-faint">Collateral</span>
                 </div>
-                <div className="flex items-center justify-between p-3 bg-white/[0.03] border border-white/[0.06] rounded-lg">
-                  <span className="text-sm font-mono text-white">{formatNumber(xlmBalance, 2)} XLM</span>
+                <div className="flex items-center justify-between px-3 py-2 bg-surface border border-border rounded-md">
+                  <span className="text-sm font-mono text-foreground">{formatNumber(xlmBalance, 2)} XLM</span>
                   <div className="flex items-center gap-2">
                     {xlmBalance < 1 && (
-                      <span className="text-[10px] text-red-400">Low</span>
+                      <span className="text-[10px] text-short">Low</span>
                     )}
-                    <span className="text-[10px] text-neutral-500">Gas</span>
+                    <span className="text-[10px] text-faint">Gas</span>
                   </div>
                 </div>
               </div>
@@ -189,7 +189,7 @@ export function ConnectButton() {
               <div className="flex flex-col gap-0.5">
                 <button
                   onClick={handleRefreshWallet}
-                  className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-muted-foreground hover:text-foreground hover:bg-surface-3 rounded-md transition-colors"
                 >
                   <ArrowLeftRight className="w-4 h-4" />
                   Switch Wallet
@@ -198,15 +198,15 @@ export function ConnectButton() {
                   href={`${STELLAR_EXPERT_BASE}/account/${address}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-muted-foreground hover:text-foreground hover:bg-surface-3 rounded-md transition-colors"
                 >
                   <ExternalLink className="w-4 h-4" />
                   View on Explorer
                 </a>
-                <div className="border-t border-white/5 my-1" />
+                <div className="border-t border-border my-1" />
                 <button
                   onClick={handleDisconnect}
-                  className="flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-short hover:bg-short/10 rounded-md transition-colors"
                 >
                   <LogOut className="w-4 h-4" />
                   Disconnect

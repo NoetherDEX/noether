@@ -113,11 +113,11 @@ export function ReferralSignIn() {
 
   if (!wallet.address) {
     return (
-      <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/10">
-          <h3 className="text-base font-semibold text-foreground">Connect your wallet</h3>
+      <div className="rounded-lg border border-border bg-surface overflow-hidden">
+        <div className="px-5 py-3 border-b border-border">
+          <h3 className="text-[13px] font-medium text-foreground">Connect your wallet</h3>
         </div>
-        <div className="p-6">
+        <div className="p-5">
           <p className="text-sm text-muted-foreground">
             Connect a Stellar wallet from the navbar to register a referral
             code. No sign-up needed — the code lives on-chain.
@@ -134,21 +134,12 @@ export function ReferralSignIn() {
   return (
     <div className="space-y-4 md:space-y-6">
       {loading && !shownSelf && (
-        <div className="rounded-2xl border border-white/10 bg-card p-6 text-sm text-muted-foreground">
+        <div className="rounded-lg border border-border bg-surface p-5 text-sm text-muted-foreground">
           Loading your referral state from chain…
         </div>
       )}
 
-      {/* Has a registered code → show stats + share + claim */}
-      {shownSelf && (
-        <>
-          <ReferralStats row={shownSelf} />
-          <ClaimFeesCard claimable={shownSelf.claimable} onClaimed={refresh} />
-          <ShareLinkCard code={shownSelf.code} />
-        </>
-      )}
-
-      {/* No code yet → register form */}
+      {/* No code yet → register form (top of the action stack) */}
       {!loading && !shownSelf && (
         <CreateCodeCard
           onCreated={(newCode) => {
@@ -159,6 +150,9 @@ export function ReferralSignIn() {
           }}
         />
       )}
+
+      {/* Has a registered code → share link directly under the code slot */}
+      {shownSelf && <ShareLinkCard code={shownSelf.code} />}
 
       {/* Not referred yet → manual code redemption (covers dismissed banner) */}
       {!loading && !shownBinding && (
@@ -176,9 +170,17 @@ export function ReferralSignIn() {
         />
       )}
 
+      {/* Stats + claim below the action cards */}
+      {shownSelf && (
+        <>
+          <ReferralStats row={shownSelf} />
+          <ClaimFeesCard claimable={shownSelf.claimable} onClaimed={refresh} />
+        </>
+      )}
+
       {/* Referee binding hint (you were referred by …) */}
       {shownBinding && (
-        <div className="rounded-2xl border border-white/10 bg-card p-5 text-xs text-muted-foreground">
+        <div className="rounded-lg border border-border bg-surface px-5 py-3 text-xs text-muted-foreground">
           You were referred by code{' '}
           <code className="text-foreground font-mono">{shownBinding.code}</code>{' '}
           on {formatDate(shownBinding.boundAt)}.
@@ -186,29 +188,32 @@ export function ReferralSignIn() {
       )}
 
       {/* Advanced — optional API dashboard */}
-      <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
+      <div className="rounded-lg border border-border bg-surface overflow-hidden">
         <button
           type="button"
           onClick={() => setShowAdvanced((v) => !v)}
-          className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors"
+          className="w-full px-5 py-3 flex items-center justify-between text-left hover:bg-surface-3/50 transition-colors"
         >
-          <span className="text-base font-semibold text-foreground">
+          <span className="text-[13px] font-medium text-foreground">
             Advanced — full dashboard
           </span>
-          <span className="text-xs text-muted-foreground">{showAdvanced ? '▲' : '▼'}</span>
+          <span className="text-xs text-faint">{showAdvanced ? '▲' : '▼'}</span>
         </button>
 
         {showAdvanced && (
-          <div className="px-6 pb-6 pt-2 space-y-4 border-t border-white/5">
-            <p className="text-sm text-muted-foreground">
+          <div className="px-5 pb-5 pt-3 space-y-4 border-t border-border">
+            <p className="text-xs text-muted-foreground">
               Sign a one-time challenge to unlock the analytics dashboard —
               trade-by-trade earnings, claim history, and aggregated stats.
               The code and share link above work without this.
             </p>
 
             {betaBlocked ? (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-2">
-                <p className="text-sm text-amber-300 font-medium">
+              <div className="rounded-md border border-border bg-surface-2 p-4 space-y-2">
+                <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-primary">
+                  Closed Beta
+                </p>
+                <p className="text-sm font-medium text-foreground">
                   Dashboard analytics — closed beta
                 </p>
                 <p className="text-xs text-muted-foreground leading-relaxed">
@@ -223,7 +228,7 @@ export function ReferralSignIn() {
                     href="https://twitter.com/Noetherdex"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-amber-400 hover:text-amber-300"
+                    className="text-primary hover:opacity-80"
                   >
                     DM us on X
                   </a>{' '}
@@ -232,7 +237,7 @@ export function ReferralSignIn() {
                     href={DISCORD_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-amber-400 hover:text-amber-300"
+                    className="text-primary hover:opacity-80"
                   >
                     join our Discord
                   </a>{' '}
@@ -240,7 +245,7 @@ export function ReferralSignIn() {
                 </p>
               </div>
             ) : (
-              <Button onClick={signIn} disabled={busy} size="sm">
+              <Button onClick={signIn} disabled={busy} size="sm" variant="secondary">
                 {busy ? 'Signing challenge…' : 'Sign in for analytics'}
               </Button>
             )}

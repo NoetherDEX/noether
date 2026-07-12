@@ -18,42 +18,42 @@ export function ReferralTradesTable({ rows }: { rows: ReferralTradeRow[] }) {
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="px-5 py-3 border-b border-zinc-800">
-          <h3 className="font-medium">Trades you earned on</h3>
-          <p className="text-xs text-zinc-500">{rows.length} entries</p>
+        <div className="px-5 py-3 border-b border-border flex items-baseline justify-between gap-3">
+          <h3 className="text-[13px] font-medium">Trades you earned on</h3>
+          <p className="text-[11px] text-faint font-mono tabular-nums">{rows.length} entries</p>
         </div>
         {rows.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-zinc-500">
+          <div className="px-5 py-8 text-center text-sm text-muted-foreground">
             No trades yet. Fee accrual starts in v1.1 — share your code now so
             your referees are already bound.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs uppercase text-zinc-500 border-b border-zinc-800/50">
+            <table className="w-full text-xs">
+              <thead className="text-[11px] uppercase tracking-wide text-faint border-b border-border">
                 <tr>
                   <th className="text-left px-5 py-2">Time</th>
                   <th className="text-left px-5 py-2">Referee</th>
                   <th className="text-right px-5 py-2">Original Fee</th>
                   <th className="text-right px-5 py-2">Their Discount</th>
-                  <th className="text-right px-5 py-2 text-emerald-400">Your Payout</th>
+                  <th className="text-right px-5 py-2 text-long">Your Payout</th>
                   <th className="text-right px-5 py-2">Tx</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-b border-zinc-800/30 last:border-0">
-                    <td className="px-5 py-3 text-zinc-400">{formatDateTimeFull(r.ts)}</td>
-                    <td className="px-5 py-3 font-mono text-xs">{shortAddr(r.referee)}</td>
-                    <td className="px-5 py-3 text-right tabular-nums">${fmtReferralUsdc(r.originalFee)}</td>
-                    <td className="px-5 py-3 text-right tabular-nums text-zinc-400">${fmtReferralUsdc(r.discount)}</td>
-                    <td className="px-5 py-3 text-right tabular-nums text-emerald-400">${fmtReferralUsdc(r.payout)}</td>
-                    <td className="px-5 py-3 text-right font-mono text-xs">
+                  <tr key={r.id} className="border-b border-border last:border-0 hover:bg-surface-3/50 transition-colors">
+                    <td className="px-5 py-2 text-muted-foreground font-mono tabular-nums">{formatDateTimeFull(r.ts)}</td>
+                    <td className="px-5 py-2 font-mono text-xs">{shortAddr(r.referee)}</td>
+                    <td className="px-5 py-2 text-right font-mono tabular-nums">${fmtReferralUsdc(r.originalFee)}</td>
+                    <td className="px-5 py-2 text-right font-mono tabular-nums text-muted-foreground">${fmtReferralUsdc(r.discount)}</td>
+                    <td className="px-5 py-2 text-right font-mono tabular-nums text-long">${fmtReferralUsdc(r.payout)}</td>
+                    <td className="px-5 py-2 text-right font-mono text-xs">
                       <a
                         href={`${STELLAR_EXPERT_BASE}/tx/${r.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-zinc-500 hover:text-amber-400 transition-colors"
+                        className="text-faint hover:text-primary transition-colors"
                         title={r.txHash}
                       >
                         {shortHash(r.txHash)}
@@ -74,18 +74,18 @@ export function ReferralClaimsTable({ rows }: { rows: ReferralClaimRow[] }) {
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="px-5 py-3 border-b border-zinc-800">
-          <h3 className="font-medium">Claim history</h3>
-          <p className="text-xs text-zinc-500">{rows.length} entries</p>
+        <div className="px-5 py-3 border-b border-border flex items-baseline justify-between gap-3">
+          <h3 className="text-[13px] font-medium">Claim history</h3>
+          <p className="text-[11px] text-faint font-mono tabular-nums">{rows.length} entries</p>
         </div>
         {rows.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-zinc-500">
+          <div className="px-5 py-8 text-center text-sm text-muted-foreground">
             You haven't claimed any referral earnings yet.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs uppercase text-zinc-500 border-b border-zinc-800/50">
+            <table className="w-full text-xs">
+              <thead className="text-[11px] uppercase tracking-wide text-faint border-b border-border">
                 <tr>
                   <th className="text-left px-5 py-2">Time</th>
                   <th className="text-right px-5 py-2">Amount</th>
@@ -94,15 +94,15 @@ export function ReferralClaimsTable({ rows }: { rows: ReferralClaimRow[] }) {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-b border-zinc-800/30 last:border-0">
-                    <td className="px-5 py-3 text-zinc-400">{formatDateTimeFull(r.ts)}</td>
-                    <td className="px-5 py-3 text-right tabular-nums">${fmtReferralUsdc(r.amount)}</td>
-                    <td className="px-5 py-3 text-right font-mono text-xs">
+                  <tr key={r.id} className="border-b border-border last:border-0 hover:bg-surface-3/50 transition-colors">
+                    <td className="px-5 py-2 text-muted-foreground font-mono tabular-nums">{formatDateTimeFull(r.ts)}</td>
+                    <td className="px-5 py-2 text-right font-mono tabular-nums">${fmtReferralUsdc(r.amount)}</td>
+                    <td className="px-5 py-2 text-right font-mono text-xs">
                       <a
                         href={`${STELLAR_EXPERT_BASE}/tx/${r.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-zinc-500 hover:text-amber-400 transition-colors"
+                        className="text-faint hover:text-primary transition-colors"
                         title={r.txHash}
                       >
                         {shortHash(r.txHash)}

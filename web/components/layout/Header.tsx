@@ -12,17 +12,7 @@ const navItems = APP_NAV_ITEMS;
 
 export function Header() {
   const pathname = usePathname();
-  const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setScrolled(window.scrollY > 50);
-    };
-
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -43,24 +33,17 @@ export function Header() {
 
   return (
     <>
-      <header
-        className={cn(
-          'fixed top-0 left-0 right-0 z-50 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between transition-all duration-300',
-          scrolled
-            ? 'bg-[#050508]/85 backdrop-blur-[20px] border-b border-white/[0.06]'
-            : 'bg-[#050508]/60 backdrop-blur-[12px]'
-        )}
-      >
+      <header className="fixed top-0 left-0 right-0 z-50 h-12 px-4 sm:px-5 flex items-center gap-6 bg-background/90 backdrop-blur-md border-b border-border">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 flex-shrink-0">
-          <NoetherLogo className="h-7 sm:h-8 w-auto" />
-          <span className="px-1.5 py-0.5 rounded-full border border-amber-500/50 text-amber-400 text-[10px] font-semibold uppercase tracking-widest leading-none">
+          <NoetherLogo className="h-6 w-auto" />
+          <span className="px-1.5 py-0.5 rounded-sm border border-primary/30 text-primary text-[10px] font-medium uppercase tracking-widest leading-none">
             Testnet
           </span>
         </Link>
 
         {/* Desktop Navigation Links */}
-        <nav className="hidden md:flex items-center gap-6 lg:gap-10">
+        <nav className="hidden md:flex items-center gap-1 h-full">
           {navItems.map((item) => {
             const isActive = pathname === item.href;
 
@@ -69,15 +52,15 @@ export function Header() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'relative text-sm font-medium transition-colors',
+                  'relative flex items-center h-full px-3 text-[13px] font-medium transition-colors',
                   isActive
-                    ? 'text-white'
-                    : 'text-white/60 hover:text-white'
+                    ? 'text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {item.label}
                 {isActive && (
-                  <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-[#eab308] rounded-full" />
+                  <span className="absolute bottom-0 left-3 right-3 h-0.5 bg-primary" />
                 )}
               </Link>
             );
@@ -85,19 +68,19 @@ export function Header() {
         </nav>
 
         {/* Right side: Connect + Hamburger */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="ml-auto flex items-center gap-2">
           <ConnectButton />
 
           {/* Mobile hamburger */}
           <button
-            className="md:hidden flex flex-col gap-1.5 p-2 -mr-2"
+            className="md:hidden flex flex-col justify-center gap-[5px] w-11 h-11 items-center -mr-2"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
             aria-expanded={mobileOpen}
           >
-            <span className={cn('block w-5 h-0.5 bg-white transition-all duration-200', mobileOpen && 'rotate-45 translate-y-2')} />
-            <span className={cn('block w-5 h-0.5 bg-white transition-all duration-200', mobileOpen && 'opacity-0')} />
-            <span className={cn('block w-5 h-0.5 bg-white transition-all duration-200', mobileOpen && '-rotate-45 -translate-y-2')} />
+            <span className={cn('block w-[18px] h-px bg-foreground transition-transform duration-200', mobileOpen && 'rotate-45 translate-y-[6px]')} />
+            <span className={cn('block w-[18px] h-px bg-foreground transition-opacity duration-200', mobileOpen && 'opacity-0')} />
+            <span className={cn('block w-[18px] h-px bg-foreground transition-transform duration-200', mobileOpen && '-rotate-45 -translate-y-[6px]')} />
           </button>
         </div>
       </header>
@@ -112,7 +95,7 @@ export function Header() {
           />
 
           {/* Menu panel */}
-          <div className="absolute top-[56px] left-0 right-0 bg-[#0a0a0c] border-b border-white/10 p-4 space-y-1">
+          <div className="absolute top-12 left-0 right-0 bg-surface border-b border-border p-3 space-y-0.5">
             {navItems.map((item) => {
               const isActive = pathname === item.href;
 
@@ -122,15 +105,15 @@ export function Header() {
                   href={item.href}
                   onClick={() => setMobileOpen(false)}
                   className={cn(
-                    'block px-4 py-3 rounded-lg text-base font-medium transition-colors',
+                    'block px-3 py-3 rounded-md text-sm font-medium transition-colors',
                     isActive
-                      ? 'text-white bg-white/5'
-                      : 'text-white/60 hover:text-white hover:bg-white/5'
+                      ? 'text-foreground bg-surface-2'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-surface-2'
                   )}
                 >
                   {item.label}
                   {isActive && (
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#eab308] ml-2" />
+                    <span className="inline-block w-1 h-1 rounded-full bg-primary ml-2 align-middle" />
                   )}
                 </Link>
               );

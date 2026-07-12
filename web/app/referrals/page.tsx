@@ -7,73 +7,87 @@ export const revalidate = 0;
 
 export default function ReferralsPage() {
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-16 pb-20">
-        <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
-          {/* Hero card */}
-          <div className="rounded-2xl border border-white/10 bg-card p-6 md:p-8">
-            <span className="text-[10px] md:text-xs uppercase tracking-[0.18em] text-amber-400 font-medium">
-              Earn from your network
-            </span>
-            <h1 className="mt-3 text-3xl md:text-4xl font-bold">Referrals</h1>
-            <p className="mt-3 text-sm md:text-base text-muted-foreground max-w-3xl">
-              Register your code and grow your network now — fee sharing goes
-              live in v1.1: <span className="text-foreground font-medium">10%</span> of
-              every fee your referees pay to you, and{' '}
-              <span className="text-foreground font-medium">4% off</span> every trade
-              for them. Codes are on-chain: your referees accept the invite with
-              one signed transaction and the binding is permanent — no off-chain
-              bookkeeping, no rugpulls.
+      <main className="pt-12 pb-16">
+        <div className="max-w-7xl mx-auto px-4">
+          {/* Page header row */}
+          <header className="border-b border-border py-8">
+            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-primary">
+              Growth · Referrals
             </p>
+            <h1 className="mt-2 text-xl font-medium">Earn from your network</h1>
+            <p className="mt-2 max-w-[560px] text-sm text-muted-foreground line-clamp-2">
+              Register your code and grow your network now — fee sharing goes
+              live in v1.1: 10% of every fee your referees pay to you, and 4%
+              off every trade for them.
+            </p>
+          </header>
 
-            <div className="mt-6 grid grid-cols-3 gap-4 md:gap-6 max-w-2xl">
-              <Pill label="Your cut · from v1.1" value="10%" />
-              <Pill label="Referee discount · from v1.1" value="4%" />
-              <Pill label="Settlement" value="On-chain" />
-            </div>
-          </div>
+          {/* Two-column body: info rail left, action stack right */}
+          <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-8 py-8">
+            {/* Left rail — informational, renders in every state */}
+            <aside className="lg:sticky lg:top-20 self-start space-y-8">
+              {/* How it works — vertical timeline */}
+              <section>
+                <h2 className="text-[13px] font-medium text-foreground">
+                  How does it work?
+                </h2>
+                <ol className="mt-4">
+                  <Step
+                    num={1}
+                    title="Register a code"
+                    body="Sign in with your wallet and pick a unique 3–16 character handle. During the beta, code creation is invite-only (allowlist in the app, not enforced by the contract)."
+                  />
+                  <Step
+                    num={2}
+                    title="Share the link"
+                    body={
+                      <>
+                        Send{' '}
+                        <code className="px-1 py-0.5 rounded-sm bg-surface-2 text-primary">
+                          ?ref=YOURCODE
+                        </code>{' '}
+                        to friends. They accept the invite with one signed
+                        transaction — from the invitation banner, or by
+                        entering your code on this page. The binding is
+                        permanent, on-chain.
+                      </>
+                    }
+                  />
+                  <Step
+                    num={3}
+                    title="Earn on every fee — from v1.1"
+                    body="Fee accrual ships in v1.1: from then on, every time the market contract collects a fee from a referee, the referral contract credits 10% of it to your claimable balance."
+                  />
+                  <Step
+                    num={4}
+                    title="Claim — from v1.1"
+                    body="Payouts go live together with fee accrual in v1.1. Your code and referee bindings are on-chain today and carry over unchanged."
+                    last
+                  />
+                </ol>
+              </section>
 
-          {/* Dashboard or sign-in (handles code creation, claim, stats) */}
-          <ReferralDashboardOrSignIn signInSlot={<ReferralSignIn />} />
+              {/* Key terms — ledger rows */}
+              <section>
+                <div className="border-t border-border">
+                  <LedgerRow label="Your cut · from v1.1" value="10%" />
+                  <LedgerRow label="Referee discount · from v1.1" value="4%" />
+                  <LedgerRow label="Settlement" value="On-chain" />
+                </div>
+                <p className="mt-3 text-[11px] text-faint leading-relaxed">
+                  Codes are on-chain: your referees accept the invite with one
+                  signed transaction and the binding is permanent — no
+                  off-chain bookkeeping, no rugpulls.
+                </p>
+              </section>
+            </aside>
 
-          {/* How it works */}
-          <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-            <div className="px-6 py-4 border-b border-white/10">
-              <h3 className="text-base font-semibold text-foreground">How does it work?</h3>
-            </div>
-            <div className="p-6">
-              <ol className="space-y-4 text-sm">
-                <Step
-                  num={1}
-                  title="Register a code"
-                  body="Sign in with your wallet and pick a unique 3–16 character handle. During the beta, code creation is invite-only (allowlist in the app, not enforced by the contract)."
-                />
-                <Step
-                  num={2}
-                  title="Share the link"
-                  body={
-                    <>
-                      Send <code className="text-xs px-1 py-0.5 rounded bg-zinc-900 text-amber-400">?ref=YOURCODE</code>{' '}
-                      to friends. They accept the invite with one signed
-                      transaction — from the invitation banner, or by entering
-                      your code on this page. The binding is permanent,
-                      on-chain.
-                    </>
-                  }
-                />
-                <Step
-                  num={3}
-                  title="Earn on every fee — from v1.1"
-                  body="Fee accrual ships in v1.1: from then on, every time the market contract collects a fee from a referee, the referral contract credits 10% of it to your claimable balance."
-                />
-                <Step
-                  num={4}
-                  title="Claim — from v1.1"
-                  body="Payouts go live together with fee accrual in v1.1. Your code and referee bindings are on-chain today and carry over unchanged."
-                />
-              </ol>
+            {/* Right column — the action stack */}
+            <div className="min-w-0">
+              <ReferralDashboardOrSignIn signInSlot={<ReferralSignIn />} />
             </div>
           </div>
         </div>
@@ -82,11 +96,11 @@ export default function ReferralsPage() {
   );
 }
 
-function Pill({ label, value }: { label: string; value: string }) {
+function LedgerRow({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 text-lg md:text-2xl font-bold font-mono">{value}</div>
+    <div className="flex items-baseline justify-between gap-4 border-b border-border py-2.5">
+      <span className="text-[11px] uppercase tracking-wide text-faint">{label}</span>
+      <span className="text-sm font-mono tabular-nums text-foreground">{value}</span>
     </div>
   );
 }
@@ -95,20 +109,20 @@ function Step({
   num,
   title,
   body,
+  last = false,
 }: {
   num: number;
   title: string;
   body: React.ReactNode;
+  last?: boolean;
 }) {
   return (
-    <li className="flex gap-4">
-      <span className="flex-none w-7 h-7 rounded-full bg-amber-500/15 text-amber-400 text-xs font-bold flex items-center justify-center mt-0.5">
-        {num}
+    <li className={`border-l border-border pl-4 ${last ? 'pb-0' : 'pb-6'}`}>
+      <span className="font-mono text-[11px] tabular-nums text-primary">
+        {String(num).padStart(2, '0')}
       </span>
-      <div className="flex-1">
-        <p className="font-medium text-foreground">{title}</p>
-        <p className="mt-1 text-muted-foreground leading-relaxed">{body}</p>
-      </div>
+      <p className="mt-1 text-sm font-medium text-foreground">{title}</p>
+      <p className="mt-1 text-[11px] text-faint leading-relaxed">{body}</p>
     </li>
   );
 }

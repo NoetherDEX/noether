@@ -30,19 +30,19 @@ export function TrustlineSection({
   const needsActivation = accountStatus === 'not_found' || accountStatus === 'funding' || accountStatus === 'error';
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden h-full flex flex-col">
-      <div className="px-6 py-4 border-b border-white/10">
-        <h3 className="text-base font-semibold text-foreground">USDC Trustline</h3>
+    <div className="rounded-lg border border-border bg-surface overflow-hidden h-full flex flex-col">
+      <div className="px-6 py-4 border-b border-border">
+        <h3 className="text-[13px] font-medium text-foreground">USDC Trustline</h3>
       </div>
       <div className="p-6 flex-1 flex flex-col">
         {/* Account not activated warning */}
         {needsActivation && (
           <div className="flex-1 flex flex-col items-center justify-center text-center py-6 space-y-4">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[#f59e0b]/10 border border-[#f59e0b]/20">
-              <AlertCircle className="w-6 h-6 text-[#f59e0b]" />
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 border border-primary/20">
+              <AlertCircle className="w-6 h-6 text-primary" />
             </div>
             <div>
-              <p className="text-lg font-semibold text-foreground">Wallet Not Active</p>
+              <p className="text-sm font-medium text-foreground">Wallet Not Active</p>
               <p className="text-sm text-muted-foreground mt-1.5 max-w-xs mx-auto leading-relaxed">
                 Activate your wallet on the Stellar testnet to get started.
               </p>
@@ -51,10 +51,10 @@ export function TrustlineSection({
               onClick={onFundAccount}
               disabled={isFundingAccount}
               className={cn(
-                'w-full h-11 text-sm font-semibold rounded-lg transition-all',
+                'w-full h-11 text-sm font-medium rounded-md transition-colors',
                 'flex items-center justify-center gap-2',
                 'disabled:opacity-40 disabled:cursor-not-allowed',
-                'bg-white text-black hover:bg-white/90'
+                'bg-primary text-primary-foreground hover:bg-primary/90'
               )}
             >
               {isFundingAccount ? (
@@ -77,7 +77,7 @@ export function TrustlineSection({
           <div className="flex-1 flex items-center justify-center">
             <div className="flex items-center gap-3">
               <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
-              <span className="text-sm text-muted-foreground">Checking account...</span>
+              <span className="text-sm text-muted-foreground">Checking account…</span>
             </div>
           </div>
         )}
@@ -89,15 +89,15 @@ export function TrustlineSection({
               <div className="flex-1 flex items-center justify-center">
                 <div className="flex items-center gap-3">
                   <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
-                  <span className="text-sm text-muted-foreground">Checking trustline...</span>
+                  <span className="text-sm text-muted-foreground">Checking trustline…</span>
                 </div>
               </div>
             )}
 
             {status === 'active' && (
               <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
-                <CheckCircle className="w-8 h-8 text-[#22c55e] mb-3" />
-                <p className="text-lg font-medium text-foreground">Trustline Active</p>
+                <CheckCircle className="w-8 h-8 text-long mb-3" />
+                <p className="text-sm font-medium text-foreground">Trustline Active</p>
                 <p className="text-sm text-muted-foreground mt-1">Ready to receive test USDC</p>
               </div>
             )}
@@ -108,7 +108,7 @@ export function TrustlineSection({
                   Add USDC to your wallet&apos;s trusted assets before claiming. One-time setup.
                 </p>
 
-                <div className="flex items-center justify-between text-sm p-3 bg-secondary/30 rounded-lg border border-white/5">
+                <div className="flex items-center justify-between text-sm p-3 bg-surface-2 rounded-md border border-border">
                   <span className="text-muted-foreground">Issuer</span>
                   <span className="text-foreground font-mono text-xs">{truncatedIssuer}</span>
                 </div>
@@ -117,10 +117,10 @@ export function TrustlineSection({
                   onClick={onAddTrustline}
                   disabled={isAdding}
                   className={cn(
-                    'w-full h-11 text-sm font-medium rounded-lg transition-all',
+                    'w-full h-11 text-sm font-medium rounded-md transition-colors',
                     'flex items-center justify-center gap-2',
                     'disabled:opacity-40 disabled:cursor-not-allowed',
-                    'bg-white text-black hover:bg-white/90'
+                    'bg-primary text-primary-foreground hover:bg-primary/90'
                   )}
                 >
                   {isAdding ? (
@@ -141,9 +141,9 @@ export function TrustlineSection({
             {status === 'error' && (
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="w-4 h-4 text-[#ef4444] flex-shrink-0 mt-0.5" />
+                  <AlertCircle className="w-4 h-4 text-short flex-shrink-0 mt-0.5" />
                   <div>
-                    <span className="text-sm font-medium text-[#ef4444]">Error</span>
+                    <span className="text-sm font-medium text-short">Error</span>
                     {error && (
                       <p className="text-xs text-muted-foreground mt-1">{error}</p>
                     )}
@@ -154,10 +154,10 @@ export function TrustlineSection({
                   onClick={onAddTrustline}
                   disabled={isAdding}
                   className={cn(
-                    'w-full h-11 text-sm font-medium rounded-lg transition-all',
+                    'w-full h-11 text-sm font-medium rounded-md transition-colors',
                     'flex items-center justify-center gap-2',
                     'disabled:opacity-40 disabled:cursor-not-allowed',
-                    'bg-secondary hover:bg-secondary/80 text-foreground border border-white/10'
+                    'bg-surface-2 hover:bg-surface-3 text-foreground border border-border-strong'
                   )}
                 >
                   {isAdding && <Loader2 className="w-4 h-4 animate-spin" />}
