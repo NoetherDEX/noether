@@ -4,7 +4,7 @@ const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/btclogo.svg',
   ETH: '/ethlogo.svg',
   XLM: '/xlmlogo.svg',
-  USDC: '/usdclogo.png',
+  USDC: '/usdclogo.svg',
   NOE: '/favicon.svg',
   SOL: '/sollogo.svg',
   XRP: '/xrplogo.svg',
