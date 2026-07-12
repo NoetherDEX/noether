@@ -19,16 +19,19 @@ export default async function VaultManagePage({
   if (!vault) notFound();
 
   return (
-    <main className="container mx-auto px-4 py-8 max-w-6xl space-y-6">
+    <main className="min-h-screen bg-background container mx-auto px-4 py-8 max-w-6xl space-y-6">
       <div>
-        <Link href={`/vaults/${id}`} className="text-sm text-zinc-400 hover:text-zinc-200">
+        <Link
+          href={`/vaults/${id}`}
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
           ← {vault.name}
         </Link>
       </div>
 
       <header>
-        <h1 className="text-3xl font-bold">Manage {vault.name}</h1>
-        <p className="text-sm text-zinc-500 mt-1 font-mono break-all">
+        <h1 className="text-lg md:text-xl font-medium text-foreground">Manage {vault.name}</h1>
+        <p className="text-sm text-muted-foreground mt-1 font-mono break-all">
           Leader: {vault.leader}
         </p>
       </header>
@@ -36,8 +39,8 @@ export default async function VaultManagePage({
       <VaultMetrics vault={vault} />
 
       <Card>
-        <CardContent className="p-5 text-sm text-zinc-400 space-y-2">
-          <h3 className="font-medium text-zinc-200">Reminders</h3>
+        <CardContent className="p-5 text-sm text-muted-foreground space-y-2">
+          <h3 className="text-sm font-medium text-foreground">Reminders</h3>
           <ul className="list-disc pl-5 space-y-1">
             <li>Every open / close call resyncs the vault's accounting from
                 the on-chain USDC balance.</li>

@@ -49,7 +49,7 @@ export function CreateVaultModal({ open, onClose }: Props) {
         <Card>
           <CardContent className="p-4 space-y-3">
             <div className="space-y-1">
-              <label className="text-xs text-zinc-500 uppercase tracking-wider">
+              <label className="text-[11px] text-faint uppercase tracking-wide">
                 Vault name
               </label>
               <Input
@@ -59,7 +59,7 @@ export function CreateVaultModal({ open, onClose }: Props) {
                 maxLength={64}
               />
             </div>
-            <ul className="text-xs text-zinc-400 list-disc pl-4 space-y-1">
+            <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-1">
               <li>You become the vault leader; depositors back you with USDC.</li>
               <li>You take 10% of any gains above the high-water mark.</li>
               <li>You must hold at least 5% of the vault yourself at all
@@ -69,8 +69,8 @@ export function CreateVaultModal({ open, onClose }: Props) {
         </Card>
 
         {!connected && (
-          <Card className="border-amber-500/40 bg-amber-500/5">
-            <CardContent className="p-3 text-xs text-amber-400">
+          <Card className="border-primary/25 bg-primary/10">
+            <CardContent className="p-3 text-xs text-foreground">
               Connect a wallet from the navbar to sign the transaction.
             </CardContent>
           </Card>

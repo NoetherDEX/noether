@@ -179,22 +179,22 @@ function PortfolioPage() {
     bannerMessages.push(`Showing last known price for ${staleAssets.join(', ')}.`);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-16 pb-20">
-        <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
+      <main className="pt-12 pb-16">
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
           {/* Degraded-data banner */}
           {isConnected && bannerMessages.length > 0 && (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-[#f59e0b]/30 bg-[#f59e0b]/10 px-4 py-3">
-              <div className="flex items-start gap-2 text-sm text-[#f59e0b]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3">
+              <div className="flex items-start gap-2 text-sm text-primary">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                 <span>{bannerMessages.join(' ')}</span>
               </div>
               <button
                 onClick={retry}
                 disabled={isRetrying}
-                className="inline-flex items-center gap-1.5 self-start sm:self-auto px-3 py-1.5 text-xs font-medium rounded-lg border border-[#f59e0b]/30 text-[#f59e0b] hover:bg-[#f59e0b]/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1.5 self-start sm:self-auto px-3 py-1.5 text-xs font-medium rounded-md border border-primary/30 text-primary hover:bg-primary/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={cn('h-3.5 w-3.5', isRetrying && 'animate-spin')} />
                 Retry
@@ -214,7 +214,7 @@ function PortfolioPage() {
           />
 
           {/* Row 2 - Performance & Allocation */}
-          <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6">
             <PnlChart trades={trades} />
             <AssetAllocation positions={positions} usdcBalance={usdcBalance} staleAssets={staleAssets} />
           </div>

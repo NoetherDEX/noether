@@ -221,11 +221,23 @@ function VaultPage() {
       : null;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-16 pb-20">
-        <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
+      <main className="pt-12 pb-16">
+        <div className="max-w-7xl mx-auto px-4 space-y-8">
+          {/* Page header — same header-row pattern as /vaults */}
+          <div className="border-b border-border py-8">
+            <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-primary">
+              Earn · Protocol Vault
+            </span>
+            <h1 className="mt-2 text-xl font-medium text-foreground">Noether Vault</h1>
+            <p className="mt-1 text-sm text-muted-foreground max-w-2xl">
+              Deposit USDC, get NOE tokens that accrue trading fees from every
+              market trade — withdraw any time the pool has free liquidity.
+            </p>
+          </div>
+
           {/* Section 1: Stats Bar */}
           <StatsBar
             tvl={poolStats.tvl}

@@ -11,7 +11,7 @@ export function LeaderManageGate({ vault }: { vault: VaultRow }) {
   if (!wallet.address) {
     return (
       <Card>
-        <CardContent className="p-5 text-sm text-zinc-400">
+        <CardContent className="p-5 text-sm text-muted-foreground">
           Connect your wallet to manage this vault.
         </CardContent>
       </Card>
@@ -20,10 +20,10 @@ export function LeaderManageGate({ vault }: { vault: VaultRow }) {
 
   if (wallet.address !== vault.leader) {
     return (
-      <Card className="border-amber-500/30">
+      <Card className="border-primary/25 bg-primary/10">
         <CardContent className="p-5 text-sm">
-          <p className="text-amber-400 font-medium">Leader-only page</p>
-          <p className="text-zinc-400 mt-1">
+          <p className="text-primary font-medium">Leader-only page</p>
+          <p className="text-foreground mt-1">
             You're connected as{' '}
             <code className="text-xs font-mono">{wallet.address.slice(0, 8)}…</code>
             {' '}but this vault's leader is{' '}
