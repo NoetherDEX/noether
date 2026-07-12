@@ -9,11 +9,11 @@ const UPDATED = 'July 4, 2026';
 
 export default function TermsPage() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16">
-      <h1 className="text-3xl font-semibold text-white">Terms of Service</h1>
-      <p className="mt-2 text-sm text-white/40">Last updated: {UPDATED}</p>
+    <main className="min-h-screen bg-background mx-auto max-w-3xl px-6 py-16">
+      <h1 className="text-xl font-medium text-foreground">Terms of Service</h1>
+      <p className="mt-2 text-sm text-faint">Last updated: {UPDATED}</p>
 
-      <div className="mt-8 space-y-8 text-sm leading-relaxed text-white/70">
+      <div className="mt-8 space-y-8 text-sm leading-relaxed text-muted-foreground">
         <p>
           These Terms govern your access to and use of the Noether interface at
           noether.exchange (the &ldquo;Interface&rdquo;), a front-end to
@@ -24,7 +24,7 @@ export default function TermsPage() {
         </p>
 
         <section className="space-y-3">
-          <h2 className="text-lg font-medium text-white">1. Eligibility &amp; restricted persons</h2>
+          <h2 className="text-[13px] font-medium text-foreground">1. Eligibility &amp; restricted persons</h2>
           <p>
             You represent and warrant that you are not, and are not acting on
             behalf of: (a) a person located in, resident of, or organized under
@@ -39,7 +39,7 @@ export default function TermsPage() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-lg font-medium text-white">2. No circumvention</h2>
+          <h2 className="text-[13px] font-medium text-foreground">2. No circumvention</h2>
           <p>
             You must not use a VPN, proxy, or any other technique to disguise
             your location or otherwise circumvent the geographic restrictions or
@@ -49,7 +49,7 @@ export default function TermsPage() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-lg font-medium text-white">3. Risk disclosure</h2>
+          <h2 className="text-[13px] font-medium text-foreground">3. Risk disclosure</h2>
           <p>
             Perpetual futures are leveraged instruments and carry substantial
             risk of loss, including liquidation of your entire position. Prices
@@ -61,7 +61,7 @@ export default function TermsPage() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-lg font-medium text-white">4. Non-custodial &amp; no advice</h2>
+          <h2 className="text-[13px] font-medium text-foreground">4. Non-custodial &amp; no advice</h2>
           <p>
             All transactions are executed by smart contracts you interact with
             directly through your own wallet. Noether cannot access, freeze, or
@@ -71,7 +71,7 @@ export default function TermsPage() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-lg font-medium text-white">5. Limitation of liability</h2>
+          <h2 className="text-[13px] font-medium text-foreground">5. Limitation of liability</h2>
           <p>
             To the maximum extent permitted by law, Noether and its contributors
             will not be liable for any indirect, incidental, or consequential
@@ -81,7 +81,7 @@ export default function TermsPage() {
           </p>
         </section>
 
-        <p className="text-white/40">
+        <p className="text-faint">
           Questions? Reach us via{' '}
           <a href="https://twitter.com/Noetherdex" className="underline underline-offset-4">
             @Noetherdex
@@ -97,7 +97,7 @@ export default function TermsPage() {
         </p>
 
         <div className="pt-4">
-          <Link href="/" className="text-white underline underline-offset-4">
+          <Link href="/" className="text-foreground underline underline-offset-4">
             ← Back to home
           </Link>
         </div>

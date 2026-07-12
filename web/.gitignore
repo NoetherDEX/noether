@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.env*
+!.env.example
+
+# agent tooling (local only)
+.agents/
+skills-lock.json
+tsconfig.tsbuildinfo

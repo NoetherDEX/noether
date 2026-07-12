@@ -29,11 +29,11 @@ const COLUMN_DEFS = {
 function PnlCell({ value, className }: { value: number; className?: string }) {
   // Exactly-zero renders neutral — green is reserved for real realized gains.
   if (value === 0) {
-    return <span className={cn('font-mono text-sm text-white/60', className)}>{formatUSD(0)}</span>;
+    return <span className={cn('font-mono tabular-nums text-xs text-muted-foreground', className)}>{formatUSD(0)}</span>;
   }
   const isPositive = value > 0;
   return (
-    <span className={cn('font-mono text-sm', isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]', className)}>
+    <span className={cn('font-mono tabular-nums text-xs', isPositive ? 'text-long' : 'text-short', className)}>
       {isPositive ? '+' : ''}{formatUSD(value)}
     </span>
   );
@@ -41,10 +41,10 @@ function PnlCell({ value, className }: { value: number; className?: string }) {
 
 function SkeletonRow() {
   return (
-    <tr className="border-b border-white/5">
+    <tr className="border-b border-border">
       {Array.from({ length: 5 }).map((_, i) => (
-        <td key={i} className="py-3 px-4">
-          <div className="h-4 bg-white/[0.06] rounded animate-pulse" style={{ width: i === 1 ? '120px' : '60px' }} />
+        <td key={i} className="py-2 px-4">
+          <div className="h-4 bg-surface-2 rounded-sm animate-pulse" style={{ width: i === 1 ? '120px' : '60px' }} />
         </td>
       ))}
     </tr>
@@ -106,37 +106,37 @@ export function LeaderboardContent() {
     <div className="space-y-6">
       {/* Stats cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-5">
+        <div className="rounded-lg border border-border bg-surface p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-lg bg-white/[0.06] flex items-center justify-center">
-              <Users className="w-4 h-4 text-white/40" />
+            <div className="w-9 h-9 rounded-md bg-surface-2 flex items-center justify-center">
+              <Users className="w-4 h-4 text-faint" />
             </div>
-            <span className="text-xs text-white/60 uppercase tracking-wider">Traders</span>
+            <span className="text-[11px] text-faint uppercase tracking-wide">Traders</span>
           </div>
-          <div className="text-2xl font-bold font-mono tabular-nums">
-            {loading ? <div className="h-7 w-12 bg-white/[0.06] rounded animate-pulse" /> : errorNoData ? '—' : formatNumber(totalTraders, 0)}
+          <div className="text-xl font-medium font-mono tabular-nums">
+            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatNumber(totalTraders, 0)}
           </div>
         </div>
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-5">
+        <div className="rounded-lg border border-border bg-surface p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-lg bg-white/[0.06] flex items-center justify-center">
-              <BarChart3 className="w-4 h-4 text-white/40" />
+            <div className="w-9 h-9 rounded-md bg-surface-2 flex items-center justify-center">
+              <BarChart3 className="w-4 h-4 text-faint" />
             </div>
-            <span className="text-xs text-white/60 uppercase tracking-wider">Total Volume</span>
+            <span className="text-[11px] text-faint uppercase tracking-wide">Total Volume</span>
           </div>
-          <div className="text-2xl font-bold font-mono tabular-nums">
-            {loading ? <div className="h-7 w-24 bg-white/[0.06] rounded animate-pulse" /> : errorNoData ? '—' : formatUSD(totalVolume, 0)}
+          <div className="text-xl font-medium font-mono tabular-nums">
+            {loading ? <div className="h-7 w-24 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatUSD(totalVolume, 0)}
           </div>
         </div>
-        <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-5">
+        <div className="rounded-lg border border-border bg-surface p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-lg bg-white/[0.06] flex items-center justify-center">
-              <TrendingUp className="w-4 h-4 text-white/40" />
+            <div className="w-9 h-9 rounded-md bg-surface-2 flex items-center justify-center">
+              <TrendingUp className="w-4 h-4 text-faint" />
             </div>
-            <span className="text-xs text-white/60 uppercase tracking-wider">Total Trades</span>
+            <span className="text-[11px] text-faint uppercase tracking-wide">Total Trades</span>
           </div>
-          <div className="text-2xl font-bold font-mono tabular-nums">
-            {loading ? <div className="h-7 w-12 bg-white/[0.06] rounded animate-pulse" /> : errorNoData ? '—' : formatNumber(totalTrades, 0)}
+          <div className="text-xl font-medium font-mono tabular-nums">
+            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatNumber(totalTrades, 0)}
           </div>
         </div>
       </div>
@@ -144,65 +144,63 @@ export function LeaderboardContent() {
       {/* Self-rank summary (A22): sticks below the fixed header while the
           table scrolls; hidden while loading or when rankings are unknown. */}
       {walletAddress && !loading && !errorNoData && (
-        <div className="sticky top-16 z-20 rounded-xl bg-[#0a0a0a]">
-          {/* Animated rainbow gradient border marks the connected trader's own row */}
-          <div className="rounded-xl p-[1.5px] bg-[length:200%_auto] bg-[linear-gradient(110deg,#f87171,#fbbf24,#4ade80,#22d3ee,#818cf8,#e879f9,#f87171)] motion-safe:animate-[rainbow-pan_6s_linear_infinite]">
-            <div className="rounded-[calc(0.75rem-1.5px)] bg-gradient-to-b from-[#15151a] to-[#0b0b0e] px-5 py-3.5 flex flex-wrap items-center gap-x-5 gap-y-2">
-              {self ? (
-                <>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/45">
-                      Your rank
-                    </span>
-                    <span className="font-mono text-xl font-bold tabular-nums text-white leading-none">
-                      #{selfIdx + 1}
-                    </span>
-                  </div>
-                  <span className="hidden sm:block h-5 w-px bg-white/10" aria-hidden="true" />
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-white/45">Volume</span>
-                    <span className="font-mono text-sm font-semibold tabular-nums text-white/90">
-                      {formatUSD(self.totalVolume, 0)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-white/45">PnL</span>
-                    <PnlCell value={self.pnl} className="text-sm font-semibold" />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <span className="text-sm font-semibold text-white/85">You&apos;re not ranked yet</span>
-                  <Link
-                    href="/trade"
-                    className="text-sm font-semibold text-transparent bg-clip-text bg-gradient-to-r from-[#fbbf24] via-[#f472b6] to-[#818cf8] hover:opacity-80 transition-opacity"
-                  >
-                    Make your first trade →
-                  </Link>
-                </>
-              )}
-            </div>
+        <div className="sticky top-16 z-20 rounded-lg bg-background">
+          {/* Quiet primary-tinted highlight marks the connected trader's own row */}
+          <div className="rounded-lg border border-primary/40 bg-primary/5 px-5 py-3.5 flex flex-wrap items-center gap-x-5 gap-y-2">
+            {self ? (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[10px] font-medium uppercase tracking-wide text-faint">
+                    Your rank
+                  </span>
+                  <span className="font-mono text-lg font-medium tabular-nums text-foreground leading-none">
+                    #{selfIdx + 1}
+                  </span>
+                </div>
+                <span className="hidden sm:block h-5 w-px bg-border" aria-hidden="true" />
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-faint">Volume</span>
+                  <span className="font-mono text-xs font-medium tabular-nums text-foreground">
+                    {formatUSD(self.totalVolume, 0)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-faint">PnL</span>
+                  <PnlCell value={self.pnl} className="text-xs font-medium" />
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="text-sm font-medium text-foreground">You&apos;re not ranked yet</span>
+                <Link
+                  href="/trade"
+                  className="text-sm font-medium text-primary hover:opacity-80 transition-opacity"
+                >
+                  Make your first trade →
+                </Link>
+              </>
+            )}
           </div>
         </div>
       )}
 
       {/* Table */}
-      <div className="rounded-xl border border-white/[0.08] bg-[#0a0a0a] overflow-hidden">
+      <div className="rounded-lg border border-border bg-surface overflow-hidden">
         {/* Table header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
-          <h3 className="text-sm font-semibold">Rankings</h3>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <h3 className="text-[13px] font-medium">Rankings</h3>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-white/60">Ranked by:</span>
+            <span className="text-xs text-muted-foreground">Ranked by:</span>
             {(['totalVolume', 'pnl'] as const).map((field) => (
               <button
                 key={field}
                 onClick={() => setSortBy(field)}
                 aria-pressed={sortBy === field}
                 className={cn(
-                  'px-2.5 py-1 rounded text-xs font-medium transition-colors',
+                  'px-2.5 py-1 rounded-sm text-xs font-medium transition-colors',
                   sortBy === field
-                    ? 'bg-white/10 text-white'
-                    : 'text-white/60 hover:text-white/80'
+                    ? 'bg-surface-3 text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {SORT_LABELS[field]}
@@ -215,10 +213,10 @@ export function LeaderboardContent() {
         {staleData && (
           <div
             role="status"
-            className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs text-[#f59e0b] bg-[#f59e0b]/10 border-b border-[#f59e0b]/20"
+            className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs text-primary bg-primary/10 border-b border-primary/20"
           >
             <span>Live refresh failed — showing the last loaded rankings.</span>
-            <button onClick={handleRetry} className="font-medium underline hover:text-[#fbbf24]">
+            <button onClick={handleRetry} className="font-medium underline hover:opacity-80">
               Retry
             </button>
           </div>
@@ -227,10 +225,10 @@ export function LeaderboardContent() {
         {!loading && errorNoData ? (
           /* Error ≠ empty: an outage never renders as "No traders yet" */
           <div className="py-16 text-center">
-            <p className="text-sm text-white/60 mb-4">Couldn&apos;t load rankings.</p>
+            <p className="text-sm text-muted-foreground mb-4">Couldn&apos;t load rankings.</p>
             <button
               onClick={handleRetry}
-              className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-sm font-medium text-white transition-colors"
+              className="px-4 py-2 rounded-md bg-surface-2 hover:bg-surface-3 text-sm font-medium text-foreground transition-colors"
             >
               Retry
             </button>
@@ -241,33 +239,33 @@ export function LeaderboardContent() {
         <div className="hidden sm:block overflow-x-auto" aria-busy={loading}>
           <table className="w-full">
             <thead>
-              <tr className="text-xs text-white/60 border-b border-white/5">
-                <th scope="col" className="text-left py-3 px-4 font-medium w-14">
+              <tr className="text-[11px] uppercase tracking-wide text-faint border-b border-border">
+                <th scope="col" className="text-left py-2 px-4 font-medium w-14">
                   <span aria-hidden="true">#</span>
                   <span className="sr-only">Rank</span>
                 </th>
-                <th scope="col" className="text-left py-3 px-4 font-medium">Wallet</th>
-                <th scope="col" className="text-right py-3 px-4 font-medium">
+                <th scope="col" className="text-left py-2 px-4 font-medium">Wallet</th>
+                <th scope="col" className="text-right py-2 px-4 font-medium">
                   <span className="inline-flex items-center gap-1">
                     Trades
                     <Tooltip content={COLUMN_DEFS.trades}>
-                      <Info className="w-3 h-3 text-white/40" />
+                      <Info className="w-3 h-3 text-faint" />
                     </Tooltip>
                   </span>
                 </th>
-                <th scope="col" className="text-right py-3 px-4 font-medium">
+                <th scope="col" className="text-right py-2 px-4 font-medium">
                   <span className="inline-flex items-center gap-1">
                     Volume
                     <Tooltip content={COLUMN_DEFS.volume}>
-                      <Info className="w-3 h-3 text-white/40" />
+                      <Info className="w-3 h-3 text-faint" />
                     </Tooltip>
                   </span>
                 </th>
-                <th scope="col" className="text-right py-3 px-4 font-medium">
+                <th scope="col" className="text-right py-2 px-4 font-medium">
                   <span className="inline-flex items-center gap-1">
                     Realized PnL
                     <Tooltip content={COLUMN_DEFS.pnl}>
-                      <Info className="w-3 h-3 text-white/40" />
+                      <Info className="w-3 h-3 text-faint" />
                     </Tooltip>
                   </span>
                 </th>
@@ -279,10 +277,10 @@ export function LeaderboardContent() {
               ) : sorted.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-16 text-center">
-                    <p className="text-sm text-white/50 mb-3">No traders yet. Be the first to open a position!</p>
+                    <p className="text-sm text-muted-foreground mb-3">No traders yet. Be the first to open a position!</p>
                     <Link
                       href="/trade"
-                      className="inline-flex items-center gap-1 text-sm font-medium text-[#eab308] hover:text-[#facc15] transition-colors"
+                      className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:opacity-80 transition-colors"
                     >
                       Start trading →
                     </Link>
@@ -293,35 +291,35 @@ export function LeaderboardContent() {
                     <tr
                       key={trader.address}
                       className={cn(
-                        'border-b border-white/5 last:border-0 transition-colors',
+                        'border-b border-border last:border-0 transition-colors',
                         trader.address === walletAddress
-                          ? 'bg-[#eab308]/[0.06] hover:bg-[#eab308]/[0.08]'
-                          : 'hover:bg-white/[0.02]'
+                          ? 'border-primary/40 bg-primary/5 hover:bg-primary/10'
+                          : 'hover:bg-surface-3/50'
                       )}
                     >
-                      <td className="py-3 px-4">
-                        <span className="font-mono text-sm text-white/50">{idx + 1}</span>
+                      <td className="py-2 px-4">
+                        <span className={cn('font-mono tabular-nums text-xs', idx === 0 ? 'text-primary' : idx < 3 ? 'text-muted-foreground' : 'text-faint')}>{idx + 1}</span>
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-2 px-4">
                         <a
                           href={`${STELLAR_EXPERT_BASE}/account/${trader.address}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="font-mono text-sm text-blue-400 hover:text-blue-300 hover:underline transition-colors cursor-pointer"
+                          className="font-mono text-xs text-foreground hover:text-primary hover:underline transition-colors cursor-pointer"
                         >
                           {truncateAddress(trader.address, 4, 4)}
                         </a>
                         {trader.address === walletAddress && (
-                          <span className="ml-2 text-[10px] font-medium text-[#eab308]">(you)</span>
+                          <span className="ml-2 text-[10px] font-medium text-primary">(you)</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-right">
-                        <span className="font-mono text-sm text-white/60">{trader.tradeCount}</span>
+                      <td className="py-2 px-4 text-right">
+                        <span className="font-mono tabular-nums text-xs text-muted-foreground">{trader.tradeCount}</span>
                       </td>
-                      <td className="py-3 px-4 text-right">
-                        <span className="font-mono text-sm text-white/60">{formatUSD(trader.totalVolume, 0)}</span>
+                      <td className="py-2 px-4 text-right">
+                        <span className="font-mono tabular-nums text-xs text-muted-foreground">{formatUSD(trader.totalVolume, 0)}</span>
                       </td>
-                      <td className="py-3 px-4 text-right">
+                      <td className="py-2 px-4 text-right">
                         <PnlCell value={trader.pnl} />
                       </td>
                     </tr>
@@ -336,15 +334,15 @@ export function LeaderboardContent() {
           {loading ? (
             <div className="p-4 space-y-3">
               {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-20 bg-white/[0.03] rounded-lg animate-pulse" />
+                <div key={i} className="h-20 bg-surface-2 rounded-lg animate-pulse" />
               ))}
             </div>
           ) : sorted.length === 0 ? (
             <div className="py-16 text-center">
-              <p className="text-sm text-white/50 mb-3">No traders yet. Be the first to open a position!</p>
+              <p className="text-sm text-muted-foreground mb-3">No traders yet. Be the first to open a position!</p>
               <Link
                 href="/trade"
-                className="inline-flex items-center gap-1 text-sm font-medium text-[#eab308] hover:text-[#facc15] transition-colors"
+                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:opacity-80 transition-colors"
               >
                 Start trading →
               </Link>
@@ -357,11 +355,11 @@ export function LeaderboardContent() {
                   className={cn(
                     'flex items-center gap-3 p-3 rounded-lg',
                     trader.address === walletAddress
-                      ? 'bg-[#eab308]/[0.06] border border-[#eab308]/25'
-                      : 'bg-white/[0.02] border border-white/5'
+                      ? 'bg-primary/5 border border-primary/40'
+                      : 'bg-surface-2 border border-border'
                   )}
                 >
-                  <span className="font-mono text-sm text-white/40 w-6 text-center flex-shrink-0">
+                  <span className={cn('font-mono tabular-nums text-xs w-6 text-center flex-shrink-0', idx === 0 ? 'text-primary' : idx < 3 ? 'text-muted-foreground' : 'text-faint')}>
                     {idx + 1}
                   </span>
                   <div className="flex-1 min-w-0">
@@ -369,16 +367,16 @@ export function LeaderboardContent() {
                       href={`${STELLAR_EXPERT_BASE}/account/${trader.address}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="font-mono text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                      className="font-mono text-xs text-foreground hover:text-primary transition-colors"
                     >
                       {truncateAddress(trader.address, 4, 4)}
                     </a>
                     {trader.address === walletAddress && (
-                      <span className="ml-1.5 text-[10px] font-medium text-[#eab308]">(you)</span>
+                      <span className="ml-1.5 text-[10px] font-medium text-primary">(you)</span>
                     )}
-                    <div className="flex items-center gap-3 mt-1 text-xs text-white/40">
-                      <span>{trader.tradeCount} trades</span>
-                      <span>{formatUSD(trader.totalVolume, 0)}</span>
+                    <div className="flex items-center gap-3 mt-1 text-xs text-faint">
+                      <span className="font-mono tabular-nums">{trader.tradeCount} trades</span>
+                      <span className="font-mono tabular-nums">{formatUSD(trader.totalVolume, 0)}</span>
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
