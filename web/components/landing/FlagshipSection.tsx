@@ -1,201 +1,179 @@
 'use client';
 
-import { motion } from 'framer-motion';
-import Image from 'next/image';
-import { Coins, TrendingUp, Eye, Zap } from 'lucide-react';
-import { LetterSpaced } from './animations';
-import { useSlideContext } from './SlideContainer';
-import { BrowserFrame } from './BrowserFrame';
+import Link from 'next/link';
+import { FadeIn } from './animations';
+import { cn } from '@/lib/utils/cn';
 
+/* ── Wireframe illustrations — stroke-only, inherit currentColor ── */
+function GlobeWire() {
+  return (
+    <svg viewBox="0 0 200 200" width="180" height="180" fill="none" aria-hidden="true" className="opacity-60">
+      <circle cx="100" cy="100" r="88" stroke="currentColor" strokeWidth="1" />
+      <ellipse cx="100" cy="100" rx="88" ry="34" stroke="currentColor" strokeWidth="1" />
+      <ellipse cx="100" cy="100" rx="88" ry="64" stroke="currentColor" strokeWidth="1" />
+      <ellipse cx="100" cy="100" rx="34" ry="88" stroke="currentColor" strokeWidth="1" />
+      <ellipse cx="100" cy="100" rx="64" ry="88" stroke="currentColor" strokeWidth="1" />
+      <line x1="12" y1="100" x2="188" y2="100" stroke="currentColor" strokeWidth="1" />
+      <circle cx="128" cy="56" r="3" fill="currentColor" />
+    </svg>
+  );
+}
+
+function DotSphere() {
+  return (
+    <svg viewBox="0 0 200 200" width="180" height="180" fill="none" aria-hidden="true" className="opacity-60">
+      {[16, 34, 52, 68, 82].map((ry, i) => (
+        <ellipse
+          key={ry}
+          cx="100"
+          cy="100"
+          rx={88 - i * 4}
+          ry={ry}
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeDasharray="0.5 7"
+          strokeLinecap="round"
+        />
+      ))}
+    </svg>
+  );
+}
+
+function Starburst() {
+  return (
+    <svg viewBox="0 0 200 200" width="180" height="180" fill="none" aria-hidden="true" className="opacity-60">
+      {Array.from({ length: 24 }, (_, i) => {
+        const a = (i * Math.PI) / 12;
+        const inner = i % 2 === 0 ? 14 : 30;
+        return (
+          <line
+            key={i}
+            x1={100 + inner * Math.cos(a)}
+            y1={100 + inner * Math.sin(a)}
+            x2={100 + 88 * Math.cos(a)}
+            y2={100 + 88 * Math.sin(a)}
+            stroke="currentColor"
+            strokeWidth="1"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+function GridPlane() {
+  return (
+    <svg viewBox="0 0 200 200" width="180" height="180" fill="none" aria-hidden="true" className="opacity-60">
+      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+        <line key={`v${i}`} x1={20 + i * 26.6} y1="150" x2={72 + i * 9.3} y2="58" stroke="currentColor" strokeWidth="1" />
+      ))}
+      {[0, 1, 2, 3, 4].map((i) => (
+        <line
+          key={`h${i}`}
+          x1={20 + i * 13}
+          y1={150 - i * 23}
+          x2={180 - i * 13}
+          y2={150 - i * 23}
+          stroke="currentColor"
+          strokeWidth="1"
+        />
+      ))}
+      <circle cx="100" cy="104" r="3" fill="currentColor" />
+    </svg>
+  );
+}
+
+/* ── Feature panels — hard color blocks, alternating ink/bone ── */
 const FEATURES = [
   {
-    icon: Coins,
-    title: 'Minimal Costs',
-    description: 'No gas overhead — every trade settles at near-zero cost on Stellar.',
-    side: 'left' as const,
+    art: <GlobeWire />,
+    title: 'Perpetuals',
+    description:
+      'BTC, ETH & XLM perpetual futures, USDC-margined with up to 10x leverage and transparent hourly funding.',
+    href: '/trade',
+    dark: true,
   },
   {
-    icon: TrendingUp,
-    title: '10x Leverage',
-    description: 'Amplify your edge with built-in margin on every perpetual pair.',
-    side: 'left' as const,
+    art: <DotSphere />,
+    title: 'Fully On-Chain',
+    description:
+      'No off-chain matcher to trust — orders, margin, and settlement all live in Soroban contracts, verifiable by anyone.',
+    href: '/trade',
+    dark: false,
   },
   {
-    icon: Eye,
-    title: 'Fully Onchain',
-    description: 'Every order, match, and settlement lives on Soroban — verifiable by anyone.',
-    side: 'right' as const,
+    art: <Starburst />,
+    title: 'Copy-Trading Vaults',
+    description:
+      'Back a proven leader with USDC or run a vault of your own. PnL splits settle through the vault factory.',
+    href: '/vaults',
+    dark: true,
   },
   {
-    icon: Zap,
+    art: <GridPlane />,
     title: 'Smart Orders',
-    description: 'Stop-loss, take-profit, and limit orders — all native to the protocol.',
-    side: 'right' as const,
+    description:
+      'Stop-loss, take-profit, limit, stop-limit, and trailing stops — triggered by the same oracle that settles you.',
+    href: '/trade',
+    dark: false,
   },
 ];
 
-/* ── Screenshot with gold glow ──────────────────────────────── */
-function ScreenshotCard() {
-  return (
-    <div className="relative">
-      <div
-        className="relative rounded-2xl overflow-hidden bg-[#0a0a0a]"
-        style={{
-          border: '1.5px solid rgba(234, 179, 8, 0.6)',
-          boxShadow:
-            '0 0 0 1px rgba(234, 179, 8, 0.3), ' +
-            '0 0 6px 1px rgba(234, 179, 8, 0.5), ' +
-            '0 0 14px 2px rgba(234, 179, 8, 0.3), ' +
-            '0 8px 24px rgba(0, 0, 0, 0.2)',
-        }}
-      >
-        <div className="aspect-[16/8] w-full">
-          <BrowserFrame>
-            <Image
-              src="/images/trading-screenshot.png"
-              alt="Noether Trading Interface"
-              fill
-              className="object-cover object-top"
-              priority
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.style.display = 'none';
-                target.parentElement!.innerHTML = `
-                  <div class="flex items-center justify-center w-full h-full bg-[#0a0a0a] text-white/20 text-lg font-mono">
-                    Trading Interface Preview
-                  </div>
-                `;
-              }}
-            />
-          </BrowserFrame>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ── Feature Card ──────────────────────────────────────────── */
-function FeatureCard({
-  feature,
-  align,
-}: {
-  feature: (typeof FEATURES)[number];
-  align: 'left' | 'right';
-}) {
-  const Icon = feature.icon;
-  const isRight = align === 'right';
-
-  return (
-    <div className={`${isRight ? 'text-right' : ''}`}>
-      <h3 className="text-lg font-semibold mb-1">{feature.title}</h3>
-      <p className="text-sm text-black/75 leading-relaxed">{feature.description}</p>
-    </div>
-  );
-}
-
-/* ════════════════════════════════════════════════════════════
-   FlagshipSection — Two-phase presentation slide
-
-   Phase is controlled by SlideContainer (fullpage controller).
-   data-phases="2" tells the controller this section has
-   2 internal phases before allowing navigation to the next slide.
-   ════════════════════════════════════════════════════════════ */
 export function FlagshipSection() {
-  const { flagshipPhase: phase } = useSlideContext();
-
-  const leftFeatures = FEATURES.filter((f) => f.side === 'left');
-  const rightFeatures = FEATURES.filter((f) => f.side === 'right');
-
-  const ease = [0.25, 0.1, 0.25, 1] as const;
-
   return (
-    <section
-      data-phases="2"
-      className="snap-section section-light flex flex-col items-center justify-center px-6 overflow-hidden"
-    >
-      {/* Heading */}
-      <div className="mt-[-2vh]">
-        <h2 className="text-xl md:text-2xl lg:text-3xl font-heading font-semibold text-center max-w-[1100px] mx-auto">
-          <span>Her theorem proves that symmetry guards truth.</span>
-          <br />
-          <span>Our exchange guards yours — fully </span>
-          <LetterSpaced text="DECENTRALIZED" color="#eab308" className="font-bold" delay={0.3} />
-        </h2>
+    <section className="bg-background border-t border-border">
+      {/* Display heading */}
+      <div className="px-6 sm:px-10 py-20 lg:py-24">
+        <FadeIn>
+          <h2 className="font-display font-normal tracking-[-0.01em] leading-[0.95] text-foreground text-[clamp(3rem,8vw,6.5rem)]">
+            Engineered
+            <br />
+            <em className="italic text-primary">for proof.</em>
+          </h2>
+          <p className="mt-6 text-sm text-muted-foreground max-w-[480px] leading-relaxed [text-wrap:balance]">
+            Her theorem proves that symmetry guards truth. Our exchange guards
+            yours — every invariant enforced by contract, every fill provable.
+          </p>
+        </FadeIn>
       </div>
 
-      {/* ── Desktop layout ────────────────────────────────── */}
-      <div className="hidden lg:grid grid-cols-[1fr_2.5fr_1fr] gap-8 max-w-[1400px] mx-auto items-center w-full mt-8">
-        {/* Left features */}
-        <div className="flex flex-col gap-12 justify-center">
-          {leftFeatures.map((feature, i) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, x: -80 }}
-              animate={{
-                opacity: phase === 1 ? 1 : 0,
-                x: phase === 1 ? 0 : -80,
-              }}
-              transition={{ duration: 0.65, delay: phase === 1 ? 0.1 + i * 0.1 : 0, ease }}
+      {/* Color-blocked panels */}
+      <div className="grid md:grid-cols-2 xl:grid-cols-4 border-t border-border">
+        {FEATURES.map((feature) => (
+          <Link
+            key={feature.title}
+            href={feature.href}
+            className={cn(
+              'group flex flex-col p-8 min-h-[480px] border-b xl:border-b-0 border-border md:[&:nth-child(odd)]:border-r xl:border-r xl:last:border-r-0',
+              feature.dark
+                ? 'bg-background text-foreground'
+                : 'bg-[#E8E6E1] text-[#0B0D10]'
+            )}
+          >
+            <div className={cn('flex-1 flex items-center justify-center py-8', feature.dark ? 'text-primary' : 'text-black/70')}>
+              {feature.art}
+            </div>
+            <h3 className="text-2xl font-semibold tracking-[-0.01em] mb-3">{feature.title}</h3>
+            <p
+              className={cn(
+                'font-mono text-[11px] uppercase tracking-[0.08em] leading-relaxed mb-8',
+                feature.dark ? 'text-muted-foreground' : 'text-black/60'
+              )}
             >
-              <FeatureCard feature={feature} align="right" />
-            </motion.div>
-          ))}
-        </div>
-
-        {/* Center screenshot */}
-        <motion.div
-          className="mt-4"
-          initial={{ scale: 1.1 }}
-          animate={{ scale: phase === 1 ? 1 : 1.1 }}
-          transition={{ duration: 0.7, ease }}
-        >
-          <ScreenshotCard />
-        </motion.div>
-
-        {/* Right features */}
-        <div className="flex flex-col gap-12 justify-center">
-          {rightFeatures.map((feature, i) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, x: 80 }}
-              animate={{
-                opacity: phase === 1 ? 1 : 0,
-                x: phase === 1 ? 0 : 80,
-              }}
-              transition={{ duration: 0.65, delay: phase === 1 ? 0.1 + i * 0.1 : 0, ease }}
+              {feature.description}
+            </p>
+            <span
+              className={cn(
+                'w-max rounded-full border px-5 py-2 font-mono text-[11px] uppercase tracking-[0.15em] transition-colors',
+                feature.dark
+                  ? 'border-border-strong text-muted-foreground group-hover:border-primary/50 group-hover:text-primary'
+                  : 'border-black/25 text-black/70 group-hover:border-black group-hover:text-black'
+              )}
             >
-              <FeatureCard feature={feature} align="left" />
-            </motion.div>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Mobile layout ─────────────────────────────────── */}
-      <div className="lg:hidden w-full max-w-[600px] mx-auto mt-8">
-        <motion.div
-          className="mb-8"
-          initial={{ scale: 1 }}
-          animate={{ scale: phase === 1 ? 0.9 : 1 }}
-          transition={{ duration: 0.65, ease }}
-        >
-          <ScreenshotCard />
-        </motion.div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          {FEATURES.map((feature, i) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, y: 30 }}
-              animate={{
-                opacity: phase === 1 ? 1 : 0,
-                y: phase === 1 ? 0 : 30,
-              }}
-              transition={{ duration: 0.5, delay: phase === 1 ? 0.1 + i * 0.08 : 0, ease }}
-            >
-              <FeatureCard feature={feature} align="left" />
-            </motion.div>
-          ))}
-        </div>
+              Explore
+            </span>
+          </Link>
+        ))}
       </div>
     </section>
   );
