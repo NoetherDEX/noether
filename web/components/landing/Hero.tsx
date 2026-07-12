@@ -94,12 +94,12 @@ function LiveMarkets() {
   );
 }
 
-/* ── Floating terminal card: one fill, narrated step by step ── */
+/* ── Fill plaque: one quiet surface — a live mark and a narrated line ── */
 const FILL_STEPS = [
-  { tag: 'Noeracle mark', body: 'BTC-PERP · mark 63,741.20 · streaming ~500ms' },
-  { tag: 'Order', body: 'Long BTC-PERP · 2,400 USDC margin · 10x isolated' },
-  { tag: 'Fill', body: 'Filled @ 63,742.05 · fee 0.05% · slippage 0.001%' },
-  { tag: 'Settlement', body: 'Margin locked, position live on-chain ✓' },
+  { caption: 'Noeracle mark streaming every ~500ms', price: '63,741.20' },
+  { caption: 'Long BTC-PERP · 2,400 USDC margin · 10x isolated', price: '63,741.20' },
+  { caption: 'Filled · fee 0.05% · slippage 0.001%', price: '63,742.05' },
+  { caption: 'Margin locked — position live on-chain', price: '63,742.05' },
 ];
 
 function TerminalCard() {
@@ -108,57 +108,65 @@ function TerminalCard() {
 
   useEffect(() => {
     if (prefersReducedMotion) return;
-    const id = setInterval(() => setStep((s) => (s + 1) % FILL_STEPS.length), 2600);
+    const id = setInterval(() => setStep((s) => (s + 1) % FILL_STEPS.length), 3200);
     return () => clearInterval(id);
   }, [prefersReducedMotion]);
 
   const active = FILL_STEPS[step];
 
   return (
-    <div className="w-[360px] rounded-lg border border-white/10 bg-[#0B0D10]/70 backdrop-blur-md p-5">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-3.5 mb-4 border-b border-white/10">
-        <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-muted-foreground">
-          Noether · Terminal
+    <div className="w-[340px] rounded-xl border border-white/[0.08] bg-[#0B0D10]/60 backdrop-blur-xl px-7 py-6">
+      {/* Pair + live pulse — one whisper of a line */}
+      <p className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground/80">
+        BTC-PERP
+        <span className="relative flex h-1 w-1" aria-hidden="true">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-long opacity-60 motion-safe:animate-ping" />
+          <span className="relative inline-flex h-1 w-1 rounded-full bg-long" />
         </span>
-        <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-long">
-          <span className="w-1 h-1 rounded-full bg-long" aria-hidden="true" />
-          Live fill
-        </span>
-      </div>
+      </p>
 
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <p className="font-mono text-[10px] text-faint tabular-nums shrink-0">
-          {String(step + 1).padStart(2, '0')} / {String(FILL_STEPS.length).padStart(2, '0')}
-        </p>
-        {/* Single progress track — gold fill grows with each step */}
-        <div className="relative h-px flex-1 bg-white/15 overflow-hidden" aria-hidden="true">
-          <motion.span
-            className="absolute left-0 top-0 h-full w-full origin-left bg-primary block"
-            animate={{ scaleX: (step + 1) / FILL_STEPS.length }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
-          />
-        </div>
-      </div>
+      {/* The mark — large, thin, unhurried */}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.p
+          key={active.price}
+          initial={prefersReducedMotion ? false : { opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={prefersReducedMotion ? undefined : { opacity: 0, y: -4 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
+          className="mt-3 font-mono text-[32px] font-light leading-none tracking-tight text-foreground tabular-nums"
+        >
+          {active.price}
+        </motion.p>
+      </AnimatePresence>
 
-      {/* Active step */}
-      <div className="min-h-[72px]">
+      {/* One narrated line, crossfading */}
+      <div className="mt-4 min-h-[18px]">
         <AnimatePresence mode="wait" initial={false}>
-          <motion.div
+          <motion.p
             key={step}
             initial={prefersReducedMotion ? false : { opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={prefersReducedMotion ? undefined : { opacity: 0 }}
-            transition={{ duration: 0.25 }}
+            transition={{ duration: 0.3 }}
+            className="font-mono text-[11.5px] leading-relaxed text-muted-foreground"
           >
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-primary mb-2">
-              ● {active.tag}
-            </p>
-            <p className="font-mono text-[13px] text-foreground/90 leading-relaxed">
-              {active.body}
-            </p>
-          </motion.div>
+            {active.caption}
+          </motion.p>
         </AnimatePresence>
+      </div>
+
+      {/* Step trace: four grains of light, no chrome */}
+      <div className="mt-5 flex items-center gap-1.5" aria-hidden="true">
+        {FILL_STEPS.map((_, i) => (
+          <span
+            key={i}
+            className={
+              i === step
+                ? 'h-[3px] w-[3px] rounded-full bg-primary transition-colors duration-300'
+                : 'h-[3px] w-[3px] rounded-full bg-white/15 transition-colors duration-300'
+            }
+          />
+        ))}
       </div>
     </div>
   );
