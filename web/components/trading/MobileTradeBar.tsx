@@ -43,17 +43,17 @@ export function MobileTradeBar({ asset, markPrice, positions, onPositionOpened, 
   return (
     <>
       {/* Fixed bottom bar — mobile/tablet only */}
-      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-[#0a0a0a]/95 backdrop-blur px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/95 backdrop-blur px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         <div className="flex gap-3 max-w-md mx-auto">
           <button
             onClick={() => openWith('Long')}
-            className="flex-1 rounded-xl bg-emerald-500 py-3 text-sm font-semibold text-black active:bg-emerald-600"
+            className="flex-1 rounded-md bg-long py-3 min-h-[44px] text-sm font-semibold text-background transition-colors hover:bg-long/90 active:bg-long/80"
           >
             Long
           </button>
           <button
             onClick={() => openWith('Short')}
-            className="flex-1 rounded-xl bg-red-500 py-3 text-sm font-semibold text-black active:bg-red-600"
+            className="flex-1 rounded-md bg-short py-3 min-h-[44px] text-sm font-semibold text-background transition-colors hover:bg-short/90 active:bg-short/80"
           >
             Short
           </button>

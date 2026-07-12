@@ -41,7 +41,7 @@ export function OrdersList({
         {[1, 2].map((i) => (
           <div
             key={i}
-            className="h-14 bg-white/5 rounded-lg animate-pulse"
+            className="h-14 bg-surface-3 rounded-md animate-pulse"
           />
         ))}
       </div>
@@ -52,8 +52,8 @@ export function OrdersList({
     return (
       <div className="flex flex-col items-center justify-center py-12 px-4">
         <div className="relative mb-4">
-          <div className="w-14 h-14 rounded-full bg-gradient-to-br from-amber-500/10 to-orange-500/10 flex items-center justify-center">
-            <Clock className="w-7 h-7 text-muted-foreground/50" />
+          <div className="w-14 h-14 rounded-full bg-surface-2 flex items-center justify-center">
+            <Clock className="w-7 h-7 text-faint" />
           </div>
         </div>
         <h3 className="text-foreground font-medium mb-1">No orders</h3>
@@ -112,28 +112,28 @@ export function OrdersList({
   const getOrderTypeColor = (orderType: string) => {
     switch (orderType) {
       case 'StopLoss':
-        return 'text-[#ef4444] bg-[#ef4444]/10';
+        return 'text-short bg-short/10';
       case 'TakeProfit':
-        return 'text-[#22c55e] bg-[#22c55e]/10';
+        return 'text-long bg-long/10';
       case 'TrailingStop':
-        return 'text-orange-400 bg-orange-400/10';
+        return 'text-primary bg-primary/10';
       case 'StopLimit':
-        return 'text-blue-400 bg-blue-400/10';
+        return 'text-primary bg-primary/10';
       default:
-        return 'text-amber-500 bg-amber-500/10';
+        return 'text-muted-foreground bg-surface-2';
     }
   };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'Executed':
-        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#22c55e]/15 text-[#22c55e]">Filled</span>;
+        return <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-medium bg-long/10 text-long">Filled</span>;
       case 'Cancelled':
-        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-neutral-400">Cancelled</span>;
+        return <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-medium bg-surface-2 text-muted-foreground">Cancelled</span>;
       case 'CancelledSlippage':
-        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400">Slippage</span>;
+        return <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-medium bg-primary/10 text-primary">Slippage</span>;
       case 'Expired':
-        return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-neutral-500">Expired</span>;
+        return <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-medium bg-surface-2 text-faint">Expired</span>;
       default:
         return null;
     }
@@ -142,9 +142,9 @@ export function OrdersList({
   const getTifBadge = (tif: string) => {
     switch (tif) {
       case 'IOC':
-        return <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-400">IOC</span>;
+        return <span className="px-1 py-0.5 rounded-sm text-[9px] font-medium bg-primary/10 text-primary">IOC</span>;
       case 'PostOnly':
-        return <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-blue-500/15 text-blue-400">Post Only</span>;
+        return <span className="px-1 py-0.5 rounded-sm text-[9px] font-medium bg-surface-2 text-muted-foreground">Post Only</span>;
       default:
         return null; // GTC is default, no badge needed
     }
@@ -163,32 +163,32 @@ export function OrdersList({
     <tr
       key={order.id}
       className={cn(
-        'border-b border-white/5 transition-colors',
-        showActions ? 'hover:bg-white/[0.03]' : 'opacity-60'
+        'border-b border-border transition-colors',
+        showActions ? 'hover:bg-surface-3/50' : 'opacity-60'
       )}
     >
-      <td className="px-3 py-3">
+      <td className="px-3 py-2">
         <div className="flex items-center gap-1.5">
-          <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium', getOrderTypeColor(order.orderType))}>
+          <div className={cn('inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-sm text-[11px] font-medium', getOrderTypeColor(order.orderType))}>
             {getOrderTypeIcon(order.orderType)}
             {getOrderTypeLabel(order.orderType, order.stopLimitPhase)}
           </div>
           {getTifBadge(order.timeInForce)}
           {order.reduceOnly && (
-            <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-orange-500/15 text-orange-400">RO</span>
+            <span className="px-1 py-0.5 rounded-sm text-[9px] font-medium bg-primary/10 text-primary">RO</span>
           )}
         </div>
       </td>
 
-      <td className="px-3 py-3">
+      <td className="px-3 py-2">
         <div className="flex items-center gap-2">
           <span className="font-medium text-foreground">{order.asset}-PERP</span>
           <span
             className={cn(
-              'px-1.5 py-0.5 rounded text-[10px] font-bold font-mono',
+              'px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono',
               order.direction === 'Long'
-                ? 'bg-[#22c55e]/15 text-[#22c55e] ring-1 ring-[#22c55e]/30'
-                : 'bg-[#ef4444]/15 text-[#ef4444] ring-1 ring-[#ef4444]/30'
+                ? 'bg-long/10 text-long'
+                : 'bg-short/10 text-short'
             )}
           >
             {order.leverage}x
@@ -197,18 +197,18 @@ export function OrdersList({
         <span
           className={cn(
             'text-[10px] font-medium',
-            order.direction === 'Long' ? 'text-[#22c55e]' : 'text-[#ef4444]'
+            order.direction === 'Long' ? 'text-long' : 'text-short'
           )}
         >
           {order.direction.toUpperCase()}
         </span>
       </td>
 
-      <td className="px-3 py-3 text-right">
+      <td className="px-3 py-2 text-right">
         {order.orderType === 'TrailingStop' ? (
           <>
             <div className="font-mono text-foreground">Trailing</div>
-            <div className="font-mono text-orange-400 text-[10px]">
+            <div className="font-mono text-primary text-[10px]">
               {(order.trailingPercentBps / 100).toFixed(1)}% trail
             </div>
           </>
@@ -231,10 +231,10 @@ export function OrdersList({
         )}
       </td>
 
-      <td className="px-3 py-3 text-right">
+      <td className="px-3 py-2 text-right">
         {order.orderType === 'TrailingStop' ? (
           <>
-            <div className="font-mono text-orange-400">Dynamic</div>
+            <div className="font-mono text-primary">Dynamic</div>
             <div className="text-[10px] text-muted-foreground">
               Tracks peak
             </div>
@@ -244,7 +244,7 @@ export function OrdersList({
             <div className="font-mono text-foreground">
               {formatUSD(order.limitPrice, priceDecimals(order.asset))}
             </div>
-            <div className="text-[10px] text-blue-400">
+            <div className="text-[10px] text-primary">
               Limit active
             </div>
           </>
@@ -275,13 +275,13 @@ export function OrdersList({
         )}
       </td>
 
-      <td className="px-3 py-3 text-right">
-        <span className="text-muted-foreground text-[10px]">
+      <td className="px-3 py-2 text-right">
+        <span className="text-faint text-[10px] font-mono">
           {formatRelativeTime(order.createdAt)}
         </span>
       </td>
 
-      <td className="px-3 py-3">
+      <td className="px-3 py-2">
         <div className="flex items-center justify-center">
           {showActions ? (
             <button
@@ -289,7 +289,7 @@ export function OrdersList({
                 setSelectedOrder(order);
                 setIsCancelModalOpen(true);
               }}
-              className="px-2.5 py-1 rounded text-[10px] font-medium bg-[#ef4444]/10 text-[#ef4444] hover:bg-[#ef4444]/20 transition-colors flex items-center gap-1"
+              className="h-7 px-2 rounded-sm text-[11px] font-medium border border-border-strong text-muted-foreground hover:text-short hover:border-short/40 hover:bg-surface-3 transition-colors flex items-center gap-1"
               title="Cancel Order"
             >
               <X className="w-3 h-3" />
@@ -315,8 +315,8 @@ export function OrdersList({
             onClick={onRefresh}
             disabled={isRefreshing}
             className={cn(
-              'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all',
-              'text-muted-foreground hover:text-foreground hover:bg-white/5',
+              'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors',
+              'text-muted-foreground hover:text-foreground hover:bg-surface-3',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}
             title="Refresh orders"
@@ -330,14 +330,14 @@ export function OrdersList({
       {/* Desktop Table */}
       <div className="hidden lg:block overflow-x-auto">
         <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-card z-10">
-            <tr className="text-muted-foreground border-b border-white/5">
-              <th className="text-left px-3 py-2.5 font-medium">Type</th>
-              <th className="text-left px-3 py-2.5 font-medium">Market</th>
-              <th className="text-right px-3 py-2.5 font-medium">Size</th>
-              <th className="text-right px-3 py-2.5 font-medium">Trigger Price</th>
-              <th className="text-right px-3 py-2.5 font-medium">Time</th>
-              <th className="text-center px-3 py-2.5 font-medium">Status</th>
+          <thead className="sticky top-0 bg-surface z-10">
+            <tr className="border-b border-border">
+              <th className="text-left px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Type</th>
+              <th className="text-left px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Market</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Size</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Trigger Price</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Time</th>
+              <th className="text-center px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -345,7 +345,7 @@ export function OrdersList({
             {historyOrders.length > 0 && pendingOrders.length > 0 && (
               <tr>
                 <td colSpan={6} className="px-3 py-2">
-                  <div className="border-t border-white/5" />
+                  <div className="border-t border-border" />
                 </td>
               </tr>
             )}
@@ -361,7 +361,7 @@ export function OrdersList({
             <div className="flex items-start justify-between mb-3">
               <div>
                 <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium', getOrderTypeColor(order.orderType))}>
+                  <div className={cn('inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-sm text-[11px] font-medium', getOrderTypeColor(order.orderType))}>
                     {getOrderTypeIcon(order.orderType)}
                     {getOrderTypeLabel(order.orderType)}
                   </div>
@@ -371,13 +371,13 @@ export function OrdersList({
                   </Badge>
                   {getTifBadge(order.timeInForce)}
                   {order.reduceOnly && (
-                    <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-orange-500/15 text-orange-400">RO</span>
+                    <span className="px-1 py-0.5 rounded-sm text-[9px] font-medium bg-primary/10 text-primary">RO</span>
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {formatRelativeTime(order.createdAt)}
                   {getDistanceToTrigger(order) && (
-                    <span className="ml-2 text-neutral-400">· {getDistanceToTrigger(order)}</span>
+                    <span className="ml-2 text-muted-foreground">· {getDistanceToTrigger(order)}</span>
                   )}
                 </p>
               </div>
@@ -443,13 +443,13 @@ export function OrdersList({
         {historyOrders.length > 0 && (
           <>
             {pendingOrders.length > 0 && (
-              <div className="border-t border-white/5 my-2" />
+              <div className="border-t border-border my-2" />
             )}
             {historyOrders.map((order) => (
               <Card key={order.id} padding="md" className="opacity-60">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <div className={cn('inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium', getOrderTypeColor(order.orderType))}>
+                    <div className={cn('inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-sm text-[11px] font-medium', getOrderTypeColor(order.orderType))}>
                       {getOrderTypeIcon(order.orderType)}
                       {getOrderTypeLabel(order.orderType)}
                     </div>
@@ -478,7 +478,7 @@ export function OrdersList({
       >
         {selectedOrder && (
           <div>
-            <div className="mb-6 p-4 bg-white/5 rounded-xl space-y-2">
+            <div className="mb-6 p-4 bg-surface-2 rounded-lg space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Order Type</span>
                 <span className="text-foreground">

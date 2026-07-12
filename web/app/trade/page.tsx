@@ -1,15 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
-import { Card, Tabs, Tooltip } from '@/components/ui';
+import { Tabs } from '@/components/ui';
 import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import {
   TradingChart,
-  ChartHeader,
   OrderPanel,
-  AssetSelector,
-  AssetSelectorDropdown,
   PositionsList,
   OrdersList,
   TradeHistoryContainer,
@@ -17,6 +14,8 @@ import {
   OrderBook,
   CrossMarginBanner,
   MobileTradeBar,
+  MarketStatsBar,
+  TradingViewChart,
 } from '@/components/trading';
 import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
 import type { ChartType } from '@/components/trading/TradingChart';
@@ -42,11 +41,11 @@ import {
   getFundingRate,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
-import { getMarketsStats, statToUsd, type AssetMarketStats } from '@/lib/api/markets';
+import { getMarketsStats, type AssetMarketStats } from '@/lib/api/markets';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { subscribeLivePrices } from '@/lib/stellar/noeracle';
 import { toPrecision, fromPrecision } from '@/lib/utils';
-import { formatCompactUsd, formatUSD, formatPercent } from '@/lib/utils/format';
+import { formatUSD } from '@/lib/utils/format';
 import { decodeContractError } from '@/lib/utils/contractErrors';
 import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
@@ -525,8 +524,60 @@ function TradePage() {
     }
   }, []);
 
+  // Chart mode: 'pro' embeds the full TradingView chart (indicators, drawing
+  // tools); 'basic' is the native chart that carries the Noeracle mark and
+  // position/order overlays. Persisted like the dock preference.
+  const [chartMode, setChartMode] = useState<'pro' | 'basic'>('pro');
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('noether:chart-mode') === 'basic') setChartMode('basic');
+    } catch {}
+  }, []);
+  const setMode = useCallback((mode: 'pro' | 'basic') => {
+    setChartMode(mode);
+    try {
+      localStorage.setItem('noether:chart-mode', mode);
+    } catch {}
+  }, []);
+
+  // Layout preference: dock the Positions/Orders tables under the chart so
+  // both share one screen (lg+); default keeps the full-width bottom section.
+  const [dockTables, setDockTables] = useState(false);
+  useEffect(() => {
+    try {
+      setDockTables(localStorage.getItem('noether:trade-dock') === '1');
+    } catch {}
+  }, []);
+  const toggleDock = useCallback(() => {
+    setDockTables((d) => {
+      try {
+        localStorage.setItem('noether:trade-dock', d ? '0' : '1');
+      } catch {}
+      return !d;
+    });
+  }, []);
+
   // Count only pending orders for the badge
   const pendingOrdersCount = orders.filter(o => o.status === 'Pending').length;
+
+  // Bottom tab selection lives in the URL (?tab=) so views deep-link and
+  // survive refresh (REDESIGN.md acceptance criteria). Invalid values fall
+  // back to Positions.
+  const TAB_IDS = ['positions', 'orders', 'history', 'orderbook', 'trades'] as const;
+  const tabParam = searchParams?.get('tab');
+  const initialTab = TAB_IDS.includes(tabParam as (typeof TAB_IDS)[number])
+    ? (tabParam as string)
+    : 'positions';
+  const handleTabChange = useCallback(
+    (tabId: string) => {
+      const params = new URLSearchParams(searchParams?.toString());
+      if (tabId === 'positions') params.delete('tab');
+      else params.set('tab', tabId);
+      const qs = params.toString();
+      router.replace(qs ? `/trade?${qs}` : '/trade', { scroll: false });
+    },
+    [searchParams, router],
+  );
 
   const positionTabs = [
     {
@@ -572,211 +623,187 @@ function TradePage() {
       label: 'Trade History',
       content: <TradeHistoryContainer />,
     },
+    // Real venue data (pending limit orders / indexer fills) — lived in the
+    // old left sidebar; now reachable as tabs so the chart keeps the width.
+    {
+      id: 'orderbook',
+      label: 'Order Book',
+      content: (
+        <div className="max-w-2xl">
+          <OrderBook asset={selectedAsset} />
+        </div>
+      ),
+    },
+    {
+      id: 'trades',
+      label: 'Recent Trades',
+      content: (
+        <div className="max-w-2xl">
+          <RecentTrades />
+        </div>
+      ),
+    },
   ];
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-16">
-        <div className="max-w-[1800px] mx-auto p-4 lg:p-6">
-          {/* Main Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
-            {/* Left Sidebar - Split: OrderBook (Top) + Recent Trades (Bottom) */}
-            <div className="hidden xl:block xl:col-span-2">
-              <div className="sticky top-20 flex flex-col gap-4 h-[calc(100vh-120px)]">
-                {/* Top Half: Order Book */}
-                <Card className="flex-1 min-h-0 overflow-hidden">
-                  <OrderBook asset={selectedAsset} />
-                </Card>
+      <main className="pt-12">
+        {/* Thin market-stats strip: pair selector · mark · 24h stats · OI · funding */}
+        <MarketStatsBar
+          selectedAsset={selectedAsset}
+          onSelect={setSelectedAsset}
+          markPrices={currentPrices}
+          fundingRate={fundingRate}
+          assetStats={assetStats}
+          pricesStale={pricesStale}
+        />
 
-                {/* Bottom Half: Recent Trades (Global Activity) */}
-                <Card className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                  <RecentTrades />
-                </Card>
-              </div>
-            </div>
-
-            {/* Main Content */}
-            <div className="lg:col-span-8 xl:col-span-7 space-y-4">
-              {/* Chart Card */}
-              <Card padding="none" className="overflow-hidden">
-                {/* Chart Header with Asset Selector */}
-                <div className="border-b border-white/5">
-                  <div className="flex items-center justify-between px-4 py-2">
-                    {/* Asset Selector Dropdown */}
-                    <div className="flex items-center gap-2">
-                      <AssetSelectorDropdown
-                        selectedAsset={selectedAsset}
-                        onSelect={setSelectedAsset}
-                        markPrices={currentPrices}
-                      />
-                      {pricesStale && (
-                        <span className="px-2 py-0.5 text-[10px] font-medium rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 whitespace-nowrap">
-                          Live prices stale
-                        </span>
+        {/* Chart (dominant, left) + 320px order rail (right) */}
+        <div className="lg:flex lg:items-stretch">
+          <div className="flex-1 min-w-0 flex flex-col lg:border-r lg:border-border">
+            {/* Timeframe + chart-mode toolbar */}
+            <div className="flex items-center justify-between gap-2 px-2 sm:px-3 py-1 border-b border-border">
+              <div className="flex items-center gap-0.5 overflow-x-auto scrollbar-none">
+                {chartMode === 'basic' ? (
+                  TIMEFRAMES.map((tf) => (
+                    <button
+                      key={tf.value}
+                      onClick={() => setSelectedTimeframe(tf.value)}
+                      className={cn(
+                        'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
+                        selectedTimeframe === tf.value
+                          ? 'bg-surface-2 text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
                       )}
-                    </div>
-                    {/* Chart Header Stats (price, change, etc.) */}
-                    <div className="hidden sm:block">
-                      <ChartHeader asset={selectedAsset} compact markPrice={currentPrices[selectedAsset] || 0} />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Timeframe + chart-type toolbar */}
-                <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2 border-b border-white/5">
-                  <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
-                    {TIMEFRAMES.map((tf) => (
-                      <button
-                        key={tf.value}
-                        onClick={() => setSelectedTimeframe(tf.value)}
-                        className={cn(
-                          'px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap',
-                          selectedTimeframe === tf.value
-                            ? 'bg-white text-black'
-                            : 'text-neutral-400 hover:text-white hover:bg-white/5'
-                        )}
-                      >
-                        {tf.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-0.5 shrink-0 rounded-lg bg-white/5 p-0.5">
-                    {(['candles', 'line', 'area'] as const).map((t) => (
-                      <button
-                        key={t}
-                        onClick={() => setChartType(t)}
-                        aria-pressed={chartType === t}
-                        title={t === 'candles' ? 'Candlesticks' : t === 'line' ? 'Line' : 'Area'}
-                        className={cn(
-                          'px-2 py-1 text-xs font-medium rounded-md capitalize transition-colors',
-                          chartType === t
-                            ? 'bg-white/10 text-white'
-                            : 'text-neutral-500 hover:text-white'
-                        )}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Chart */}
-                <div className="h-[400px] lg:h-[500px]">
-                  <TradingChart
-                    asset={selectedAsset}
-                    interval={selectedTimeframe}
-                    chartType={chartType}
-                    markPrice={currentPrices[selectedAsset] || 0}
-                    stale={pricesStale}
-                    positions={positions.filter((p) => p.asset === selectedAsset)}
-                    orders={orders.filter((o) => o.asset === selectedAsset && o.status === 'Pending')}
-                    onSource={setChartSource}
-                  />
-                </div>
-
-                {/* Price-source disclosure (A16): native Noeracle candles when
-                    the venue has them, else Binance reference. Execution is
-                    always the Noeracle mark. */}
-                <div className="px-4 py-1.5 border-t border-white/5">
-                  <p className="text-[10px] text-neutral-400">
-                    {chartSource === 'noeracle'
-                      ? 'Chart: Noether candles (Noeracle) · Execution: Noeracle mark'
-                      : 'Chart: Binance reference · Execution: Noeracle mark'}
-                  </p>
-                </div>
-              </Card>
-
-              {/* Mobile Asset Selector */}
-              <div className="xl:hidden">
-                <Card>
-                  <h3 className="text-sm font-medium text-neutral-400 mb-4">Select Market</h3>
-                  <AssetSelector
-                    selectedAsset={selectedAsset}
-                    onSelect={setSelectedAsset}
-                  />
-                </Card>
+                    >
+                      {tf.label}
+                    </button>
+                  ))
+                ) : (
+                  <span className="px-2.5 py-1.5 text-[11px] text-faint whitespace-nowrap">
+                    Indicators & drawing tools in the chart toolbar
+                  </span>
+                )}
               </div>
-
-              {/* Positions & History */}
-              <Card>
-                <Tabs tabs={positionTabs} defaultTab="positions" />
-              </Card>
-            </div>
-
-            {/* Right Sidebar - Order Panel (desktop; mobile uses the fixed bottom bar) */}
-            <div className="lg:col-span-4 xl:col-span-3">
-              <div className="sticky top-20 space-y-4">
-                {/* OrderPanel is replaced by the fixed bottom bar below lg */}
-                <div className="hidden lg:block space-y-4">
-                  <LeaderModeSelector />
-                  <OrderPanel
-                    asset={selectedAsset}
-                    markPrice={currentPrices[selectedAsset] || 0}
-                    positions={positions}
-                    onPositionOpened={() => {
-                      refreshPositionsAfterTrade();
-                      refreshBalances();
-                    }}
-                  />
+              <div className="flex items-center gap-0.5 shrink-0">
+                {/* Pro (TradingView) vs Basic (native, with mark/position overlays) */}
+                <div className="flex items-center bg-surface-2 rounded-md p-0.5 gap-0.5 mr-1">
+                  {(['pro', 'basic'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setMode(m)}
+                      aria-pressed={chartMode === m}
+                      title={m === 'pro' ? 'Full chart — indicators & drawings' : 'Basic chart — mark price & position overlays'}
+                      className={cn(
+                        'px-2 py-1 text-xs font-medium rounded-[4px] capitalize transition-colors',
+                        chartMode === m
+                          ? 'bg-surface-3 text-foreground'
+                          : 'text-faint hover:text-foreground'
+                      )}
+                    >
+                      {m}
+                    </button>
+                  ))}
                 </div>
-
-                {/* Market Stats */}
-                <Card>
-                  <h3 className="text-sm font-medium text-neutral-400 mb-4">Market Info</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-neutral-400">Open Interest</span>
-                      <span className="text-white tabular-nums">
-                        {assetStats
-                          ? formatCompactUsd(
-                              statToUsd(assetStats.openInterestLong) +
-                                statToUsd(assetStats.openInterestShort),
-                            )
-                          : '—'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-neutral-400">24h Volume (Noether)</span>
-                      <span className="text-white tabular-nums">
-                        {assetStats ? formatCompactUsd(statToUsd(assetStats.volume24h)) : '—'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-neutral-400">
-                        <Tooltip content="Positive: longs pay shorts; negative: shorts pay longs. Accrues hourly and is settled when a position closes or is liquidated.">
-                          <span className="cursor-help border-b border-dotted border-neutral-600">
-                            Funding / 1h
-                          </span>
-                        </Tooltip>{' '}
-                        · settles on close
-                      </span>
-                      <span
-                        className={cn(
-                          'tabular-nums',
-                          fundingRate === null
-                            ? 'text-neutral-400'
-                            : Number(fundingRate.toFixed(4)) === 0
-                            ? 'text-white'
-                            : fundingRate > 0
-                            ? 'text-emerald-400'
-                            : 'text-red-400',
-                        )}
-                      >
-                        {fundingRate === null ? '—' : formatPercent(fundingRate, 4)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-neutral-400">Max Leverage</span>
-                      <span className="text-white">10x</span>
-                    </div>
-                  </div>
-                </Card>
+                {chartMode === 'basic' &&
+                  (['candles', 'line', 'area'] as const).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setChartType(t)}
+                      aria-pressed={chartType === t}
+                      title={t === 'candles' ? 'Candlesticks' : t === 'line' ? 'Line' : 'Area'}
+                      className={cn(
+                        'px-2 py-1.5 text-xs font-medium rounded-md capitalize transition-colors',
+                        chartType === t
+                          ? 'bg-surface-2 text-foreground'
+                          : 'text-faint hover:text-foreground'
+                      )}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                <span className="hidden lg:block w-px h-4 bg-border mx-1" aria-hidden="true" />
+                <button
+                  onClick={toggleDock}
+                  aria-pressed={dockTables}
+                  title={dockTables ? 'Move tables below the fold' : 'Dock tables under the chart'}
+                  aria-label={dockTables ? 'Move tables below the fold' : 'Dock tables under the chart'}
+                  className={cn(
+                    'hidden lg:inline-flex items-center px-2 py-1.5 rounded-md transition-colors',
+                    dockTables ? 'bg-surface-2 text-foreground' : 'text-faint hover:text-foreground'
+                  )}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="13" height="13" rx="1.5" stroke="currentColor" />
+                    <line x1="1.5" y1="10.5" x2="14.5" y2="10.5" stroke="currentColor" />
+                  </svg>
+                </button>
               </div>
             </div>
+
+            {/* Chart — fills whatever height the row has (the order rail sets
+                it on lg), so no dead band can open between axis and footer */}
+            <div className="flex-1 h-[380px] lg:h-auto lg:min-h-[440px]">
+              {chartMode === 'pro' ? (
+                <TradingViewChart asset={selectedAsset} interval={selectedTimeframe} />
+              ) : (
+                <TradingChart
+                  asset={selectedAsset}
+                  interval={selectedTimeframe}
+                  chartType={chartType}
+                  markPrice={currentPrices[selectedAsset] || 0}
+                  stale={pricesStale}
+                  positions={positions.filter((p) => p.asset === selectedAsset)}
+                  orders={orders.filter((o) => o.asset === selectedAsset && o.status === 'Pending')}
+                  onSource={setChartSource}
+                />
+              )}
+            </div>
+
+            {/* Price-source disclosure (A16): native Noeracle candles when
+                the venue has them, else Binance reference. Execution is
+                always the Noeracle mark. */}
+            <div className="px-3 py-1.5 border-t border-border">
+              <p className="text-[10px] text-faint">
+                {chartMode === 'pro'
+                  ? 'Chart: TradingView (Binance feed) · Execution: Noeracle mark'
+                  : chartSource === 'noeracle'
+                  ? 'Chart: Noether candles (Noeracle) · Execution: Noeracle mark'
+                  : 'Chart: Binance reference · Execution: Noeracle mark'}
+              </p>
+            </div>
+
+            {/* Docked mode: tables live right under the chart, same screen */}
+            {dockTables && (
+              <div className="border-t border-border px-3 pb-4 lg:h-[360px] lg:flex-none lg:overflow-y-auto custom-scrollbar">
+                <Tabs tabs={positionTabs} defaultTab={initialTab} onChange={handleTabChange} />
+              </div>
+            )}
           </div>
+
+          {/* Order rail — desktop only; mobile trades via the fixed bottom bar */}
+          <aside className="hidden lg:block w-[320px] shrink-0">
+            <LeaderModeSelector />
+            <OrderPanel
+              asset={selectedAsset}
+              markPrice={currentPrices[selectedAsset] || 0}
+              positions={positions}
+              onPositionOpened={() => {
+                refreshPositionsAfterTrade();
+                refreshBalances();
+              }}
+            />
+          </aside>
         </div>
+
+        {/* Positions / Orders / History / venue activity — full-width */}
+        {!dockTables && (
+          <div className="border-t border-border px-3 sm:px-4 pb-8">
+            <Tabs tabs={positionTabs} defaultTab={initialTab} onChange={handleTabChange} />
+          </div>
+        )}
 
         {/* Mobile-only trade access (fixed bottom Long/Short → bottom-sheet OrderPanel) */}
         <MobileTradeBar
@@ -799,25 +826,26 @@ function TradePage() {
 // hook the Suspense boundary below exists to isolate).
 function TradePageSkeleton() {
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
-      <div className="h-16 border-b border-white/5 flex items-center px-4 lg:px-6">
-        <div className="h-5 w-28 rounded bg-[#eab308]/20 animate-pulse" />
+    <div className="min-h-screen bg-background">
+      <div className="h-12 border-b border-border flex items-center px-4">
+        <div className="h-4 w-28 rounded-sm bg-surface-3 animate-pulse" />
       </div>
       <main>
-        <div className="max-w-[1800px] mx-auto p-4 lg:p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
-            <div className="hidden xl:block xl:col-span-2 space-y-4">
-              <div className="h-[44vh] rounded-lg border border-white/10 bg-white/[0.03] animate-pulse" />
-              <div className="h-[44vh] rounded-lg border border-white/10 bg-white/[0.03] animate-pulse" />
-            </div>
-            <div className="lg:col-span-8 xl:col-span-7 space-y-4">
-              <div className="h-[400px] lg:h-[500px] rounded-lg border border-white/10 bg-white/[0.03] animate-pulse" />
-              <div className="h-64 rounded-lg border border-white/10 bg-white/[0.03] animate-pulse" />
-            </div>
-            <div className="lg:col-span-4 xl:col-span-3">
-              <div className="h-[500px] rounded-lg border border-[#eab308]/15 bg-white/[0.03] animate-pulse" />
-            </div>
+        <div className="h-14 border-b border-border flex items-center gap-4 px-4">
+          <div className="h-6 w-40 rounded-sm bg-surface-3 animate-pulse" />
+          <div className="h-6 w-64 rounded-sm bg-surface-2 animate-pulse hidden sm:block" />
+        </div>
+        <div className="lg:flex">
+          <div className="flex-1 min-w-0 lg:border-r lg:border-border">
+            <div className="h-[380px] lg:h-[calc(100dvh-21rem)] lg:min-h-[440px] bg-surface animate-pulse" />
           </div>
+          <div className="hidden lg:block w-[320px] shrink-0 p-4 space-y-3">
+            <div className="h-9 rounded-md bg-surface-3 animate-pulse" />
+            <div className="h-64 rounded-md bg-surface-2 animate-pulse" />
+          </div>
+        </div>
+        <div className="border-t border-border p-4">
+          <div className="h-40 rounded-md bg-surface animate-pulse" />
         </div>
       </main>
     </div>

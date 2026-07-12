@@ -587,7 +587,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       toast.error(
         <span>
           Insufficient USDC balance —{' '}
-          <Link href="/faucet" className="underline text-[#eab308]">
+          <Link href="/faucet" className="underline text-primary">
             get test USDC from the faucet
           </Link>
         </span>,
@@ -638,15 +638,15 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   };
 
   return (
-    <div className="h-full rounded-lg border border-white/10 bg-[#0a0a0a] overflow-hidden flex flex-col">
+    <div className="h-full overflow-hidden flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
         <h3 className="text-sm font-medium text-foreground">Place Order</h3>
         {isLeader && (
           <button
             type="button"
             onClick={() => setLeaderVault(null)}
-            className="text-[10px] uppercase tracking-wider text-amber-400 hover:text-amber-300 transition-colors"
+            className="text-[10px] uppercase tracking-wider text-primary hover:text-primary/80 transition-colors"
           >
             Exit leader mode
           </button>
@@ -654,13 +654,13 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       </div>
 
       {isLeader && leaderVault && (
-        <div className="px-4 py-2.5 border-b border-amber-500/20 bg-amber-500/[0.06] flex items-center gap-2">
-          <Users className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+        <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 border-l-2 border-l-primary/60">
+          <Users className="w-3.5 h-3.5 text-primary shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="text-[10px] uppercase tracking-wider text-amber-400/80">
+            <div className="text-[10px] uppercase tracking-wider text-primary/80">
               Leader mode
             </div>
-            <div className="text-xs text-amber-200 truncate">
+            <div className="text-xs text-foreground truncate">
               Trading <span className="font-medium">{leaderVault.name}</span> · vault balance{' '}
               <span className="font-mono">{formatNumber(vaultBalanceUsdc)} USDC</span>
             </div>
@@ -672,14 +672,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         {/* Margin Mode Toggle — Cross has no vault_factory proxy yet,
             so the whole toggle is hidden in leader mode. */}
         {!isLeader && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-0.5 bg-surface-2 rounded-md p-0.5">
             <button
               onClick={() => setMarginMode('Isolated')}
               className={cn(
-                'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
+                'flex-1 rounded-[4px] px-2 py-1.5 text-xs font-medium transition-colors',
                 marginMode === 'Isolated'
-                  ? 'bg-primary/20 border-primary/50 text-primary'
-                  : 'border-white/10 text-muted-foreground hover:text-foreground'
+                  ? 'bg-surface-3 text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
               Isolated
@@ -687,10 +687,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             <button
               onClick={() => setMarginMode('Cross')}
               className={cn(
-                'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
+                'flex-1 rounded-[4px] px-2 py-1.5 text-xs font-medium transition-colors',
                 marginMode === 'Cross'
-                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
-                  : 'border-white/10 text-muted-foreground hover:text-foreground'
+                  ? 'bg-surface-3 text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
               Cross
@@ -700,13 +700,13 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
         {/* Cross-Margin Info + Deposit/Withdraw */}
         {!isLeader && marginMode === 'Cross' && (
-          <div className="space-y-2">
-            <div className="p-2 bg-amber-500/10 rounded border border-amber-500/20">
+          <div className="space-y-3">
+            <div className="border-l-2 border-primary/60 pl-3 space-y-1">
               <div className="flex justify-between text-xs">
-                <span className="text-amber-500">Cross Margin</span>
-                <span className="text-amber-500/70">Positions share collateral</span>
+                <span className="text-primary">Cross Margin</span>
+                <span className="text-faint">Positions share collateral</span>
               </div>
-              <div className="flex justify-between text-xs mt-1">
+              <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Pool Balance</span>
                 <span className="font-mono text-foreground">{formatNumber(crossBalance)} USDC</span>
               </div>
@@ -714,25 +714,26 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
             {/* Deposit/Withdraw Controls */}
             {isConnected && (
-              <div className="p-2 bg-zinc-900/50 rounded border border-white/10 space-y-2">
+              <div className="space-y-1.5">
                 {/* Deposit */}
                 <div className="flex gap-1.5">
                   <div className="relative flex-1">
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="1"
                       min="1"
                       value={crossDepositAmount}
                       onChange={(e) => setCrossDepositAmount(e.target.value)}
                       placeholder="Deposit USDC"
                       aria-label="Cross-margin deposit amount in USDC"
-                      className="w-full bg-zinc-900/80 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                      className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-sm font-mono text-foreground placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
                     />
                   </div>
                   <button
                     onClick={handleCrossDeposit}
                     disabled={isCrossDepositing || !crossDepositAmount}
-                    className="px-3 py-1.5 text-xs font-medium rounded bg-amber-500/20 text-amber-500 border border-amber-500/30 hover:bg-amber-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    className="h-9 px-3 text-xs font-medium rounded-md text-primary hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {isCrossDepositing ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Deposit'}
                   </button>
@@ -742,19 +743,20 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   <div className="relative flex-1">
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="1"
                       min="1"
                       value={crossWithdrawAmount}
                       onChange={(e) => setCrossWithdrawAmount(e.target.value)}
                       placeholder="Withdraw USDC"
                       aria-label="Cross-margin withdraw amount in USDC"
-                      className="w-full bg-zinc-900/80 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50"
+                      className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-sm font-mono text-foreground placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
                     />
                   </div>
                   <button
                     onClick={handleCrossWithdraw}
                     disabled={isCrossWithdrawing || !crossWithdrawAmount}
-                    className="px-3 py-1.5 text-xs font-medium rounded bg-zinc-800 text-foreground border border-white/10 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                    className="h-9 px-3 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {isCrossWithdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Withdraw'}
                   </button>
@@ -770,7 +772,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             clickable-but-broken. */}
         <div
           className={cn(
-            'gap-0 rounded-lg overflow-hidden border border-white/10',
+            'gap-0.5 rounded-md bg-surface-2 p-0.5',
             isLeader ? 'grid grid-cols-1' : 'grid grid-cols-4',
           )}
         >
@@ -782,10 +784,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               key={type}
               onClick={() => setOrderType(type)}
               className={cn(
-                'py-2 text-[11px] font-medium transition-all',
+                'rounded-[4px] px-1 py-1.5 text-[11px] font-medium transition-colors',
                 orderType === type
-                  ? 'bg-primary/20 text-primary border-b-2 border-primary'
-                  : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                  ? 'bg-surface-3 text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
               {type === 'StopLimit' ? 'Stop Limit' : type === 'TrailingStop' ? 'Trail Stop' : type}
@@ -794,32 +796,28 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         </div>
 
         {/* Long/Short Tabs - hidden for TrailingStop (uses position's direction) */}
-        {orderType !== 'TrailingStop' && <div className="grid grid-cols-2 gap-0 rounded-lg overflow-hidden border border-white/10">
-          {/* A3: black text on the green/red fills (white was 2.28:1 on
-              #22c55e) — same treatment as MobileTradeBar. */}
+        {orderType !== 'TrailingStop' && <div className="grid grid-cols-2 gap-0.5 rounded-md bg-surface-2 p-0.5">
           <button
             onClick={() => setDirection('Long')}
             className={cn(
-              'py-3 text-sm font-bold transition-all relative',
+              'rounded-[4px] py-2.5 text-sm font-medium transition-colors',
               direction === 'Long'
-                ? 'bg-[#22c55e] text-black'
-                : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                ? 'bg-long/15 text-long'
+                : 'text-muted-foreground hover:text-foreground'
             )}
           >
             Long
-            {direction === 'Long' && <div className="absolute inset-0 bg-[#22c55e]/20 animate-pulse" />}
           </button>
           <button
             onClick={() => setDirection('Short')}
             className={cn(
-              'py-3 text-sm font-bold transition-all relative',
+              'rounded-[4px] py-2.5 text-sm font-medium transition-colors',
               direction === 'Short'
-                ? 'bg-[#ef4444] text-black'
-                : 'bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary/50'
+                ? 'bg-short/15 text-short'
+                : 'text-muted-foreground hover:text-foreground'
             )}
           >
             Short
-            {direction === 'Short' && <div className="absolute inset-0 bg-[#ef4444]/20 animate-pulse" />}
           </button>
         </div>}
 
@@ -842,7 +840,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               placeholder="0.00"
               aria-label="Collateral amount in USDC"
               data-collateral-input
-              className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors pr-20"
+              className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm text-foreground placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong transition-colors pr-20"
             />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
               <TokenIcon symbol="USDC" size={16} />
@@ -861,9 +859,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           {/* A11: connected wallets with no funds get routed to the faucet
               instead of dead-ending on a disabled money page. */}
           {isConnected && !isLeader && (usdcBalance === 0 || xlmBalance < 1) && (
-            <div className="p-2 bg-[#eab308]/[0.08] border border-[#eab308]/20 rounded-md space-y-1">
+            <div className="border-l-2 border-primary/60 pl-3 space-y-1">
               {usdcBalance === 0 && (
-                <p className="text-xs text-[#eab308]">
+                <p className="text-xs text-primary">
                   No test USDC yet —{' '}
                   <Link href="/faucet" className="underline hover:opacity-80">
                     get test USDC from the faucet →
@@ -871,7 +869,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 </p>
               )}
               {xlmBalance < 1 && (
-                <p className="text-xs text-[#eab308]/80">
+                <p className="text-xs text-primary/80">
                   Low XLM for gas — the{' '}
                   <Link href="/faucet" className="underline hover:opacity-80">
                     faucet
@@ -882,12 +880,12 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             </div>
           )}
           {/* Percentage Buttons */}
-          <div className="grid grid-cols-4 gap-1.5">
+          <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
             {[25, 50, 75, 100].map((pct) => (
               <button
                 key={pct}
                 onClick={() => handlePercentage(pct)}
-                className="py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-secondary/30 hover:bg-secondary/60 rounded border border-white/5 hover:border-white/10 transition-all"
+                className="rounded-[4px] py-1.5 text-xs font-mono font-medium text-muted-foreground hover:text-foreground hover:bg-surface-3 transition-colors"
               >
                 {pct}%
               </button>
@@ -896,7 +894,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         </div>}
 
         {/* Leverage Slider - hidden for TrailingStop */}
-        {orderType !== 'TrailingStop' && <div className="space-y-3 p-3 bg-secondary/20 rounded-lg border border-white/5">
+        {orderType !== 'TrailingStop' && <div className="space-y-3 border-t border-border pt-4">
           <div className="flex items-center justify-between">
             <label className="text-xs text-muted-foreground flex items-center gap-1.5">
               Leverage
@@ -907,8 +905,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             <div className="flex items-center gap-2">
               <span
                 className={cn(
-                  'text-lg font-mono font-bold',
-                  leverage >= 8 ? 'text-[#ef4444]' : leverage >= 5 ? 'text-[#f59e0b]' : 'text-foreground'
+                  'text-lg font-mono font-semibold tabular-nums',
+                  leverage >= 8 ? 'text-short' : leverage >= 5 ? 'text-primary' : 'text-foreground'
                 )}
               >
                 {leverage}x
@@ -926,21 +924,21 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               onChange={(e) => setLeverage(parseInt(e.target.value))}
               aria-label="Leverage"
               aria-valuetext={`${leverage}x`}
-              className="w-full h-1.5 bg-secondary rounded-lg appearance-none cursor-pointer accent-primary"
+              className="w-full h-1.5 bg-surface-3 rounded-full appearance-none cursor-pointer accent-primary"
             />
           </div>
 
           {/* Quick leverage buttons */}
-          <div className="grid grid-cols-5 gap-1.5">
+          <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
             {[1, 2, 5, 8, 10].map((lev) => (
               <button
                 key={lev}
                 onClick={() => setLeverage(lev)}
                 className={cn(
-                  'py-1.5 text-xs font-mono font-medium rounded border transition-all',
+                  'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
                   leverage === lev
-                    ? 'bg-primary/20 border-primary/50 text-primary'
-                    : 'border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20'
+                    ? 'bg-surface-3 text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {lev}x
@@ -951,8 +949,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
         {/* Limit Order Settings (only show when Limit is selected) */}
         {orderType === 'Limit' && (
-          <div className="space-y-3 p-3 bg-amber-500/10 rounded-lg border border-amber-500/20">
-            <h4 className="text-xs font-medium text-amber-500 uppercase tracking-wider">
+          <div className="space-y-3 border-t border-border pt-4">
+            <h4 className="text-[11px] font-medium uppercase tracking-[0.15em] text-faint">
               Limit Order Settings
             </h4>
 
@@ -966,7 +964,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   </Tooltip>
                 </label>
                 <span className="text-xs text-muted-foreground">
-                  Current: ${assetPrice.toFixed(priceDecimals(asset))}
+                  Current: <span className="font-mono">${assetPrice.toFixed(priceDecimals(asset))}</span>
                 </span>
               </div>
               <div className="relative">
@@ -977,11 +975,11 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   onChange={(e) => setTriggerPrice(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder="Enter the trigger price"
                   aria-label="Trigger price in USD"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2.5 text-right font-mono text-sm text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-colors pr-8"
+                  className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm text-foreground placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong transition-colors pr-8"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-faint">
                 {direction === 'Long'
                   ? 'Order triggers when price drops to this level'
                   : 'Order triggers when price rises to this level'}
@@ -1001,7 +999,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   {(slippageTolerance / 100).toFixed(2)}%
                 </span>
               </div>
-              <div className="flex gap-1.5">
+              <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
                 {/* Preset buttons */}
                 {[50, 100, 200].map((bps) => (
                   <button
@@ -1011,17 +1009,17 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                       setCustomSlippage('');
                     }}
                     className={cn(
-                      'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
+                      'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
                       slippageTolerance === bps && customSlippage === ''
-                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
-                        : 'border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20'
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
                     )}
                   >
                     {(bps / 100).toFixed(1)}%
                   </button>
                 ))}
                 {/* Custom input */}
-                <div className="relative flex-1">
+                <div className="relative">
                   <input
                     type="text"
                     inputMode="decimal"
@@ -1037,17 +1035,17 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                     placeholder="Custom"
                     aria-label="Custom slippage tolerance in percent"
                     className={cn(
-                      'w-full bg-zinc-900/50 border rounded-md px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-colors pr-5',
+                      'w-full h-full rounded-[4px] bg-transparent px-2 py-1.5 text-xs font-mono text-center placeholder:text-faint focus:outline-none transition-colors pr-4',
                       customSlippage !== ''
-                        ? 'border-amber-500/50'
-                        : 'border-white/10'
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground'
                     )}
                   />
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Order cancelled if execution price differs by more than this (default: 0.5%)
+              <p className="text-[11px] text-faint">
+                Order cancelled if execution price differs by more than this
               </p>
             </div>
 
@@ -1059,7 +1057,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   <Info className="h-3 w-3 opacity-50" />
                 </Tooltip>
               </label>
-              <div className="flex gap-1.5">
+              <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
                 {([
                   { value: 0, label: 'GTC' },
                   { value: 1, label: 'IOC' },
@@ -1069,17 +1067,17 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                     key={tif.value}
                     onClick={() => setTimeInForce(tif.value)}
                     className={cn(
-                      'flex-1 py-1.5 text-xs font-medium rounded border transition-all',
+                      'rounded-[4px] py-1.5 text-xs font-medium transition-colors',
                       timeInForce === tif.value
-                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
-                        : 'border-white/10 text-muted-foreground hover:text-foreground hover:border-white/20'
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
                     )}
                   >
                     {tif.label}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-faint">
                 {timeInForce === 0
                   ? 'Good Till Cancel — order stays open until filled or cancelled'
                   : timeInForce === 1
@@ -1096,7 +1094,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   type="checkbox"
                   checked={reduceOnly}
                   onChange={(e) => setReduceOnly(e.target.checked)}
-                  className="w-3.5 h-3.5 rounded border-white/20 bg-zinc-900/50 text-amber-500 focus:ring-amber-500 focus:ring-offset-0"
+                  className="w-3.5 h-3.5 rounded-sm border-border-strong bg-surface-2 text-primary focus:ring-primary focus:ring-offset-0"
                 />
                 <span className="text-xs text-muted-foreground">
                   Reduce Only
@@ -1107,7 +1105,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               </Tooltip>
             </div>
             {reduceOnly && (
-              <p className="text-xs text-muted-foreground -mt-1 ml-5">
+              <p className="text-[11px] text-faint -mt-1 ml-5">
                 Order will only execute if it reduces an existing position
               </p>
             )}
@@ -1116,14 +1114,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
         {/* Stop Limit Settings */}
         {orderType === 'StopLimit' && (
-          <div className="space-y-3 p-3 bg-purple-500/10 rounded-lg border border-purple-500/20">
-            <h4 className="text-xs font-medium text-purple-400 uppercase tracking-wider">
+          <div className="space-y-3 border-t border-border pt-4">
+            <h4 className="text-[11px] font-medium uppercase tracking-[0.15em] text-faint">
               Stop Limit
             </h4>
             <div className="space-y-2">
               <div className="flex justify-between">
                 <label className="text-xs text-muted-foreground">Stop Price</label>
-                <span className="text-[10px] text-purple-400/60">Activates the order</span>
+                <span className="text-[11px] text-faint">Activates the order</span>
               </div>
               <input
                 type="text"
@@ -1132,13 +1130,13 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 onChange={(e) => setStopPrice(e.target.value.replace(/[^0-9.]/g, ''))}
                 placeholder={`e.g. ${assetPrice > 0 ? (assetPrice * 0.95).toFixed(2) : '0'}`}
                 aria-label="Stop price in USD"
-                className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
               />
             </div>
             <div className="space-y-2">
               <div className="flex justify-between">
                 <label className="text-xs text-muted-foreground">Limit Price</label>
-                <span className="text-[10px] text-purple-400/60">Max entry price</span>
+                <span className="text-[11px] text-faint">Max entry price</span>
               </div>
               <input
                 type="text"
@@ -1147,10 +1145,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 onChange={(e) => setLimitPrice(e.target.value.replace(/[^0-9.]/g, ''))}
                 placeholder={`e.g. ${assetPrice > 0 ? (assetPrice * 0.94).toFixed(2) : '0'}`}
                 aria-label="Limit price in USD"
-                className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
               />
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11px] text-faint">
               {direction === 'Long'
                 ? 'When price drops to stop, a buy limit at your limit price activates.'
                 : 'When price rises to stop, a sell limit at your limit price activates.'}
@@ -1160,8 +1158,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
         {/* Trailing Stop Settings */}
         {orderType === 'TrailingStop' && (
-          <div className="space-y-3 p-3 bg-cyan-500/10 rounded-lg border border-cyan-500/20">
-            <h4 className="text-xs font-medium text-cyan-400 uppercase tracking-wider">
+          <div className="space-y-3 border-t border-border pt-4">
+            <h4 className="text-[11px] font-medium uppercase tracking-[0.15em] text-faint">
               Trailing Stop
             </h4>
             <div className="space-y-2">
@@ -1170,9 +1168,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 <select
                   value={trailingPositionId}
                   onChange={(e) => setTrailingPositionId(e.target.value)}
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-sm font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
                 >
-                  <option value="">Select a position...</option>
+                  <option value="">Select a position…</option>
                   {trailingEligiblePositions.map((pos) => (
                     <option key={pos.id} value={pos.id.toString()}>
                       #{pos.id} {pos.asset} {pos.direction} {pos.leverage}x — ${formatNumber(pos.size, 0)}
@@ -1183,23 +1181,23 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 <p className="text-xs text-muted-foreground py-2">No open positions. Open a position first.</p>
               )}
               {hasCrossPositions && (
-                <p className="text-xs text-muted-foreground/70">
+                <p className="text-[11px] text-faint">
                   Unavailable for cross-margin positions (contract fix pending)
                 </p>
               )}
             </div>
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground">Trailing %</label>
-              <div className="flex gap-1.5">
+              <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
                 {['1', '2', '3', '5'].map((pct) => (
                   <button
                     key={pct}
                     onClick={() => setTrailingPercent(pct)}
                     className={cn(
-                      'flex-1 py-1.5 text-xs font-mono rounded border transition-all',
+                      'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
                       trailingPercent === pct
-                        ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-400'
-                        : 'border-white/10 text-muted-foreground hover:text-foreground'
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
                     )}
                   >
                     {pct}%
@@ -1211,11 +1209,11 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   value={trailingPercent}
                   onChange={(e) => setTrailingPercent(e.target.value.replace(/[^0-9.]/g, ''))}
                   aria-label="Trailing distance in percent"
-                  className="w-16 bg-zinc-900/50 border border-white/10 rounded px-2 py-1.5 text-xs font-mono text-right focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  className="w-full h-full rounded-[4px] bg-transparent px-2 py-1.5 text-xs font-mono text-center text-muted-foreground focus:text-foreground focus:bg-surface-3 focus:outline-none transition-colors"
                 />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11px] text-faint">
               Stop follows peak price. Triggers when price drops {trailingPercent || '?'}% from peak.
             </p>
           </div>
@@ -1223,16 +1221,16 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
         {/* Optional TP/SL at open (P4-17) — isolated Market orders only */}
         {canAttachTpSl && (
-          <div className="space-y-2.5 p-3 bg-secondary/20 rounded-lg border border-white/5">
+          <div className="space-y-2.5 border-t border-border pt-4">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Take Profit / Stop Loss
+              <h4 className="text-[11px] font-medium uppercase tracking-[0.15em] text-faint">
+                TP / SL
               </h4>
-              <span className="text-[10px] text-muted-foreground">optional</span>
+              <span className="text-[11px] text-faint">optional</span>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <label className="text-[10px] text-emerald-400/70">Take Profit</label>
+                <label className="text-[11px] text-long">Take Profit</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -1240,11 +1238,11 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   onChange={(e) => setAttachTp(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder={assetPrice > 0 ? (assetPrice * (direction === 'Long' ? 1.1 : 0.9)).toFixed(2) : '0'}
                   aria-label="Take-profit price in USD"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] text-red-400/70">Stop Loss</label>
+                <label className="text-[11px] text-short">Stop Loss</label>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -1252,25 +1250,25 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   onChange={(e) => setAttachSl(e.target.value.replace(/[^0-9.]/g, ''))}
                   placeholder={assetPrice > 0 ? (assetPrice * (direction === 'Long' ? 0.95 : 1.05)).toFixed(2) : '0'}
                   aria-label="Stop-loss price in USD"
-                  className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-2 text-right font-mono text-sm placeholder:text-white/55 focus:outline-none focus:ring-1 focus:ring-red-500"
+                  className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
                 />
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-[11px] text-faint">
               Attached as separate signatures right after the position opens.
             </p>
           </div>
         )}
 
-        {/* Order Summary Box */}
-        <div className="space-y-2.5 p-3 bg-secondary/20 rounded-lg border border-white/5">
-          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Order Summary</h4>
+        {/* Order Summary */}
+        <div className="space-y-2.5 border-t border-border pt-4">
+          <h4 className="text-[11px] font-medium uppercase tracking-[0.15em] text-faint">Order Summary</h4>
 
           <div className="space-y-2">
             {/* Position Size */}
             <div className="flex justify-between items-center">
               <span className="text-xs text-muted-foreground">Position Size</span>
-              <span className="font-mono text-sm text-foreground">{formatUSD(positionSize)}</span>
+              <span className="font-mono text-xs text-foreground">{formatUSD(positionSize)}</span>
             </div>
 
             {/* Effective entry: trigger (Limit) / limit price (Stop-Limit) /
@@ -1284,7 +1282,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   ? 'Limit Price'
                   : 'Entry Price'}
               </span>
-              <span className="font-mono text-sm text-foreground">
+              <span className="font-mono text-xs text-foreground">
                 {effectiveEntryPrice != null ? formatPairPrice(asset, effectiveEntryPrice) : '—'}
               </span>
             </div>
@@ -1299,9 +1297,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   <Tooltip content="Account-level estimate assuming your other cross positions' PnL stays frozen at current marks. Actual liquidation triggers when whole-account equity falls to maintenance margin.">
                     <Info className="h-3 w-3 opacity-50" />
                   </Tooltip>
-                  {liquidationRisk === 'high' && <AlertTriangle className="h-3 w-3 text-[#ef4444]" />}
+                  {liquidationRisk === 'high' && <AlertTriangle className="h-3 w-3 text-short" />}
                 </span>
-                <span className="font-mono text-sm font-medium text-foreground">
+                <span className="font-mono text-xs font-medium text-foreground">
                   {crossLiqEstimate != null ? formatPairPrice(asset, crossLiqEstimate) : '—'}
                 </span>
               </div>
@@ -1309,15 +1307,15 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <div className="flex justify-between items-center">
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
                   Liq. Price
-                  {liquidationRisk === 'high' && <AlertTriangle className="h-3 w-3 text-[#ef4444]" />}
+                  {liquidationRisk === 'high' && <AlertTriangle className="h-3 w-3 text-short" />}
                 </span>
                 <span
                   className={cn(
-                    'font-mono text-sm font-medium',
+                    'font-mono text-xs font-medium',
                     liquidationRisk === 'high'
-                      ? 'text-[#ef4444]'
+                      ? 'text-short'
                       : liquidationRisk === 'medium'
-                      ? 'text-[#f59e0b]'
+                      ? 'text-primary'
                       : 'text-foreground'
                   )}
                 >
@@ -1329,7 +1327,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             )}
 
             {/* Divider */}
-            <div className="border-t border-white/5 my-1" />
+            <div className="border-t border-border my-1" />
 
             {/* Trading Fee — always an estimate while the trader's real 14d
                 volume is unreadable on-chain (A18). */}
@@ -1340,7 +1338,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <span className="font-mono text-xs text-muted-foreground">{formatUSD(tradingFee)}</span>
             </div>
             {isLeader && (
-              <p className="text-[10px] text-muted-foreground/70">
+              <p className="text-[11px] text-faint">
                 Leader trades are charged at the vault factory&apos;s fee tier, not your wallet&apos;s.
               </p>
             )}
@@ -1350,7 +1348,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 trades establish a lower bound (A18). */}
             {positionSize > 0 && volumeKnown && (
               <>
-                <div className="border-t border-white/5 my-1" />
+                <div className="border-t border-border my-1" />
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-muted-foreground">Fee Tier (est.)</span>
                   <span className="font-mono text-xs text-primary">{projectedFee.tierName}</span>
@@ -1372,9 +1370,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
 
         {/* Errors */}
         {errors.length > 0 && collateralNum > 0 && (
-          <div className="p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg">
+          <div className="border-l-2 border-short/60 pl-3 space-y-1">
             {errors.map((error, i) => (
-              <div key={i} className="flex items-center gap-2 text-sm text-[#ef4444]">
+              <div key={i} className="flex items-center gap-2 text-xs text-short">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>
                   {error}
@@ -1382,7 +1380,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   {error === 'Insufficient USDC balance' && (
                     <>
                       {' — '}
-                      <Link href="/faucet" className="underline text-[#eab308] hover:opacity-80">
+                      <Link href="/faucet" className="underline text-primary hover:opacity-80">
                         get test USDC from the faucet →
                       </Link>
                     </>
@@ -1400,16 +1398,16 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           onClick={isConnected ? handleSubmit : () => setWalletModalOpen(true)}
           disabled={isConnected && (!canSubmit || isSubmitting)}
           className={cn(
-            'w-full h-14 text-base font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed',
-            'flex items-center justify-center gap-2 rounded-lg',
+            'w-full h-11 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+            'flex items-center justify-center gap-2 rounded-md',
             !isConnected
-              ? 'bg-[#eab308] hover:bg-[#eab308]/90 text-black'
+              ? 'bg-primary hover:bg-primary/90 text-background'
               : direction === 'Long'
-              ? 'bg-[#22c55e] hover:bg-[#22c55e]/90 text-black'
-              : 'bg-[#ef4444] hover:bg-[#ef4444]/90 text-black'
+              ? 'bg-long hover:bg-long/90 text-background'
+              : 'bg-short hover:bg-short/90 text-background'
           )}
         >
-          {isSubmitting && <Loader2 className="w-5 h-5 animate-spin" />}
+          {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
           {!isConnected
             ? 'Connect Wallet'
             : orderType === 'Limit'
