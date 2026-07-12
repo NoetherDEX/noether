@@ -302,8 +302,8 @@ export function Hero() {
       {/* ── Color-block band: onboarding · live markets · gold CTA ── */}
       <section className="border-t border-border">
         <div className="grid lg:grid-cols-3 items-stretch">
-          {/* Start in three moves — bone */}
-          <div className="bg-[#E8E6E1] text-[#0B0D10] px-8 py-12">
+          {/* Start in three moves — gold, mirroring the CTA slab */}
+          <div className="bg-[#DCA82B] text-[#0B0D10] px-8 py-12">
             <h2 className="text-lg font-semibold tracking-[-0.01em] mb-5">
               Start in three moves
             </h2>
@@ -316,7 +316,7 @@ export function Hero() {
                 <Link
                   key={step.n}
                   href={step.href}
-                  className="flex items-baseline gap-4 py-3.5 border-b border-black/10 last:border-b-0 group"
+                  className="flex items-baseline gap-4 py-3.5 border-b border-black/15 last:border-b-0 group"
                 >
                   <span className="font-mono text-[11px] text-black/40 tabular-nums">{step.n}</span>
                   <span className="text-[15px] font-medium text-black/80 group-hover:text-black transition-colors">
