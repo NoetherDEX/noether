@@ -49,16 +49,6 @@ const RESOURCE_LINKS = [
   { href: 'https://github.com/orgs/NoetherDEX/repositories', label: 'GitHub', external: true },
 ];
 
-/* Gold double-chevron mark — our take on the reference's » glyph */
-function ChevronsGlyph() {
-  return (
-    <svg viewBox="0 0 52 32" width="52" height="32" aria-hidden="true" className="text-primary">
-      <path d="M0 0h11l16 16-16 16H0l16-16z" fill="currentColor" />
-      <path d="M25 0h11l16 16-16 16H25l16-16z" fill="currentColor" opacity="0.55" />
-    </svg>
-  );
-}
-
 function FooterColumn({
   title,
   children,
@@ -112,8 +102,7 @@ export function LandingFooter() {
 
       {/* Inner block — rounded dark slab with a faint dot grid */}
       <div className="mx-auto max-w-[1400px] rounded-[28px] border border-border bg-surface overflow-hidden [background-image:radial-gradient(rgba(255,255,255,0.035)_1px,transparent_1px)] [background-size:14px_14px]">
-        <div className="grid lg:grid-cols-[150px_1fr] gap-12 px-8 sm:px-14 pt-14 pb-4">
-          <ChevronsGlyph />
+        <div className="px-8 sm:px-14 pt-14 pb-4">
           <div className="grid sm:grid-cols-3 gap-10 max-w-3xl">
             <FooterColumn title="Platform" count={APP_NAV_ITEMS.length}>
               {APP_NAV_ITEMS.map((item) => (
