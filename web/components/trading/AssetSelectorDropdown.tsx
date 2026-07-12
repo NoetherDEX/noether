@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { formatPrice, formatPercent } from '@/lib/utils';
@@ -44,6 +45,31 @@ const ASSETS = [
 
 export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: AssetSelectorDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+
+  const openMenu = () => {
+    const r = triggerRef.current?.getBoundingClientRect();
+    if (r) {
+      setMenuPos({
+        top: r.bottom + 4,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - 248)),
+      });
+      setIsOpen(true);
+    }
+  };
+
+  // The menu is viewport-anchored: close it if the page shifts under it.
+  useEffect(() => {
+    if (!isOpen) return;
+    const close = () => setIsOpen(false);
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [isOpen]);
   // Every pair renders from the first frame — prices fill in as fetches
   // land. An empty initial state made the menu depend on 13 parallel
   // ticker fetches, so a slow/rate-limited response hid the whole list.
@@ -118,7 +144,8 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
     <div className="relative">
       {/* Trigger Button */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        ref={triggerRef}
+        onClick={() => (isOpen ? setIsOpen(false) : openMenu())}
         className={cn(
           'flex h-9 items-center gap-2 px-2.5 rounded-md border transition-colors',
           'bg-surface-2 border-border hover:bg-surface-3 hover:border-border-strong',
@@ -144,8 +171,11 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
         )} />
       </button>
 
-      {/* Dropdown Menu */}
-      {isOpen && (
+      {/* Dropdown Menu — rendered in a portal with viewport (fixed)
+          coordinates: the stats bar scrolls horizontally (overflow-x-auto),
+          and any overflow on an ancestor clips absolutely-positioned
+          children — which cut this menu down to a sliver. */}
+      {isOpen && menuPos && createPortal(
         <>
           {/* Backdrop */}
           <div
@@ -156,7 +186,9 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
           {/* Menu — height-capped so all 13 pairs stay reachable by scrolling
               on short/mobile viewports; overscroll-contain stops the page
               behind from scrolling when the list hits its edge. */}
-          <div className="absolute top-full left-0 mt-1 z-50 min-w-[220px] max-h-[min(60vh,480px)] bg-surface-2 border border-border-strong rounded-md overflow-y-auto overscroll-contain custom-scrollbar divide-y divide-border">
+          <div
+            style={{ top: menuPos.top, left: menuPos.left }}
+            className="fixed z-50 min-w-[220px] max-h-[min(60vh,480px)] bg-surface-2 border border-border-strong rounded-md overflow-y-auto overscroll-contain custom-scrollbar divide-y divide-border shadow-2xl">
             {displayAssets.map((asset) => (
               <button
                 key={asset.symbol}
@@ -188,7 +220,8 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
               </button>
             ))}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
