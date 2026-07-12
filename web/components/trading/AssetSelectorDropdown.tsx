@@ -44,7 +44,12 @@ const ASSETS = [
 
 export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: AssetSelectorDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [assets, setAssets] = useState<AssetOption[]>([]);
+  // Every pair renders from the first frame — prices fill in as fetches
+  // land. An empty initial state made the menu depend on 13 parallel
+  // ticker fetches, so a slow/rate-limited response hid the whole list.
+  const [assets, setAssets] = useState<AssetOption[]>(() =>
+    ASSETS.map((a) => ({ ...a, price: 0, changePercent24h: null }))
+  );
 
   // Fetch Binance prices for the 24h change + as a fallback until the
   // Noeracle marks stream in.
