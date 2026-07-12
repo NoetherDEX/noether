@@ -94,74 +94,103 @@ function LiveMarkets() {
   );
 }
 
-/* ── Fill plaque: one quiet surface — a live mark and a narrated line ── */
-const FILL_STEPS = [
-  { caption: 'Noeracle mark streaming every ~500ms', price: '63,741.20' },
-  { caption: 'Long BTC-PERP · 2,400 USDC margin · 10x isolated', price: '63,741.20' },
-  { caption: 'Filled · fee 0.05% · slippage 0.001%', price: '63,742.05' },
-  { caption: 'Margin locked — position live on-chain', price: '63,742.05' },
-];
+/* ── Fill plaque: one quiet surface — live majors rotate through it ── */
+const PLAQUE_PAIRS = ['BTC', 'ETH', 'XLM', 'SOL'] as const;
 
 function TerminalCard() {
   const prefersReducedMotion = useReducedMotion();
-  const [step, setStep] = useState(0);
+  const [idx, setIdx] = useState(0);
+  const [ticks, setTicks] = useState<
+    Record<string, { price: number; change: number | null }>
+  >({});
+
+  // One quiet fetch per minute — the landing doesn't need trading cadence.
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      PLAQUE_PAIRS.forEach(async (sym) => {
+        try {
+          const t = await fetchTicker(sym);
+          if (alive)
+            setTicks((prev) => ({
+              ...prev,
+              [sym]: { price: t.price, change: t.changePercent24h },
+            }));
+        } catch {
+          /* keep the previous tick */
+        }
+      });
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     if (prefersReducedMotion) return;
-    const id = setInterval(() => setStep((s) => (s + 1) % FILL_STEPS.length), 3200);
+    const id = setInterval(() => setIdx((i) => (i + 1) % PLAQUE_PAIRS.length), 3200);
     return () => clearInterval(id);
   }, [prefersReducedMotion]);
 
-  const active = FILL_STEPS[step];
+  const sym = PLAQUE_PAIRS[idx];
+  const tick = ticks[sym];
+  const change = tick?.change ?? null;
 
   return (
     <div className="w-[340px] rounded-xl border border-white/[0.08] bg-[#0B0D10]/60 backdrop-blur-xl px-7 py-6">
-      {/* Pair + live pulse — one whisper of a line */}
-      <p className="flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] text-muted-foreground/80">
-        BTC-PERP
-        <span className="relative flex h-1 w-1" aria-hidden="true">
-          <span className="absolute inline-flex h-full w-full rounded-full bg-long opacity-60 motion-safe:animate-ping" />
-          <span className="relative inline-flex h-1 w-1 rounded-full bg-long" />
-        </span>
-      </p>
-
-      {/* The mark — large, thin, unhurried */}
+      {/* Pair identity — real token mark, live pulse */}
       <AnimatePresence mode="wait" initial={false}>
-        <motion.p
-          key={active.price}
-          initial={prefersReducedMotion ? false : { opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={prefersReducedMotion ? undefined : { opacity: 0, y: -4 }}
-          transition={{ duration: 0.35, ease: 'easeOut' }}
-          className="mt-3 font-mono text-[32px] font-light leading-none tracking-tight text-foreground tabular-nums"
+        <motion.div
+          key={sym}
+          initial={prefersReducedMotion ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={prefersReducedMotion ? undefined : { opacity: 0 }}
+          transition={{ duration: 0.3 }}
         >
-          {active.price}
-        </motion.p>
+          <p className="flex items-center gap-2.5">
+            <TokenIcon symbol={sym} size={22} />
+            <span className="font-mono text-[11px] tracking-[0.18em] text-muted-foreground/90">
+              {sym}-PERP
+            </span>
+            <span className="relative flex h-1 w-1" aria-hidden="true">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-long opacity-60 motion-safe:animate-ping" />
+              <span className="relative inline-flex h-1 w-1 rounded-full bg-long" />
+            </span>
+          </p>
+
+          {/* The mark — large, thin, unhurried; real Binance reference */}
+          <p className="mt-3 font-mono text-[32px] font-light leading-none tracking-tight text-foreground tabular-nums">
+            {tick ? formatUSD(tick.price, priceDecimals(sym)) : '—'}
+          </p>
+
+          {/* 24h change + source, one whisper of a line */}
+          <p className="mt-4 flex items-baseline gap-3 font-mono text-[11.5px]">
+            <span
+              className={
+                change == null
+                  ? 'text-muted-foreground'
+                  : change >= 0
+                    ? 'text-long'
+                    : 'text-short'
+              }
+            >
+              {change == null ? '— 24h' : `${formatPercent(change)} 24h`}
+            </span>
+            <span className="text-faint">Noeracle mark · ~500ms</span>
+          </p>
+        </motion.div>
       </AnimatePresence>
 
-      {/* One narrated line, crossfading */}
-      <div className="mt-4 min-h-[18px]">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.p
-            key={step}
-            initial={prefersReducedMotion ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={prefersReducedMotion ? undefined : { opacity: 0 }}
-            transition={{ duration: 0.3 }}
-            className="font-mono text-[11.5px] leading-relaxed text-muted-foreground"
-          >
-            {active.caption}
-          </motion.p>
-        </AnimatePresence>
-      </div>
-
-      {/* Step trace: four grains of light, no chrome */}
+      {/* Pair trace: one grain of light per market */}
       <div className="mt-5 flex items-center gap-1.5" aria-hidden="true">
-        {FILL_STEPS.map((_, i) => (
+        {PLAQUE_PAIRS.map((p, i) => (
           <span
-            key={i}
+            key={p}
             className={
-              i === step
+              i === idx
                 ? 'h-[3px] w-[3px] rounded-full bg-primary transition-colors duration-300'
                 : 'h-[3px] w-[3px] rounded-full bg-white/15 transition-colors duration-300'
             }
@@ -302,8 +331,8 @@ export function Hero() {
       {/* ── Color-block band: onboarding · live markets · gold CTA ── */}
       <section className="border-t border-border">
         <div className="grid lg:grid-cols-3 items-stretch">
-          {/* Start in three moves — bone */}
-          <div className="bg-[#E8E6E1] text-[#0B0D10] px-8 py-12">
+          {/* Start in three moves — gold, mirroring the CTA slab */}
+          <div className="bg-[#DCA82B] text-[#0B0D10] px-8 py-12">
             <h2 className="text-lg font-semibold tracking-[-0.01em] mb-5">
               Start in three moves
             </h2>
@@ -316,7 +345,7 @@ export function Hero() {
                 <Link
                   key={step.n}
                   href={step.href}
-                  className="flex items-baseline gap-4 py-3.5 border-b border-black/10 last:border-b-0 group"
+                  className="flex items-baseline gap-4 py-3.5 border-b border-black/15 last:border-b-0 group"
                 >
                   <span className="font-mono text-[11px] text-black/40 tabular-nums">{step.n}</span>
                   <span className="text-[15px] font-medium text-black/80 group-hover:text-black transition-colors">
