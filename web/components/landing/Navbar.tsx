@@ -57,10 +57,12 @@ export function Navbar() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {/* Launch App CTA — gold pill, the one accent in the chrome */}
+          {/* Launch App CTA — gold pill, the one accent in the chrome.
+              Visible at EVERY width: below lg this is the page's only
+              primary CTA until the hero hydrates. */}
           <Link
             href="/trade"
-            className="hidden lg:inline-flex items-center h-10 px-6 rounded-full bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+            className="inline-flex items-center h-9 lg:h-10 px-4 lg:px-6 rounded-full bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
           >
             Launch App
           </Link>

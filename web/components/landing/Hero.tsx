@@ -10,7 +10,6 @@ import {
   useMotionTemplate,
   useReducedMotion,
 } from 'framer-motion';
-import { FadeIn } from './animations';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 import { formatUSD, formatPercent, priceDecimals } from '@/lib/utils';
@@ -262,14 +261,18 @@ export function Hero() {
             <div className="absolute inset-x-0 bottom-0 px-6 sm:px-14 pb-12 sm:pb-16">
               <div className="flex items-end justify-between gap-12">
                 <div className="max-w-[760px]">
-                  <FadeIn delay={0.05} immediate>
+                  {/* CSS entrance (not FadeIn): the LCP headline and the only
+                      mobile CTAs must be visible in SSR HTML — framer-motion's
+                      initial="hidden" serialized opacity:0 inline and held the
+                      biggest text on the page hostage to JS hydration. */}
+                  <div className="hero-enter" style={{ animationDelay: '0.05s' }}>
                     <h1 className="font-display font-normal tracking-[-0.015em] leading-[1.02] text-foreground text-[clamp(3.25rem,7.5vw,7rem)]">
                       The world based
                       <br />
                       on <em className="italic text-primary">leverage.</em>
                     </h1>
-                  </FadeIn>
-                  <FadeIn delay={0.2} immediate>
+                  </div>
+                  <div className="hero-enter" style={{ animationDelay: '0.2s' }}>
                     <div className="mt-9 flex flex-wrap items-center gap-3">
                       <Link
                         href="/trade"
@@ -287,14 +290,12 @@ export function Hero() {
                         Explore Vaults
                       </Link>
                     </div>
-                  </FadeIn>
+                  </div>
                 </div>
 
                 {/* Terminal card shares the composition's baseline */}
-                <div className="hidden lg:block shrink-0 pb-1">
-                  <FadeIn delay={0.35} immediate>
-                    <TerminalCard />
-                  </FadeIn>
+                <div className="hidden lg:block shrink-0 pb-1 hero-enter" style={{ animationDelay: '0.35s' }}>
+                  <TerminalCard />
                 </div>
               </div>
             </div>
