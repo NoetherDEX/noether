@@ -81,28 +81,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build and submit payment transaction
+    // Build and submit payment transaction.
+    // B26: the issuer account is shared (faucet + admin ops), so concurrent
+    // claims can collide on the sequence number. One reload-and-retry on
+    // tx_bad_seq turns demo-time collisions into successes instead of
+    // user-facing "faucet failed" errors.
     const horizonServer = new Horizon.Server(NETWORK.HORIZON_URL);
     const issuerKeypair = Keypair.fromSecret(adminSecretKey);
-    const issuerAccount = await horizonServer.loadAccount(issuerKeypair.publicKey());
 
-    const transaction = new TransactionBuilder(issuerAccount, {
-      fee: '100',
-      networkPassphrase: Networks.TESTNET,
-    })
-      .addOperation(
-        Operation.payment({
-          destination: address,
-          asset: USDC_ASSET,
-          amount: amount.toString(),
-        })
-      )
-      .setTimeout(30)
-      .build();
+    let result;
+    for (let attempt = 0; ; attempt++) {
+      const issuerAccount = await horizonServer.loadAccount(issuerKeypair.publicKey());
 
-    transaction.sign(issuerKeypair);
+      const transaction = new TransactionBuilder(issuerAccount, {
+        fee: '100',
+        networkPassphrase: Networks.TESTNET,
+      })
+        .addOperation(
+          Operation.payment({
+            destination: address,
+            asset: USDC_ASSET,
+            amount: amount.toString(),
+          })
+        )
+        .setTimeout(30)
+        .build();
 
-    const result = await horizonServer.submitTransaction(transaction);
+      transaction.sign(issuerKeypair);
+
+      try {
+        result = await horizonServer.submitTransaction(transaction);
+        break;
+      } catch (err) {
+        const txCode = (err as { response?: { data?: { extras?: { result_codes?: { transaction?: string } } } } })
+          ?.response?.data?.extras?.result_codes?.transaction;
+        if (txCode === 'tx_bad_seq' && attempt === 0) {
+          continue; // fresh sequence on the next loop iteration
+        }
+        throw err;
+      }
+    }
 
     // Calculate new remaining
     const newRemaining = remaining - amount;
