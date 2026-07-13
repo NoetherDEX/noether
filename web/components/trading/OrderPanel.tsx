@@ -65,6 +65,20 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // Margin mode
   const [marginMode, setMarginMode] = useState<'Isolated' | 'Cross'>('Isolated');
 
+  // B8: trigger-side override for Limit / Stop-Limit. null = the CEX default
+  // for the direction (Long buys the dip / Short shorts the rally). The
+  // contract always accepted the bool — the UI just never exposed it, which
+  // made breakout entries (Long above / Short below) impossible.
+  const [triggerSideOverride, setTriggerSideOverride] = useState<'Above' | 'Below' | null>(null);
+  // Direction change re-derives the sensible default.
+  useEffect(() => {
+    setTriggerSideOverride(null);
+  }, [direction]);
+  const autoLimitSide: 'Above' | 'Below' = direction === 'Long' ? 'Below' : 'Above';
+  const autoStopSide: 'Above' | 'Below' = direction === 'Short' ? 'Above' : 'Below';
+  const limitTriggerSide = triggerSideOverride ?? autoLimitSide;
+  const stopTriggerSide = triggerSideOverride ?? autoStopSide;
+
   // Leader mode lacks vault_factory proxies for Cross / Limit / StopLimit /
   // TrailingStop, so silently snap back to the supported flavour whenever
   // the leader switches in (the UI itself hides those controls below).
@@ -431,7 +445,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       // Stop-limit order
       const stopPriceNum = parseFloat(stopPrice) || 0;
       const limitPriceNum = parseFloat(limitPrice) || 0;
-      const triggerAbove = direction === 'Short';
+      const triggerAbove = stopTriggerSide === 'Above';
       try {
         const encodedTif = timeInForce | (reduceOnly ? 0x100 : 0);
         await placeStopLimitOrder(publicKey, sign, {
@@ -562,11 +576,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       const triggerPriceNum = parseFloat(triggerPrice) || 0;
       const triggerPricePrecision = toPrecision(triggerPriceNum);
 
-      // Determine trigger condition based on direction and price
-      // Long: buy when price goes BELOW trigger (dip buy)
-      // Short: sell when price goes ABOVE trigger (rally short)
-      const triggerCondition: TriggerCondition =
-        direction === 'Long' ? 'Below' : 'Above';
+      // B8: default is the CEX convention (Long buys the dip / Short shorts
+      // the rally); the Above/Below pills let breakout entries flip it.
+      const triggerCondition: TriggerCondition = limitTriggerSide;
 
       // Encode time_in_force: bits 0-7 = TIF mode, bit 8 = reduce_only
       const encodedTif = timeInForce | (reduceOnly ? 0x100 : 0);
@@ -840,6 +852,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 // escrowing collateral with zero explanation.
                 setTimeInForce(0);
                 setReduceOnly(false);
+                setTriggerSideOverride(null);
               }}
               className={cn(
                 'rounded-[4px] px-1 py-1.5 text-[11px] font-medium transition-colors',
@@ -1037,11 +1050,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
               </div>
-              <p className="text-[11px] text-faint">
-                {direction === 'Long'
-                  ? 'Order triggers when price drops to this level'
-                  : 'Order triggers when price rises to this level'}
-              </p>
+              {/* B8: expose the trigger side — breakout entries need it */}
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-faint mr-1">Triggers when mark is</span>
+                {(['Above', 'Below'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setTriggerSideOverride(s)}
+                    aria-pressed={limitTriggerSide === s}
+                    className={cn(
+                      'px-2 py-0.5 rounded-sm text-[11px] font-medium transition-colors',
+                      limitTriggerSide === s
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+                <span className="text-[11px] text-faint">this price</span>
+              </div>
             </div>
 
             {/* Slippage Tolerance */}
@@ -1190,6 +1219,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 aria-label="Stop price in USD"
                 className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
               />
+              {/* B8: expose the stop's activation side */}
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-faint mr-1">Activates when mark is</span>
+                {(['Above', 'Below'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setTriggerSideOverride(s)}
+                    aria-pressed={stopTriggerSide === s}
+                    className={cn(
+                      'px-2 py-0.5 rounded-sm text-[11px] font-medium transition-colors',
+                      stopTriggerSide === s
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+                <span className="text-[11px] text-faint">the stop</span>
+              </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between">
