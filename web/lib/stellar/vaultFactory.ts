@@ -93,6 +93,20 @@ export async function createVault(
   return null;
 }
 
+/** Leader-only pause/unpause — while paused, deposit() and withdraw()
+ *  revert with FactoryError::Paused (B19: was never wired in the UI). */
+export async function setVaultPaused(
+  signerPublicKey: string,
+  walletId: string,
+  vaultId: number,
+  paused: boolean,
+): Promise<void> {
+  const factory = vaultFactoryContract();
+  const args = [toScVal(vaultId, 'u32'), toScVal(paused, 'bool')];
+  const xdr = await buildTransaction(signerPublicKey, factory, 'set_paused', args);
+  await signAndSubmit(signerPublicKey, walletId, xdr);
+}
+
 export async function claimLeaderFees(
   signerPublicKey: string,
   walletId: string,

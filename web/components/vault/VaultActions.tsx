@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { Button } from '@/components/ui';
 import { useWalletStore, useLeaderModeStore } from '@/lib/store';
-import { claimLeaderFees } from '@/lib/stellar/vaultFactory';
+import { claimLeaderFees, setVaultPaused } from '@/lib/stellar/vaultFactory';
 import { toUserMessage } from '@/lib/utils/userError';
 import { fmtUsdc7 } from '@/lib/utils/format';
 import { VAULT_PRECISION, vaultNav } from '@/types/vault';
@@ -28,6 +28,7 @@ function leaderProfitOwed(vault: VaultRow): bigint {
 export function VaultActions({ vault }: { vault: VaultRow }) {
   const [open, setOpen] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const router = useRouter();
   const wallet = useWalletStore();
   const { setVault: setLeaderVault } = useLeaderModeStore();
@@ -84,6 +85,32 @@ export function VaultActions({ vault }: { vault: VaultRow }) {
             {claimable > 0n
               ? `Claim profit share — $${fmtUsdc7(claimable, 2)}`
               : 'No profit share to claim'}
+          </Button>
+        )}
+        {isLeader && (
+          <Button
+            variant="ghost"
+            onClick={async () => {
+              if (!wallet.address || !wallet.walletId) return;
+              setPausing(true);
+              try {
+                await setVaultPaused(wallet.address, wallet.walletId, vault.id, !vault.paused);
+                toast.success(
+                  vault.paused
+                    ? 'Vault unpaused — deposits and withdrawals re-enabled'
+                    : 'Vault paused — deposits and withdrawals disabled'
+                );
+                router.refresh();
+              } catch (err) {
+                toast.error(toUserMessage(err, { contract: 'vault_factory' }));
+              } finally {
+                setPausing(false);
+              }
+            }}
+            disabled={pausing}
+            isLoading={pausing}
+          >
+            {vault.paused ? 'Unpause vault' : 'Pause vault'}
           </Button>
         )}
       </div>
