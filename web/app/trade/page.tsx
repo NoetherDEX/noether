@@ -19,6 +19,7 @@ import {
   TradingViewChart,
 } from '@/components/trading';
 import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
+import { FirstSessionChecklist } from '@/components/trading/FirstSessionChecklist';
 import type { ChartType } from '@/components/trading/TradingChart';
 import type { CandleSource } from '@/lib/api/candles';
 import { useLeaderModeStore } from '@/lib/store';
@@ -102,7 +103,7 @@ function TradePage() {
     [rawPositions, currentPrices, cumulativeFunding],
   );
 
-  const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
+  const { isConnected, publicKey, walletId, sign, refreshBalances, xlmBalance, usdcBalance } = useWallet();
   const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -946,6 +947,13 @@ function TradePage() {
 
           {/* Order rail — desktop only; mobile trades via the fixed bottom bar */}
           <aside className="hidden lg:block w-[320px] shrink-0">
+            {/* B22: guided first-session funnel — disappears once traded */}
+            <FirstSessionChecklist
+              isConnected={isConnected}
+              xlmBalance={xlmBalance}
+              usdcBalance={usdcBalance}
+              hasTraded={positions.length > 0 || orders.length > 0}
+            />
             <LeaderModeSelector />
             <OrderPanel
               asset={selectedAsset}
