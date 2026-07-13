@@ -693,6 +693,7 @@ function TradePage() {
           <CrossMarginBanner positions={positions} publicKey={publicKey ?? null} />
           <PositionsList
             positions={positions}
+            orders={orders}
             isLoading={isLoadingPositions}
             isRefreshing={isRefreshing}
             onClosePosition={handleClosePosition}

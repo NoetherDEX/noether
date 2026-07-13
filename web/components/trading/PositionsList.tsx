@@ -6,7 +6,7 @@ import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPrice, formatPercent, formatDateTime, priceDecimals } from '@/lib/utils';
 import { formatPairPrice } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
-import type { DisplayPosition, PnlShareData } from '@/types';
+import type { DisplayPosition, DisplayOrder, PnlShareData } from '@/types';
 import { PnlShareModal } from '@/components/share/PnlShareModal';
 
 // Field-value equality for DisplayPosition. The parent's useMemo always
@@ -31,6 +31,9 @@ function positionEquals(a: DisplayPosition, b: DisplayPosition): boolean {
 
 interface PositionsListProps {
   positions: DisplayPosition[];
+  /** B8: the trader's orders (already fetched by the page) — used to show a
+   *  per-row TP/SL cell so protected vs unprotected is visible at a glance. */
+  orders?: DisplayOrder[];
   isLoading?: boolean;
   isRefreshing?: boolean;
   onClosePosition?: (id: number) => Promise<void>;
@@ -43,6 +46,7 @@ interface PositionsListProps {
 
 export function PositionsList({
   positions,
+  orders,
   isLoading,
   isRefreshing,
   onClosePosition,
@@ -53,6 +57,18 @@ export function PositionsList({
 }: PositionsListProps) {
   const [selectedPosition, setSelectedPosition] = useState<DisplayPosition | null>(null);
   const [actionModal, setActionModal] = useState<'close' | 'stop-loss' | 'take-profit' | null>(null);
+
+  // B8: pending SL/TP triggers per position, from the orders the page
+  // already polls — protected vs unprotected at a glance, no extra RPC.
+  const protectionByPosition = new Map<number, { tp?: number; sl?: number }>();
+  for (const o of orders ?? []) {
+    if (o.status !== 'Pending' || !o.positionId) continue;
+    if (o.orderType !== 'StopLoss' && o.orderType !== 'TakeProfit') continue;
+    const entry = protectionByPosition.get(o.positionId) ?? {};
+    if (o.orderType === 'StopLoss') entry.sl = o.triggerPrice;
+    else entry.tp = o.triggerPrice;
+    protectionByPosition.set(o.positionId, entry);
+  }
   const [slTpPrice, setSlTpPrice] = useState('');
   const [slTpSlippage, setSlTpSlippage] = useState(50); // 0.5% default
   const [customSlTpSlippage, setCustomSlTpSlippage] = useState('');
@@ -213,6 +229,7 @@ export function PositionsList({
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Net Value</th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Entry / Mark</th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Liq. Price</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">TP / SL</th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">PnL</th>
               <th className="text-center px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Actions</th>
             </tr>
@@ -246,6 +263,7 @@ export function PositionsList({
                   setActionModal('take-profit');
                 }}
                 hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
+                protection={protectionByPosition.get(position.id)}
                 onShare={() => handleShare(position)}
               />
             ))}
@@ -767,6 +785,7 @@ const PositionRow = memo(function PositionRow({
   onSetStopLoss,
   onSetTakeProfit,
   hasSlTpCallbacks,
+  protection,
   onShare,
 }: {
   position: DisplayPosition;
@@ -775,6 +794,7 @@ const PositionRow = memo(function PositionRow({
   onSetStopLoss: () => void;
   onSetTakeProfit: () => void;
   hasSlTpCallbacks: boolean;
+  protection?: { tp?: number; sl?: number };
   onShare: () => void;
 }) {
   // NaN pnl = mark price unknown — render '—' in neutral color, never a
@@ -853,6 +873,17 @@ const PositionRow = memo(function PositionRow({
               : formatPairPrice(position.asset, position.liquidationPrice)}
           </span>
         </div>
+      </td>
+
+      {/* B8: protection at a glance — pending TP / SL triggers, '—' when unprotected */}
+      <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap">
+        <span className={protection?.tp ? 'text-long' : 'text-faint'}>
+          {protection?.tp ? formatPairPrice(position.asset, protection.tp) : '—'}
+        </span>
+        <span className="text-faint"> / </span>
+        <span className={protection?.sl ? 'text-short' : 'text-faint'}>
+          {protection?.sl ? formatPairPrice(position.asset, protection.sl) : '—'}
+        </span>
       </td>
 
       <td className="px-3 py-2 text-right">

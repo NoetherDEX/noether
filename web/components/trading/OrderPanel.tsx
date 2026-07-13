@@ -325,6 +325,25 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       if (!(parseFloat(stopPrice) > 0)) errors.push('Enter stop price');
       if (!(parseFloat(limitPrice) > 0)) errors.push('Enter limit price');
     }
+    // B8: wrong-side TP/SL used to fail only AFTER the open confirmed and
+    // the signature was spent — leaving the position unprotected. Validate
+    // against the live mark before anything is signed.
+    if (canAttachTpSl && assetPrice > 0) {
+      const tpNum = parseFloat(attachTp) || 0;
+      const slNum = parseFloat(attachSl) || 0;
+      if (tpNum > 0 && (direction === 'Long' ? tpNum <= assetPrice : tpNum >= assetPrice))
+        errors.push(
+          direction === 'Long'
+            ? 'Take Profit must be above the current price for a Long'
+            : 'Take Profit must be below the current price for a Short'
+        );
+      if (slNum > 0 && (direction === 'Long' ? slNum >= assetPrice : slNum <= assetPrice))
+        errors.push(
+          direction === 'Long'
+            ? 'Stop Loss must be below the current price for a Long'
+            : 'Stop Loss must be above the current price for a Short'
+        );
+    }
   }
 
   const canSubmit = isConnected && errors.length === 0 &&
@@ -1293,8 +1312,44 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 />
               </div>
             </div>
+            {/* B8: projected PnL per level, so the trader sees what each
+                trigger is worth before signing. */}
+            {(() => {
+              const entry = effectiveEntryPrice ?? (assetPrice > 0 ? assetPrice : null);
+              if (!entry || positionSize <= 0) return null;
+              const lines: React.ReactNode[] = [];
+              const tpNum = parseFloat(attachTp) || 0;
+              const slNum = parseFloat(attachSl) || 0;
+              const project = (level: number) =>
+                positionSize * ((level - entry) / entry) * (direction === 'Long' ? 1 : -1);
+              if (tpNum > 0) {
+                const pnl = project(tpNum);
+                const pct = collateralNum > 0 ? (pnl / collateralNum) * 100 : null;
+                lines.push(
+                  <span key="tp" className={pnl >= 0 ? 'text-long' : 'text-short'}>
+                    TP = {pnl >= 0 ? '+' : ''}{formatUSD(pnl)}
+                    {pct != null ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)` : ''}
+                  </span>
+                );
+              }
+              if (slNum > 0) {
+                const pnl = project(slNum);
+                const pct = collateralNum > 0 ? (pnl / collateralNum) * 100 : null;
+                lines.push(
+                  <span key="sl" className={pnl >= 0 ? 'text-long' : 'text-short'}>
+                    SL = {pnl >= 0 ? '+' : ''}{formatUSD(pnl)}
+                    {pct != null ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)` : ''}
+                  </span>
+                );
+              }
+              if (lines.length === 0) return null;
+              return (
+                <p className="text-[11px] font-mono flex items-center gap-3">{lines}</p>
+              );
+            })()}
             <p className="text-[11px] text-faint">
-              Attached as separate signatures right after the position opens.
+              Attached as separate signatures right after the position opens
+              (1 of 2: open · 2 of 2: TP/SL).
             </p>
           </div>
         )}
