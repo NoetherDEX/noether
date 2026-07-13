@@ -18,13 +18,13 @@ interface YourPositionProps {
 
 export function YourPositionSkeleton() {
   return (
-    <div className="rounded-2xl border border-white/10 bg-card p-6">
-      <div className="h-6 w-32 bg-white/5 rounded animate-pulse mb-6" />
+    <div className="rounded-lg border border-border bg-surface p-6">
+      <div className="h-6 w-32 bg-surface-2 rounded animate-pulse mb-6" />
       <div className="space-y-4">
         {[1, 2, 3, 4].map((i) => (
           <div key={i} className="flex justify-between items-center">
-            <div className="h-4 w-24 bg-white/5 rounded animate-pulse" />
-            <div className="h-5 w-20 bg-white/5 rounded animate-pulse" />
+            <div className="h-4 w-24 bg-surface-2 rounded animate-pulse" />
+            <div className="h-5 w-20 bg-surface-2 rounded animate-pulse" />
           </div>
         ))}
       </div>
@@ -55,9 +55,9 @@ export function YourPosition({
   const hasPosition = noeBalance != null && noeBalance > 0;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b border-white/10">
-        <h3 className="text-base font-semibold text-foreground">Your Position</h3>
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+      <div className="px-6 py-4 border-b border-border">
+        <h3 className="text-sm font-medium text-foreground">Your Position</h3>
       </div>
 
       <div className="p-6">
@@ -74,29 +74,29 @@ export function YourPosition({
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">NOE Balance</span>
-              <span className="font-mono text-sm font-medium text-foreground">
+              <span className="font-mono tabular-nums text-sm font-medium text-foreground">
                 {formatNumber(noeBalance, 4)} NOE
               </span>
             </div>
 
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Value</span>
-              <span className="font-mono text-sm font-medium text-foreground">
+              <span className="font-mono tabular-nums text-sm font-medium text-foreground">
                 {formatUSD(value)}
               </span>
             </div>
 
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Pool Share</span>
-              <span className="font-mono text-sm font-medium text-foreground">
+              <span className="font-mono tabular-nums text-sm font-medium text-foreground">
                 {formatPercent(poolShare)}
               </span>
             </div>
 
             {dailyEarnings != null && (
-              <div className="flex items-center justify-between pt-3 border-t border-white/5">
+              <div className="flex items-center justify-between pt-3 border-t border-border">
                 <span className="text-sm text-muted-foreground">Est. Daily Earnings</span>
-                <span className="font-mono text-sm font-medium text-[#22c55e]">
+                <span className="font-mono tabular-nums text-sm font-medium text-long">
                   ~{formatUSD(dailyEarnings)}
                 </span>
               </div>

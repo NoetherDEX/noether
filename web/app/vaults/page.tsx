@@ -1,17 +1,30 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { Header } from '@/components/layout';
-import { VaultCard } from '@/components/vault/VaultCard';
+import { Badge } from '@/components/ui';
 import { CreateVaultButton } from '@/components/vault/CreateVaultButton';
 import { listAllVaultsOnChain } from '@/lib/stellar/vaultFactory';
 import { getNoePrice } from '@/lib/stellar/vault';
 import { listVaults } from '@/lib/api/vaults';
-import { vaultRowFromOnChain, type VaultRow } from '@/types/vault';
+import { vaultRowFromOnChain, vaultNav, type VaultRow } from '@/types/vault';
 import { CONTRACTS } from '@/lib/utils/constants';
 import { fmtUsdc7 } from '@/lib/utils/format';
 import { toUserMessage } from '@/lib/utils/userError';
+
+function shortenAddress(addr: string): string {
+  if (addr.length <= 12) return addr;
+  return `${addr.slice(0, 4)}…${addr.slice(-4)}`;
+}
+
+function fmtBps(bps: number | undefined, signed = false): string {
+  if (bps == null) return '—';
+  const pct = bps / 100;
+  const sign = signed && pct > 0 ? '+' : '';
+  return `${sign}${pct.toFixed(pct < 10 ? 2 : 1)}%`;
+}
 
 /**
  * Marketplace page. Base list (id / leader / name / TVL / NAV /
@@ -19,15 +32,15 @@ import { toUserMessage } from '@/lib/utils/userError';
  * the API gateway is down. Aggregates (APY, drawdown, depositor
  * count, open trades, closed-trade PnL) are overlaid from the API
  * when reachable — they aren't tracked by the contract itself.
- * If the API call fails we still render the cards, the aggregate
- * tiles just show "—".
+ * If the API call fails we still render the rows, the aggregate
+ * cells just show "—".
  */
 export default function VaultsPage() {
   const [vaults, setVaults] = useState<VaultRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  // Live NOE price for the hero tile — null means "unknown", rendered as '—'
-  // (never a fabricated $1.000).
+  // Live NOE price for the protocol-vault panel — null means "unknown",
+  // rendered as '—' (never a fabricated $1.000).
   const [noePrice, setNoePrice] = useState<bigint | null>(null);
 
   useEffect(() => {
@@ -53,8 +66,8 @@ export default function VaultsPage() {
         const [onchain, apiRows] = await Promise.all([
           listAllVaultsOnChain(source),
           // Aggregates are best-effort — never block the page on the
-          // gateway. If it's down, the cards still render with on-chain
-          // data and the aggregate tiles fall back to em-dash.
+          // gateway. If it's down, the rows still render with on-chain
+          // data and the aggregate cells fall back to em-dash.
           listVaults({ limit: 50 }).catch(() => [] as VaultRow[]),
         ]);
         if (cancelled) return;
@@ -88,76 +101,122 @@ export default function VaultsPage() {
     };
   }, []);
 
+  // Aggregate header stats — derived from the already-loaded rows.
+  const leaderTvl =
+    !loading && !err
+      ? vaults.reduce((acc, v) => acc + BigInt(v.totalUsdc), 0n)
+      : null;
+
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-16 pb-20">
-        <div className="max-w-7xl mx-auto px-4 py-8 space-y-12">
-          {/* ─── Noether Vault hero ─────────────────────────────────────── */}
-          <section className="rounded-2xl border border-white/10 bg-card p-6 md:p-8">
-            <div className="flex items-start justify-between flex-wrap gap-6">
-              <div className="flex-1 min-w-[260px]">
-                <span className="text-[10px] md:text-xs uppercase tracking-[0.18em] text-yellow-500/90 font-medium">
-                  Protocol Vault · Default
+      <main className="pt-12 pb-16">
+        <div className="max-w-7xl mx-auto px-4">
+          {/* ─── Page header ────────────────────────────────────────────── */}
+          <div className="flex items-end justify-between gap-6 flex-wrap border-b border-border py-8">
+            <div>
+              <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-primary">
+                Earn · Vaults
+              </span>
+              <h1 className="mt-2 text-xl font-medium text-foreground">Vaults</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Deposit USDC into the protocol vault, or follow a specific
+                trader through a leader vault.
+              </p>
+            </div>
+            <div className="flex items-baseline gap-8">
+              <div className="text-right">
+                <div className="text-[11px] uppercase tracking-wide text-faint">
+                  Leader vaults
+                </div>
+                <div className="mt-1 text-sm font-mono tabular-nums text-foreground">
+                  {!loading && !err ? vaults.length : '—'}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[11px] uppercase tracking-wide text-faint">
+                  Leader TVL (liquid)
+                </div>
+                <div className="mt-1 text-sm font-mono tabular-nums text-foreground">
+                  {leaderTvl != null ? `$${fmtUsdc7(leaderTvl)}` : '—'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ─── Featured: Noether protocol vault ───────────────────────── */}
+          <section className="mt-8">
+            <div className="grid lg:grid-cols-[1fr_auto] gap-6 items-center rounded-lg border border-border bg-surface p-6">
+              <div className="min-w-0">
+                <span className="inline-block rounded-sm bg-primary/10 text-primary font-mono text-[10px] uppercase tracking-wide px-1.5 py-0.5">
+                  Protocol Vault
                 </span>
-                <h1 className="mt-3 text-2xl md:text-4xl font-bold">Noether Vault</h1>
-                <p className="mt-3 text-sm md:text-base text-muted-foreground max-w-2xl">
+                <h2 className="mt-2 text-lg font-medium text-foreground">Noether Vault</h2>
+                <p className="mt-1.5 text-sm text-muted-foreground max-w-2xl line-clamp-2">
                   Protocol-managed liquidity. Deposit USDC, get NOE tokens that
                   accrue trading fees from every market trade, withdraw any time
-                  the pool has free liquidity. The pool takes the other side of
-                  every trade — its value falls when traders profit, so principal
-                  is at risk.
+                  the pool has free liquidity.
+                </p>
+                <p className="mt-1 text-[11px] text-faint max-w-2xl">
+                  The pool takes the other side of every trade — its value falls
+                  when traders profit, so principal is at risk.
                 </p>
 
-                <div className="mt-6 grid grid-cols-3 gap-4 md:gap-6 max-w-lg">
-                  <div>
-                    <div className="text-xs text-muted-foreground">APR</div>
-                    <div className="mt-1 text-lg md:text-2xl font-bold font-mono text-green-400">
+                <div className="mt-4 flex flex-wrap items-baseline gap-x-8 gap-y-2">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[11px] uppercase tracking-wide text-faint">APR</span>
+                    <span className="text-sm font-mono tabular-nums text-foreground">
                       Variable
-                    </div>
+                    </span>
                   </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">NOE Price</div>
-                    <div className="mt-1 text-lg md:text-2xl font-bold font-mono">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[11px] uppercase tracking-wide text-faint">
+                      NOE Price
+                    </span>
+                    <span className="text-sm font-mono tabular-nums text-foreground">
                       {noePrice != null ? `$${fmtUsdc7(noePrice, 3)}` : '—'}
-                    </div>
+                    </span>
                   </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Withdrawals</div>
-                    <div className="mt-1 text-lg md:text-2xl font-bold">Anytime</div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[11px] uppercase tracking-wide text-faint">
+                      Withdrawals
+                    </span>
+                    <span className="text-sm font-mono tabular-nums text-foreground">
+                      Anytime
+                    </span>
                   </div>
                 </div>
               </div>
 
-              <Link
-                href="/vault"
-                className="self-stretch md:self-center inline-flex items-center justify-center gap-2 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-black font-medium px-6 py-3 transition-colors"
-              >
-                Open Noether Vault
-                <span aria-hidden>→</span>
-              </Link>
+              <div className="flex lg:items-center">
+                <Link
+                  href="/vault"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium px-5 transition-colors"
+                >
+                  Open Noether Vault
+                  <span aria-hidden>→</span>
+                </Link>
+              </div>
             </div>
           </section>
 
-          {/* ─── Leader vaults (advanced / opt-in) ───────────────────────── */}
-          <section>
-            <div className="flex items-end justify-between flex-wrap gap-4 mb-6">
-              <div>
-                <h2 className="text-xl md:text-2xl font-bold">Leader Vaults</h2>
-                <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
-                  Advanced: follow a specific trader. Deposit USDC into their
-                  vault, they trade with the pooled capital, you share their PnL.
-                  Anyone can launch one — leaders keep 10% of profits.
-                </p>
-              </div>
+          {/* ─── Leader vaults (advanced / opt-in) ──────────────────────── */}
+          <section className="mt-12">
+            <div className="flex items-center justify-between gap-4 pb-3 border-b border-border">
+              <h2 className="text-[15px] font-medium text-foreground">Leader Vaults</h2>
               <CreateVaultButton />
             </div>
+            <p className="mt-3 text-sm text-muted-foreground max-w-2xl">
+              Advanced: follow a specific trader. Deposit USDC into their
+              vault, they trade with the pooled capital, you share their PnL.
+              Anyone can launch one — leaders keep 10% of profits.
+            </p>
 
             {/* Beta caveat (A20) — until the V-1 accounting fix lands, vault
                 numbers count only liquid USDC. Mirrors the detail-page banner. */}
-            <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs md:text-sm text-amber-400/90">
-              <span className="font-semibold">Beta:</span> leader-vault accounting
+            <div className="mt-4 mb-6 border-l-2 border-primary/60 pl-3 text-xs text-muted-foreground">
+              <span className="font-medium text-primary">Beta:</span> leader-vault accounting
               counts only the USDC sitting in the vault. While a leader has open
               positions, TVL, NAV and P&amp;L exclude the deployed capital — and
               withdrawing mid-trade forfeits your share of it. A contract fix is
@@ -165,43 +224,148 @@ export default function VaultsPage() {
             </div>
 
             {loading && (
-              <div className="rounded-2xl border border-white/10 bg-card/40 p-10 text-center">
-                <p className="text-sm text-muted-foreground">Loading vaults from chain…</p>
-              </div>
+              <p className="py-12 text-center text-sm text-muted-foreground">
+                Loading vaults from chain…
+              </p>
             )}
 
             {!loading && err && (
-              <div className="rounded-2xl border border-dashed border-white/10 bg-card/40 p-10 text-center">
+              <div className="py-8">
                 <p className="text-sm text-muted-foreground">
                   Could not load vaults from chain right now. Refresh in a moment.
                 </p>
-                <p className="mt-2 text-xs text-muted-foreground/60">{err}</p>
+                <details className="mt-3">
+                  <summary className="cursor-pointer font-mono text-[11px] text-faint">
+                    Technical detail
+                  </summary>
+                  <p className="mt-2 font-mono text-[11px] text-faint break-all">{err}</p>
+                </details>
               </div>
             )}
 
-            {!loading && !err && vaults.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-white/10 bg-card/40 p-10 text-center">
-                <p className="text-sm md:text-base text-muted-foreground">
-                  No leader vaults yet.
-                </p>
-                <p className="mt-2 text-xs md:text-sm text-muted-foreground/70 max-w-md mx-auto">
-                  Most users just deposit into the Noether Vault above. Leader
-                  vaults are for traders who want to manage capital on behalf
-                  of followers and earn a share of the profits.
-                </p>
-              </div>
-            )}
-
-            {vaults.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {vaults.map((v) => (
-                  <VaultCard key={v.id} vault={v} />
-                ))}
-              </div>
-            )}
+            {!loading && !err && <LeaderVaultTable vaults={vaults} />}
           </section>
         </div>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Dense marketplace table — surfaces the five SCF Tranche 2 metrics
+ * (name · APY · TVL · drawdown · depositor count) plus open-trades
+ * and NAV as secondary context. Falls back to em-dash when the
+ * indexer hasn't produced an aggregate yet (brand-new vault).
+ */
+function LeaderVaultTable({ vaults }: { vaults: VaultRow[] }) {
+  const router = useRouter();
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[880px] border-collapse">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint py-2 pr-4">
+              Vault
+            </th>
+            <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint py-2 pr-4">
+              Leader
+            </th>
+            <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint py-2 pr-4">
+              TVL (liquid)
+            </th>
+            <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint py-2 pr-4">
+              Liquid NAV
+            </th>
+            <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint py-2 pr-4">
+              APY
+            </th>
+            <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint py-2 pr-4">
+              Drawdown
+            </th>
+            <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint py-2 pr-4">
+              Depositors
+            </th>
+            <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint py-2 pr-4">
+              Open trades
+            </th>
+            <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint py-2">
+              <span className="sr-only">View</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {vaults.length === 0 && (
+            <tr className="h-12 border-b border-border">
+              <td colSpan={9} className="text-sm text-muted-foreground">
+                No leader vaults yet.{' '}
+                <span className="text-xs text-faint">
+                  Most users just deposit into the Noether Vault above. Leader
+                  vaults are for traders who want to manage capital on behalf
+                  of followers and earn a share of the profits.
+                </span>
+              </td>
+            </tr>
+          )}
+          {vaults.map((v) => {
+            const apyClass =
+              v.apyBps == null
+                ? 'text-foreground'
+                : v.apyBps > 0
+                ? 'text-long'
+                : v.apyBps < 0
+                ? 'text-short'
+                : 'text-foreground';
+            return (
+              <tr
+                key={v.id}
+                onClick={() => router.push(`/vaults/${v.id}`)}
+                className="h-12 border-b border-border hover:bg-surface-3/50 cursor-pointer"
+              >
+                <td className="pr-4">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-medium text-foreground truncate">
+                      {v.name}
+                    </span>
+                    <span className="font-mono text-[11px] text-faint shrink-0">#{v.id}</span>
+                    {v.paused && <Badge variant="warning">Paused</Badge>}
+                  </div>
+                </td>
+                <td className="pr-4 font-mono text-xs text-muted-foreground">
+                  {shortenAddress(v.leader)}
+                </td>
+                <td className="pr-4 text-right font-mono tabular-nums text-sm text-foreground">
+                  ${fmtUsdc7(v.totalUsdc)}
+                </td>
+                <td className="pr-4 text-right font-mono tabular-nums text-sm text-foreground">
+                  {fmtUsdc7(vaultNav(v), 4)}
+                </td>
+                <td className={`pr-4 text-right font-mono tabular-nums text-sm ${apyClass}`}>
+                  {fmtBps(v.apyBps, true)}
+                </td>
+                <td className="pr-4 text-right font-mono tabular-nums text-sm text-foreground">
+                  {fmtBps(v.drawdownBps)}
+                </td>
+                <td className="pr-4 text-right font-mono tabular-nums text-sm text-foreground">
+                  {v.depositorCount ?? '—'}
+                </td>
+                <td className="pr-4 text-right font-mono tabular-nums text-sm text-foreground">
+                  {v.openPositions ?? '—'}
+                </td>
+                <td className="text-right">
+                  <Link
+                    href={`/vaults/${v.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="font-mono text-xs text-muted-foreground hover:text-primary"
+                  >
+                    ↳ View
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

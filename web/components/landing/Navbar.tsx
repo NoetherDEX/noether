@@ -1,130 +1,93 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { NoetherLogo } from './NoetherLogo';
+import { cn } from '@/lib/utils/cn';
 
 const NAV_LINKS = [
   { href: '/trade', label: 'Trade' },
   { href: '/vaults', label: 'Vaults' },
   { href: '/referrals', label: 'Referrals' },
   { href: '/leaderboard', label: 'Leaderboard' },
-  { href: '/api-keys', label: 'API Keys' },
 ];
 
 export function Navbar() {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const handleScroll = useCallback(() => {
-    const sections = document.querySelectorAll('.snap-section');
-    const container = document.querySelector('.snap-container');
-    if (!container) return;
-
-    const scrollTop = container.scrollTop;
-    const viewportHeight = window.innerHeight;
-
-    let currentTheme: 'dark' | 'light' = 'dark';
-    sections.forEach((section) => {
-      const el = section as HTMLElement;
-      const sectionTop = el.offsetTop;
-      if (scrollTop >= sectionTop - viewportHeight / 2) {
-        currentTheme = el.classList.contains('section-light') ? 'light' : 'dark';
-      }
-    });
-
-    setTheme(currentTheme);
-  }, []);
-
   useEffect(() => {
-    const container = document.querySelector('.snap-container');
-    if (!container) return;
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
-
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [handleScroll]);
-
-  const isDark = theme === 'dark';
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   return (
     <>
-    <nav className={`fixed top-0 left-0 right-0 z-50 transition-colors duration-300 ${isDark ? 'navbar-dark' : 'navbar-light'}`}>
-      <div className="max-w-[1400px] mx-auto px-6 py-4">
-        <div
-          className={`flex items-center justify-between rounded-full px-6 py-3 border backdrop-blur-xl transition-all duration-300 ${
-            isDark
-              ? 'border-[#eab308]/30 bg-black/20'
-              : 'border-black/10 bg-white/70'
-          }`}
-        >
-          {/* Logo */}
-          <Link href="/" className="flex-shrink-0">
-            <NoetherLogo
-              className={`h-6 w-auto transition-all duration-300 ${isDark ? 'text-white' : 'text-[#1a1a1a]'}`}
-              maskColor={isDark ? '#050508' : '#f8f6f0'}
-            />
-          </Link>
+      <nav
+        className={cn(
+          'fixed top-0 left-0 right-0 z-50 h-16 px-5 sm:px-8 flex items-center transition-colors duration-500',
+          scrolled
+            ? 'bg-[#E8E6E1]/95 backdrop-blur-md border-b border-black/10'
+            : 'bg-transparent border-b border-transparent'
+        )}
+      >
+        {/* Logo */}
+        <Link href="/" className="flex-shrink-0">
+          <NoetherLogo className="h-6 w-auto" maskColor={scrolled ? '#f8f6f0' : '#0B0D10'} />
+        </Link>
 
-          {/* Desktop Links */}
-          <div className="hidden lg:flex items-center gap-8">
-            {NAV_LINKS.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`nav-link text-sm transition-colors duration-200 ${
-                  isDark ? 'text-[#eab308] hover:text-[#fbbf24]' : 'text-black/75 hover:text-black'
-                }`}
-              >
-                {link.label}
-              </Link>
-            ))}
-          </div>
-
-          {/* Launch App CTA */}
-          <div className="hidden lg:block">
+        {/* Desktop links — dead-center, unclamped from the logo */}
+        <div className="hidden lg:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
+          {NAV_LINKS.map((link) => (
             <Link
-              href="/trade"
-              className="pill-button pill-button-filled text-sm"
+              key={link.href}
+              href={link.href}
+              className={cn(
+                'text-sm font-medium transition-colors',
+                scrolled
+                  ? 'text-black/60 hover:text-black'
+                  : 'text-foreground/65 hover:text-foreground'
+              )}
             >
-              Launch App
+              {link.label}
             </Link>
-          </div>
+          ))}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {/* Launch App CTA — gold pill, the one accent in the chrome */}
+          <Link
+            href="/trade"
+            className="hidden lg:inline-flex items-center h-10 px-6 rounded-full bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Launch App
+          </Link>
 
           {/* Mobile hamburger */}
           <button
-            className="lg:hidden flex flex-col gap-1.5 p-2"
+            className="lg:hidden flex flex-col justify-center items-center gap-[5px] w-11 h-11 -mr-2"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
             aria-expanded={mobileOpen}
           >
-            <span className={`block w-5 h-0.5 transition-all duration-200 ${isDark ? 'bg-white' : 'bg-black'} ${mobileOpen ? 'rotate-45 translate-y-2' : ''}`} />
-            <span className={`block w-5 h-0.5 transition-all duration-200 ${isDark ? 'bg-white' : 'bg-black'} ${mobileOpen ? 'opacity-0' : ''}`} />
-            <span className={`block w-5 h-0.5 transition-all duration-200 ${isDark ? 'bg-white' : 'bg-black'} ${mobileOpen ? '-rotate-45 -translate-y-2' : ''}`} />
+            <span className={cn('block w-[18px] h-px transition-transform duration-200', scrolled ? 'bg-black' : 'bg-foreground', mobileOpen && 'rotate-45 translate-y-[6px]')} />
+            <span className={cn('block w-[18px] h-px transition-opacity duration-200', scrolled ? 'bg-black' : 'bg-foreground', mobileOpen && 'opacity-0')} />
+            <span className={cn('block w-[18px] h-px transition-transform duration-200', scrolled ? 'bg-black' : 'bg-foreground', mobileOpen && '-rotate-45 -translate-y-[6px]')} />
           </button>
         </div>
-      </div>
+      </nav>
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div
-          className={`lg:hidden border backdrop-blur-xl mx-6 rounded-2xl mt-1 p-6 ${
-            isDark
-              ? 'bg-black/90 border-white/10'
-              : 'bg-white/90 border-black/10'
-          }`}
-        >
-          <div className="flex flex-col gap-1">
+        <div className="lg:hidden fixed top-16 left-0 right-0 z-50 bg-surface border-b border-border p-3">
+          <div className="flex flex-col gap-0.5">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`px-4 py-3 rounded-lg text-base transition-colors ${
-                  isDark
-                    ? 'text-[#eab308] hover:text-[#fbbf24] hover:bg-white/5'
-                    : 'text-black/80 hover:text-black hover:bg-black/5'
-                }`}
+                className="px-3 py-3 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors"
                 onClick={() => setMobileOpen(false)}
               >
                 {link.label}
@@ -132,7 +95,7 @@ export function Navbar() {
             ))}
             <Link
               href="/trade"
-              className="pill-button pill-button-filled text-sm mt-3 text-center"
+              className="mt-2 inline-flex items-center justify-center h-11 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
               onClick={() => setMobileOpen(false)}
             >
               Launch App
@@ -140,10 +103,9 @@ export function Navbar() {
           </div>
         </div>
       )}
-    </nav>
 
-    {/* Skip-link target: after the nav, before the slide deck */}
-    <span id="main-content" tabIndex={-1} className="sr-only" />
+      {/* Skip-link target: after the nav, before the page content */}
+      <span id="main-content" tabIndex={-1} className="sr-only" />
     </>
   );
 }

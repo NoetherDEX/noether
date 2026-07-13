@@ -78,9 +78,9 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
   };
 
   return (
-    <div className="rounded-xl border border-white/10 bg-card">
+    <div className="rounded-lg border border-border bg-surface">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-white/10">
+      <div className="flex items-center justify-between p-3 border-b border-border">
         {/* Tabs */}
         <div className="flex items-center gap-1">
           {visibleTabs.map((tab) => (
@@ -88,10 +88,10 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
-                'px-4 py-2 text-sm font-medium rounded-lg transition-all',
+                'px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
                 currentTab === tab
-                  ? 'bg-[#eab308]/20 text-[#eab308]'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-surface-2'
               )}
             >
               {tab}
@@ -104,9 +104,9 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
           <button
             onClick={handleExport}
             disabled={isLoading || trades.length === 0 || currentTab !== 'Trade History'}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
           >
-            <Download className="h-4 w-4" />
+            <Download className="h-3.5 w-3.5" />
             Export
           </button>
         </div>
@@ -118,44 +118,44 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
           <div className="p-8">
             <div className="space-y-3">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-12 bg-secondary/30 rounded-lg animate-pulse" />
+                <div key={i} className="h-9 bg-surface-2 rounded-md animate-pulse" />
               ))}
             </div>
           </div>
         ) : currentTab === 'Trade History' ? (
           trades.length === 0 ? (
             <div className="p-8 text-center">
-              <p className="text-muted-foreground">No trade history yet</p>
+              <p className="text-sm text-muted-foreground">No trade history yet</p>
             </div>
           ) : (
             <table className="w-full">
               <thead>
-                <tr className="border-b border-white/5">
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Date</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Market</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Side</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Size</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Entry Price</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Exit Price</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Realized PnL</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Fee</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Tx</th>
+                <tr className="border-b border-border">
+                  <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Date</th>
+                  <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Market</th>
+                  <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Side</th>
+                  <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Size</th>
+                  <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Entry Price</th>
+                  <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Exit Price</th>
+                  <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Realized PnL</th>
+                  <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Fee</th>
+                  <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Tx</th>
                 </tr>
               </thead>
               <tbody>
                 {trades.map((trade) => (
-                  <tr key={trade.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-xs text-muted-foreground">{formatDate(trade.timestamp)}</span>
+                  <tr key={trade.id} className="border-b border-border hover:bg-surface-3/50 transition-colors">
+                    <td className="px-4 py-2">
+                      <span className="font-mono tabular-nums text-xs text-faint">{formatDate(trade.timestamp)}</span>
                     </td>
-                    <td className="px-4 py-3">
-                      <span className="font-medium text-foreground text-sm">{trade.asset}-PERP</span>
+                    <td className="px-4 py-2">
+                      <span className="font-medium text-foreground text-[13px]">{trade.asset}-PERP</span>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-2">
                       <span
                         className={cn(
                           'inline-flex items-center gap-1 text-xs font-medium',
-                          trade.direction === 'Long' ? 'text-[#22c55e]' : 'text-[#ef4444]'
+                          trade.direction === 'Long' ? 'text-long' : 'text-short'
                         )}
                       >
                         {trade.direction === 'Long' ? (
@@ -166,54 +166,54 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
                         {trade.direction}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-sm text-foreground">
+                    <td className="px-4 py-2 text-right">
+                      <span className="font-mono tabular-nums text-[13px] text-foreground">
                         ${trade.size.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-sm text-foreground">
+                    <td className="px-4 py-2 text-right">
+                      <span className="font-mono tabular-nums text-[13px] text-foreground">
                         ${trade.entryPrice?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '-'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-sm text-foreground">
+                    <td className="px-4 py-2 text-right">
+                      <span className="font-mono tabular-nums text-[13px] text-foreground">
                         ${trade.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-2 text-right">
                       {/* A15: unknown PnL/fee render '—', never a fabricated $0 */}
                       {trade.pnl == null ? (
-                        <span className="font-mono text-sm text-muted-foreground">—</span>
+                        <span className="font-mono tabular-nums text-[13px] text-muted-foreground">—</span>
                       ) : (
                         <span
                           className={cn(
-                            'font-mono text-sm font-semibold',
-                            trade.pnl >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'
+                            'font-mono tabular-nums text-[13px] font-medium',
+                            trade.pnl >= 0 ? 'text-long' : 'text-short'
                           )}
                         >
                           {trade.pnl >= 0 ? '+' : '-'}${Math.abs(trade.pnl).toFixed(2)}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-2 text-right">
                       {trade.fee == null ? (
                         <span
-                          className="font-mono text-xs text-muted-foreground"
+                          className="font-mono tabular-nums text-xs text-muted-foreground"
                           title="Fee breakdown ships with the next contract deploy"
                         >
                           —
                         </span>
                       ) : (
-                        <span className="font-mono text-xs text-muted-foreground">-${trade.fee.toFixed(2)}</span>
+                        <span className="font-mono tabular-nums text-xs text-muted-foreground">-${trade.fee.toFixed(2)}</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-2 text-right">
                       <a
                         href={getStellarExpertUrl(trade.txHash)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-white/40 hover:text-white/60 transition-colors font-mono"
+                        className="inline-flex items-center gap-1 text-xs text-faint hover:text-muted-foreground transition-colors font-mono"
                       >
                         {trade.txHash.slice(0, 6)}...
                         <ExternalLink className="w-3 h-3" />
@@ -228,32 +228,32 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
           // Transfers tab
           transfers.length === 0 ? (
             <div className="p-8 text-center">
-              <p className="text-muted-foreground">No transfers yet</p>
+              <p className="text-sm text-muted-foreground">No transfers yet</p>
             </div>
           ) : (
             <table className="w-full">
               <thead>
-                <tr className="border-b border-white/5">
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Date</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Type</th>
-                  <th className="text-left text-xs font-medium text-muted-foreground px-4 py-3">Asset</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Amount</th>
-                  <th className="text-right text-xs font-medium text-muted-foreground px-4 py-3">Tx Hash</th>
+                <tr className="border-b border-border">
+                  <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Date</th>
+                  <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Type</th>
+                  <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Asset</th>
+                  <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Amount</th>
+                  <th className="text-right text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Tx Hash</th>
                 </tr>
               </thead>
               <tbody>
                 {transfers.map((transfer) => (
-                  <tr key={transfer.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-xs text-muted-foreground">{formatDate(transfer.date)}</span>
+                  <tr key={transfer.id} className="border-b border-border hover:bg-surface-3/50 transition-colors">
+                    <td className="px-4 py-2">
+                      <span className="font-mono tabular-nums text-xs text-faint">{formatDate(transfer.date)}</span>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-2">
                       <span
                         className={cn(
-                          'inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded',
+                          'inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded-sm',
                           transfer.type === 'Deposit'
-                            ? 'bg-[#22c55e]/10 text-[#22c55e]'
-                            : 'bg-[#ef4444]/10 text-[#ef4444]'
+                            ? 'bg-long/10 text-long'
+                            : 'bg-short/10 text-short'
                         )}
                       >
                         {transfer.type === 'Deposit' ? (
@@ -264,21 +264,21 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
                         {transfer.type}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <span className="font-medium text-foreground text-sm">{transfer.asset}</span>
+                    <td className="px-4 py-2">
+                      <span className="font-medium text-foreground text-[13px]">{transfer.asset}</span>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-sm text-foreground">
+                    <td className="px-4 py-2 text-right">
+                      <span className="font-mono tabular-nums text-[13px] text-foreground">
                         {transfer.type === 'Deposit' ? '+' : '-'}
                         {transfer.amount.toLocaleString()} {transfer.asset}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-2 text-right">
                       <a
                         href={getStellarExpertUrl(transfer.txHash)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="font-mono text-xs text-white/40 hover:text-white/60 hover:underline"
+                        className="font-mono text-xs text-faint hover:text-muted-foreground hover:underline transition-colors"
                       >
                         {transfer.txHash.slice(0, 8)}...{transfer.txHash.slice(-6)}
                       </a>

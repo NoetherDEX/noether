@@ -37,63 +37,151 @@ function TelegramIcon() {
   );
 }
 
+const FEATURE_LINKS = [
+  { href: '/trade', label: 'Perpetuals' },
+  { href: '/trade', label: 'Cross Margin' },
+  { href: '/vaults', label: 'Copy Vaults' },
+];
+
+const RESOURCE_LINKS = [
+  { href: '/terms', label: 'Terms of Service', external: false },
+  { href: DOCS_URL, label: 'Technical Architecture', external: true },
+  { href: 'https://github.com/orgs/NoetherDEX/repositories', label: 'GitHub', external: true },
+];
+
+function FooterColumn({
+  title,
+  children,
+  count,
+}: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-foreground mb-4">
+        {title}
+        <sup className="ml-1 font-mono text-[10px] font-normal text-faint">{count}</sup>
+      </h3>
+      <ul className="space-y-2.5">{children}</ul>
+    </div>
+  );
+}
+
+const footerLinkClass =
+  'inline-flex items-baseline gap-1.5 text-[15px] font-medium text-muted-foreground hover:text-primary transition-colors';
+
 export function LandingFooter() {
   return (
-    <section className="snap-section relative bg-[#050508] overflow-hidden flex flex-col justify-end">
-      {/* Giant NOETHER logo — SVG image, perfectly centered */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element -- decorative SVG watermark sized in viewport units; next/image is unsuitable */}
-        <img
-          src="/noethersvg.svg"
-          alt=""
-          className="w-[90vw] max-w-[1400px] select-none translate-x-[3%]"
-          style={{
-            opacity: 0.12,
-          }}
-        />
-      </div>
-
-      {/* Social icons — right-aligned at bottom */}
-      <div className="relative z-10 flex justify-end gap-5 px-8 md:px-16 mb-8">
-        <a href="https://x.com/Noetherdex" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="X (Twitter)">
-          <XIcon />
-        </a>
-        <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="Discord">
-          <DiscordIcon />
-        </a>
-        <a href="https://github.com/orgs/NoetherDEX/repositories" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="GitHub">
-          <GitHubIcon />
-        </a>
-        <a href="https://t.me/Noetherdex" target="_blank" rel="noopener noreferrer" className="text-white/40 hover:text-white/70 transition-colors" aria-label="Telegram">
-          <TelegramIcon />
+    <footer className="bg-background border-t border-border px-4 sm:px-6 pb-6 pt-12">
+      {/* Community CTA on the frame — a real channel, not a dead newsletter form */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-6 px-2 sm:px-6 pb-10">
+        <div>
+          <p className="font-mono text-[11px] uppercase tracking-[0.35em] text-faint mb-3">
+            Stay close to the venue
+          </p>
+          <a
+            href={DISCORD_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-display font-normal tracking-[-0.01em] leading-none text-muted-foreground hover:text-foreground transition-colors text-[clamp(2.5rem,6.5vw,5rem)]"
+          >
+            Join the <em className="italic">Discord</em>
+          </a>
+        </div>
+        <a
+          href={DISCORD_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-max shrink-0 rounded-full border border-primary/50 px-8 py-3 font-mono text-xs uppercase tracking-[0.2em] text-primary hover:bg-primary/10 transition-colors"
+        >
+          Join ↗
         </a>
       </div>
 
-      {/* Bottom bar */}
-      <div className="relative z-10 border-t border-white/[0.04] px-8 md:px-16 py-5">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-white/60">
-          <div className="flex items-center gap-4 flex-wrap justify-center">
-            <span>© 2026 Noether</span>
-            <Link href="/terms" className="hover:text-white/90 transition-colors">
-              Terms of Service
-            </Link>
-            <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className="hover:text-white/90 transition-colors">
-              Technical Architecture
-            </a>
+      {/* Inner block — rounded dark slab with a faint dot grid */}
+      <div className="mx-auto max-w-[1400px] rounded-[28px] border border-border bg-surface overflow-hidden [background-image:radial-gradient(rgba(255,255,255,0.035)_1px,transparent_1px)] [background-size:14px_14px]">
+        <div className="px-8 sm:px-14 pt-14 pb-4">
+          <div className="grid sm:grid-cols-3 gap-10 max-w-3xl">
+            <FooterColumn title="Platform" count={APP_NAV_ITEMS.length}>
+              {APP_NAV_ITEMS.map((item) => (
+                <li key={item.href}>
+                  <Link href={item.href} className={footerLinkClass}>
+                    <span aria-hidden="true" className="text-faint">↳</span>
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </FooterColumn>
+
+            <FooterColumn title="Features" count={FEATURE_LINKS.length}>
+              {FEATURE_LINKS.map((item) => (
+                <li key={item.label}>
+                  <Link href={item.href} className={footerLinkClass}>
+                    <span aria-hidden="true" className="text-faint">↳</span>
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </FooterColumn>
+
+            <FooterColumn title="Resources" count={RESOURCE_LINKS.length}>
+              {RESOURCE_LINKS.map((item) =>
+                item.external ? (
+                  <li key={item.label}>
+                    <a
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={footerLinkClass}
+                    >
+                      <span aria-hidden="true" className="text-faint">↳</span>
+                      {item.label}
+                    </a>
+                  </li>
+                ) : (
+                  <li key={item.label}>
+                    <Link href={item.href} className={footerLinkClass}>
+                      <span aria-hidden="true" className="text-faint">↳</span>
+                      {item.label}
+                    </Link>
+                  </li>
+                )
+              )}
+            </FooterColumn>
           </div>
-          <div className="flex items-center gap-4 flex-wrap justify-center">
-            {APP_NAV_ITEMS.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="hover:text-white/90 transition-colors"
-              >
-                {item.label}
-              </Link>
-            ))}
+        </div>
+
+        {/* Giant wordmark — single-color gold type filling the slab */}
+        <div className="mt-14 px-4 overflow-hidden">
+          <p
+            aria-hidden="true"
+            className="select-none whitespace-nowrap text-center font-heading font-bold uppercase text-primary leading-[0.85] tracking-[-0.03em] text-[clamp(3.5rem,15.5vw,16rem)]"
+          >
+            NØETHER
+          </p>
+        </div>
+
+        {/* Bottom bar */}
+        <div className="px-8 sm:px-14 py-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4">
+          <span className="font-mono text-xs text-faint">© 2026 Noether · Testnet</span>
+          <div className="flex items-center gap-5">
+            <a href="https://x.com/Noetherdex" target="_blank" rel="noopener noreferrer" className="text-faint hover:text-foreground transition-colors" aria-label="X (Twitter)">
+              <XIcon />
+            </a>
+            <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer" className="text-faint hover:text-foreground transition-colors" aria-label="Discord">
+              <DiscordIcon />
+            </a>
+            <a href="https://github.com/orgs/NoetherDEX/repositories" target="_blank" rel="noopener noreferrer" className="text-faint hover:text-foreground transition-colors" aria-label="GitHub">
+              <GitHubIcon />
+            </a>
+            <a href="https://t.me/Noetherdex" target="_blank" rel="noopener noreferrer" className="text-faint hover:text-foreground transition-colors" aria-label="Telegram">
+              <TelegramIcon />
+            </a>
           </div>
         </div>
       </div>
-    </section>
+    </footer>
   );
 }

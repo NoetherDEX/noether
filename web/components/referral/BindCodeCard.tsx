@@ -52,12 +52,10 @@ export function BindCodeCard({ onBound }: Props) {
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b border-white/10">
-        <h3 className="text-base font-semibold text-foreground">Have a referral code?</h3>
-      </div>
-      <div className="p-6 space-y-3">
-        <p className="text-sm text-muted-foreground">
+    <div className="rounded-lg border border-border bg-surface p-5">
+      <div className="space-y-3">
+        <h3 className="text-[13px] font-medium text-foreground">Have a referral code?</h3>
+        <p className="text-xs text-faint">
           Enter a friend&apos;s code and accept the invite with one signed
           transaction — the binding is permanent, on-chain. Your 4% fee
           discount activates in v1.1. Codes are case-sensitive.
@@ -70,15 +68,21 @@ export function BindCodeCard({ onBound }: Props) {
             maxLength={16}
             spellCheck={false}
             autoComplete="off"
-            className="font-mono"
+            className="h-9 font-mono"
             aria-label="Referral code"
           />
-          <Button onClick={submit} disabled={busy || !wallet.address || !valid}>
+          <Button
+            onClick={submit}
+            variant="secondary"
+            size="md"
+            disabled={busy || !wallet.address || !valid}
+          >
             {busy ? 'Signing…' : 'Bind code'}
           </Button>
         </div>
         {trimmed.length > 0 && !valid && (
-          <p className="text-xs text-red-400">
+          <p className="text-xs text-short flex items-center gap-1.5">
+            <span aria-hidden className="w-1 h-1 rounded-full bg-short flex-none" />
             3–16 characters: letters, digits, _ or - only
           </p>
         )}

@@ -8,7 +8,7 @@ export function CreateVaultButton() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button onClick={() => setOpen(true)}>Create vault</Button>
+      <Button variant="secondary" onClick={() => setOpen(true)}>Create vault</Button>
       <CreateVaultModal open={open} onClose={() => setOpen(false)} />
     </>
   );

@@ -49,7 +49,7 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-12 bg-white/5 rounded-lg animate-pulse"
+            className="h-12 bg-surface-3 rounded-md animate-pulse"
           />
         ))}
       </div>
@@ -59,13 +59,13 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
   if (trades.length === 0) {
     return (
       <div className="text-center py-12">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
-          <Clock className="w-8 h-8 text-neutral-600" />
+        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-surface-2 flex items-center justify-center">
+          <Clock className="w-8 h-8 text-faint" />
         </div>
-        <h3 className="text-lg font-medium text-neutral-300 mb-2">
+        <h3 className="font-medium text-foreground mb-2">
           No Trade History
         </h3>
-        <p className="text-sm text-neutral-500">
+        <p className="text-sm text-muted-foreground">
           Your completed trades will appear here
         </p>
       </div>
@@ -76,7 +76,7 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
     <>
       {/* Header with Refresh Button */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-neutral-500">
+        <span className="text-xs text-muted-foreground">
           {trades.length} trade{trades.length !== 1 ? 's' : ''}
         </span>
         {onRefresh && (
@@ -84,8 +84,8 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
             onClick={onRefresh}
             disabled={isRefreshing}
             className={cn(
-              'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all',
-              'text-neutral-400 hover:text-white hover:bg-white/5',
+              'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors',
+              'text-muted-foreground hover:text-foreground hover:bg-surface-3',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}
             title="Refresh trades"
@@ -100,15 +100,15 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
       <div className="overflow-x-auto -mx-4 px-4">
         <table className="w-full min-w-[800px]">
           <thead>
-            <tr className="text-xs text-neutral-500 border-b border-white/5">
-              <th className="text-left py-3 px-3 font-medium whitespace-nowrap">ID</th>
-              <th className="text-left py-3 px-3 font-medium whitespace-nowrap">Market</th>
-              <th className="text-left py-3 px-3 font-medium whitespace-nowrap">Side</th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Size</th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Entry</th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Exit</th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Gross PnL</th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">
+            <tr className="border-b border-border">
+              <th className="text-left py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">ID</th>
+              <th className="text-left py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">Market</th>
+              <th className="text-left py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">Side</th>
+              <th className="text-right py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">Size</th>
+              <th className="text-right py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">Entry</th>
+              <th className="text-right py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">Exit</th>
+              <th className="text-right py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">Gross PnL</th>
+              <th className="text-right py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">
                 <span className="inline-flex items-center gap-1">
                   Fees
                   <Tooltip content="Fee breakdown ships with the next contract deploy — the current on-chain event doesn't report it." position="bottom">
@@ -116,7 +116,7 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
                   </Tooltip>
                 </span>
               </th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">
+              <th className="text-right py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">
                 <span className="inline-flex items-center gap-1">
                   Net PnL
                   <Tooltip content="Net PnL needs the fee, which the current on-chain event doesn't report — coming with the next contract deploy." position="bottom">
@@ -124,9 +124,9 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
                   </Tooltip>
                 </span>
               </th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Date</th>
-              <th className="text-right py-3 px-3 font-medium whitespace-nowrap">Tx</th>
-              <th className="text-center py-3 px-3 font-medium whitespace-nowrap"></th>
+              <th className="text-right py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">Date</th>
+              <th className="text-right py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap">Tx</th>
+              <th className="text-center py-2 px-3 text-[11px] font-medium uppercase tracking-wide text-faint whitespace-nowrap"></th>
             </tr>
           </thead>
           <tbody>
@@ -171,92 +171,92 @@ function TradeRow({
   const isLong = trade.direction === 'Long';
 
   return (
-    <tr className="border-b border-white/5 hover:bg-white/[0.02] transition-colors text-sm">
+    <tr className="border-b border-border hover:bg-surface-3/50 transition-colors text-xs">
       {/* Trade ID */}
-      <td className="py-3 px-3">
-        <span className="text-neutral-400 font-mono text-xs">#{index}</span>
+      <td className="py-2 px-3">
+        <span className="text-faint font-mono text-xs">#{index}</span>
       </td>
       {/* Market */}
-      <td className="py-3 px-3">
-        <span className="font-medium text-white">{trade.asset || 'XLM'}/USD</span>
+      <td className="py-2 px-3">
+        <span className="font-medium text-foreground">{trade.asset || 'XLM'}/USD</span>
       </td>
       {/* Side */}
-      <td className="py-3 px-3">
+      <td className="py-2 px-3">
         <Badge variant={isLong ? 'success' : 'danger'} size="sm">
           {trade.direction || 'Long'}
         </Badge>
       </td>
       {/* Size */}
-      <td className="py-3 px-3 text-right text-white">
+      <td className="py-2 px-3 text-right text-foreground font-mono">
         {formatUSD(trade.size ?? 0)}
       </td>
       {/* Entry Price */}
-      <td className="py-3 px-3 text-right text-neutral-400">
+      <td className="py-2 px-3 text-right text-muted-foreground font-mono">
         {formatUSD(trade.entryPrice ?? 0, priceDecimals(trade.asset))}
       </td>
       {/* Exit Price */}
-      <td className="py-3 px-3 text-right text-neutral-400">
+      <td className="py-2 px-3 text-right text-muted-foreground font-mono">
         {formatUSD(trade.price ?? 0, priceDecimals(trade.asset))}
       </td>
       {/* Gross PnL */}
-      <td className="py-3 px-3 text-right">
+      <td className="py-2 px-3 text-right">
         <span className={cn(
-          'font-medium',
-          grossPnl >= 0 ? 'text-emerald-400' : 'text-red-400'
+          'font-medium font-mono',
+          grossPnl >= 0 ? 'text-long' : 'text-short'
         )}>
           {grossPnl >= 0 ? '+' : ''}{formatUSD(grossPnl)}
         </span>
       </td>
       {/* Fees — unknown until the contract emits it */}
-      <td className="py-3 px-3 text-right">
+      <td className="py-2 px-3 text-right">
         {fee != null ? (
-          <span className="text-orange-400">
+          <span className="text-muted-foreground font-mono">
             -{formatUSD(Math.abs(fee))}
           </span>
         ) : (
-          <span className="text-neutral-500">—</span>
+          <span className="text-faint">—</span>
         )}
       </td>
       {/* Net PnL — needs the fee */}
-      <td className="py-3 px-3 text-right">
+      <td className="py-2 px-3 text-right">
         {netPnl != null ? (
           <span className={cn(
-            'font-semibold',
-            isPositive ? 'text-emerald-400' : 'text-red-400'
+            'font-medium font-mono',
+            isPositive ? 'text-long' : 'text-short'
           )}>
             {isPositive ? '+' : ''}{formatUSD(netPnl)}
           </span>
         ) : (
-          <span className="text-neutral-500">—</span>
+          <span className="text-faint">—</span>
         )}
       </td>
       {/* Date */}
-      <td className="py-3 px-3 text-right text-neutral-400 whitespace-nowrap">
+      <td className="py-2 px-3 text-right text-faint font-mono whitespace-nowrap">
         {formatDateTime(trade.timestamp)}
       </td>
       {/* Tx Hash with Explorer Link */}
-      <td className="py-3 px-3 text-right">
+      <td className="py-2 px-3 text-right">
         {trade.txHash ? (
           <a
             href={`${STELLAR_EXPERT_BASE}/tx/${trade.txHash}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-neutral-400 hover:text-white transition-colors font-mono text-xs"
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors font-mono text-xs"
             title={trade.txHash}
           >
             {shortenTxHash(trade.txHash)}
             <ExternalLink className="w-3 h-3" />
           </a>
         ) : (
-          <span className="text-neutral-600">-</span>
+          <span className="text-faint">-</span>
         )}
       </td>
       {/* Share */}
-      <td className="py-3 px-3 text-center">
+      <td className="py-2 px-3 text-center">
         {onShare && (
           <button
             onClick={onShare}
-            className="p-1.5 rounded hover:bg-white/10 text-neutral-500 hover:text-white transition-colors"
+            className="p-1.5 rounded-sm hover:bg-surface-3 text-muted-foreground hover:text-foreground transition-colors"
             title="Share PnL"
           >
             <Share2 className="w-3.5 h-3.5" />

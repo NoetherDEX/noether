@@ -29,27 +29,29 @@ export function Tabs({ tabs, defaultTab, onChange, className }: TabsProps) {
 
   return (
     <div className={cn('w-full', className)}>
-      {/* Tab buttons */}
-      <div className="flex gap-1 p-1 bg-white/5 rounded-xl mb-4">
+      {/* Tab buttons — hairline underline, gold active indicator */}
+      <div role="tablist" className="flex items-center gap-4 border-b border-border mb-4">
         {tabs.map((tab) => (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
             onClick={() => handleTabChange(tab.id)}
             className={cn(
-              'flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200',
+              'relative px-1 py-2.5 text-[13px] font-medium transition-colors -mb-px',
               activeTab === tab.id
-                ? 'bg-white text-black'
-                : 'text-neutral-400 hover:text-white hover:bg-white/5'
+                ? 'text-foreground border-b-2 border-primary'
+                : 'text-muted-foreground hover:text-foreground border-b-2 border-transparent'
             )}
           >
             {tab.label}
             {tab.count !== undefined && (
               <span
                 className={cn(
-                  'ml-2 px-1.5 py-0.5 text-xs rounded-md',
+                  'ml-1.5 px-1.5 py-0.5 text-[11px] rounded-sm font-mono',
                   activeTab === tab.id
-                    ? 'bg-black/10'
-                    : 'bg-white/10'
+                    ? 'bg-surface-3 text-foreground'
+                    : 'bg-surface-2 text-muted-foreground'
                 )}
               >
                 {tab.count}

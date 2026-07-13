@@ -1,12 +1,7 @@
 export { Navbar } from './Navbar';
 export { Hero } from './Hero';
-export { HeroBlobs } from './HeroBlobs';
 export { FlagshipSection, FlagshipFeaturesSection } from './FlagshipSection';
-export { NOEIntroSection } from './NOEIntroSection';
-export { VaultSection } from './VaultSection';
-export { FinalSection } from './FinalSection';
-export { CommunitySection } from './CommunitySection';
+export { ProtocolNewsSection } from './ProtocolNewsSection';
 export { LandingFooter } from './LandingFooter';
 export { NoetherLogo } from './NoetherLogo';
 export { BrowserFrame } from './BrowserFrame';
-export { SlideContainer } from './SlideContainer';

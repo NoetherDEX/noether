@@ -85,7 +85,7 @@ export function PositionsList({
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-16 bg-zinc-900/50 rounded-lg animate-pulse"
+            className="h-16 bg-surface-3 rounded-md animate-pulse"
           />
         ))}
       </div>
@@ -96,11 +96,11 @@ export function PositionsList({
     return (
       <div className="flex flex-col items-center justify-center py-16 px-4">
         <div className="relative mb-4">
-          <div className="w-16 h-16 rounded-full bg-white/[0.04] flex items-center justify-center">
-            <TrendingUp className="w-8 h-8 text-muted-foreground/50" />
+          <div className="w-16 h-16 rounded-full bg-surface-2 flex items-center justify-center">
+            <TrendingUp className="w-8 h-8 text-faint" />
           </div>
-          <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-card border border-white/10 flex items-center justify-center">
-            <span className="text-muted-foreground/50 text-xs font-mono">0</span>
+          <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-surface-2 border border-border flex items-center justify-center">
+            <span className="text-faint text-xs font-mono">0</span>
           </div>
         </div>
         <h3 className="text-foreground font-medium mb-1">No open positions</h3>
@@ -110,7 +110,7 @@ export function PositionsList({
         {onStartTrading && (
           <button
             onClick={onStartTrading}
-            className="mt-4 px-4 py-2 text-sm font-medium rounded-lg bg-[#eab308] text-black hover:opacity-90 transition-opacity"
+            className="mt-4 inline-flex h-9 items-center px-4 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
           >
             Start Trading
           </button>
@@ -190,8 +190,8 @@ export function PositionsList({
               onClick={onRefresh}
               disabled={isRefreshing}
               className={cn(
-                'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg transition-all',
-                'text-muted-foreground hover:text-foreground hover:bg-zinc-900/50',
+                'flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors',
+                'text-muted-foreground hover:text-foreground hover:bg-surface-3',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
               title="Refresh positions"
@@ -206,15 +206,15 @@ export function PositionsList({
       {/* Desktop Table */}
       <div className="hidden lg:block overflow-x-auto">
         <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-card z-10">
-            <tr className="text-muted-foreground border-b border-white/5">
-              <th className="text-left px-3 py-2.5 font-medium">Market</th>
-              <th className="text-right px-3 py-2.5 font-medium">Size</th>
-              <th className="text-right px-3 py-2.5 font-medium">Net Value</th>
-              <th className="text-right px-3 py-2.5 font-medium">Entry / Mark</th>
-              <th className="text-right px-3 py-2.5 font-medium">Liq. Price</th>
-              <th className="text-right px-3 py-2.5 font-medium">PnL</th>
-              <th className="text-center px-3 py-2.5 font-medium">Actions</th>
+          <thead className="sticky top-0 bg-surface z-10">
+            <tr className="border-b border-border">
+              <th className="text-left px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Market</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Size</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Net Value</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Entry / Mark</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Liq. Price</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">PnL</th>
+              <th className="text-center px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -294,7 +294,7 @@ export function PositionsList({
       >
         {selectedPosition && (
           <div>
-            <div className="mb-6 p-4 bg-zinc-900/50 rounded-xl space-y-2">
+            <div className="mb-6 pb-4 border-b border-border space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Position</span>
                 <span className="text-foreground">
@@ -307,7 +307,7 @@ export function PositionsList({
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Unrealized PnL</span>
-                <span className={selectedPosition.pnl >= 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}>
+                <span className={selectedPosition.pnl >= 0 ? 'text-long' : 'text-short'}>
                   {formatUSD(selectedPosition.pnl)} ({formatPercent(selectedPosition.pnlPercent)})
                 </span>
               </div>
@@ -356,7 +356,7 @@ export function PositionsList({
 
           return (
             <div>
-              <div className="mb-4 p-4 bg-zinc-900/50 rounded-xl space-y-2">
+              <div className="mb-4 pb-4 border-b border-border space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Position</span>
                   <span className="text-foreground">{selectedPosition.asset} {selectedPosition.direction}</span>
@@ -376,7 +376,7 @@ export function PositionsList({
               </div>
 
               {/* Quick-set % buttons */}
-              <div className="flex gap-1.5 mb-3">
+              <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5 mb-3">
                 {slQuickPcts.map((pct) => (
                   <button
                     key={pct}
@@ -387,16 +387,16 @@ export function PositionsList({
                       setSelectedPct(pct);
                     }}
                     className={cn(
-                      'flex-1 py-1.5 text-[10px] font-medium rounded border transition-all',
+                      'rounded-[4px] py-1.5 text-xs font-medium transition-colors',
                       selectedPct === pct
-                        ? 'bg-[#ef4444]/20 border-[#ef4444]/50 text-[#ef4444]'
-                        : 'border-white/10 text-muted-foreground hover:text-[#ef4444] hover:border-[#ef4444]/30'
+                        ? 'bg-surface-3 text-short'
+                        : 'text-muted-foreground hover:text-short'
                     )}
                   >
                     {pct > 0 ? '+' : ''}{pct}%
                   </button>
                 ))}
-                <div className="relative flex-1">
+                <div className="relative">
                   <input
                     type="text"
                     inputMode="decimal"
@@ -414,11 +414,11 @@ export function PositionsList({
                     }}
                     placeholder="Custom"
                     className={cn(
-                      'w-full bg-zinc-900/50 border rounded-md px-2 py-1.5 text-[10px] font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-5',
-                      customPct !== '' ? 'border-[#ef4444]/50' : 'border-white/10'
+                      'w-full h-full rounded-[4px] bg-transparent px-2 py-1.5 text-xs font-mono text-center placeholder:text-faint focus:outline-none transition-colors pr-4',
+                      customPct !== '' ? 'bg-surface-3 text-short' : 'text-muted-foreground'
                     )}
                   />
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-muted-foreground">%</span>
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
                 </div>
               </div>
 
@@ -434,11 +434,12 @@ export function PositionsList({
                 <div className="relative">
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.0001"
                     value={slTpPrice}
                     onChange={(e) => { setSlTpPrice(e.target.value); setSelectedPct(null); setCustomPct(''); }}
                     placeholder="0.00"
-                    className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-12"
+                    className="w-full bg-surface-2 border border-border rounded-md px-3 py-2 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-short focus:border-short transition-colors pr-12"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
                 </div>
@@ -446,10 +447,10 @@ export function PositionsList({
 
               {/* PnL Preview */}
               {triggerPrice > 0 && !invalid && (
-                <div className="mb-4 p-3 bg-[#ef4444]/5 border border-[#ef4444]/10 rounded-lg">
+                <div className="mb-4 border-l-2 border-short/60 pl-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Est. loss at trigger</span>
-                    <span className="text-[#ef4444] font-mono font-medium">
+                    <span className="text-short font-mono font-medium">
                       {estPnl >= 0 ? '+' : ''}{formatUSD(estPnl, 2)} ({estPnlPct >= 0 ? '+' : ''}{estPnlPct.toFixed(1)}%)
                     </span>
                   </div>
@@ -467,22 +468,22 @@ export function PositionsList({
                   <label className="text-sm text-muted-foreground">Slippage Tolerance</label>
                   <span className="text-xs font-mono text-foreground">{(slTpSlippage / 100).toFixed(2)}%</span>
                 </div>
-                <div className="flex gap-2">
+                <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
                   {[50, 100, 200].map((bps) => (
                     <button
                       key={bps}
                       onClick={() => { setSlTpSlippage(bps); setCustomSlTpSlippage(''); }}
                       className={cn(
-                        'flex-1 py-2 text-xs font-medium rounded border transition-all',
+                        'rounded-[4px] py-1.5 text-xs font-medium transition-colors',
                         slTpSlippage === bps && customSlTpSlippage === ''
-                          ? 'bg-[#ef4444]/20 border-[#ef4444]/50 text-[#ef4444]'
-                          : 'border-white/10 text-muted-foreground hover:text-foreground'
+                          ? 'bg-surface-3 text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
                       {(bps / 100).toFixed(1)}%
                     </button>
                   ))}
-                  <div className="relative flex-1">
+                  <div className="relative">
                     <input
                       type="text"
                       inputMode="decimal"
@@ -495,19 +496,19 @@ export function PositionsList({
                       }}
                       placeholder="Custom"
                       className={cn(
-                        'w-full bg-zinc-900/50 border rounded-md px-2 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#ef4444] focus:border-[#ef4444] transition-colors pr-5',
-                        customSlTpSlippage !== '' ? 'border-[#ef4444]/50' : 'border-white/10'
+                        'w-full h-full rounded-[4px] bg-transparent px-2 py-1.5 text-xs font-mono text-center placeholder:text-faint focus:outline-none transition-colors pr-4',
+                        customSlTpSlippage !== '' ? 'bg-surface-3 text-foreground' : 'text-muted-foreground'
                       )}
                     />
-                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
                   </div>
                 </div>
               </div>
 
               {invalid && (
-                <div className="mb-4 p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-[#ef4444] mt-0.5 shrink-0" />
-                  <p className="text-xs text-[#ef4444]">
+                <div className="mb-4 border-l-2 border-short/60 pl-3 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-short mt-0.5 shrink-0" />
+                  <p className="text-xs text-short">
                     {isLong ? 'Stop-loss must be below entry price for Long positions' : 'Stop-loss must be above entry price for Short positions'}
                   </p>
                 </div>
@@ -551,7 +552,7 @@ export function PositionsList({
 
           return (
             <div>
-              <div className="mb-4 p-4 bg-zinc-900/50 rounded-xl space-y-2">
+              <div className="mb-4 pb-4 border-b border-border space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Position</span>
                   <span className="text-foreground">{selectedPosition.asset} {selectedPosition.direction}</span>
@@ -571,7 +572,7 @@ export function PositionsList({
               </div>
 
               {/* Quick-set % buttons */}
-              <div className="flex gap-1.5 mb-3">
+              <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5 mb-3">
                 {tpQuickPcts.map((pct) => (
                   <button
                     key={pct}
@@ -582,16 +583,16 @@ export function PositionsList({
                       setSelectedPct(pct);
                     }}
                     className={cn(
-                      'flex-1 py-1.5 text-[10px] font-medium rounded border transition-all',
+                      'rounded-[4px] py-1.5 text-xs font-medium transition-colors',
                       selectedPct === pct
-                        ? 'bg-[#22c55e]/20 border-[#22c55e]/50 text-[#22c55e]'
-                        : 'border-white/10 text-muted-foreground hover:text-[#22c55e] hover:border-[#22c55e]/30'
+                        ? 'bg-surface-3 text-long'
+                        : 'text-muted-foreground hover:text-long'
                     )}
                   >
                     {pct > 0 ? '+' : ''}{pct}%
                   </button>
                 ))}
-                <div className="relative flex-1">
+                <div className="relative">
                   <input
                     type="text"
                     inputMode="decimal"
@@ -609,11 +610,11 @@ export function PositionsList({
                     }}
                     placeholder="Custom"
                     className={cn(
-                      'w-full bg-zinc-900/50 border rounded-md px-2 py-1.5 text-[10px] font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-5',
-                      customPct !== '' ? 'border-[#22c55e]/50' : 'border-white/10'
+                      'w-full h-full rounded-[4px] bg-transparent px-2 py-1.5 text-xs font-mono text-center placeholder:text-faint focus:outline-none transition-colors pr-4',
+                      customPct !== '' ? 'bg-surface-3 text-long' : 'text-muted-foreground'
                     )}
                   />
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-muted-foreground">%</span>
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
                 </div>
               </div>
 
@@ -629,11 +630,12 @@ export function PositionsList({
                 <div className="relative">
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.0001"
                     value={slTpPrice}
                     onChange={(e) => { setSlTpPrice(e.target.value); setSelectedPct(null); setCustomPct(''); }}
                     placeholder="0.00"
-                    className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
+                    className="w-full bg-surface-2 border border-border rounded-md px-3 py-2 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-long focus:border-long transition-colors pr-12"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
                 </div>
@@ -641,10 +643,10 @@ export function PositionsList({
 
               {/* PnL Preview */}
               {triggerPrice > 0 && !invalid && (
-                <div className="mb-4 p-3 bg-[#22c55e]/5 border border-[#22c55e]/10 rounded-lg">
+                <div className="mb-4 border-l-2 border-long/60 pl-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Est. profit at trigger</span>
-                    <span className="text-[#22c55e] font-mono font-medium">
+                    <span className="text-long font-mono font-medium">
                       +{formatUSD(estPnl, 2)} (+{estPnlPct.toFixed(1)}%)
                     </span>
                   </div>
@@ -664,11 +666,12 @@ export function PositionsList({
                 <div className="relative">
                   <input
                     type="number"
+                    inputMode="decimal"
                     step="0.0001"
                     value={tpLimitPrice}
                     onChange={(e) => setTpLimitPrice(e.target.value)}
                     placeholder="Market execution"
-                    className="w-full bg-zinc-900/50 border border-white/10 rounded-md px-3 py-3 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-12"
+                    className="w-full bg-surface-2 border border-border rounded-md px-3 py-2 text-right font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-long focus:border-long transition-colors pr-12"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground">USD</span>
                 </div>
@@ -682,22 +685,22 @@ export function PositionsList({
                   <label className="text-sm text-muted-foreground">Slippage Tolerance</label>
                   <span className="text-xs font-mono text-foreground">{(slTpSlippage / 100).toFixed(2)}%</span>
                 </div>
-                <div className="flex gap-2">
+                <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
                   {[50, 100, 200].map((bps) => (
                     <button
                       key={bps}
                       onClick={() => { setSlTpSlippage(bps); setCustomSlTpSlippage(''); }}
                       className={cn(
-                        'flex-1 py-2 text-xs font-medium rounded border transition-all',
+                        'rounded-[4px] py-1.5 text-xs font-medium transition-colors',
                         slTpSlippage === bps && customSlTpSlippage === ''
-                          ? 'bg-[#22c55e]/20 border-[#22c55e]/50 text-[#22c55e]'
-                          : 'border-white/10 text-muted-foreground hover:text-foreground'
+                          ? 'bg-surface-3 text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
                       {(bps / 100).toFixed(1)}%
                     </button>
                   ))}
-                  <div className="relative flex-1">
+                  <div className="relative">
                     <input
                       type="text"
                       inputMode="decimal"
@@ -710,19 +713,19 @@ export function PositionsList({
                       }}
                       placeholder="Custom"
                       className={cn(
-                        'w-full bg-zinc-900/50 border rounded-md px-2 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[#22c55e] focus:border-[#22c55e] transition-colors pr-5',
-                        customSlTpSlippage !== '' ? 'border-[#22c55e]/50' : 'border-white/10'
+                        'w-full h-full rounded-[4px] bg-transparent px-2 py-1.5 text-xs font-mono text-center placeholder:text-faint focus:outline-none transition-colors pr-4',
+                        customSlTpSlippage !== '' ? 'bg-surface-3 text-foreground' : 'text-muted-foreground'
                       )}
                     />
-                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">%</span>
+                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
                   </div>
                 </div>
               </div>
 
               {invalid && (
-                <div className="mb-4 p-3 bg-[#ef4444]/10 border border-[#ef4444]/20 rounded-lg flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-[#ef4444] mt-0.5 shrink-0" />
-                  <p className="text-xs text-[#ef4444]">
+                <div className="mb-4 border-l-2 border-short/60 pl-3 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-short mt-0.5 shrink-0" />
+                  <p className="text-xs text-short">
                     {isLong ? 'Take-profit must be above entry price for Long positions' : 'Take-profit must be below entry price for Short positions'}
                   </p>
                 </div>
@@ -784,16 +787,16 @@ const PositionRow = memo(function PositionRow({
   const isCross = position.marginMode === 'Cross';
 
   return (
-    <tr className="border-b border-white/5 hover:bg-zinc-900/50 transition-colors">
-      <td className="px-3 py-3">
+    <tr className="border-b border-border hover:bg-surface-3/50 transition-colors">
+      <td className="px-3 py-2">
         <div className="flex items-center gap-2">
           <span className="font-medium text-foreground">{position.asset}-PERP</span>
           <span
             className={cn(
-              'px-1.5 py-0.5 rounded text-[10px] font-bold font-mono',
+              'px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono',
               position.direction === 'Long'
-                ? 'bg-[#22c55e]/15 text-[#22c55e] ring-1 ring-[#22c55e]/30'
-                : 'bg-[#ef4444]/15 text-[#ef4444] ring-1 ring-[#ef4444]/30'
+                ? 'bg-long/10 text-long'
+                : 'bg-short/10 text-short'
             )}
           >
             {position.leverage.toFixed(0)}x
@@ -802,17 +805,17 @@ const PositionRow = memo(function PositionRow({
         <span
           className={cn(
             'text-[10px] font-medium',
-            position.direction === 'Long' ? 'text-[#22c55e]' : 'text-[#ef4444]'
+            position.direction === 'Long' ? 'text-long' : 'text-short'
           )}
         >
           {position.direction.toUpperCase()}
           {position.marginMode === 'Cross' && (
-            <span className="ml-1 text-[8px] px-1 py-0.5 bg-amber-500/20 text-amber-500 rounded">CROSS</span>
+            <span className="ml-1 text-[9px] px-1 py-0.5 bg-primary/10 text-primary rounded-sm">CROSS</span>
           )}
         </span>
       </td>
 
-      <td className="px-3 py-3 text-right">
+      <td className="px-3 py-2 text-right">
         <div className="font-mono text-foreground">
           {formatUSD(position.size, 0)}
         </div>
@@ -821,13 +824,13 @@ const PositionRow = memo(function PositionRow({
         </div>
       </td>
 
-      <td className="px-3 py-3 text-right">
+      <td className="px-3 py-2 text-right">
         <span className="font-mono text-foreground">
           {formatUSD(position.collateral + position.pnl, 0)}
         </span>
       </td>
 
-      <td className="px-3 py-3 text-right">
+      <td className="px-3 py-2 text-right">
         <div className="font-mono text-muted-foreground text-[10px]">
           {formatPairPrice(position.asset, position.entryPrice)}
         </div>
@@ -836,33 +839,33 @@ const PositionRow = memo(function PositionRow({
         </div>
       </td>
 
-      <td className="px-3 py-3 text-right">
+      <td className="px-3 py-2 text-right">
         <div className="flex items-center justify-end gap-1">
-          {isLiquidationRisk && <AlertTriangle className="w-3 h-3 text-[#f97316]" />}
+          {isLiquidationRisk && <AlertTriangle className="w-3 h-3 text-primary" />}
           <span
             className={cn(
               'font-mono',
-              isLiquidationRisk ? 'text-[#f97316]' : 'text-muted-foreground'
+              isLiquidationRisk ? 'text-primary' : 'text-muted-foreground'
             )}
           >
             {position.marginMode === 'Cross'
-              ? <span className="text-amber-500 text-xs">Account Level</span>
+              ? <span className="text-primary text-xs">Account Level</span>
               : formatPairPrice(position.asset, position.liquidationPrice)}
           </span>
         </div>
       </td>
 
-      <td className="px-3 py-3 text-right">
+      <td className="px-3 py-2 text-right">
         {/* formatPercent owns the sign (fixes the '++2.34%' double sign, A32). */}
-        <div className={cn('font-mono font-medium', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]')}>
+        <div className={cn('font-mono font-medium', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-long' : 'text-short')}>
           {isPositive ? '+' : ''}{formatUSD(position.pnl)}
         </div>
-        <div className={cn('font-mono text-[10px]', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-[#22c55e]/70' : 'text-[#ef4444]/70')}>
+        <div className={cn('font-mono text-[10px]', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-long/70' : 'text-short/70')}>
           {formatPercent(position.pnlPercent)}
         </div>
       </td>
 
-      <td className="px-3 py-3">
+      <td className="px-3 py-2">
         <div className="flex items-center justify-center gap-1">
           {hasSlTpCallbacks && (
             <>
@@ -870,10 +873,10 @@ const PositionRow = memo(function PositionRow({
                 onClick={onSetStopLoss}
                 disabled={isCross}
                 className={cn(
-                  'p-1.5 rounded transition-colors',
+                  'p-1.5 rounded-sm transition-colors',
                   isCross
                     ? 'text-muted-foreground/30 cursor-not-allowed'
-                    : 'hover:bg-[#ef4444]/10 text-muted-foreground hover:text-[#ef4444]'
+                    : 'hover:bg-short/10 text-muted-foreground hover:text-short'
                 )}
                 title={isCross ? 'Unavailable for cross-margin positions (contract fix pending)' : 'Set Stop-Loss'}
               >
@@ -883,10 +886,10 @@ const PositionRow = memo(function PositionRow({
                 onClick={onSetTakeProfit}
                 disabled={isCross}
                 className={cn(
-                  'p-1.5 rounded transition-colors',
+                  'p-1.5 rounded-sm transition-colors',
                   isCross
                     ? 'text-muted-foreground/30 cursor-not-allowed'
-                    : 'hover:bg-[#22c55e]/10 text-muted-foreground hover:text-[#22c55e]'
+                    : 'hover:bg-long/10 text-muted-foreground hover:text-long'
                 )}
                 title={isCross ? 'Unavailable for cross-margin positions (contract fix pending)' : 'Set Take-Profit'}
               >
@@ -896,14 +899,14 @@ const PositionRow = memo(function PositionRow({
           )}
           <button
             onClick={onShare}
-            className="p-1.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+            className="p-1.5 rounded-sm hover:bg-surface-3 text-muted-foreground hover:text-foreground transition-colors"
             title="Share PnL"
           >
             <Share2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={onClose}
-            className="px-2.5 py-1 rounded text-[10px] font-medium bg-[#ef4444]/10 text-[#ef4444] hover:bg-[#ef4444]/20 transition-colors flex items-center gap-1"
+            className="h-7 px-2 rounded-sm text-[11px] font-medium border border-border-strong text-muted-foreground hover:text-short hover:border-short/40 hover:bg-surface-3 transition-colors flex items-center gap-1"
             title="Close Position"
           >
             <X className="w-3 h-3" />
@@ -953,17 +956,17 @@ const PositionCard = memo(function PositionCard({
         </div>
         <div className="flex items-start gap-2">
           <div className="text-right">
-            <div className={cn('text-lg font-semibold font-mono', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]')}>
+            <div className={cn('text-lg font-semibold font-mono', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-long' : 'text-short')}>
               {isPositive ? '+' : ''}{formatUSD(position.pnl)}
             </div>
             {/* formatPercent owns the sign (fixes '++2.34%', A32). */}
-            <div className={cn('text-sm font-mono', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-[#22c55e]/70' : 'text-[#ef4444]/70')}>
+            <div className={cn('text-sm font-mono', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-long/70' : 'text-short/70')}>
               {formatPercent(position.pnlPercent)}
             </div>
           </div>
           <button
             onClick={onShare}
-            className="p-1.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+            className="p-1.5 rounded-sm hover:bg-surface-3 text-muted-foreground hover:text-foreground transition-colors"
             title="Share PnL"
           >
             <Share2 className="w-4 h-4" />
@@ -988,9 +991,9 @@ const PositionCard = memo(function PositionCard({
         </div>
         <div>
           <p className="text-muted-foreground mb-1">Liq. Price</p>
-          <p className="text-[#f97316]/70 font-mono">
+          <p className="text-primary/70 font-mono">
             {position.marginMode === 'Cross'
-              ? <span className="text-amber-500">Account Level</span>
+              ? <span className="text-primary">Account Level</span>
               : formatPairPrice(position.asset, position.liquidationPrice)}
           </p>
         </div>

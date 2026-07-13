@@ -46,7 +46,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
   if (!wallet.address || !wallet.walletId) {
     return (
       <Card>
-        <CardContent className="p-5 text-sm text-zinc-400">
+        <CardContent className="p-5 text-sm text-muted-foreground">
           Connect a wallet to manage this vault.
         </CardContent>
       </Card>
@@ -101,7 +101,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <Card>
         <CardContent className="p-5 space-y-3">
-          <h3 className="font-medium">Open position</h3>
+          <h3 className="text-sm font-medium text-foreground">Open position</h3>
 
           <div className="grid grid-cols-3 gap-2">
             {ASSETS.map((a) => (
@@ -133,7 +133,7 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs text-zinc-500 uppercase tracking-wider">
+            <label className="text-[11px] text-faint uppercase tracking-wide">
               Collateral (USDC)
             </label>
             <Input
@@ -146,8 +146,8 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs text-zinc-500 uppercase tracking-wider">
-              Leverage: {leverage}×
+            <label className="text-[11px] text-faint uppercase tracking-wide">
+              Leverage: <span className="font-mono tabular-nums">{leverage}×</span>
             </label>
             <input
               type="range"
@@ -168,9 +168,9 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
       <div className="space-y-4">
         <Card>
           <CardContent className="p-5 space-y-3">
-            <h3 className="font-medium">Close position</h3>
+            <h3 className="text-sm font-medium text-foreground">Close position</h3>
             <div className="space-y-1">
-              <label className="text-xs text-zinc-500 uppercase tracking-wider">
+              <label className="text-[11px] text-faint uppercase tracking-wide">
                 Position id
               </label>
               <Input
@@ -189,8 +189,8 @@ export function LeaderTradePanel({ vaultId, vaultName }: Props) {
 
         <Card>
           <CardContent className="p-5 space-y-3">
-            <h3 className="font-medium">Claim profit share</h3>
-            <p className="text-xs text-zinc-400">
+            <h3 className="text-sm font-medium text-foreground">Claim profit share</h3>
+            <p className="text-xs text-muted-foreground">
               Pulls this vault&apos;s profit share of any liquid-NAV gain above the
               high-water mark to your wallet. HWM resets afterward — no
               double-claiming the same gain.

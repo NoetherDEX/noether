@@ -32,7 +32,7 @@ export default function NotFound() {
           `,
         }}
       />
-      <main className="min-h-screen w-full bg-[#050508] flex flex-col items-center justify-center px-6 relative overflow-hidden">
+      <main className="min-h-screen w-full bg-background flex flex-col items-center justify-center px-6 relative overflow-hidden">
         <Link
           href="/"
           aria-label="Noether home"
@@ -42,21 +42,18 @@ export default function NotFound() {
         </Link>
 
         <div className="flex flex-col items-center text-center max-w-md w-full">
-          <h1
-            className="noether-404-anim noether-404-anim-2 font-heading text-[#eab308]/85 font-light leading-none tracking-tight text-[7rem] sm:text-[9rem]"
-            style={{ textShadow: '0 0 60px rgba(234,179,8,0.18)' }}
-          >
+          <h1 className="noether-404-anim noether-404-anim-2 font-heading text-primary/85 font-light leading-none tracking-tight text-[7rem] sm:text-[9rem]">
             404
           </h1>
 
-          <p className="noether-404-anim noether-404-anim-3 mt-6 text-sm text-white/40 tracking-wide">
+          <p className="noether-404-anim noether-404-anim-3 mt-6 text-sm text-muted-foreground tracking-wide">
             This page doesn't exist.
           </p>
 
           <div className="noether-404-anim noether-404-anim-4 mt-10 flex flex-col sm:flex-row items-center gap-3 sm:gap-4 w-full sm:w-auto">
             <Link
               href="/trade"
-              className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 rounded-full bg-[#eab308] text-black text-sm font-semibold hover:bg-[#ca9a04] transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-[#eab308]/60 focus:ring-offset-2 focus:ring-offset-[#050508]"
+              className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary/60 focus:ring-offset-2 focus:ring-offset-background"
             >
               Back to Trade
             </Link>
@@ -64,11 +61,11 @@ export default function NotFound() {
               href={DISCORD_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full border border-white/10 text-white/70 text-sm font-medium hover:border-[#eab308]/40 hover:text-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#eab308]/40 focus:ring-offset-2 focus:ring-offset-[#050508]"
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-md border border-border text-muted-foreground text-sm font-medium hover:border-primary/40 hover:text-foreground transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-background"
             >
               <DiscordIcon />
               Join Discord
-              <span aria-hidden="true" className="text-white/30">↗</span>
+              <span aria-hidden="true" className="text-faint">↗</span>
             </a>
           </div>
         </div>

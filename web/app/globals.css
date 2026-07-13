@@ -4,32 +4,42 @@
 
 /* Custom dark theme for Noether trading dashboard */
 :root {
-  /* HSL format values for Tailwind hsl() functions */
-  --card: 0 0% 4%;
-  --card-foreground: 0 0% 98%;
-  --popover: 0 0% 4%;
-  --popover-foreground: 0 0% 98%;
+  /* ── Quiet-terminal palette (docs/REDESIGN.md) ──
+     Layered dark neutrals instead of pure black; elevation is expressed by
+     surface steps + hairline borders, never shadows or glow. */
+  --background: 216 19% 5%;        /* #0B0D10 app base */
+  --surface: 216 19% 8%;           /* #111419 cards, panels */
+  --surface-2: 216 18% 11%;        /* #171B21 nested surfaces, inputs */
+  --surface-3: 217 18% 14%;        /* #1D222A hover / active rows */
+  --foreground: 216 12% 92%;       /* #E8EAED */
+  --card: 216 19% 8%;
+  --card-foreground: 216 12% 92%;
+  --popover: 216 18% 11%;
+  --popover-foreground: 216 12% 92%;
+  /* Brand gold: CTAs, active states, brand marks only — never large fills. */
   --primary: 45 93% 47%;
   /* Near-black on the gold primary — white on #eab308 is 1.98:1 and must never ship */
-  --primary-foreground: 0 0% 4%;
-  --secondary: 0 0% 10%;
-  --secondary-foreground: 0 0% 98%;
-  --muted: 0 0% 10%;
-  --muted-foreground: 240 4% 65%;
+  --primary-foreground: 216 19% 5%;
+  --secondary: 216 18% 11%;
+  --secondary-foreground: 216 12% 92%;
+  --muted: 216 18% 11%;
+  --muted-foreground: 212 8% 63%;  /* #9BA1A8 */
+  --faint: 212 7% 42%;             /* #646B73 timestamps, tertiary */
   --accent: 217 91% 60%;
   --accent-foreground: 0 0% 100%;
-  --destructive: 0 84% 60%;
+  --destructive: 357 81% 57%;
   --destructive-foreground: 0 0% 100%;
-  --border: 0 0% 15%;
-  --input: 0 0% 10%;
+  --border: 216 13% 12%;           /* hairline (~7% white over base) */
+  --border-strong: 217 11% 15%;    /* emphasized hairline (~12%) */
+  --input: 216 18% 11%;
   --ring: 45 93% 47%;
   --radius: 0.5rem;
-  --background: 0 0% 0%;
-  --foreground: 0 0% 98%;
 
-  /* Trading specific colors */
-  --profit: #22c55e;
-  --loss: #ef4444;
+  /* Trading colors — muted, terminal-grade */
+  --profit: #16c784;
+  --loss: #ea3943;
+  --long: 158 80% 43%;             /* #16C784 */
+  --short: 357 81% 57%;            /* #EA3943 */
   --stellar-gold: #eab308;
   --electric-blue: #3b82f6;
 }
@@ -44,12 +54,28 @@
 
   html {
     scroll-behavior: smooth;
+    /* Native controls, scrollbars and form widgets follow the dark theme */
+    color-scheme: dark;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
   }
 
   body {
     @apply bg-background text-foreground;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Every numeral in the product is data: align digits everywhere. */
+  .font-mono,
+  code,
+  kbd,
+  samp {
+    font-variant-numeric: tabular-nums;
   }
 
   /* Chart colors */
@@ -133,14 +159,11 @@ textarea:focus-visible,
   }
 }
 
-/* Prevent horizontal overflow on mobile */
+/* Prevent horizontal overflow on mobile. `clip` (not `hidden`) — hidden
+   turns body into a scroll container, which silently disables every
+   position:sticky descendant (the landing hero pin relies on it). */
 html, body {
-  overflow-x: hidden;
-}
-
-/* When snap-container is present (landing page), prevent body scroll to avoid double-scroll conflict */
-body:has(.snap-container) {
-  overflow-y: hidden;
+  overflow-x: clip;
 }
 
 /* Ensure WalletConnect / Reown AppKit modal is always on top */
@@ -164,45 +187,10 @@ w3m-modal, appkit-modal {
   }
 }
 
-/* Utility classes for the new theme */
+/* Utility classes for the quiet-terminal theme. Decorative glow/gradient
+   helpers were removed with the redesign — elevation is surface steps +
+   hairlines only (docs/REDESIGN.md). */
 @layer utilities {
-  .text-gradient {
-    @apply bg-gradient-to-r from-[#eab308] to-[#f59e0b] bg-clip-text text-transparent;
-  }
-
-  .bg-gradient-primary {
-    @apply bg-gradient-to-r from-[#eab308] to-[#f59e0b];
-  }
-
-  .border-gradient {
-    border-image: linear-gradient(to right, #eab308, #f59e0b) 1;
-  }
-
-  .glow-gold {
-    box-shadow: 0 0 20px rgba(234, 179, 8, 0.3);
-  }
-
-  .glow-blue {
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
-  }
-
-  /* Landing page utilities */
-  .text-gradient-gold-green {
-    @apply bg-gradient-to-r from-[#eab308] via-[#a3c926] to-[#22c55e] bg-clip-text text-transparent;
-  }
-
-  .text-gradient-gold {
-    @apply bg-gradient-to-r from-[#eab308] to-[#fbbf24] bg-clip-text text-transparent;
-  }
-
-  .glow-gold {
-    box-shadow: 0 0 40px rgba(234, 179, 8, 0.15);
-  }
-
-  .glow-gold-lg {
-    box-shadow: 0 0 60px rgba(234, 179, 8, 0.25);
-  }
-
   /* Hide scrollbar but keep scrolling */
   .scrollbar-none {
     -ms-overflow-style: none;
@@ -210,17 +198,5 @@ w3m-modal, appkit-modal {
   }
   .scrollbar-none::-webkit-scrollbar {
     display: none;
-  }
-}
-
-/* Animated rainbow gradient — used by the leaderboard self-rank border (A22).
-   Pans a 200%-wide gradient by one full period; the gradient starts and ends
-   on the same hue so the loop is seamless. Applied via motion-safe only. */
-@keyframes rainbow-pan {
-  0% {
-    background-position: 0% 50%;
-  }
-  100% {
-    background-position: 200% 50%;
   }
 }

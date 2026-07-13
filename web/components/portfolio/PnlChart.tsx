@@ -150,25 +150,25 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
   const areaPath = `${linePath} L ${chartWidth} ${chartHeight} L 0 ${chartHeight} Z`;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-card p-4">
+    <div className="rounded-lg border border-border bg-surface p-4">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-white/40" />
-            <span className="font-semibold text-foreground">PnL History</span>
+            <TrendingUp className="h-4 w-4 text-faint" />
+            <span className="text-[13px] font-medium text-foreground">PnL History</span>
           </div>
-          <div className="flex items-center gap-2 pl-3 border-l border-white/10">
+          <div className="flex items-center gap-2 pl-3 border-l border-border">
             <span className={cn(
-              'font-mono text-lg font-bold',
-              isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
+              'font-mono tabular-nums text-base font-medium',
+              isPositive ? 'text-long' : 'text-short'
             )}>
               {isPositive ? '+' : ''}${change.toFixed(2)}
             </span>
             {changePercent !== null && (
               <span className={cn(
-                'text-sm font-mono',
-                isPositive ? 'text-[#22c55e]' : 'text-[#ef4444]'
+                'text-sm font-mono tabular-nums',
+                isPositive ? 'text-long' : 'text-short'
               )}>
                 ({formatPercent(changePercent)})
               </span>
@@ -177,15 +177,15 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
         </div>
 
         {/* Timeframe Selector */}
-        <div className="flex items-center gap-1 bg-secondary/50 rounded-lg p-1">
+        <div className="flex items-center gap-1 bg-surface-2 rounded-md p-0.5">
           {timeframes.map((tf) => (
             <button
               key={tf}
               onClick={() => setTimeframe(tf)}
               className={cn(
-                'px-5 py-1 text-xs font-medium rounded-md transition-all',
+                'px-4 py-1 text-xs font-medium rounded-sm transition-colors',
                 timeframe === tf
-                  ? 'bg-[#eab308] text-black'
+                  ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
@@ -204,35 +204,46 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
         >
           <defs>
             <linearGradient id="pnlGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={isPositive ? '#22c55e' : '#ef4444'} stopOpacity={0.3} />
-              <stop offset="100%" stopColor={isPositive ? '#22c55e' : '#ef4444'} stopOpacity={0} />
+              <stop offset="0%" stopColor={isPositive ? '#16C784' : '#EA3943'} stopOpacity={0.18} />
+              <stop offset="100%" stopColor={isPositive ? '#16C784' : '#EA3943'} stopOpacity={0} />
             </linearGradient>
           </defs>
+          {/* Grid */}
+          {[0.25, 0.5, 0.75].map((t) => (
+            <line
+              key={t}
+              x1={0}
+              y1={chartHeight * t}
+              x2={chartWidth}
+              y2={chartHeight * t}
+              stroke="rgba(255,255,255,0.04)"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
           {/* Area */}
           <path
             d={areaPath}
             fill="url(#pnlGradient)"
-            className="transition-all duration-300 ease-in-out"
           />
           {/* Line */}
           <path
             d={linePath}
             fill="none"
-            stroke={isPositive ? '#22c55e' : '#ef4444'}
+            stroke={isPositive ? '#16C784' : '#EA3943'}
             strokeWidth="1.2"
             vectorEffect="non-scaling-stroke"
-            className="transition-all duration-300 ease-in-out"
           />
         </svg>
 
         {/* Y-axis labels */}
-        <div className="absolute left-0 top-0 h-full flex flex-col justify-between text-xs text-muted-foreground font-mono pointer-events-none py-1">
+        <div className="absolute left-0 top-0 h-full flex flex-col justify-between text-xs text-muted-foreground font-mono tabular-nums pointer-events-none py-1">
           <span>${(maxValue + padding).toFixed(0)}</span>
           <span>${(minValue - padding).toFixed(0)}</span>
         </div>
 
         {/* X-axis labels */}
-        <div className="absolute bottom-0 left-5 w-full flex justify-between text-xs text-muted-foreground font-mono pointer-events-none px-4">
+        <div className="absolute bottom-0 left-5 w-full flex justify-between text-xs text-muted-foreground font-mono tabular-nums pointer-events-none px-4">
           <span>{data[0]?.time}</span>
           <span>{data[Math.floor(data.length / 2)]?.time}</span>
           <span>{data[data.length - 1]?.time}</span>

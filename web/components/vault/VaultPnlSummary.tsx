@@ -73,20 +73,20 @@ export function VaultPnlSummary({
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between gap-2 flex-wrap">
+        <div className="px-6 py-4 border-b border-border flex items-center justify-between gap-2 flex-wrap">
           <div>
-            <h3 className="text-base font-semibold text-foreground">PnL History</h3>
+            <h3 className="text-sm font-medium text-foreground">PnL History</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
               Closed-trade PnL over time
             </p>
           </div>
           <div className="text-right">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <p className="text-[11px] uppercase tracking-wide text-faint">
               Closed-trade PnL
             </p>
             <p
-              className={`font-mono text-xl font-bold ${
-                positive ? 'text-[#22c55e]' : 'text-red-400'
+              className={`font-mono tabular-nums text-lg font-medium ${
+                positive ? 'text-long' : 'text-short'
               }`}
             >
               {positive ? '+' : '-'}${fmtUsdc7(realized < 0n ? -realized : realized)}
@@ -101,21 +101,26 @@ export function VaultPnlSummary({
               x2={W - pad}
               y1={zeroY}
               y2={zeroY}
-              stroke="rgba(255,255,255,0.08)"
+              stroke="hsl(var(--border))"
               strokeWidth={1}
               strokeDasharray="3 3"
             />
-            <path d={d} fill="none" stroke={positive ? '#22c55e' : '#f87171'} strokeWidth={1.5} />
+            <path
+              d={d}
+              fill="none"
+              stroke={positive ? 'hsl(var(--long))' : 'hsl(var(--short))'}
+              strokeWidth={1.5}
+            />
             <circle
               cx={xs(points[points.length - 1]!.ts)}
               cy={ys(points[points.length - 1]!.pnl)}
               r={3}
-              fill={positive ? '#22c55e' : '#f87171'}
+              fill={positive ? 'hsl(var(--long))' : 'hsl(var(--short))'}
             />
           </svg>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 border-t border-white/5 mt-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 border-t border-border mt-4">
           <Tile label="APY" value={fmtBps(vault.apyBps, true)} />
           <Tile label="Max drawdown" value={fmtBps(vault.drawdownBps)} />
           <Tile label="Inflow" value={`$${fmtUsdc7(totalDeposits)}`} />
@@ -129,8 +134,8 @@ export function VaultPnlSummary({
 function Tile({ label, value }: { label: string; value: string }) {
   return (
     <div className="space-y-0.5">
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="font-mono text-sm font-semibold tabular-nums">{value}</p>
+      <p className="text-[11px] uppercase tracking-wide text-faint">{label}</p>
+      <p className="font-mono text-sm font-medium tabular-nums text-foreground">{value}</p>
     </div>
   );
 }

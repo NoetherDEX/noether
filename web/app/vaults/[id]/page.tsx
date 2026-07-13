@@ -40,10 +40,10 @@ export default async function VaultDetailPage({
   ]);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
+    <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="pt-16 pb-20">
+      <main className="pt-12 pb-16">
         <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
           {/* Breadcrumb */}
           <div>
@@ -55,23 +55,23 @@ export default async function VaultDetailPage({
             </Link>
           </div>
 
-          {/* Header card */}
-          <div className="rounded-2xl border border-white/10 bg-card p-6 md:p-8">
+          {/* Header */}
+          <div className="border-b border-border pb-8">
             <div className="flex items-start justify-between gap-6 flex-wrap">
               <div className="flex-1 min-w-[260px]">
                 <div className="flex items-center gap-3 flex-wrap">
-                  <span className="text-[10px] md:text-xs uppercase tracking-[0.18em] text-amber-400 font-medium">
+                  <span className="text-[11px] uppercase tracking-[0.2em] text-primary font-medium">
                     Leader Vault · #{vault.id}
                   </span>
                   {vault.paused && <Badge variant="warning">Paused</Badge>}
                 </div>
-                <h1 className="mt-3 text-3xl md:text-4xl font-bold">{vault.name}</h1>
+                <h1 className="mt-2 text-xl font-medium text-foreground">{vault.name}</h1>
 
                 <a
                   href={`${STELLAR_EXPERT_BASE}/account/${vault.leader}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-3 inline-flex items-center gap-2 text-xs md:text-sm text-muted-foreground hover:text-amber-400 transition-colors group"
+                  className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-primary transition-colors group"
                   title="View leader on stellar.expert"
                 >
                   <span>Leader</span>
@@ -82,7 +82,7 @@ export default async function VaultDetailPage({
                     ↗
                   </span>
                 </a>
-                <p className="mt-1 text-xs text-muted-foreground/70">
+                <p className="mt-1 text-xs text-faint font-mono tabular-nums">
                   Created {formatDate(vault.createdAt)}
                 </p>
               </div>
@@ -93,8 +93,8 @@ export default async function VaultDetailPage({
 
           {/* Beta caveat (A20) — leader-vault accounting counts only liquid
               USDC until the V-1 contract fix lands. */}
-          <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs md:text-sm text-amber-400/90">
-            <span className="font-semibold">Beta:</span> all numbers below count
+          <div className="border-l-2 border-primary/60 pl-3 text-xs text-muted-foreground">
+            <span className="font-medium text-primary">Beta:</span> all numbers below count
             only the USDC sitting in the vault. While the leader has open
             positions, TVL, NAV and P&amp;L exclude the deployed capital — and
             withdrawing mid-trade forfeits your share of it.
@@ -142,9 +142,9 @@ export default async function VaultDetailPage({
           />
 
           {/* How it works (compact) */}
-          <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
-            <div className="px-6 py-4 border-b border-white/10">
-              <h3 className="text-base font-semibold text-foreground">How this vault works</h3>
+          <div className="rounded-lg border border-border bg-surface overflow-hidden">
+            <div className="px-6 py-4 border-b border-border">
+              <h3 className="text-sm font-medium text-foreground">How this vault works</h3>
             </div>
             <div className="p-6 text-sm text-muted-foreground space-y-3 leading-relaxed">
               <p>

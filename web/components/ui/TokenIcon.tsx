@@ -4,7 +4,7 @@ const TOKEN_LOGOS: Record<string, string> = {
   BTC: '/btclogo.svg',
   ETH: '/ethlogo.svg',
   XLM: '/xlmlogo.svg',
-  USDC: '/usdclogo.png',
+  USDC: '/usdclogo.svg',
   NOE: '/favicon.svg',
   SOL: '/sollogo.svg',
   XRP: '/xrplogo.svg',
@@ -31,7 +31,7 @@ export function TokenIcon({ symbol, size = 24, className = '' }: TokenIconProps)
     // Fallback: colored circle with first letter
     return (
       <div
-        className={`rounded-full flex items-center justify-center bg-white/10 text-white font-bold ${className}`}
+        className={`rounded-full flex items-center justify-center bg-surface-3 text-muted-foreground font-medium ${className}`}
         style={{ width: size, height: size, fontSize: size * 0.4 }}
       >
         {symbol.charAt(0)}

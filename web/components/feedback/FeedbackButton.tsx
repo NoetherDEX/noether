@@ -65,13 +65,13 @@ export function FeedbackButton() {
             transition={{ type: 'spring', stiffness: 260, damping: 20 }}
             onClick={() => setIsOpen(true)}
             className={`fixed bottom-6 right-6 z-40 ${hideOnMobileTrade ? 'hidden lg:flex' : 'flex'} items-center gap-2 px-4 py-3
-                       bg-[#0a0a0c] border border-white/10 rounded-full shadow-lg
-                       hover:border-[#eab308]/40 hover:shadow-[0_0_20px_rgba(234,179,8,0.15)]
-                       transition-all duration-300 group cursor-pointer`}
+                       bg-surface border border-border rounded-full
+                       hover:border-primary/40 hover:bg-surface-2
+                       transition-colors duration-300 group cursor-pointer`}
             aria-label="Send feedback"
           >
-            <MessageSquare className="w-5 h-5 text-[#eab308] group-hover:scale-110 transition-transform" />
-            <span className="text-sm font-medium text-neutral-300 group-hover:text-white transition-colors">
+            <MessageSquare className="w-5 h-5 text-primary" />
+            <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
               Feedback
             </span>
           </motion.button>
@@ -83,7 +83,7 @@ export function FeedbackButton() {
         <div className="space-y-5">
           {/* Category Pills */}
           <div>
-            <label className="block text-sm font-medium text-neutral-400 mb-2.5">
+            <label className="block text-sm font-medium text-muted-foreground mb-2.5">
               Category
             </label>
             <div className="flex gap-2">
@@ -94,10 +94,10 @@ export function FeedbackButton() {
                   <button
                     key={cat.id}
                     onClick={() => setCategory(cat.id)}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-colors duration-200 cursor-pointer
                       ${active
-                        ? 'bg-[#eab308]/15 text-[#eab308] border border-[#eab308]/30'
-                        : 'bg-white/5 text-neutral-400 border border-white/10 hover:bg-white/10 hover:text-white'
+                        ? 'bg-primary/10 text-primary border border-primary/30'
+                        : 'bg-surface-2 text-muted-foreground border border-border hover:bg-surface-3 hover:text-foreground'
                       }`}
                   >
                     <Icon className="w-4 h-4" />
@@ -110,49 +110,49 @@ export function FeedbackButton() {
 
           {/* Subject */}
           <div>
-            <label className="block text-sm font-medium text-neutral-400 mb-2">
-              Subject <span className="text-neutral-600">(optional)</span>
+            <label className="block text-sm font-medium text-muted-foreground mb-2">
+              Subject <span className="text-faint">(optional)</span>
             </label>
             <input
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              placeholder="Brief summary..."
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/60
-                         focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/20
-                         transition-all duration-200"
+              placeholder="Brief summary…"
+              className="w-full bg-surface-2 border border-border rounded-md px-4 py-3 text-foreground placeholder:text-faint
+                         focus:outline-none focus:border-border-strong focus:ring-1 focus:ring-ring
+                         transition-colors duration-200"
             />
           </div>
 
           {/* Message */}
           <div>
-            <label className="block text-sm font-medium text-neutral-400 mb-2">
+            <label className="block text-sm font-medium text-muted-foreground mb-2">
               Message
             </label>
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Tell us what's on your mind..."
+              placeholder="Tell us what's on your mind…"
               rows={4}
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/60
-                         focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/20
-                         transition-all duration-200 resize-none"
+              className="w-full bg-surface-2 border border-border rounded-md px-4 py-3 text-foreground placeholder:text-faint
+                         focus:outline-none focus:border-border-strong focus:ring-1 focus:ring-ring
+                         transition-colors duration-200 resize-none"
             />
           </div>
 
           {/* Destination hint */}
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-faint">
             This will open your email client to send feedback to{' '}
-            <span className="text-neutral-400">{SUPPORT_EMAIL}</span>
+            <span className="text-muted-foreground">{SUPPORT_EMAIL}</span>
           </p>
 
           {/* Submit */}
           <button
             onClick={handleSubmit}
             className="w-full flex items-center justify-center gap-2 px-4 py-3
-                       bg-[#eab308] text-black font-semibold rounded-xl
-                       hover:bg-[#ca9a04] transition-colors duration-200
-                       focus:outline-none focus:ring-2 focus:ring-[#eab308]/50 focus:ring-offset-2 focus:ring-offset-[#0a0a0c]
+                       bg-primary text-primary-foreground font-medium rounded-md
+                       hover:bg-primary/90 transition-colors duration-200
+                       focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background
                        cursor-pointer"
           >
             <Send className="w-4 h-4" />

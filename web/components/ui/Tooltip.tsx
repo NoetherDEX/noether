@@ -41,10 +41,10 @@ export function Tooltip({
   };
 
   const arrows = {
-    top: 'top-full left-1/2 -translate-x-1/2 border-t-neutral-800',
-    bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-neutral-800',
-    left: 'left-full top-1/2 -translate-y-1/2 border-l-neutral-800',
-    right: 'right-full top-1/2 -translate-y-1/2 border-r-neutral-800',
+    top: 'top-full left-1/2 -translate-x-1/2 border-t-surface-3',
+    bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-surface-3',
+    left: 'left-full top-1/2 -translate-y-1/2 border-l-surface-3',
+    right: 'right-full top-1/2 -translate-y-1/2 border-r-surface-3',
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLSpanElement>) => {
@@ -72,7 +72,7 @@ export function Tooltip({
           id={tooltipId}
           role="tooltip"
           className={cn(
-            'absolute z-50 block px-3 py-1.5 text-xs text-white bg-neutral-800 rounded-lg',
+            'absolute z-50 block px-2.5 py-1.5 text-xs text-foreground bg-surface-3 border border-border-strong rounded-md',
             'w-max max-w-[16rem] whitespace-normal text-left pointer-events-none',
             'animate-in fade-in-0 zoom-in-95 duration-200',
             positions[position]

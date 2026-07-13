@@ -1,3 +1,7 @@
+# Noether — User Interface
+
+Next.js frontend for the Noether perpetual exchange.
+
 # Noether Web Frontend
 
 Next.js frontend for the Noether Perpetual DEX.
@@ -25,8 +29,6 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 - Tailwind CSS
 - Freighter Wallet SDK
 - Stellar SDK
-
-
 
 
 

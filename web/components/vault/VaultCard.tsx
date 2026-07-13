@@ -32,18 +32,18 @@ export function VaultCard({ vault }: { vault: VaultRow }) {
     apyValue == null
       ? 'text-foreground'
       : apyValue > 0
-      ? 'text-[#22c55e]'
+      ? 'text-long'
       : apyValue < 0
-      ? 'text-red-400'
+      ? 'text-short'
       : 'text-foreground';
 
   return (
     <Link href={`/vaults/${vault.id}`} className="block group">
-      <Card className="hover:border-amber-500/30 transition-colors">
-        <CardContent className="p-5 space-y-4">
+      <Card className="hover:border-border-strong transition-colors" padding="none">
+        <CardContent className="p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="font-semibold text-lg truncate group-hover:text-amber-300 transition-colors">
+              <h3 className="font-medium text-sm text-foreground truncate group-hover:text-primary transition-colors">
                 {vault.name}
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -55,12 +55,12 @@ export function VaultCard({ vault }: { vault: VaultRow }) {
           </div>
 
           {/* Primary stats — 5 SCF-required metrics on two rows */}
-          <div className="grid grid-cols-3 gap-3 pt-3 border-t border-white/5">
+          <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border">
             <Metric label="TVL (liquid)" value={`$${fmtUsdc7(vault.totalUsdc)}`} />
             <Metric label="APY" value={fmtBps(apyValue, true)} valueClass={apyClass} />
             <Metric label="Drawdown" value={fmtBps(vault.drawdownBps)} />
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border">
             <Metric
               label="Depositors"
               value={String(vault.depositorCount ?? '—')}
@@ -92,10 +92,10 @@ function Metric({
 }) {
   return (
     <div className="space-y-0.5">
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className="text-[11px] uppercase tracking-wide text-faint">{label}</p>
       <p
         className={`tabular-nums font-mono ${
-          compact ? 'text-xs' : 'text-base font-semibold'
+          compact ? 'text-xs' : 'text-sm font-medium'
         } ${valueClass ?? 'text-foreground'}`}
       >
         {value}

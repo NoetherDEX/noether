@@ -167,16 +167,16 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
               role="dialog"
               aria-modal="true"
               aria-labelledby={titleId}
-              className="relative w-full sm:max-w-[480px] max-h-[85dvh] bg-[#111114] border border-white/10 rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col outline-none"
+              className="relative w-full sm:max-w-[480px] max-h-[85dvh] bg-surface border border-border-strong rounded-t-lg sm:rounded-lg overflow-hidden flex flex-col outline-none"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] flex-shrink-0">
-                <h2 id={titleId} className="text-base font-bold text-white">Connect Wallet</h2>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+                <h2 id={titleId} className="text-[13px] font-medium text-foreground">Connect Wallet</h2>
                 <button
                   onClick={onClose}
                   aria-label="Close dialog"
-                  className="p-1.5 text-neutral-500 hover:text-white transition-colors rounded-lg hover:bg-white/5"
+                  className="p-1.5 text-faint hover:text-foreground transition-colors rounded-md hover:bg-surface-3"
                 >
                   <X className="w-5 h-5" aria-hidden="true" />
                 </button>
@@ -185,14 +185,14 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
               {/* Content */}
               <div className="flex-1 overflow-y-auto p-4">
                 {error && (
-                  <div className="mb-3 px-3 py-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg">
+                  <div className="mb-3 px-3 py-2 text-sm text-short bg-short/10 border border-short/20 rounded-md">
                     {error}
                   </div>
                 )}
 
                 {loading ? (
                   <div className="flex items-center justify-center py-12">
-                    <Loader2 className="w-6 h-6 text-neutral-500 animate-spin" />
+                    <Loader2 className="w-6 h-6 text-faint animate-spin" />
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -201,24 +201,24 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
                       <button
                         onClick={() => handleSelect(wcWallet)}
                         disabled={connectingId !== null}
-                        className="w-full flex items-center gap-4 px-4 py-4 rounded-xl bg-[#eab308]/10 border border-[#eab308]/20 hover:bg-[#eab308]/15 transition-all cursor-pointer"
+                        className="w-full flex items-center gap-4 px-4 py-4 rounded-md bg-primary/5 border border-primary/20 hover:bg-primary/10 transition-colors cursor-pointer"
                       >
-                        <div className="w-10 h-10 rounded-full bg-[#eab308]/20 flex items-center justify-center flex-shrink-0">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                           {wcWallet.icon ? (
                             // eslint-disable-next-line @next/next/no-img-element -- dynamic wallet icon (data URI / remote) from stellar-wallets-kit; next/image is unsuitable
                             <img src={wcWallet.icon} alt={wcWallet.name} className="w-6 h-6 object-contain" />
                           ) : (
-                            <Smartphone className="w-5 h-5 text-[#eab308]" />
+                            <Smartphone className="w-5 h-5 text-primary" />
                           )}
                         </div>
                         <div className="flex-1 text-left">
-                          <span className="text-sm font-medium text-white block">WalletConnect</span>
-                          <span className="text-xs text-neutral-400">LOBSTR, Freighter & more</span>
+                          <span className="text-sm font-medium text-foreground block">WalletConnect</span>
+                          <span className="text-xs text-muted-foreground">LOBSTR, Freighter & more</span>
                         </div>
                         {connectingId === wcWallet.id ? (
-                          <Loader2 className="w-4 h-4 text-[#eab308] animate-spin" />
+                          <Loader2 className="w-4 h-4 text-primary animate-spin" />
                         ) : (
-                          <span className="px-2.5 py-1 text-[10px] font-medium text-[#eab308] border border-[#eab308]/30 rounded-full">
+                          <span className="px-2.5 py-1 text-[10px] font-medium text-primary border border-primary/30 rounded-full">
                             Mobile
                           </span>
                         )}
@@ -228,9 +228,9 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
                     {/* Divider */}
                     {wcWallet && otherWallets.length > 0 && (
                       <div className="flex items-center gap-3 py-1">
-                        <div className="flex-1 h-px bg-white/[0.06]" />
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-wider">Extensions</span>
-                        <div className="flex-1 h-px bg-white/[0.06]" />
+                        <div className="flex-1 h-px bg-border" />
+                        <span className="text-[11px] text-faint uppercase tracking-wide">Extensions</span>
+                        <div className="flex-1 h-px bg-border" />
                       </div>
                     )}
 
@@ -239,15 +239,15 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
                       {otherWallets.map((wallet) => {
                         const identity = (
                           <>
-                            <div className="w-9 h-9 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center overflow-hidden flex-shrink-0">
+                            <div className="w-9 h-9 rounded-full bg-surface-2 border border-border flex items-center justify-center overflow-hidden flex-shrink-0">
                               {wallet.icon ? (
                                 // eslint-disable-next-line @next/next/no-img-element -- dynamic wallet icon (data URI / remote) from stellar-wallets-kit; next/image is unsuitable
                                 <img src={wallet.icon} alt={wallet.name} className="w-5 h-5 object-contain" />
                               ) : (
-                                <span className="text-xs font-bold text-neutral-500">{wallet.name.charAt(0)}</span>
+                                <span className="text-xs font-medium text-faint">{wallet.name.charAt(0)}</span>
                               )}
                             </div>
-                            <span className="text-sm font-medium text-white flex-1 text-left">{wallet.name}</span>
+                            <span className="text-sm font-medium text-foreground flex-1 text-left">{wallet.name}</span>
                           </>
                         );
 
@@ -257,7 +257,7 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
                           return (
                             <div
                               key={wallet.id}
-                              className="w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all"
+                              className="w-full flex items-center gap-4 px-4 py-3 rounded-md"
                             >
                               <div className="flex items-center gap-4 flex-1 opacity-40">{identity}</div>
                               <a
@@ -265,7 +265,7 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 aria-label={`Install ${wallet.name}`}
-                                className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-neutral-500 border border-white/10 rounded-full hover:text-white hover:border-white/20 transition-colors"
+                                className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-faint border border-border rounded-full hover:text-foreground hover:border-border-strong transition-colors"
                               >
                                 Install
                                 <ExternalLink className="w-2.5 h-2.5" aria-hidden="true" />
@@ -279,11 +279,11 @@ export function WalletModal({ isOpen, onClose, onConnected }: WalletModalProps) 
                             key={wallet.id}
                             onClick={() => handleSelect(wallet)}
                             disabled={connectingId !== null}
-                            className="w-full flex items-center gap-4 px-4 py-3 rounded-xl transition-all hover:bg-white/[0.05] cursor-pointer"
+                            className="w-full flex items-center gap-4 px-4 py-3 rounded-md transition-colors hover:bg-surface-3/50 cursor-pointer"
                           >
                             {identity}
                             {connectingId === wallet.id && (
-                              <Loader2 className="w-4 h-4 text-[#eab308] animate-spin" />
+                              <Loader2 className="w-4 h-4 text-primary animate-spin" />
                             )}
                           </button>
                         );

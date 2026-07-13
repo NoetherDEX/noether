@@ -146,6 +146,10 @@ export function TradingChart({
     });
     chartRef.current = chart;
 
+    // Track the CONTAINER, not the window: lightweight-charts renders at a
+    // fixed pixel size, and the container's height (100dvh-based calc) can
+    // settle after mount without any window resize event — which previously
+    // left a short canvas over a dead void.
     const onResize = () => {
       if (containerRef.current && !disposedRef.current) {
         chart.applyOptions({
@@ -154,6 +158,8 @@ export function TradingChart({
         });
       }
     };
+    const resizeObserver = new ResizeObserver(onResize);
+    resizeObserver.observe(containerRef.current);
     window.addEventListener('resize', onResize);
 
     const onCrosshair = (param: MouseEventParams) => {
@@ -179,6 +185,7 @@ export function TradingChart({
 
     return () => {
       disposedRef.current = true;
+      resizeObserver.disconnect();
       window.removeEventListener('resize', onResize);
       chart.unsubscribeCrosshairMove(onCrosshair);
       markLineRef.current = null;
@@ -207,16 +214,16 @@ export function TradingChart({
 
     if (chartType === 'line') {
       seriesRef.current = chart.addLineSeries({
-        color: CHART_COLORS.gold,
+        color: CHART_COLORS.line,
         lineWidth: 2,
         priceLineVisible: true,
         lastValueVisible: true,
       });
     } else if (chartType === 'area') {
       seriesRef.current = chart.addAreaSeries({
-        lineColor: CHART_COLORS.gold,
-        topColor: 'rgba(234, 179, 8, 0.28)',
-        bottomColor: 'rgba(234, 179, 8, 0.02)',
+        lineColor: CHART_COLORS.line,
+        topColor: CHART_COLORS.areaTop,
+        bottomColor: CHART_COLORS.areaBottom,
         lineWidth: 2,
       });
     } else {
@@ -381,7 +388,7 @@ export function TradingChart({
       overlayRef.current.push(
         series.createPriceLine({
           price,
-          color: CHART_COLORS.order,
+          color: o.direction === 'Long' ? CHART_COLORS.orderLong : CHART_COLORS.orderShort,
           lineWidth: 1 as const,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
@@ -396,41 +403,47 @@ export function TradingChart({
   const shown = hover ?? latest;
 
   return (
-    <div className={cn('relative w-full h-full min-h-[400px]', className)}>
+    <div className={cn('relative w-full h-full', className)}>
       {/* OHLC / price legend */}
       {shown && (
-        <div className="absolute top-2 left-3 z-10 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-mono pointer-events-none select-none">
-          <span className="font-semibold text-neutral-200">{asset}/USD</span>
-          <span className="text-neutral-500">{interval.toUpperCase()}</span>
+        <div className="absolute top-2 left-3 z-10 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-mono tabular-nums pointer-events-none select-none">
+          <span className="font-semibold text-foreground">{asset}/USD</span>
+          <span className="text-faint">{interval.toUpperCase()}</span>
           {shown.open !== undefined ? (
-            <span className={cn(shown.close >= (shown.open ?? 0) ? 'text-emerald-400' : 'text-red-400')}>
+            <span className={cn(shown.close >= (shown.open ?? 0) ? 'text-long' : 'text-short')}>
               {`O ${formatUSD(shown.open ?? 0, dec)}  H ${formatUSD(shown.high ?? 0, dec)}  L ${formatUSD(shown.low ?? 0, dec)}  C ${formatUSD(shown.close, dec)}`}
             </span>
           ) : (
-            <span className="text-neutral-200">{formatUSD(shown.close, dec)}</span>
+            <span className="text-foreground">{formatUSD(shown.close, dec)}</span>
           )}
           {markPrice > 0 && (
-            <span className={cn(stale ? 'text-amber-500/60' : 'text-amber-400')}>
-              {`Mark ${formatUSD(markPrice, dec)}${stale ? ' (stale)' : ''}`}
-            </span>
+            stale ? (
+              <span className="inline-flex items-center rounded-sm border border-primary/25 bg-primary/10 px-1.5 py-px text-[10px] text-primary">
+                {`Mark ${formatUSD(markPrice, dec)} (stale)`}
+              </span>
+            ) : (
+              <span className="text-primary">
+                {`Mark ${formatUSD(markPrice, dec)}`}
+              </span>
+            )
           )}
         </div>
       )}
 
       {isLoading && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#09090b]/80">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/80">
           <div className="flex flex-col items-center gap-2">
-            <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-            <span className="text-sm text-neutral-400">Loading chart...</span>
+            <div className="w-6 h-6 border-2 border-border-strong border-t-foreground rounded-full animate-spin" />
+            <span className="text-xs text-muted-foreground">Loading chart…</span>
           </div>
         </div>
       )}
 
       {error && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#09090b]/80">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/80">
           <div className="text-center">
-            <p className="mb-2 text-red-400">{error}</p>
-            <button onClick={loadData} className="text-sm text-neutral-400 underline hover:text-white">
+            <p className="mb-2 text-xs text-short">{error}</p>
+            <button onClick={loadData} className="text-xs text-muted-foreground underline hover:text-foreground transition-colors">
               Retry
             </button>
           </div>

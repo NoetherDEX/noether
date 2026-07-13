@@ -13,12 +13,12 @@ interface AssetAllocationProps {
   staleAssets?: string[];
 }
 
-// Asset colors mapping
+// Asset colors mapping — restrained chart hues from the token palette
 const assetColors: Record<string, string> = {
-  USDC: '#3b82f6',
-  XLM: '#eab308',
-  BTC: '#f59e0b',
-  ETH: '#627eea',
+  USDC: 'hsl(var(--chart-1))',
+  XLM: 'hsl(var(--chart-2))',
+  BTC: 'hsl(var(--chart-3))',
+  ETH: 'hsl(var(--chart-4))',
 };
 
 export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: AssetAllocationProps) {
@@ -50,7 +50,7 @@ export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: As
       allocations.push({
         asset,
         value,
-        color: assetColors[asset] || '#666',
+        color: assetColors[asset] || 'hsl(var(--faint))',
         type: 'Position',
       });
     }
@@ -70,18 +70,18 @@ export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: As
   // Determine collateral health
   const stablePercent = allocationsWithPercent.find(a => a.asset === 'USDC')?.percentage || 0;
   const healthStatus = stablePercent >= 70 ? 'Excellent' : stablePercent >= 40 ? 'Good' : 'At Risk';
-  const healthColor = stablePercent >= 70 ? 'text-[#22c55e]' : stablePercent >= 40 ? 'text-[#f59e0b]' : 'text-[#ef4444]';
+  const healthColor = stablePercent >= 70 ? 'text-long' : stablePercent >= 40 ? 'text-primary' : 'text-short';
 
   if (allocationsWithPercent.length === 0) {
     return (
-      <div className="rounded-xl border border-white/10 bg-card p-4 flex flex-col">
+      <div className="rounded-lg border border-border bg-surface p-4 flex flex-col">
         <div className="flex items-center gap-2 mb-4">
-          <Wallet className="h-5 w-5 text-white/40" />
-          <span className="font-semibold text-foreground">Asset Allocation</span>
+          <Wallet className="h-4 w-4 text-faint" />
+          <span className="text-[13px] font-medium text-foreground">Asset Allocation</span>
         </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center py-8">
-            <Wallet className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+            <Wallet className="w-10 h-10 text-faint mx-auto mb-3" />
             <p className="text-muted-foreground text-sm">
               No assets to display
             </p>
@@ -92,24 +92,24 @@ export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: As
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-card p-4 flex flex-col">
+    <div className="rounded-lg border border-border bg-surface p-4 flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Wallet className="h-5 w-5 text-white/40" />
-          <span className="font-semibold text-foreground">Asset Allocation</span>
+          <Wallet className="h-4 w-4 text-faint" />
+          <span className="text-[13px] font-medium text-foreground">Asset Allocation</span>
         </div>
-        <span className="font-mono text-sm text-muted-foreground">
+        <span className="font-mono tabular-nums text-sm text-muted-foreground">
           ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
       </div>
 
       {/* Stacked Bar */}
-      <div className="h-3 rounded-full overflow-hidden flex mb-6">
+      <div className="h-2 rounded-sm overflow-hidden flex mb-6">
         {allocationsWithPercent.map((item, i) => (
           <div
             key={item.asset}
-            className="h-full transition-all"
+            className="h-full"
             style={{
               width: `${item.percentage}%`,
               backgroundColor: item.color,
@@ -124,17 +124,17 @@ export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: As
         {allocationsWithPercent.map((item) => (
           <div
             key={item.asset}
-            className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-white/5"
+            className="flex items-center justify-between px-3 py-2 rounded-md bg-surface-2 border border-border"
           >
             <div className="flex items-center gap-3">
               {/* Asset Icon */}
               <TokenIcon symbol={item.asset} size={32} />
               <div>
                 <div className="flex items-center gap-1.5">
-                  <span className="font-medium text-foreground">{item.asset}</span>
+                  <span className="text-sm font-medium text-foreground">{item.asset}</span>
                   {staleAssets.includes(item.asset) && (
                     <span
-                      className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20"
+                      className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded-sm bg-primary/10 text-primary border border-primary/20"
                       title="Live price read failed — value uses the last known price"
                     >
                       Stale
@@ -145,18 +145,18 @@ export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: As
               </div>
             </div>
             <div className="text-right">
-              <div className="font-mono text-sm font-semibold text-foreground">
+              <div className="font-mono tabular-nums text-sm font-medium text-foreground">
                 ${item.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div className="flex items-center gap-2">
                 {/* Mini progress bar */}
-                <div className="w-16 h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div className="w-16 h-1 bg-surface-3 rounded-sm overflow-hidden">
                   <div
-                    className="h-full rounded-full"
+                    className="h-full rounded-sm"
                     style={{ width: `${item.percentage}%`, backgroundColor: item.color }}
                   />
                 </div>
-                <span className="font-mono text-xs text-muted-foreground">{item.percentage.toFixed(0)}%</span>
+                <span className="font-mono tabular-nums text-xs text-muted-foreground">{item.percentage.toFixed(0)}%</span>
               </div>
             </div>
           </div>
@@ -164,10 +164,10 @@ export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: As
       </div>
 
       {/* Collateral Health */}
-      <div className="mt-4 pt-4 border-t border-white/10">
+      <div className="mt-4 pt-4 border-t border-border">
         <div className="flex items-center justify-between text-xs">
           <span className="text-muted-foreground">Collateral Health</span>
-          <span className={cn('font-semibold', healthColor)}>{healthStatus}</span>
+          <span className={cn('font-medium', healthColor)}>{healthStatus}</span>
         </div>
         <p className="text-xs text-muted-foreground mt-1">
           {stablePercent >= 70

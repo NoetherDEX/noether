@@ -97,7 +97,7 @@ export function ReferralDashboard() {
 
   if (state.loading && !self) {
     return (
-      <div className="rounded-2xl border border-white/10 bg-card p-8 text-center text-sm text-muted-foreground">
+      <div className="rounded-lg border border-border bg-surface p-8 text-center text-sm text-muted-foreground">
         Loading dashboard…
       </div>
     );
@@ -105,8 +105,8 @@ export function ReferralDashboard() {
 
   if (state.error) {
     return (
-      <div className="rounded-2xl border border-red-500/30 bg-card p-6 space-y-3">
-        <p className="text-sm text-red-400">Could not load dashboard: {state.error}</p>
+      <div className="rounded-lg border border-short/30 bg-surface p-6 space-y-3">
+        <p className="text-sm text-short">Could not load dashboard: {state.error}</p>
         <button
           type="button"
           onClick={clearAuth}
@@ -130,7 +130,7 @@ export function ReferralDashboard() {
         />
 
         {state.binding && (
-          <div className="rounded-2xl border border-white/10 bg-card p-5 text-xs text-muted-foreground">
+          <div className="rounded-lg border border-border bg-surface px-5 py-3 text-xs text-muted-foreground">
             You were referred by code{' '}
             <code className="text-foreground font-mono">{state.binding.code}</code>{' '}
             on {formatDate(state.binding.boundAt)}.
@@ -152,10 +152,10 @@ export function ReferralDashboard() {
 
   return (
     <div className="space-y-6 md:space-y-8">
+      <ShareLinkCard code={self.code} />
       <ReferralStats row={self} />
       <ClaimFeesCard claimable={self.claimable} onClaimed={refresh} />
-      <ShareLinkCard code={self.code} />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
         <ReferralTradesTable rows={state.trades} />
         <ReferralClaimsTable rows={state.claims} />
       </div>

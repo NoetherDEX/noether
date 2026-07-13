@@ -9,8 +9,8 @@ interface TrustlineWarningProps {
 
 export function TrustlineWarning({ onAddTrustline, isLoading }: TrustlineWarningProps) {
   return (
-    <div className="p-4 rounded-lg border border-white/[0.06] bg-white/[0.02]">
-      <p className="text-sm font-medium text-[#f59e0b] mb-1">Trustline Required</p>
+    <div className="border-l-2 border-primary/60 pl-3 py-1">
+      <p className="text-xs font-medium text-primary mb-1">Trustline Required</p>
       <p className="text-xs text-muted-foreground mb-3">
         Add NOE to your wallet to receive LP tokens when you deposit.
       </p>

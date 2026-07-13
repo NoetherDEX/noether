@@ -20,34 +20,34 @@ export function AppFooter() {
     <footer
       data-noether-chrome
       className={cn(
-        'relative z-10 border-t border-white/[0.06] px-4 sm:px-6 py-4',
+        'relative z-10 border-t border-border px-4 sm:px-6 py-3',
         // Clear the fixed MobileTradeBar on /trade below lg
-        isTrade && 'pb-24 lg:pb-4'
+        isTrade && 'pb-24 lg:pb-3'
       )}
     >
-      <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-white/60">
-        <Link href="/terms" className="hover:text-white/90 transition-colors">
+      <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <Link href="/terms" className="hover:text-foreground transition-colors">
           Terms
         </Link>
-        <span aria-hidden="true" className="text-white/25">·</span>
+        <span aria-hidden="true" className="text-faint">·</span>
         <a
           href={DOCS_URL}
           target="_blank"
           rel="noopener noreferrer"
-          className="hover:text-white/90 transition-colors"
+          className="hover:text-foreground transition-colors"
         >
           Docs
         </a>
-        <span aria-hidden="true" className="text-white/25">·</span>
+        <span aria-hidden="true" className="text-faint">·</span>
         <a
           href={DISCORD_URL}
           target="_blank"
           rel="noopener noreferrer"
-          className="hover:text-white/90 transition-colors"
+          className="hover:text-foreground transition-colors"
         >
           Discord
         </a>
-        <span aria-hidden="true" className="text-white/25">·</span>
+        <span aria-hidden="true" className="text-faint">·</span>
         <span>© 2026 Noether · Testnet</span>
       </div>
     </footer>

@@ -22,10 +22,10 @@ export function HowItWorks() {
   }, []);
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-card overflow-hidden">
+    <div className="rounded-lg border border-border bg-surface overflow-hidden">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/[0.02] transition-colors"
+        className="w-full px-6 py-4 flex items-center justify-between hover:bg-surface-2 transition-colors"
       >
         <h3 className="text-sm font-medium text-foreground">How It Works</h3>
         {isExpanded ? (
@@ -37,24 +37,24 @@ export function HowItWorks() {
 
       <div
         className={cn(
-          'overflow-hidden transition-all duration-300',
+          'overflow-hidden transition-[max-height,opacity] duration-300',
           isExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'
         )}
       >
         <div className="px-6 pb-6">
           <div className="grid grid-cols-3 gap-4">
-            <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-4">
-              <span className="text-[11px] uppercase tracking-wider text-white/30 font-medium">Step 1</span>
+            <div className="rounded-md bg-surface-2 border border-border p-4">
+              <span className="text-[11px] uppercase tracking-wide text-faint font-medium">Step 1</span>
               <p className="text-sm font-medium text-foreground mt-1.5">Deposit</p>
               <p className="text-xs text-muted-foreground mt-1">USDC in, NOE tokens out.</p>
             </div>
-            <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-4">
-              <span className="text-[11px] uppercase tracking-wider text-white/30 font-medium">Step 2</span>
+            <div className="rounded-md bg-surface-2 border border-border p-4">
+              <span className="text-[11px] uppercase tracking-wide text-faint font-medium">Step 2</span>
               <p className="text-sm font-medium text-foreground mt-1.5">Earn</p>
               <p className="text-xs text-muted-foreground mt-1">Maker/taker fees (0.02%/0.05%, volume-tiered) + trader losses.</p>
             </div>
-            <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-4">
-              <span className="text-[11px] uppercase tracking-wider text-white/30 font-medium">Step 3</span>
+            <div className="rounded-md bg-surface-2 border border-border p-4">
+              <span className="text-[11px] uppercase tracking-wide text-faint font-medium">Step 3</span>
               <p className="text-sm font-medium text-foreground mt-1.5">Withdraw</p>
               <p className="text-xs text-muted-foreground mt-1">Redeem NOE for USDC when the pool has free liquidity.</p>
             </div>
