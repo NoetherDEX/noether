@@ -71,13 +71,18 @@ export function MarketStatsBar({
     };
   }, [selectedAsset]);
 
+  // ONE subscription per selected asset. Depending on `ticker` here caused a
+  // self-retriggering loop: every price frame allocated a new ticker object,
+  // re-keyed this effect, and subscribeToPriceUpdates fetches immediately on
+  // subscribe — so the 5s poll became a continuous serial fetch loop against
+  // /api/price for every visitor. The functional updater below already
+  // handles the pre-first-fetch (null) case.
   useEffect(() => {
-    if (!ticker) return;
     const unsubscribe = subscribeToPriceUpdates(selectedAsset, (newPrice) => {
       setTicker((prev) => (prev ? { ...prev, price: newPrice } : prev));
     });
     return unsubscribe;
-  }, [selectedAsset, ticker]);
+  }, [selectedAsset]);
 
   const markPrice = markPrices[selectedAsset] || 0;
   const displayPrice = markPrice > 0 ? markPrice : ticker?.price ?? 0;
