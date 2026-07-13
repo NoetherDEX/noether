@@ -111,26 +111,41 @@ function parseMarketEvents(diagnosticEventsXdr: string[] | undefined): TradeEven
       const topics = body.topics();
       if (!topics.length) continue;
       const topicName = scValToNative(topics[0]) as string;
-      if (!['position_opened', 'position_closed', 'position_liquidated'].includes(topicName)) continue;
+      if (!['position_opened', 'position_closed', 'position_liquidated', 'cross_liq'].includes(topicName)) continue;
 
       const data = scValToNative(body.data());
-      if (!Array.isArray(data) || !data[1]) continue;
+      if (!Array.isArray(data)) continue;
 
-      const positionId = String(data[0]);
-      const trader = String(data[1]);
+      let positionId = '';
+      let trader = '';
       let size = 0;
       let pnl = 0;
       if (topicName === 'position_opened') {
         // Event: (id, trader, asset, direction, size, entry_price)
+        positionId = String(data[0]);
+        trader = String(data[1]);
         size = bigIntToNumber(data[4] as bigint);
       } else if (topicName === 'position_closed') {
         // Event: (id, trader, asset, direction, size, entry_price, current_price, pnl)
+        positionId = String(data[0]);
+        trader = String(data[1]);
         size = bigIntToNumber(data[4] as bigint);
         pnl = bigIntToNumber(data[7] as bigint);
       } else if (topicName === 'position_liquidated') {
         // Event: (id, trader, asset, direction, size, keeper_reward, current_price)
+        // NOTE: the deployed event carries NO pnl — the trader's loss stays
+        // uncounted (flagged via liq_count) until the C2 event enrichment.
+        positionId = String(data[0]);
+        trader = String(data[1]);
         size = bigIntToNumber(data[4] as bigint);
+      } else if (topicName === 'cross_liq') {
+        // Event: (trader, total_pnl, keeper_reward) — one event for the whole
+        // cross account, and total_pnl IS the real (negative) figure.
+        positionId = 'cross';
+        trader = String(data[0]);
+        pnl = bigIntToNumber(data[1] as bigint);
       }
+      if (!trader) continue;
       events.push({ type: topicName, trader, size, pnl, positionId });
     } catch { /* skip a single malformed event, keep the rest */ }
   }
@@ -224,12 +239,13 @@ async function recomputeTraderAggregates(): Promise<void> {
   const db = getDb();
   await db.batch([
     'DELETE FROM traders',
-    `INSERT INTO traders (address, trade_count, total_volume, total_pnl, last_updated)
+    `INSERT INTO traders (address, trade_count, total_volume, total_pnl, liq_count, last_updated)
      SELECT
        trader,
        SUM(CASE WHEN event_type = 'position_opened' THEN 1 ELSE 0 END),
        SUM(CASE WHEN event_type = 'position_opened' THEN size ELSE 0 END),
        SUM(CASE WHEN event_type != 'position_opened' THEN pnl ELSE 0 END),
+       SUM(CASE WHEN event_type IN ('position_liquidated', 'cross_liq') THEN 1 ELSE 0 END),
        unixepoch()
      FROM trades
      GROUP BY trader`,

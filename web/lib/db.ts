@@ -30,6 +30,7 @@ export async function ensureSchema(): Promise<void> {
       trade_count INTEGER NOT NULL DEFAULT 0,
       total_volume REAL NOT NULL DEFAULT 0,
       total_pnl REAL NOT NULL DEFAULT 0,
+      liq_count INTEGER NOT NULL DEFAULT 0,
       last_updated INTEGER NOT NULL DEFAULT (unixepoch())
     )`,
     `CREATE TABLE IF NOT EXISTS sync_state (
@@ -45,4 +46,12 @@ export async function ensureSchema(): Promise<void> {
       first_seen INTEGER NOT NULL DEFAULT (unixepoch())
     )`,
   ]);
+
+  // Migration for pre-existing DBs: CREATE TABLE IF NOT EXISTS doesn't add
+  // new columns. Errors when the column already exists — ignore.
+  try {
+    await db.execute('ALTER TABLE traders ADD COLUMN liq_count INTEGER NOT NULL DEFAULT 0');
+  } catch {
+    /* column already exists */
+  }
 }

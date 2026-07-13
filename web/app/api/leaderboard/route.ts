@@ -9,7 +9,7 @@ export async function GET() {
     const db = getDb();
 
     const result = await db.execute(
-      'SELECT address, trade_count, total_volume, total_pnl FROM traders ORDER BY total_volume DESC'
+      'SELECT address, trade_count, total_volume, total_pnl, liq_count, last_updated FROM traders ORDER BY total_volume DESC'
     );
 
     const leaderboard = result.rows.map(row => ({
@@ -17,6 +17,10 @@ export async function GET() {
       tradeCount: row.trade_count as number,
       totalVolume: row.total_volume as number,
       pnl: row.total_pnl as number,
+      liqCount: (row.liq_count as number) ?? 0,
+      // Cron-sync stamp (unix seconds) — lets the UI show "Updated Xm ago"
+      // instead of presenting stale rankings as live.
+      lastUpdated: (row.last_updated as number) ?? null,
     }));
 
     return NextResponse.json(leaderboard, {

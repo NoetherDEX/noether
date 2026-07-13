@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Info, Users, BarChart3, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { Tooltip } from '@/components/ui';
-import { formatNumber, formatUSD, truncateAddress } from '@/lib/utils/format';
+import { formatNumber, formatUSD, formatRelativeTime, truncateAddress } from '@/lib/utils/format';
 import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useWalletStore } from '@/lib/store';
 import { getLeaderboardData, type LeaderboardTrader } from '@/lib/stellar/leaderboard';
@@ -36,6 +36,22 @@ function PnlCell({ value, className }: { value: number; className?: string }) {
     <span className={cn('font-mono tabular-nums text-xs', isPositive ? 'text-long' : 'text-short', className)}>
       {isPositive ? '+' : ''}{formatUSD(value)}
     </span>
+  );
+}
+
+/** B2: flags accounts whose PnL is INCOMPLETE — the deployed isolated-liq
+ *  event carries no loss figure, so a blown account would otherwise rank as
+ *  break-even. Cross-account liquidation losses ARE counted (cross_liq
+ *  carries total_pnl); this marks the remainder honestly. */
+function LiqFlag({ count }: { count: number }) {
+  return (
+    <Tooltip
+      content={`${count} liquidation${count === 1 ? '' : 's'} — isolated-liq losses aren't included in PnL yet (the on-chain event doesn't report them until the next contract deploy).`}
+    >
+      <span className="text-[10px] font-medium text-short border border-short/30 bg-short/10 rounded-sm px-1 whitespace-nowrap">
+        {count}× liq
+      </span>
+    </Tooltip>
   );
 }
 
@@ -94,6 +110,14 @@ export function LeaderboardContent() {
   // Error with nothing to show: totals are unknown, not zero.
   const errorNoData = fetchFailed && traders.length === 0;
   const staleData = fetchFailed && traders.length > 0;
+
+  // Cron-sync freshness: rankings update via a background sync, not live.
+  // Show WHEN they were computed; amber past 10 minutes (B2).
+  const syncedAtMs = traders.reduce(
+    (max, t) => (t.lastUpdated ? Math.max(max, t.lastUpdated * 1000) : max),
+    0
+  );
+  const syncIsStale = syncedAtMs > 0 && Date.now() - syncedAtMs > 10 * 60 * 1000;
 
   const selfIdx = walletAddress ? sorted.findIndex((t) => t.address === walletAddress) : -1;
   const self = selfIdx >= 0 ? sorted[selfIdx] : null;
@@ -209,6 +233,26 @@ export function LeaderboardContent() {
           </div>
         </div>
 
+        {/* Sync freshness: rankings are cron-computed, not live (B2) */}
+        {!loading && !errorNoData && syncedAtMs > 0 && (
+          <div
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-1.5 text-[11px] border-b border-border',
+              syncIsStale ? 'text-primary' : 'text-faint'
+            )}
+          >
+            <span
+              className={cn(
+                'inline-block h-1.5 w-1.5 rounded-full',
+                syncIsStale ? 'bg-primary' : 'bg-long'
+              )}
+              aria-hidden="true"
+            />
+            Updated {formatRelativeTime(syncedAtMs)}
+            {syncIsStale && <span>— sync may be delayed</span>}
+          </div>
+        )}
+
         {/* Stale banner: a background refresh failed but we still have data */}
         {staleData && (
           <div
@@ -320,7 +364,10 @@ export function LeaderboardContent() {
                         <span className="font-mono tabular-nums text-xs text-muted-foreground">{formatUSD(trader.totalVolume, 0)}</span>
                       </td>
                       <td className="py-2 px-4 text-right">
-                        <PnlCell value={trader.pnl} />
+                        <span className="inline-flex items-center gap-1.5">
+                          {(trader.liqCount ?? 0) > 0 && <LiqFlag count={trader.liqCount!} />}
+                          <PnlCell value={trader.pnl} />
+                        </span>
                       </td>
                     </tr>
                 ))
@@ -379,7 +426,8 @@ export function LeaderboardContent() {
                       <span className="font-mono tabular-nums">{formatUSD(trader.totalVolume, 0)}</span>
                     </div>
                   </div>
-                  <div className="text-right flex-shrink-0">
+                  <div className="text-right flex-shrink-0 flex items-center gap-1.5">
+                    {(trader.liqCount ?? 0) > 0 && <LiqFlag count={trader.liqCount!} />}
                     <PnlCell value={trader.pnl} />
                   </div>
                 </div>
