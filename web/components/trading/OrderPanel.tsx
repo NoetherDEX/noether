@@ -812,7 +812,16 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           ).map((type) => (
             <button
               key={type}
-              onClick={() => setOrderType(type)}
+              onClick={() => {
+                if (type === orderType) return;
+                setOrderType(type);
+                // B7: TIF / Reduce-Only are per-order settings, not sticky
+                // panel state. A Reduce-Only toggled while exploring Limit
+                // silently made a later Stop-Limit entry un-fillable,
+                // escrowing collateral with zero explanation.
+                setTimeInForce(0);
+                setReduceOnly(false);
+              }}
               className={cn(
                 'rounded-[4px] px-1 py-1.5 text-[11px] font-medium transition-colors',
                 orderType === type
@@ -1312,6 +1321,22 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               </div>
             )}
 
+            {/* B7: every flag the order encodes is echoed at the point of
+                signature — no invisible TIF/Reduce-Only riding along. */}
+            {(orderType === 'Limit' || orderType === 'StopLimit') && (
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">Flags</span>
+                <span className={cn('font-mono text-xs', reduceOnly ? 'text-primary' : 'text-foreground')}>
+                  {[
+                    timeInForce === 1 ? 'IOC' : timeInForce === 2 ? 'Post Only' : 'GTC',
+                    reduceOnly ? 'Reduce-Only' : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              </div>
+            )}
+
             {/* Effective entry: trigger (Limit) / limit price (Stop-Limit) /
                 mark (Market) — the price the contract will actually fill at,
                 which also drives the liq preview below (A19). */}
@@ -1409,8 +1434,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           </div>
         </div>
 
-        {/* Errors */}
-        {errors.length > 0 && collateralNum > 0 && (
+        {/* Errors — Trail Stop has no collateral input, so its blockers must
+            render unconditionally (they were invisible behind the old
+            collateralNum > 0 gate while the CTA sat disabled). */}
+        {errors.length > 0 && (orderType === 'TrailingStop' || collateralNum > 0) && (
           <div className="border-l-2 border-short/60 pl-3 space-y-1">
             {errors.map((error, i) => (
               <div key={i} className="flex items-center gap-2 text-xs text-short">
