@@ -26,7 +26,7 @@
     ·
     <a href="https://twitter.com/Noetherdex">Twitter</a>
     ·
-    <a href="https://discord.gg/2BxYv6Uc">Discord</a>
+    <a href="https://discord.gg/hmS6t2R5z">Discord</a>
     ·
     <a href="https://t.me/Noetherdex">Telegram</a>
     ·
@@ -912,7 +912,7 @@ Distributed under the MIT License. See [`LICENSE`](./LICENSE) for the full text.
 
 - Website: [noether.exchange](https://noether.exchange)
 - Twitter / X: [@Noetherdex](https://twitter.com/Noetherdex)
-- Discord: [discord.gg/2BxYv6Uc](https://discord.gg/2BxYv6Uc)
+- Discord: [discord.gg/hmS6t2R5z](https://discord.gg/hmS6t2R5z)
 - Telegram: [t.me/Noetherdex](https://t.me/Noetherdex)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -968,7 +968,7 @@ Einstein called her *"the most significant creative mathematical genius thus far
 [twitter-shield]: https://img.shields.io/twitter/follow/Noetherdex?style=flat-square&logo=x&logoColor=white&label=%40Noetherdex
 [twitter-url]: https://twitter.com/Noetherdex
 [discord-shield]: https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white
-[discord-url]: https://discord.gg/2BxYv6Uc
+[discord-url]: https://discord.gg/hmS6t2R5z
 [telegram-shield]: https://img.shields.io/badge/Telegram-Join-26A5E4?style=flat-square&logo=telegram&logoColor=white
 [telegram-url]: https://t.me/Noetherdex
 [rust-shield]: https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust&logoColor=white
