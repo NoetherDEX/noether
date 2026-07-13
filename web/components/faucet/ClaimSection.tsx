@@ -9,8 +9,10 @@ import type { ClaimAmount } from '@/lib/stellar/faucet';
 import { useState, useEffect } from 'react';
 
 interface ClaimSectionProps {
-  claimedToday: number;
-  remainingToday: number;
+  /** null = faucet history read failed — stats render '—', claiming stays
+   *  enabled (the claim API enforces the real limit server-side). */
+  claimedToday: number | null;
+  remainingToday: number | null;
   dailyLimit: number;
   selectedAmount: ClaimAmount | null;
   onSelectAmount: (amount: ClaimAmount) => void;
@@ -29,8 +31,9 @@ export function ClaimSection({
   isClaiming,
   disabled,
 }: ClaimSectionProps) {
-  const progressPercent = (claimedToday / dailyLimit) * 100;
-  const availableAmounts = getAvailableAmounts(remainingToday);
+  const progressPercent = claimedToday == null ? 0 : (claimedToday / dailyLimit) * 100;
+  // Unknown remaining → offer every amount; the server rejects over-claims.
+  const availableAmounts = getAvailableAmounts(remainingToday ?? dailyLimit);
   const [timeUntilReset, setTimeUntilReset] = useState(getTimeUntilReset());
 
   // Update countdown every second
@@ -62,7 +65,7 @@ export function ClaimSection({
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Daily Limit</span>
                 <span className="text-foreground font-medium font-mono tabular-nums">
-                  {formatNumber(claimedToday, 0)} / {formatNumber(dailyLimit, 0)} USDC
+                  {claimedToday == null ? '—' : formatNumber(claimedToday, 0)} / {formatNumber(dailyLimit, 0)} USDC
                 </span>
               </div>
               <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
@@ -78,7 +81,7 @@ export function ClaimSection({
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">
-                  Remaining: <span className="font-mono tabular-nums">{formatNumber(remainingToday, 0)}</span> USDC
+                  Remaining: <span className="font-mono tabular-nums">{remainingToday == null ? '—' : formatNumber(remainingToday, 0)}</span> USDC
                 </span>
                 {isLimitReached && (
                   <span className="flex items-center gap-1 text-primary">

@@ -9,7 +9,8 @@ import type { ClaimRecord } from '@/lib/stellar/faucet';
 
 interface ClaimHistoryProps {
   records: (ClaimRecord & { runningTotal: number })[];
-  totalAllTime: number;
+  /** null = history read failed — renders '—', never a fake 0. */
+  totalAllTime: number | null;
   isLoading: boolean;
 }
 
@@ -39,7 +40,7 @@ export function ClaimHistory({
         <div className="text-sm text-muted-foreground">
           Total Received:{' '}
           <span className="text-foreground font-medium font-mono tabular-nums">
-            {formatNumber(totalAllTime, 0)} USDC
+            {totalAllTime == null ? '—' : formatNumber(totalAllTime, 0)} USDC
           </span>
         </div>
       </div>
