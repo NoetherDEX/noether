@@ -50,9 +50,6 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const vaultBalanceUsdc = leaderVault
     ? Number(BigInt(leaderVault.totalUsdc)) / Number(VAULT_PRECISION)
     : 0;
-  // null = balance unknown (read failed) — render '—' and let the chain
-  // enforce limits rather than blocking on a fabricated 0.
-  const effectiveUsdcBalance: number | null = isLeader ? vaultBalanceUsdc : usdcBalance;
   const {
     direction,
     collateral,
@@ -79,6 +76,19 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // null = pool balance unknown (read failed/not loaded) — renders '—' and
   // disables math that would otherwise run on a fabricated 0.
   const [crossBalance, setCrossBalance] = useState<number | null>(null);
+
+  // B6: what an order can actually SPEND. In Cross mode the contract funds
+  // collateral from the pool and auto-deposits only the wallet shortfall —
+  // validating against the wallet alone false-blocked pool-funded opens.
+  // null when any component is unknown (gates skip; chain enforces).
+  const spendableBalance: number | null = isLeader
+    ? vaultBalanceUsdc
+    : marginMode === 'Cross'
+    ? crossBalance == null || usdcBalance == null
+      ? null
+      : crossBalance + usdcBalance
+    : usdcBalance;
+
   const [crossDepositAmount, setCrossDepositAmount] = useState<string>('');
   const [crossWithdrawAmount, setCrossWithdrawAmount] = useState<string>('');
   const [isCrossDepositing, setIsCrossDepositing] = useState(false);
@@ -292,8 +302,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
   } else {
     if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
-    if (effectiveUsdcBalance != null && collateralNum > effectiveUsdcBalance)
-      errors.push(isLeader ? 'Vault balance too low' : 'Insufficient USDC balance');
+    if (spendableBalance != null && collateralNum > spendableBalance)
+      errors.push(
+        isLeader
+          ? 'Vault balance too low'
+          : marginMode === 'Cross'
+          ? 'Exceeds pool + wallet balance'
+          : 'Insufficient USDC balance'
+      );
     if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
     if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
     if (isLeader && marginMode === 'Cross')
@@ -578,11 +594,12 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     setIsSubmitting(false);
   };
 
-  // Percentage buttons for collateral — uses the active source (wallet or vault).
+  // Percentage buttons for collateral — sized off what an order can actually
+  // spend (wallet, pool + wallet in Cross, or the vault in leader mode).
   // No-op while the balance is unknown (never size an order off a fabricated 0).
   const handlePercentage = (pct: number) => {
-    if (effectiveUsdcBalance == null) return;
-    setCollateral(Math.floor(effectiveUsdcBalance * (pct / 100)).toString());
+    if (spendableBalance == null) return;
+    setCollateral(Math.floor(spendableBalance * (pct / 100)).toString());
   };
 
   // Cross-margin deposit handler
@@ -862,9 +879,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
-              {isLeader ? 'Vault balance' : 'Balance'}:{' '}
+              {isLeader ? 'Vault balance' : marginMode === 'Cross' ? 'Spendable (pool + wallet)' : 'Balance'}:{' '}
               <span className="font-mono text-foreground">
-                {effectiveUsdcBalance == null ? '—' : formatNumber(effectiveUsdcBalance)}
+                {spendableBalance == null ? '—' : formatNumber(spendableBalance)}
               </span>{' '}
               USDC
             </span>
@@ -1283,6 +1300,17 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <span className="text-xs text-muted-foreground">Position Size</span>
               <span className="font-mono text-xs text-foreground">{formatUSD(positionSize)}</span>
             </div>
+
+            {/* B6: the contract funds Cross opens from the pool and pulls only
+                the shortfall from the wallet — say so before the signature. */}
+            {marginMode === 'Cross' && crossBalance != null && collateralNum > crossBalance && (
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">Auto-deposit from wallet</span>
+                <span className="font-mono text-xs text-primary">
+                  {formatNumber(collateralNum - crossBalance)} USDC
+                </span>
+              </div>
+            )}
 
             {/* Effective entry: trigger (Limit) / limit price (Stop-Limit) /
                 mark (Market) — the price the contract will actually fill at,
