@@ -168,7 +168,12 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install web deps
-        run: npm ci
+        # Pinned to npm 10: web/package-lock.json is npm-10-generated, and
+        # newer npm majors prune optional/nested entries that npm 10's
+        # `npm ci` then reports as "Missing" (EUSAGE). Pinning the install
+        # tool makes this job independent of whatever npm the runner's Node
+        # bundles — and of whatever npm regenerated the lock locally.
+        run: npx -y npm@10 ci
 
       - name: Typecheck web
         run: npx tsc --noEmit
