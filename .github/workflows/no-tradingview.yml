@@ -16,6 +16,6 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Scan the whole tree for TradingView Advanced Charts files
         run: sh scripts/guard-no-tradingview.sh --all
