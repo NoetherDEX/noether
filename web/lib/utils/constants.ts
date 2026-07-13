@@ -94,7 +94,7 @@ export const FAUCET_DAILY_LIMIT_USDC = 1000;
 // Community links — ONE canonical invite (three different invites used to be
 // hardcoded across not-found / landing footer / referral + keys cards). This
 // is the invite the active T2 surfaces (referrals, api-keys) already shipped.
-export const DISCORD_URL = 'https://discord.gg/2BxYv6Uc';
+export const DISCORD_URL = 'https://discord.gg/hmS6t2R5z';
 
 // Network configuration
 export const NETWORK = {
