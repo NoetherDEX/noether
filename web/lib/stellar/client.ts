@@ -146,6 +146,23 @@ function txResultMessage(txResult: xdr.TransactionResult | undefined | null): st
 }
 
 /**
+ * Thrown when a submitted transaction hasn't reached a final status within
+ * the polling window. The tx was NOT rejected — it may still land. Carries
+ * the hash so UIs can link the explorer instead of claiming failure.
+ */
+export class TxStillPendingError extends Error {
+  readonly txHash: string;
+  constructor(txHash: string) {
+    super(
+      `Transaction is still confirming (${txHash.slice(0, 8)}…) — it was submitted, ` +
+        'not rejected. Check its status on the explorer or your history before retrying.'
+    );
+    this.name = 'TxStillPendingError';
+    this.txHash = txHash;
+  }
+}
+
+/**
  * Submit a signed transaction
  */
 export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetTransactionResponse> {
@@ -202,9 +219,10 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
   }
 
   if (result.status !== 'SUCCESS') {
-    throw new Error(
-      'Transaction is taking longer than usual to confirm — check your history before retrying'
-    );
+    // NOT a failure: the tx is submitted and may still land. Give the hash
+    // so the outcome is checkable — a bare "failed" here invited duplicate
+    // leveraged submissions (B21).
+    throw new TxStillPendingError(response.hash);
   }
 
   debugLog('[DEBUG] Transaction successful!');
