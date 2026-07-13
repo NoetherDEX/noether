@@ -228,7 +228,9 @@ export async function getPositions(traderPublicKey: string): Promise<Position[]>
     );
 
     if (!rpc.Api.isSimulationSuccess(idsResult) || !idsResult.result?.retval) {
-      return [];
+      // A failed read is NOT an empty account — throw so callers can keep
+      // last-good rows and show an error instead of "No open positions".
+      throw new Error('get_all_position_ids simulation failed');
     }
 
     const allIds = (scValToNative(idsResult.result.retval) as (number | bigint)[]).map(Number);
@@ -255,7 +257,8 @@ export async function getPositions(traderPublicKey: string): Promise<Position[]>
     return positions;
   } catch (error) {
     console.error('Error fetching positions:', error);
-    return [];
+    // Propagate: failure must stay distinguishable from "no positions".
+    throw error instanceof Error ? error : new Error('Failed to fetch positions');
   }
 }
 
@@ -823,7 +826,7 @@ export async function cancelOrder(
  */
 export async function getOrders(traderPublicKey: string): Promise<Order[]> {
   try {
-    const allIds = await getAllOrderIds(traderPublicKey);
+    const allIds = await getAllOrderIds(traderPublicKey, true);
     const orders: Order[] = [];
 
     for (const id of allIds) {
@@ -840,14 +843,17 @@ export async function getOrders(traderPublicKey: string): Promise<Order[]> {
     return orders;
   } catch (error) {
     console.error('Error fetching orders:', error);
-    return [];
+    // Propagate: failure must stay distinguishable from "no orders".
+    throw error instanceof Error ? error : new Error('Failed to fetch orders');
   }
 }
 
 /**
- * Get all pending order IDs (for orderbook) - read-only
+ * Get all pending order IDs (for orderbook) - read-only.
+ * `strict` makes a failed read THROW instead of returning [] — used by
+ * getOrders so an RPC outage never masquerades as an empty account.
  */
-export async function getAllOrderIds(publicKey: string): Promise<number[]> {
+export async function getAllOrderIds(publicKey: string, strict = false): Promise<number[]> {
   try {
     const result = await sorobanRpc.simulateTransaction(
       await buildSimulateTransaction(publicKey, 'get_all_order_ids', [])
@@ -858,9 +864,11 @@ export async function getAllOrderIds(publicKey: string): Promise<number[]> {
       return ids.map(id => Number(id));
     }
 
+    if (strict) throw new Error('get_all_order_ids simulation failed');
     return [];
   } catch (error) {
     console.error('Error fetching all order IDs:', error);
+    if (strict) throw error instanceof Error ? error : new Error('Failed to fetch order ids');
     return [];
   }
 }

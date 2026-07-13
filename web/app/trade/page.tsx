@@ -60,6 +60,15 @@ function TradePage() {
   // displayed PnL / Mark / Net Value comes from currentPrices below.
   const [rawPositions, setRawPositions] = useState<Position[]>([]);
   const [orders, setOrders] = useState<DisplayOrder[]>([]);
+  // True when the LAST refresh failed — rows keep their last-good values and
+  // a strip explains staleness instead of wiping into "No open positions".
+  const [positionsFetchFailed, setPositionsFetchFailed] = useState(false);
+  const [ordersFetchFailed, setOrdersFetchFailed] = useState(false);
+  // Monotonic sequence guards: overlapping refreshes (the 0/2.5/6s post-trade
+  // burst vs the 60s tick) must never let a STALE response overwrite newer
+  // state — that race could resurrect a just-closed position.
+  const positionsFetchSeq = useRef(0);
+  const ordersFetchSeq = useRef(0);
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -129,6 +138,9 @@ function TradePage() {
   const fetchPositions = useCallback(async (showLoading = true) => {
     if (!publicKey) return;
 
+    const seq = ++positionsFetchSeq.current;
+    const isStale = () => seq !== positionsFetchSeq.current;
+
     if (showLoading) setIsLoadingPositions(true);
     setIsRefreshing(true);
 
@@ -148,7 +160,9 @@ function TradePage() {
       //  - Personal mode: ids for this trader.
       let contractPositions;
       if (currentLeaderVault && factoryAddress) {
-        const open = await listOpenPositions(factoryAddress).catch(() => []);
+        // No .catch(() => []) here: an API outage must surface as a failed
+        // refresh (rows kept + strip), not as a fake empty vault book.
+        const open = await listOpenPositions(factoryAddress);
         contractPositions = await getPositionsByIds(
           publicKey,
           open.map((p) => p.positionId),
@@ -177,8 +191,12 @@ function TradePage() {
           apiPositions.length > 0 ? apiPositions : await getPositions(publicKey);
       }
 
+      if (isStale()) return;
+
       if (contractPositions.length === 0) {
+        // Genuinely empty (failed reads THROW and land in the catch below).
         setRawPositions([]);
+        setPositionsFetchFailed(false);
         return;
       }
 
@@ -197,13 +215,19 @@ function TradePage() {
         })
       );
 
+      if (isStale()) return;
       setRawPositions(contractPositions);
       setCurrentPrices(prev => ({ ...prev, ...priceMap }));
+      setPositionsFetchFailed(false);
     } catch (error) {
       console.error('Failed to fetch positions:', error);
+      // Keep last-good rows; the strip above the tables explains staleness.
+      if (!isStale()) setPositionsFetchFailed(true);
     } finally {
-      setIsLoadingPositions(false);
-      setIsRefreshing(false);
+      if (!isStale()) {
+        setIsLoadingPositions(false);
+        setIsRefreshing(false);
+      }
     }
   }, [publicKey, factoryAddress]);
 
@@ -225,11 +249,15 @@ function TradePage() {
   const fetchOrders = useCallback(async (showLoading = true) => {
     if (!publicKey) return;
 
+    const seq = ++ordersFetchSeq.current;
+    const isStale = () => seq !== ordersFetchSeq.current;
+
     if (showLoading) setIsLoadingOrders(true);
     setIsRefreshingOrders(true);
 
     try {
       const contractOrders = await getOrders(publicKey);
+      if (isStale()) return;
       const displayOrders = contractOrders.map(toDisplayOrder);
 
       // Detect status changes for toast notifications
@@ -268,11 +296,16 @@ function TradePage() {
       prevOrdersRef.current = newMap;
 
       setOrders(displayOrders);
+      setOrdersFetchFailed(false);
     } catch (error) {
       console.error('Failed to fetch orders:', error);
+      // Keep last-good rows — a failed read is not "no orders".
+      if (!isStale()) setOrdersFetchFailed(true);
     } finally {
-      setIsLoadingOrders(false);
-      setIsRefreshingOrders(false);
+      if (!isStale()) {
+        setIsLoadingOrders(false);
+        setIsRefreshingOrders(false);
+      }
     }
   }, [publicKey, fetchPositions, refreshBalances]);
 
@@ -291,6 +324,8 @@ function TradePage() {
     if (!isConnected || !publicKey) {
       setRawPositions([]);
       setOrders([]);
+      setPositionsFetchFailed(false);
+      setOrdersFetchFailed(false);
       return;
     }
 
@@ -645,6 +680,32 @@ function TradePage() {
     },
   ];
 
+  // Failed-refresh strip: rows below keep their last-good values; this makes
+  // the staleness visible instead of letting an RPC outage cosplay as an
+  // empty account.
+  const fetchFailStrip = (positionsFetchFailed || ordersFetchFailed) ? (
+    <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-primary">
+      <span>
+        Couldn&apos;t refresh{' '}
+        {positionsFetchFailed && ordersFetchFailed
+          ? 'positions & orders'
+          : positionsFetchFailed
+          ? 'positions'
+          : 'orders'}{' '}
+        — showing last known data. Retries every 60s.
+      </span>
+      <button
+        onClick={() => {
+          if (positionsFetchFailed) fetchPositions(false);
+          if (ordersFetchFailed) fetchOrders(false);
+        }}
+        className="underline hover:opacity-80 flex-none"
+      >
+        Retry now
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -778,6 +839,7 @@ function TradePage() {
             {/* Docked mode: tables live right under the chart, same screen */}
             {dockTables && (
               <div className="border-t border-border px-3 pb-4 lg:h-[360px] lg:flex-none lg:overflow-y-auto custom-scrollbar">
+                {fetchFailStrip}
                 <Tabs tabs={positionTabs} defaultTab={initialTab} onChange={handleTabChange} />
               </div>
             )}
@@ -801,6 +863,7 @@ function TradePage() {
         {/* Positions / Orders / History / venue activity — full-width */}
         {!dockTables && (
           <div className="border-t border-border px-3 sm:px-4 pb-8">
+            {fetchFailStrip}
             <Tabs tabs={positionTabs} defaultTab={initialTab} onChange={handleTabChange} />
           </div>
         )}
