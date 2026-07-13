@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect } from 'react';
-import { WalletProvider } from '@/components/wallet';
+// DEEP import — the '@/components/wallet' barrel re-exports ConnectButton,
+// whose static useWallet → lib/stellar/token chain drags @stellar/stellar-sdk
+// (~190KB gzip) into the ROOT layout graph for every route, defeating the
+// dynamic imports WalletProvider itself uses to keep the SDK out of the
+// landing first-load. Import the provider file directly so the barrel never
+// enters the layout bundle.
+import { WalletProvider } from '@/components/wallet/WalletProvider';
 import { assertContractsConfigured, CONTRACTS } from '@/lib/utils/constants';
 
 // Build-time constant: env vars are inlined by Next, so this is identical on
