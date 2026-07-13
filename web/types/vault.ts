@@ -23,8 +23,11 @@ export interface VaultRow {
   tradeCount?: number;
   /** Drawdown in basis points. */
   drawdownBps?: number;
-  /** Annualised yield in basis points. */
+  /** Yield in basis points, SIGNED. Annualised only when apyKind is
+   *  'annualized'; for young vaults it's the raw since-inception return. */
   apyBps?: number;
+  /** 'annualized' (≥7d) or 'inception' (younger — not an annual rate). */
+  apyKind?: 'annualized' | 'inception';
   /**
    * Sum of pnl across every leader_close in vault_trades (7-dec USDC).
    * The "lifetime PnL from closed trades returned to the pool" number —

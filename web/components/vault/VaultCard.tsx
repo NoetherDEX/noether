@@ -57,7 +57,14 @@ export function VaultCard({ vault }: { vault: VaultRow }) {
           {/* Primary stats — 5 SCF-required metrics on two rows */}
           <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border">
             <Metric label="TVL (liquid)" value={`$${fmtUsdc7(vault.totalUsdc)}`} />
-            <Metric label="APY" value={fmtBps(apyValue, true)} valueClass={apyClass} />
+            {/* Young vaults report the raw since-inception return — labelling
+                it APY would fabricate triple-digit annual rates from days-old
+                track records (B17). */}
+            <Metric
+              label={vault.apyKind === 'inception' ? 'Since inception' : 'APY'}
+              value={fmtBps(apyValue, true)}
+              valueClass={apyClass}
+            />
             <Metric label="Drawdown" value={fmtBps(vault.drawdownBps)} />
           </div>
           <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border">
