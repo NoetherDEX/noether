@@ -4,12 +4,15 @@
 export const APP_NAV_ITEMS = [
   { href: '/trade', label: 'Trade' },
   { href: '/portfolio', label: 'Portfolio' },
+  // B24: the protocol LP pool holds user funds — it cannot be orphaned from
+  // primary nav, and "Earn" separates it from the leader-vault marketplace
+  // one letter away.
+  { href: '/vault', label: 'Earn' },
   { href: '/vaults', label: 'Vaults' },
   { href: '/referrals', label: 'Referrals' },
   { href: '/leaderboard', label: 'Leaderboard' },
   { href: '/faucet', label: 'Faucet' },
 ];
 
-// Canonical docs link (today: the technical-architecture folder the landing footer links)
-export const DOCS_URL =
-  'https://drive.google.com/drive/folders/1_W3c5DZy2b4Aj8hQVcCkvObZSqCDBzmv';
+// Canonical docs link — the real docs site (was a Google Drive folder).
+export const DOCS_URL = 'https://docs.noether.exchange';

@@ -45,7 +45,7 @@ export function Header() {
         {/* Desktop Navigation Links */}
         <nav className="hidden md:flex items-center gap-1 h-full">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
 
             return (
               <Link
@@ -97,7 +97,7 @@ export function Header() {
           {/* Menu panel */}
           <div className="absolute top-12 left-0 right-0 bg-surface border-b border-border p-3 space-y-0.5">
             {navItems.map((item) => {
-              const isActive = pathname === item.href;
+              const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
 
               return (
                 <Link
