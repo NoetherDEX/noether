@@ -50,7 +50,17 @@ export function CrossMarginBanner({ positions, publicKey }: CrossMarginBannerPro
   const pnlUnknown = !Number.isFinite(totalUnrealizedPnl);
   const unknown = pnlUnknown || poolBalance === null;
 
-  const equity = unknown ? null : (poolBalance as number) + totalCollateral + totalUnrealizedPnl;
+  // B4: the contract settles pending funding on close/liquidation, so the
+  // honest equity estimate subtracts it. Included only when known for every
+  // cross position; otherwise the estimate stays price-only (never NaN).
+  const fundingKnown = crossPositions.every(p => p.pendingFunding != null);
+  const totalPendingFunding = fundingKnown
+    ? crossPositions.reduce((s, p) => s + (p.pendingFunding as number), 0)
+    : 0;
+
+  const equity = unknown
+    ? null
+    : (poolBalance as number) + totalCollateral + totalUnrealizedPnl - totalPendingFunding;
   const maintenanceMargin = totalSize * MAINTENANCE_MARGIN_BPS / 10000;
   const usedMargin = totalCollateral;
   const freeMargin = equity === null ? null : equity - usedMargin;

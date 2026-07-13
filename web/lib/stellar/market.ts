@@ -19,9 +19,14 @@ interface RawPosition {
   size: bigint;
   entry_price: bigint; // snake_case from contract
   liquidation_price: bigint; // snake_case from contract
-  opened_at: number | bigint; // snake_case from contract
-  last_funding_at: number | bigint;
-  accumulated_funding: bigint;
+  /** Unix seconds when opened. Current struct calls it `timestamp`. */
+  timestamp?: number | bigint;
+  /** Cumulative funding index snapshot at open (PRECISION-scaled). */
+  entry_cumulative_funding?: bigint;
+  /** Legacy field names from the pre-cumulative-funding struct — kept so a
+   *  stale deployment can't NaN the parse. */
+  opened_at?: number | bigint;
+  accumulated_funding?: bigint;
   margin_mode?: number | bigint; // 0 = Isolated, 1 = Cross
 }
 
@@ -38,9 +43,10 @@ function parsePosition(raw: RawPosition): Position {
     size: raw.size,
     entryPrice: raw.entry_price,
     liquidationPrice: raw.liquidation_price,
-    openedAt: Number(raw.opened_at),
-    lastFundingAt: Number(raw.last_funding_at),
-    accumulatedFunding: raw.accumulated_funding,
+    // The deployed struct's field is `timestamp`; the old parser read the
+    // long-renamed `opened_at`, silently producing Invalid Dates.
+    openedAt: Number(raw.timestamp ?? raw.opened_at ?? 0),
+    entryCumulativeFunding: BigInt(raw.entry_cumulative_funding ?? raw.accumulated_funding ?? 0),
     marginMode: Number(raw.margin_mode ?? 0) === 1 ? 'Cross' : 'Isolated',
   };
 }
@@ -296,7 +302,10 @@ async function buildSimulateTransaction(
  */
 export function toDisplayPosition(
   position: Position,
-  currentPrice: number
+  currentPrice: number,
+  /** Current global cumulative funding index (PRECISION-scaled) — enables
+   *  the per-position accrued-funding estimate (B4). null/omitted = unknown. */
+  cumulativeFunding?: bigint | null
 ): DisplayPosition {
   const entryPrice = bigIntToNumber(position.entryPrice);
   const collateral = bigIntToNumber(position.collateral);
@@ -325,6 +334,19 @@ export function toDisplayPosition(
     leverage: isNaN(leverage) ? 0 : leverage,
     openedAt: new Date(position.openedAt * 1000),
     marginMode: position.marginMode || 'Isolated',
+    // B4: mirrors the contract's close-time settlement —
+    // calculate_cumulative_funding(size, direction, entry_snapshot, current).
+    // Positive = the position PAYS this on close. null = index unknown.
+    pendingFunding:
+      cumulativeFunding == null
+        ? null
+        : (() => {
+            const delta = cumulativeFunding - position.entryCumulativeFunding;
+            // size(7dp) × delta(PRECISION-scaled) / PRECISION → 7dp USDC
+            const raw = (position.size * delta) / 10_000_000n;
+            const usd = Number(raw) / 10_000_000;
+            return position.direction === 'Long' ? usd : -usd;
+          })(),
   };
 }
 
@@ -1514,6 +1536,34 @@ export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
  * Returns null when the rate is unknown (RPC failure or the storage entry
  * is absent) — callers must render '—', never a healthy-looking 0.
  */
+/**
+ * Read the global cumulative funding index (PRECISION-scaled i128) straight
+ * from contract storage. Positions snapshot this at open; pending funding =
+ * size × (current − snapshot) / PRECISION, signed by direction (B4).
+ * Returns null when unknown — callers render '—', never assert 0.
+ */
+export async function getCumulativeFundingRate(): Promise<bigint | null> {
+  try {
+    const key = xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract: new Address(CONTRACTS.MARKET).toScAddress(),
+        key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('CumulativeFundingRate')]),
+        durability: xdr.ContractDataDurability.persistent(),
+      })
+    );
+
+    const entries = await sorobanRpc.getLedgerEntries(key);
+    if (entries.entries && entries.entries.length > 0) {
+      const val = scValToNative(entries.entries[0].val.contractData().val());
+      return typeof val === 'bigint' ? val : BigInt(Number(val));
+    }
+    // Entry absent = funding has never accrued — the index is genuinely 0.
+    return 0n;
+  } catch {
+    return null;
+  }
+}
+
 export async function getFundingRate(): Promise<number | null> {
   try {
     const PRECISION = 10_000_000;

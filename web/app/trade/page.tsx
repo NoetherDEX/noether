@@ -39,6 +39,7 @@ import {
   setTakeProfit,
   cancelOrder,
   getFundingRate,
+  getCumulativeFundingRate,
   getRecentLiquidations,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
@@ -81,6 +82,8 @@ function TradePage() {
   // null = unknown (RPC failure / entry absent) — rendered as '—', never a
   // healthy-looking +0.0000% (A14).
   const [fundingRate, setFundingRate] = useState<number | null>(null);
+  // Global cumulative funding index (PRECISION-scaled) — null until first read.
+  const [cumulativeFunding, setCumulativeFunding] = useState<bigint | null>(null);
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const [pricesStale, setPricesStale] = useState(false);
   const [assetStats, setAssetStats] = useState<AssetMarketStats | null>(null);
@@ -91,8 +94,8 @@ function TradePage() {
   // (React reconciliation handles the in-place text update) without
   // re-fetching the whole position list from the contract.
   const positions = useMemo<DisplayPosition[]>(
-    () => rawPositions.map(p => toDisplayPosition(p, currentPrices[p.asset] || 0)),
-    [rawPositions, currentPrices],
+    () => rawPositions.map(p => toDisplayPosition(p, currentPrices[p.asset] || 0, cumulativeFunding)),
+    [rawPositions, currentPrices, cumulativeFunding],
   );
 
   const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
@@ -397,12 +400,18 @@ function TradePage() {
     return () => clearInterval(interval);
   }, [isConnected, publicKey, leaderVault?.id, fetchPositions, fetchOrders]);
 
-  // Poll funding rate every 60s (updates hourly on-chain, no wallet needed)
+  // Poll funding rate + the cumulative index every 60s (updates hourly
+  // on-chain, no wallet needed). The index feeds the per-position accrued
+  // funding estimate (B4). Keep last-good on failed refreshes.
   useEffect(() => {
-    getFundingRate().then(setFundingRate);
-    const interval = setInterval(() => {
+    const load = () => {
       getFundingRate().then(setFundingRate);
-    }, 60000);
+      getCumulativeFundingRate().then((v) => {
+        if (v != null) setCumulativeFunding(v);
+      });
+    };
+    load();
+    const interval = setInterval(load, 60000);
     return () => clearInterval(interval);
   }, []);
 

@@ -230,6 +230,12 @@ export function PositionsList({
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Entry / Mark</th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Liq. Price</th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">TP / SL</th>
+              <th
+                className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint"
+                title="Est. accrued funding — settles when the position closes"
+              >
+                Funding
+              </th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">PnL</th>
               <th className="text-center px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Actions</th>
             </tr>
@@ -327,6 +333,34 @@ export function PositionsList({
                 <span className="text-muted-foreground">Unrealized PnL</span>
                 <span className={selectedPosition.pnl >= 0 ? 'text-long' : 'text-short'}>
                   {formatUSD(selectedPosition.pnl)} ({formatPercent(selectedPosition.pnlPercent)})
+                </span>
+              </div>
+              {/* B4: funding settles at close — show it BEFORE the signature so
+                  the wallet never reconciles short of the promised number. */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Accrued funding (est.)</span>
+                {selectedPosition.pendingFunding == null ? (
+                  <span className="text-faint">—</span>
+                ) : (
+                  <span className={-selectedPosition.pendingFunding >= 0 ? 'text-long' : 'text-short'}>
+                    {-selectedPosition.pendingFunding >= 0 ? '+' : ''}
+                    {formatUSD(-selectedPosition.pendingFunding)}
+                  </span>
+                )}
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">You receive (est.)</span>
+                <span className="text-foreground font-medium">
+                  {selectedPosition.pendingFunding == null || !Number.isFinite(selectedPosition.pnl)
+                    ? '—'
+                    : formatUSD(
+                        Math.max(
+                          0,
+                          selectedPosition.collateral +
+                            selectedPosition.pnl -
+                            selectedPosition.pendingFunding
+                        )
+                      )}
                 </span>
               </div>
             </div>
@@ -884,6 +918,30 @@ const PositionRow = memo(function PositionRow({
         <span className={protection?.sl ? 'text-short' : 'text-faint'}>
           {protection?.sl ? formatPairPrice(position.asset, protection.sl) : '—'}
         </span>
+      </td>
+
+      {/* B4: est. accrued funding from the trader's POV (+receives / −pays),
+          settles on close — the number promised must be the number paid. */}
+      <td
+        className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap"
+        title="Est. accrued funding — settles when the position closes"
+      >
+        {position.pendingFunding == null ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <span
+            className={
+              -position.pendingFunding > 0
+                ? 'text-long'
+                : -position.pendingFunding < 0
+                ? 'text-short'
+                : 'text-muted-foreground'
+            }
+          >
+            {-position.pendingFunding > 0 ? '+' : ''}
+            {formatUSD(-position.pendingFunding)}
+          </span>
+        )}
       </td>
 
       <td className="px-3 py-2 text-right">

@@ -24,8 +24,9 @@ export interface Position {
   entryPrice: bigint;
   liquidationPrice: bigint;
   openedAt: number;
-  lastFundingAt: number;
-  accumulatedFunding: bigint;
+  /** Global cumulative funding index snapshot at open (PRECISION-scaled).
+   *  Pending funding = size × (currentCumulative − this) / PRECISION. */
+  entryCumulativeFunding: bigint;
   marginMode: MarginMode;
 }
 
@@ -132,6 +133,10 @@ export interface DisplayPosition {
   leverage: number;
   openedAt: Date;
   marginMode: MarginMode;
+  /** Est. accrued funding in USDC — POSITIVE = the position pays this on
+   *  close, negative = it receives. null = unknown (cumulative index not
+   *  loaded) — render '—', never 0 (B4). */
+  pendingFunding: number | null;
 }
 
 // Trade for history
