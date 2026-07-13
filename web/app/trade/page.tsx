@@ -833,6 +833,9 @@ function TradePage() {
       <Header />
 
       <main className="pt-12">
+        {/* B29: money pages need a page title for screen readers — the visual
+            hierarchy starts at the stats bar, so it's visually hidden. */}
+        <h1 className="sr-only">Trade {selectedAsset}-PERP — Noether</h1>
         {/* Thin market-stats strip: pair selector · mark · 24h stats · OI · funding */}
         <MarketStatsBar
           selectedAsset={selectedAsset}

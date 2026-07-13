@@ -232,6 +232,8 @@ function PortfolioPage() {
       <Header />
 
       <main className="pt-12 pb-16">
+        {/* B29: screen-reader page title — visual hierarchy starts at the cards */}
+        <h1 className="sr-only">Portfolio — Noether</h1>
         <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
           {/* Degraded-data banner */}
           {isConnected && bannerMessages.length > 0 && (

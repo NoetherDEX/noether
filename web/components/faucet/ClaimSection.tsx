@@ -68,7 +68,19 @@ export function ClaimSection({
                   {claimedToday == null ? '—' : formatNumber(claimedToday, 0)} / {formatNumber(dailyLimit, 0)} USDC
                 </span>
               </div>
-              <div className="h-2 bg-surface-3 rounded-full overflow-hidden">
+              <div
+                className="h-2 bg-surface-3 rounded-full overflow-hidden"
+                role="progressbar"
+                aria-label="Daily claim limit used"
+                aria-valuemin={0}
+                aria-valuemax={dailyLimit}
+                aria-valuenow={claimedToday ?? undefined}
+                aria-valuetext={
+                  claimedToday == null
+                    ? 'unknown'
+                    : `${claimedToday} of ${dailyLimit} USDC claimed today`
+                }
+              >
                 <div
                   className={cn(
                     'h-full rounded-full transition-[width] duration-500',

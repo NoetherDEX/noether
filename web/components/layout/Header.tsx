@@ -51,6 +51,7 @@ export function Header() {
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={isActive ? 'page' : undefined}
                 className={cn(
                   'relative flex items-center h-full px-3 text-[13px] font-medium transition-colors',
                   isActive
@@ -104,6 +105,7 @@ export function Header() {
                   key={item.href}
                   href={item.href}
                   onClick={() => setMobileOpen(false)}
+                  aria-current={isActive ? 'page' : undefined}
                   className={cn(
                     'block px-3 py-3 rounded-md text-sm font-medium transition-colors',
                     isActive

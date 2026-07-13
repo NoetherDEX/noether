@@ -101,7 +101,13 @@ export function ConnectButton() {
 
   // Connected - show dropdown
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onKeyDown={(e) => {
+        // B29: Escape closes the wallet menu (backdrop covers pointer users).
+        if (e.key === 'Escape' && isDropdownOpen) setIsDropdownOpen(false);
+      }}
+    >
       <button
         className={chipClass}
         onClick={() => setIsDropdownOpen(!isDropdownOpen)}
