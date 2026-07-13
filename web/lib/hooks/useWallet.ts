@@ -13,9 +13,11 @@ import toast from 'react-hot-toast';
 const HORIZON_TESTNET_URL = 'https://horizon-testnet.stellar.org';
 
 /**
- * Fetches XLM balance from Horizon Testnet API
+ * Fetches XLM balance from Horizon Testnet API.
+ * Returns null when the read fails (unknown — render '—'), 0 only for
+ * genuinely unfunded accounts.
  */
-async function fetchXLMBalance(publicKey: string): Promise<number> {
+async function fetchXLMBalance(publicKey: string): Promise<number | null> {
   try {
     const response = await fetch(`${HORIZON_TESTNET_URL}/accounts/${publicKey}`);
     if (!response.ok) {
@@ -29,7 +31,7 @@ async function fetchXLMBalance(publicKey: string): Promise<number> {
     return nativeBalance ? parseFloat(nativeBalance.balance) : 0;
   } catch (error) {
     console.error('Failed to fetch XLM balance:', error);
-    return 0;
+    return null;
   }
 }
 
@@ -61,7 +63,7 @@ export function useWallet() {
           getUSDCBalance(walletAddress),
           getNoeBalance(walletAddress, walletAddress),
         ]);
-        setBalances(xlmBal, usdcBal, fromPrecision(noeBal ?? 0n));
+        setBalances(xlmBal, usdcBal, noeBal == null ? null : fromPrecision(noeBal));
       } catch (error) {
         console.error('Failed to complete wallet connection:', error);
         setDisconnected();
@@ -126,7 +128,7 @@ export function useWallet() {
       getUSDCBalance(publicKey),
       getNoeBalance(publicKey, publicKey),
     ]);
-    setBalances(xlmBal, usdcBal, fromPrecision(noeBal ?? 0n));
+    setBalances(xlmBal, usdcBal, noeBal == null ? null : fromPrecision(noeBal));
   }, [publicKey, setBalances]);
 
   return {

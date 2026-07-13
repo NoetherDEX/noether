@@ -13,7 +13,8 @@ interface DepositWithdrawCardProps {
   onDepositAmountChange: (value: string) => void;
   onDeposit: () => void;
   isDepositing: boolean;
-  usdcBalance: number;
+  /** null = wallet balance read failed — Max hides and the chain enforces limits. */
+  usdcBalance: number | null;
   noeToReceive: number | null;
   depositFee: number | null;
   /** On-chain deposit fee in basis points (30 = 0.30%); null = read failed */
@@ -158,7 +159,7 @@ export function DepositWithdrawCard({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-sm text-muted-foreground">You Pay</label>
-                {isConnected && (
+                {isConnected && usdcBalance != null && (
                   <button
                     onClick={() => onDepositAmountChange(Math.floor(usdcBalance * 0.95).toString())}
                     className="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -224,7 +225,7 @@ export function DepositWithdrawCard({
             ) : (
               <button
                 onClick={onDeposit}
-                disabled={depositNum <= 0 || depositNum > usdcBalance || isDepositing}
+                disabled={depositNum <= 0 || (usdcBalance != null && depositNum > usdcBalance) || isDepositing}
                 className={cn(
                   'w-full h-12 text-sm font-medium rounded-md transition-colors',
                   'flex items-center justify-center gap-2',

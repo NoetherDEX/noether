@@ -50,7 +50,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const vaultBalanceUsdc = leaderVault
     ? Number(BigInt(leaderVault.totalUsdc)) / Number(VAULT_PRECISION)
     : 0;
-  const effectiveUsdcBalance = isLeader ? vaultBalanceUsdc : usdcBalance;
+  // null = balance unknown (read failed) — render '—' and let the chain
+  // enforce limits rather than blocking on a fabricated 0.
+  const effectiveUsdcBalance: number | null = isLeader ? vaultBalanceUsdc : usdcBalance;
   const {
     direction,
     collateral,
@@ -283,13 +285,13 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (!trailingPositionId) errors.push('Select a position');
     if (positions.find(p => p.id === Number(trailingPositionId))?.marginMode === 'Cross')
       errors.push('Unavailable for cross-margin positions (contract fix pending)');
-    if (xlmBalance < 1) errors.push('Need XLM for gas fees');
+    if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
   } else {
     if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
-    if (collateralNum > effectiveUsdcBalance)
+    if (effectiveUsdcBalance != null && collateralNum > effectiveUsdcBalance)
       errors.push(isLeader ? 'Vault balance too low' : 'Insufficient USDC balance');
     if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
-    if (xlmBalance < 1) errors.push('Need XLM for gas fees');
+    if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
     if (isLeader && marginMode === 'Cross')
       errors.push('Leader trades support isolated margin only');
     if (isLeader && orderType !== 'Market')
@@ -572,8 +574,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     setIsSubmitting(false);
   };
 
-  // Percentage buttons for collateral — uses the active source (wallet or vault)
+  // Percentage buttons for collateral — uses the active source (wallet or vault).
+  // No-op while the balance is unknown (never size an order off a fabricated 0).
   const handlePercentage = (pct: number) => {
+    if (effectiveUsdcBalance == null) return;
     setCollateral(Math.floor(effectiveUsdcBalance * (pct / 100)).toString());
   };
 
@@ -582,7 +586,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (!publicKey || isCrossDepositing) return;
     const amount = parseFloat(crossDepositAmount) || 0;
     if (amount < 1) { toast.error('Minimum deposit is 1 USDC'); return; }
-    if (amount > usdcBalance) {
+    // Skip the gate while the balance is unknown — simulation catches real
+    // shortfalls pre-sign; a failed read must not brick a funded wallet.
+    if (usdcBalance != null && amount > usdcBalance) {
       // A11: route broke users to funds instead of dead-ending them.
       toast.error(
         <span>
@@ -851,14 +857,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             <span className="text-xs text-muted-foreground">
               {isLeader ? 'Vault balance' : 'Balance'}:{' '}
               <span className="font-mono text-foreground">
-                {formatNumber(effectiveUsdcBalance)}
+                {effectiveUsdcBalance == null ? '—' : formatNumber(effectiveUsdcBalance)}
               </span>{' '}
               USDC
             </span>
           </div>
           {/* A11: connected wallets with no funds get routed to the faucet
               instead of dead-ending on a disabled money page. */}
-          {isConnected && !isLeader && (usdcBalance === 0 || xlmBalance < 1) && (
+          {isConnected && !isLeader && (usdcBalance === 0 || (xlmBalance != null && xlmBalance < 1)) && (
             <div className="border-l-2 border-primary/60 pl-3 space-y-1">
               {usdcBalance === 0 && (
                 <p className="text-xs text-primary">
@@ -868,7 +874,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   </Link>
                 </p>
               )}
-              {xlmBalance < 1 && (
+              {xlmBalance != null && xlmBalance < 1 && (
                 <p className="text-xs text-primary/80">
                   Low XLM for gas — the{' '}
                   <Link href="/faucet" className="underline hover:opacity-80">

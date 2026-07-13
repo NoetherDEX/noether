@@ -8,7 +8,8 @@ import type { DisplayPosition } from '@/types';
 interface AssetAllocationProps {
   /** Positions with a known price (fresh or last-good) — the page excludes unpriced ones. */
   positions: DisplayPosition[];
-  usdcBalance: number;
+  /** null = wallet balance read failed — the USDC row is omitted, never a fake $0. */
+  usdcBalance: number | null;
   /** A8: assets whose value uses a last-good (stale) price — rows get a badge. */
   staleAssets?: string[];
 }
@@ -25,8 +26,8 @@ export function AssetAllocation({ positions, usdcBalance, staleAssets = [] }: As
   // Calculate allocation from positions and USDC balance
   const allocations: { asset: string; value: number; color: string; type: string }[] = [];
 
-  // Add USDC balance
-  if (usdcBalance > 0) {
+  // Add USDC balance (skipped when unknown — allocation shows knowns only)
+  if (usdcBalance != null && usdcBalance > 0) {
     allocations.push({
       asset: 'USDC',
       value: usdcBalance,

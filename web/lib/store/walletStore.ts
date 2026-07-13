@@ -9,17 +9,18 @@ interface WalletState {
   publicKey: string | null;
   walletId: string | null; // Which wallet module was used (e.g. 'freighter', 'wallet_connect')
 
-  // Balances
-  xlmBalance: number;
-  usdcBalance: number;
-  noeBalance: number;
+  // Balances — null = unknown (read failed or not yet fetched).
+  // Renders as '—'; NEVER coerce null to 0 (fabricates money data).
+  xlmBalance: number | null;
+  usdcBalance: number | null;
+  noeBalance: number | null;
 
   // Actions
   setConnected: (address: string, publicKey: string, walletId?: string) => void;
   setDisconnected: () => void;
   setConnecting: (isConnecting: boolean) => void;
-  setBalances: (xlm: number, usdc: number, noe: number) => void;
-  setUsdcBalance: (usdc: number) => void;
+  setBalances: (xlm: number | null, usdc: number | null, noe: number | null) => void;
+  setUsdcBalance: (usdc: number | null) => void;
 }
 
 export const useWalletStore = create<WalletState>()(
@@ -30,9 +31,9 @@ export const useWalletStore = create<WalletState>()(
       address: null,
       publicKey: null,
       walletId: null,
-      xlmBalance: 0,
-      usdcBalance: 0,
-      noeBalance: 0,
+      xlmBalance: null,
+      usdcBalance: null,
+      noeBalance: null,
 
       setConnected: (address, publicKey, walletId) =>
         set({
@@ -50,9 +51,9 @@ export const useWalletStore = create<WalletState>()(
           address: null,
           publicKey: null,
           walletId: null,
-          xlmBalance: 0,
-          usdcBalance: 0,
-          noeBalance: 0,
+          xlmBalance: null,
+          usdcBalance: null,
+          noeBalance: null,
         }),
 
       setConnecting: (isConnecting) => set({ isConnecting }),

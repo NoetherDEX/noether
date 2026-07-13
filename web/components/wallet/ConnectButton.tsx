@@ -171,13 +171,17 @@ export function ConnectButton() {
               {/* Balances */}
               <div className="mb-3 space-y-1.5">
                 <div className="flex items-center justify-between px-3 py-2 bg-surface border border-border rounded-md">
-                  <span className="text-sm font-mono text-foreground">{formatNumber(usdcBalance, 2)} USDC</span>
+                  <span className="text-sm font-mono text-foreground">
+                    {usdcBalance == null ? '—' : formatNumber(usdcBalance, 2)} USDC
+                  </span>
                   <span className="text-[10px] text-faint">Collateral</span>
                 </div>
                 <div className="flex items-center justify-between px-3 py-2 bg-surface border border-border rounded-md">
-                  <span className="text-sm font-mono text-foreground">{formatNumber(xlmBalance, 2)} XLM</span>
+                  <span className="text-sm font-mono text-foreground">
+                    {xlmBalance == null ? '—' : formatNumber(xlmBalance, 2)} XLM
+                  </span>
                   <div className="flex items-center gap-2">
-                    {xlmBalance < 1 && (
+                    {xlmBalance != null && xlmBalance < 1 && (
                       <span className="text-[10px] text-short">Low</span>
                     )}
                     <span className="text-[10px] text-faint">Gas</span>

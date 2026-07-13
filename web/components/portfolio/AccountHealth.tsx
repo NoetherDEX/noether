@@ -8,7 +8,8 @@ import type { DisplayPosition } from '@/types';
 interface AccountHealthProps {
   /** Positions with a known price (fresh or last-good) — the page excludes unpriced ones. */
   positions: DisplayPosition[];
-  usdcBalance: number;
+  /** null = wallet balance read failed — Net Worth / Buying Power render '—'. */
+  usdcBalance: number | null;
   isConnected: boolean;
   /** A9: cross-margin pool balance in display units; null = not read yet (renders '—'). */
   crossMarginBalance?: number | null;
@@ -51,7 +52,7 @@ export function AccountHealth({
   // + collateral + unrealized PnL) plus the wallet balance. An unknown part
   // makes the whole unknown — render '—', never a fabricated number.
   const netWorth =
-    pnlKnown && crossMarginBalance !== null
+    pnlKnown && crossMarginBalance !== null && usdcBalance !== null
       ? usdcBalance + crossMarginBalance + totalCollateral + totalUnrealizedPnl
       : null;
   const buyingPower = usdcBalance;
