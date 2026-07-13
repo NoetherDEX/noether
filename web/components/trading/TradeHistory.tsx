@@ -97,7 +97,23 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
       </div>
 
       {/* Compact Table - Both Desktop and Mobile with horizontal scroll */}
-      <div className="overflow-x-auto -mx-4 px-4">
+      {/* B25: card layout below sm — the 12-column table stays desktop-only */}
+      <div className="sm:hidden divide-y divide-border">
+        {trades.map((trade) => (
+          <TradeCard
+            key={trade.id}
+            trade={trade}
+            onShare={
+              trade.type === 'close' ||
+              (trade.type === 'liquidation' && trade.pnl != null && trade.entryPrice != null)
+                ? () => handleShare(trade)
+                : undefined
+            }
+          />
+        ))}
+      </div>
+
+      <div className="hidden sm:block overflow-x-auto -mx-4 px-4">
         <table className="w-full min-w-[800px]">
           <thead>
             <tr className="border-b border-border">
@@ -156,6 +172,73 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
         data={shareData}
       />
     </>
+  );
+}
+
+/** B25: compact mobile card — same null-honesty rules as TradeRow
+ *  (unknown PnL/fee/entry render '—', never a fabricated figure). */
+function TradeCard({ trade, onShare }: { trade: Trade; onShare?: () => void }) {
+  const grossPnl = trade.pnl != null && Number.isFinite(trade.pnl) ? trade.pnl : null;
+  const isLiquidation = trade.type === 'liquidation';
+  const isCrossLiq = isLiquidation && trade.asset === 'CROSS';
+
+  return (
+    <div className="py-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1.5 font-medium text-[13px] text-foreground">
+          {isCrossLiq ? 'Cross account' : `${trade.asset}/USD`}
+          {!isCrossLiq && (
+            <Badge variant={trade.direction === 'Long' ? 'success' : 'danger'} size="sm">
+              {trade.direction}
+            </Badge>
+          )}
+          {isLiquidation && (
+            <Badge variant="danger" size="sm">
+              Liq
+            </Badge>
+          )}
+        </span>
+        {grossPnl != null ? (
+          <span className={cn('font-mono tabular-nums text-[13px] font-medium', grossPnl >= 0 ? 'text-long' : 'text-short')}>
+            {grossPnl >= 0 ? '+' : ''}{formatUSD(grossPnl)}
+          </span>
+        ) : (
+          <span className="font-mono text-[13px] text-faint">—</span>
+        )}
+      </div>
+      <div className="flex items-center justify-between font-mono tabular-nums text-xs text-muted-foreground">
+        <span>{isCrossLiq ? '—' : formatUSD(trade.size ?? 0)}</span>
+        <span>
+          {trade.entryPrice != null ? formatUSD(trade.entryPrice, priceDecimals(trade.asset)) : '—'}
+          {' → '}
+          {isCrossLiq ? '—' : formatUSD(trade.price ?? 0, priceDecimals(trade.asset))}
+        </span>
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-faint">
+        <span className="font-mono tabular-nums">{formatDateTime(trade.timestamp)}</span>
+        <span className="inline-flex items-center gap-3">
+          {trade.txHash && (
+            <a
+              href={`${STELLAR_EXPERT_BASE}/tx/${trade.txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono hover:text-muted-foreground transition-colors min-h-[32px] inline-flex items-center"
+            >
+              {trade.txHash.slice(0, 6)}…
+            </a>
+          )}
+          {onShare && (
+            <button
+              onClick={onShare}
+              className="min-h-[32px] px-1 text-faint hover:text-foreground transition-colors"
+              aria-label="Share trade"
+            >
+              Share
+            </button>
+          )}
+        </span>
+      </div>
+    </div>
   );
 }
 

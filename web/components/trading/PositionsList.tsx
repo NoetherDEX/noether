@@ -26,7 +26,8 @@ function positionEquals(a: DisplayPosition, b: DisplayPosition): boolean {
     && a.liquidationPrice === b.liquidationPrice
     && a.leverage === b.leverage
     && a.direction === b.direction
-    && a.marginMode === b.marginMode;
+    && a.marginMode === b.marginMode
+    && a.pendingFunding === b.pendingFunding;
 }
 
 interface PositionsListProps {
@@ -1007,6 +1008,9 @@ const PositionRow = memo(function PositionRow({
   );
 }, (prev, next) => prev.isLiquidationRisk === next.isLiquidationRisk
   && prev.hasSlTpCallbacks === next.hasSlTpCallbacks
+  // B8: the TP/SL cell must re-render when protection orders change.
+  && prev.protection?.tp === next.protection?.tp
+  && prev.protection?.sl === next.protection?.sl
   && positionEquals(prev.position, next.position));
 
 // Mobile card component
@@ -1095,11 +1099,12 @@ const PositionCard = memo(function PositionCard({
           </p>
         ) : (
           <div className="flex gap-2 mb-2">
-            <Button variant="secondary" size="sm" className="flex-1" onClick={onSetStopLoss}>
+            {/* B25: thumbs need ≥44px targets on the mobile cards */}
+            <Button variant="secondary" size="sm" className="flex-1 min-h-[44px]" onClick={onSetStopLoss}>
               <Shield className="w-4 h-4 mr-1" />
               Stop-Loss
             </Button>
-            <Button variant="secondary" size="sm" className="flex-1" onClick={onSetTakeProfit}>
+            <Button variant="secondary" size="sm" className="flex-1 min-h-[44px]" onClick={onSetTakeProfit}>
               <Target className="w-4 h-4 mr-1" />
               Take-Profit
             </Button>
@@ -1108,7 +1113,7 @@ const PositionCard = memo(function PositionCard({
       )}
 
       <div className="flex gap-2">
-        <Button variant="danger" size="sm" className="flex-1" onClick={onClose}>
+        <Button variant="danger" size="sm" className="flex-1 min-h-[44px]" onClick={onClose}>
           Close
         </Button>
       </div>
