@@ -39,6 +39,7 @@ import {
   setTakeProfit,
   cancelOrder,
   getFundingRate,
+  getRecentLiquidations,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
 import { getMarketsStats, type AssetMarketStats } from '@/lib/api/markets';
@@ -69,6 +70,10 @@ function TradePage() {
   // state — that race could resurrect a just-closed position.
   const positionsFetchSeq = useRef(0);
   const ordersFetchSeq = useRef(0);
+  // B1 liquidation vanish-detection: id → isCross of the last applied poll,
+  // plus ids the user just closed themselves (never toast those as liqs).
+  const prevPositionIdsRef = useRef<Map<number, boolean> | null>(null);
+  const expectedCloseIdsRef = useRef<Set<number>>(new Set());
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -134,6 +139,49 @@ function TradePage() {
     };
   }, [selectedAsset]);
 
+  // B1: when a position disappears between polls WITHOUT a user-initiated
+  // close, check recent on-chain liquidation events and tell the trader —
+  // margin seized with no record is the worst trust failure a venue can ship.
+  const detectLiquidatedVanish = useCallback(async (current: Map<number, boolean>) => {
+    const prev = prevPositionIdsRef.current;
+    prevPositionIdsRef.current = current;
+    if (!prev || !publicKey) return;
+
+    const vanished = Array.from(prev.keys()).filter(
+      (id) => !current.has(id) && !expectedCloseIdsRef.current.has(id)
+    );
+    // Consume expected closes that have now landed on-chain.
+    for (const id of Array.from(expectedCloseIdsRef.current)) {
+      if (!current.has(id)) expectedCloseIdsRef.current.delete(id);
+    }
+    if (vanished.length === 0) return;
+
+    try {
+      const liqs = await getRecentLiquidations(publicKey);
+      if (liqs.length === 0) return; // order fill / external close — already toasted elsewhere
+      const isolated = new Map(
+        liqs.filter((l) => l.positionId != null).map((l) => [l.positionId as number, l])
+      );
+      const crossLiq = liqs.find((l) => l.positionId === null) ?? null;
+      let crossToasted = false;
+      for (const id of vanished) {
+        const hit = isolated.get(id);
+        if (hit) {
+          toast.error(`Position #${id} liquidated at ${formatUSD(hit.price)}`, {
+            duration: 12000,
+          });
+        } else if (crossLiq && prev.get(id) === true && !crossToasted) {
+          crossToasted = true;
+          const pnlText =
+            crossLiq.totalPnl != null ? ` — total PnL ${formatUSD(crossLiq.totalPnl)}` : '';
+          toast.error(`Cross-margin account liquidated${pnlText}`, { duration: 12000 });
+        }
+      }
+    } catch {
+      // Best-effort: no toast is better than a wrong toast.
+    }
+  }, [publicKey]);
+
   // Fetch positions function - extracted for manual refresh
   const fetchPositions = useCallback(async (showLoading = true) => {
     if (!publicKey) return;
@@ -197,6 +245,8 @@ function TradePage() {
         // Genuinely empty (failed reads THROW and land in the catch below).
         setRawPositions([]);
         setPositionsFetchFailed(false);
+        if (!currentLeaderVault) void detectLiquidatedVanish(new Map());
+        else prevPositionIdsRef.current = null;
         return;
       }
 
@@ -219,6 +269,13 @@ function TradePage() {
       setRawPositions(contractPositions);
       setCurrentPrices(prev => ({ ...prev, ...priceMap }));
       setPositionsFetchFailed(false);
+      if (!currentLeaderVault) {
+        void detectLiquidatedVanish(
+          new Map(contractPositions.map((p) => [p.id, p.marginMode === 'Cross']))
+        );
+      } else {
+        prevPositionIdsRef.current = null;
+      }
     } catch (error) {
       console.error('Failed to fetch positions:', error);
       // Keep last-good rows; the strip above the tables explains staleness.
@@ -229,7 +286,7 @@ function TradePage() {
         setIsRefreshing(false);
       }
     }
-  }, [publicKey, factoryAddress]);
+  }, [publicKey, factoryAddress, detectLiquidatedVanish]);
 
   // Manual refresh handler
   const handleRefreshPositions = useCallback(() => {
@@ -326,6 +383,8 @@ function TradePage() {
       setOrders([]);
       setPositionsFetchFailed(false);
       setOrdersFetchFailed(false);
+      prevPositionIdsRef.current = null;
+      expectedCloseIdsRef.current.clear();
       return;
     }
 
@@ -439,6 +498,8 @@ function TradePage() {
     toast.promise(closePromise, {
       loading: `Closing ${label}…`,
       success: (pnl) => {
+        // User-initiated close — never toast this vanish as a liquidation.
+        expectedCloseIdsRef.current.add(positionId);
         // Refresh positions and balances. The staggered refetch covers the
         // indexer lag so the closed position drops without a manual refresh.
         refreshPositionsAfterTrade();

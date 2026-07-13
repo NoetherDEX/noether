@@ -510,6 +510,56 @@ function parseClosePositionFromTransaction(
               fee: undefined,
               timestamp: new Date(tx.created_at),
             };
+          } else if (firstTopic === 'position_liquidated') {
+            // (position_id, trader, asset, direction, size, keeper_reward, current_price)
+            const eventData = scValToNative(data);
+            if (!Array.isArray(eventData)) continue;
+            const trader = eventData[1] as string;
+            if (trader !== traderPublicKey) continue;
+            const dirVal = eventData[3];
+            const direction: Direction =
+              typeof dirVal === 'number'
+                ? dirVal === 0 ? 'Long' : 'Short'
+                : typeof dirVal === 'object' && dirVal !== null && 'Short' in dirVal
+                ? 'Short'
+                : 'Long';
+            return {
+              id: tx.id,
+              txHash: tx.hash,
+              trader,
+              asset: String(eventData[2] ?? 'Unknown'),
+              direction,
+              type: 'liquidation',
+              size: bigIntToNumber(BigInt(eventData[4] ?? 0)),
+              price: bigIntToNumber(BigInt(eventData[6] ?? 0)),
+              // Entry/PnL are NOT in the deployed event (C2 adds them) —
+              // undefined renders '—', never a fabricated figure.
+              entryPrice: undefined,
+              pnl: undefined,
+              fee: undefined,
+              timestamp: new Date(tx.created_at),
+            };
+          } else if (firstTopic === 'cross_liq') {
+            // (trader, total_pnl, keeper_reward) — one event for the whole
+            // cross account; rendered as a single 'Cross account' row.
+            const eventData = scValToNative(data);
+            if (!Array.isArray(eventData)) continue;
+            const trader = eventData[0] as string;
+            if (trader !== traderPublicKey) continue;
+            return {
+              id: tx.id,
+              txHash: tx.hash,
+              trader,
+              asset: 'CROSS',
+              direction: 'Long',
+              type: 'liquidation',
+              size: 0,
+              price: 0,
+              entryPrice: undefined,
+              pnl: bigIntToNumber(BigInt(eventData[1] ?? 0)),
+              fee: undefined,
+              timestamp: new Date(tx.created_at),
+            };
           }
         }
       } catch {
@@ -538,23 +588,32 @@ async function getTradeHistoryFromEvents(traderPublicKey: string): Promise<Trade
 
     debugLog(`[TradeHistory] Fetching events from ledger ${startLedger} to ${latestLedger.sequence}`);
 
-    // Try position_closed first (what contract actually emits)
+    // Closes AND liquidations — a liquidated trader must find the record
+    // in their history, not a silent gap (B1).
     const response = await sorobanRpc.getEvents({
       startLedger,
       filters: [
         {
           type: 'contract',
           contractIds: [CONTRACTS.MARKET],
-          topics: [
-            [xdr.ScVal.scvSymbol('position_closed').toXDR('base64')],
-          ],
+          topics: [[xdr.ScVal.scvSymbol('position_closed').toXDR('base64')]],
+        },
+        {
+          type: 'contract',
+          contractIds: [CONTRACTS.MARKET],
+          topics: [[xdr.ScVal.scvSymbol('position_liquidated').toXDR('base64')]],
+        },
+        {
+          type: 'contract',
+          contractIds: [CONTRACTS.MARKET],
+          topics: [[xdr.ScVal.scvSymbol('cross_liq').toXDR('base64')]],
         },
       ],
       limit: 100,
     });
 
     if (!response.events || response.events.length === 0) {
-      debugLog('[TradeHistory] No position_closed events found');
+      debugLog('[TradeHistory] No close/liquidation events found');
       return [];
     }
 
@@ -562,6 +621,75 @@ async function getTradeHistoryFromEvents(traderPublicKey: string): Promise<Trade
     return parseEventsToTrades(response.events, traderPublicKey);
   } catch (error) {
     console.error('Error fetching trade history from events:', error);
+    return [];
+  }
+}
+
+/** One recent liquidation touching the trader (B1 vanish-toast source). */
+export interface RecentLiquidation {
+  /** null = whole cross account was liquidated (cross_liq). */
+  positionId: number | null;
+  /** Liquidation price for isolated positions; 0 for cross events. */
+  price: number;
+  /** Total account PnL for cross liquidations; null for isolated. */
+  totalPnl: number | null;
+}
+
+/**
+ * Best-effort scan of recent position_liquidated / cross_liq events for one
+ * trader, so the UI can say "Position #N liquidated at $X" when a row
+ * vanishes between polls instead of deleting it silently (B1). Errors return
+ * [] — no toast is better than a wrong toast.
+ */
+export async function getRecentLiquidations(
+  traderPublicKey: string,
+  lookbackLedgers = 240 // ≈ 20 minutes of ledgers
+): Promise<RecentLiquidation[]> {
+  try {
+    const latestLedger = await sorobanRpc.getLatestLedger();
+    const startLedger = Math.max(1, latestLedger.sequence - lookbackLedgers);
+    const response = await sorobanRpc.getEvents({
+      startLedger,
+      filters: [
+        {
+          type: 'contract',
+          contractIds: [CONTRACTS.MARKET],
+          topics: [[xdr.ScVal.scvSymbol('position_liquidated').toXDR('base64')]],
+        },
+        {
+          type: 'contract',
+          contractIds: [CONTRACTS.MARKET],
+          topics: [[xdr.ScVal.scvSymbol('cross_liq').toXDR('base64')]],
+        },
+      ],
+      limit: 50,
+    });
+
+    const out: RecentLiquidation[] = [];
+    for (const event of response.events ?? []) {
+      try {
+        const topic = event.topic?.length ? String(scValToNative(event.topic[0])) : '';
+        const data = scValToNative(event.value);
+        if (!Array.isArray(data)) continue;
+        if (topic === 'position_liquidated') {
+          if ((data[1] as string) !== traderPublicKey) continue;
+          out.push({
+            positionId: Number(data[0]),
+            price: bigIntToNumber(BigInt(data[6] ?? 0)),
+            totalPnl: null,
+          });
+        } else if (topic === 'cross_liq') {
+          if ((data[0] as string) !== traderPublicKey) continue;
+          out.push({
+            positionId: null,
+            price: 0,
+            totalPnl: bigIntToNumber(BigInt(data[1] ?? 0)),
+          });
+        }
+      } catch {}
+    }
+    return out;
+  } catch {
     return [];
   }
 }
@@ -971,6 +1099,64 @@ function parseEventsToTrades(events: rpc.Api.EventResponse[], traderPublicKey: s
       if (!eventData) continue;
 
       const data = scValToNative(eventData);
+
+      // Dispatch by topic — the query returns closes AND liquidations (B1).
+      let topicName = '';
+      try {
+        topicName = event.topic?.length ? String(scValToNative(event.topic[0])) : '';
+      } catch {}
+
+      if (topicName === 'position_liquidated') {
+        // (position_id, trader, asset, direction, size, keeper_reward, current_price)
+        if (!Array.isArray(data)) continue;
+        const trader = data[1] as string;
+        if (trader !== traderPublicKey) continue;
+        const dirVal = data[3];
+        const direction: Direction =
+          typeof dirVal === 'number'
+            ? dirVal === 0 ? 'Long' : 'Short'
+            : typeof dirVal === 'object' && dirVal !== null && 'Short' in dirVal
+            ? 'Short'
+            : 'Long';
+        trades.push({
+          id: `${event.id}`,
+          txHash: event.txHash,
+          trader,
+          asset: String(data[2] ?? 'Unknown'),
+          direction,
+          type: 'liquidation',
+          size: bigIntToNumber(BigInt(data[4] ?? 0)),
+          price: bigIntToNumber(BigInt(data[6] ?? 0)),
+          // Entry/PnL are not in the deployed event (C2 adds them) — '—'.
+          entryPrice: undefined,
+          pnl: undefined,
+          fee: undefined,
+          timestamp: new Date(event.ledgerClosedAt || Date.now()),
+        });
+        continue;
+      }
+
+      if (topicName === 'cross_liq') {
+        // (trader, total_pnl, keeper_reward)
+        if (!Array.isArray(data)) continue;
+        const trader = data[0] as string;
+        if (trader !== traderPublicKey) continue;
+        trades.push({
+          id: `${event.id}`,
+          txHash: event.txHash,
+          trader,
+          asset: 'CROSS',
+          direction: 'Long',
+          type: 'liquidation',
+          size: 0,
+          price: 0,
+          entryPrice: undefined,
+          pnl: bigIntToNumber(BigInt(data[1] ?? 0)),
+          fee: undefined,
+          timestamp: new Date(event.ledgerClosedAt || Date.now()),
+        });
+        continue;
+      }
 
       // Extract fields from the NEW event format
       let trader: string = traderPublicKey;

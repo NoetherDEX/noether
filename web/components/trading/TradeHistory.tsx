@@ -135,7 +135,14 @@ export function TradeHistory({ trades, isLoading, isRefreshing, onRefresh }: Tra
                 key={trade.id}
                 trade={trade}
                 index={trades.length - index}
-                onShare={trade.type === 'close' || trade.type === 'liquidation' ? () => handleShare(trade) : undefined}
+                onShare={
+                  // Liq events lack entry/PnL until C2 — sharing them would
+                  // render fabricated zeros on the card.
+                  trade.type === 'close' ||
+                  (trade.type === 'liquidation' && trade.pnl != null && trade.entryPrice != null)
+                    ? () => handleShare(trade)
+                    : undefined
+                }
               />
             ))}
           </tbody>
@@ -162,13 +169,18 @@ function TradeRow({
   index: number;
   onShare?: () => void;
 }) {
-  const grossPnl = trade.pnl ?? 0;
+  // pnl == null → UNKNOWN (the deployed position_liquidated event carries no
+  // PnL until C2): render '—', never a fabricated +$0.00 (B1/A15).
+  const grossPnl = trade.pnl != null && Number.isFinite(trade.pnl) ? trade.pnl : null;
   // fee == null → UNKNOWN (the deployed event doesn't emit it): Fees and
   // Net PnL render '—' — never assert the venue charged $0.00 (A15).
   const fee = trade.fee != null && Number.isFinite(trade.fee) ? trade.fee : null;
-  const netPnl = fee != null ? grossPnl - Math.abs(fee) : null;
-  const isPositive = (netPnl ?? grossPnl) >= 0;
+  const netPnl = fee != null && grossPnl != null ? grossPnl - Math.abs(fee) : null;
+  const isPositive = (netPnl ?? grossPnl ?? 0) >= 0;
   const isLong = trade.direction === 'Long';
+  const isLiquidation = trade.type === 'liquidation';
+  // cross_liq is one account-level event — no single asset/side/size.
+  const isCrossLiq = isLiquidation && trade.asset === 'CROSS';
 
   return (
     <tr className="border-b border-border hover:bg-surface-3/50 transition-colors text-xs">
@@ -178,34 +190,57 @@ function TradeRow({
       </td>
       {/* Market */}
       <td className="py-2 px-3">
-        <span className="font-medium text-foreground">{trade.asset || 'XLM'}/USD</span>
+        <span className="font-medium text-foreground">
+          {isCrossLiq ? 'Cross account' : `${trade.asset || 'XLM'}/USD`}
+        </span>
       </td>
-      {/* Side */}
+      {/* Side (+ explicit Liquidated marker — B1) */}
       <td className="py-2 px-3">
-        <Badge variant={isLong ? 'success' : 'danger'} size="sm">
-          {trade.direction || 'Long'}
-        </Badge>
+        <span className="inline-flex items-center gap-1.5">
+          {!isCrossLiq && (
+            <Badge variant={isLong ? 'success' : 'danger'} size="sm">
+              {trade.direction || 'Long'}
+            </Badge>
+          )}
+          {isLiquidation && (
+            <Badge variant="danger" size="sm">
+              Liq
+            </Badge>
+          )}
+        </span>
       </td>
       {/* Size */}
       <td className="py-2 px-3 text-right text-foreground font-mono">
-        {formatUSD(trade.size ?? 0)}
+        {isCrossLiq ? <span className="text-faint">—</span> : formatUSD(trade.size ?? 0)}
       </td>
-      {/* Entry Price */}
+      {/* Entry Price — unknown for liquidation events until C2 */}
       <td className="py-2 px-3 text-right text-muted-foreground font-mono">
-        {formatUSD(trade.entryPrice ?? 0, priceDecimals(trade.asset))}
+        {trade.entryPrice != null ? (
+          formatUSD(trade.entryPrice, priceDecimals(trade.asset))
+        ) : (
+          <span className="text-faint">—</span>
+        )}
       </td>
-      {/* Exit Price */}
+      {/* Exit / liquidation price */}
       <td className="py-2 px-3 text-right text-muted-foreground font-mono">
-        {formatUSD(trade.price ?? 0, priceDecimals(trade.asset))}
+        {isCrossLiq ? (
+          <span className="text-faint">—</span>
+        ) : (
+          formatUSD(trade.price ?? 0, priceDecimals(trade.asset))
+        )}
       </td>
-      {/* Gross PnL */}
+      {/* Gross PnL — '—' when the event doesn't report it */}
       <td className="py-2 px-3 text-right">
-        <span className={cn(
-          'font-medium font-mono',
-          grossPnl >= 0 ? 'text-long' : 'text-short'
-        )}>
-          {grossPnl >= 0 ? '+' : ''}{formatUSD(grossPnl)}
-        </span>
+        {grossPnl != null ? (
+          <span className={cn(
+            'font-medium font-mono',
+            grossPnl >= 0 ? 'text-long' : 'text-short'
+          )}>
+            {grossPnl >= 0 ? '+' : ''}{formatUSD(grossPnl)}
+          </span>
+        ) : (
+          <span className="text-faint">—</span>
+        )}
       </td>
       {/* Fees — unknown until the contract emits it */}
       <td className="py-2 px-3 text-right">
