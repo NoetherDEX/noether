@@ -215,7 +215,7 @@ function PortfolioPage() {
 
           {/* Row 2 - Performance & Allocation */}
           <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6">
-            <PnlChart trades={trades} />
+            <PnlChart trades={trades} isLoading={isLoadingTrades} hasError={tradesError} />
             <AssetAllocation positions={positions} usdcBalance={usdcBalance} staleAssets={staleAssets} />
           </div>
 

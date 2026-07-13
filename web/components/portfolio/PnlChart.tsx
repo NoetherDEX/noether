@@ -11,6 +11,10 @@ type Timeframe = (typeof timeframes)[number];
 
 interface PnlChartProps {
   trades?: Trade[];
+  /** First-load in progress — renders a skeleton, never a fake flat line. */
+  isLoading?: boolean;
+  /** Trade-history read failed — renders an error state, never fake data. */
+  hasError?: boolean;
 }
 
 interface ChartDataPoint {
@@ -34,29 +38,13 @@ const formatDateLabel = (date: Date, timeframe: Timeframe, index: number): strin
   }
 };
 
-export function PnlChart({ trades = [] }: PnlChartProps) {
+export function PnlChart({ trades = [], isLoading = false, hasError = false }: PnlChartProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1M');
 
   const data = useMemo(() => {
-    if (!trades || trades.length === 0) {
-      // Return flat line at 0 if no trades
-      const emptyData: ChartDataPoint[] = [];
-      const now = new Date();
-      const points = timeframe === '1D' ? 24 : timeframe === '1W' ? 7 : 30;
-
-      for (let i = 0; i < points; i++) {
-        const d = new Date(now);
-        if (timeframe === '1D') d.setHours(d.getHours() - (points - 1 - i));
-        else d.setDate(d.getDate() - (points - 1 - i));
-
-        emptyData.push({
-          time: formatDateLabel(d, timeframe, i),
-          pnl: 0,
-          timestamp: d.getTime()
-        });
-      }
-      return emptyData;
-    }
+    // No trades = nothing to chart. Never fabricate a flat $0 series —
+    // loading/error/empty each render their own honest state below.
+    if (!trades || trades.length === 0) return [];
 
     // 1. Sort trades by time ascending
     const sortedTrades = [...trades].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
@@ -115,6 +103,7 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
     return chartData;
   }, [trades, timeframe]);
 
+  const hasData = data.length > 0;
   const startValue = data[0]?.pnl || 0;
   const endValue = data[data.length - 1]?.pnl || 0;
   const change = endValue - startValue;
@@ -158,22 +147,28 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
             <TrendingUp className="h-4 w-4 text-faint" />
             <span className="text-[13px] font-medium text-foreground">PnL History</span>
           </div>
-          <div className="flex items-center gap-2 pl-3 border-l border-border">
-            <span className={cn(
-              'font-mono tabular-nums text-base font-medium',
-              isPositive ? 'text-long' : 'text-short'
-            )}>
-              {isPositive ? '+' : ''}${change.toFixed(2)}
-            </span>
-            {changePercent !== null && (
+          {hasData ? (
+            <div className="flex items-center gap-2 pl-3 border-l border-border">
               <span className={cn(
-                'text-sm font-mono tabular-nums',
+                'font-mono tabular-nums text-base font-medium',
                 isPositive ? 'text-long' : 'text-short'
               )}>
-                ({formatPercent(changePercent)})
+                {isPositive ? '+' : ''}${change.toFixed(2)}
               </span>
-            )}
-          </div>
+              {changePercent !== null && (
+                <span className={cn(
+                  'text-sm font-mono tabular-nums',
+                  isPositive ? 'text-long' : 'text-short'
+                )}>
+                  ({formatPercent(changePercent)})
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 pl-3 border-l border-border">
+              <span className="font-mono tabular-nums text-base font-medium text-muted-foreground">—</span>
+            </div>
+          )}
         </div>
 
         {/* Timeframe Selector */}
@@ -195,7 +190,33 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
         </div>
       </div>
 
-      {/* Chart */}
+      {/* Chart — honest states: skeleton while loading, error, teach-the-page
+          empty state; the fabricated flat $0 line is gone. */}
+      {!hasData ? (
+        <div className="h-[280px] w-full flex items-center justify-center">
+          {isLoading ? (
+            <div className="w-full h-full flex flex-col justify-between py-6" aria-hidden="true">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-3 w-full bg-surface-2 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : hasError ? (
+            <div className="text-center px-6">
+              <p className="text-sm text-foreground mb-1">Couldn&apos;t load trade history</p>
+              <p className="text-xs text-muted-foreground">
+                Realized PnL can&apos;t be charted right now — it retries automatically.
+              </p>
+            </div>
+          ) : (
+            <div className="text-center px-6">
+              <p className="text-sm text-foreground mb-1">No closed trades yet</p>
+              <p className="text-xs text-muted-foreground">
+                Your realized PnL charts here after your first position close.
+              </p>
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="h-[280px] w-full relative group">
         <svg
           viewBox={`0 0 ${chartWidth} ${chartHeight}`}
@@ -253,6 +274,7 @@ export function PnlChart({ trades = [] }: PnlChartProps) {
         {/* Note: A full interactive tooltip with mouse tracking would require more complex React state/refs.
             For now, we keep the visual simplicity. */}
       </div>
+      )}
     </div>
   );
 }
