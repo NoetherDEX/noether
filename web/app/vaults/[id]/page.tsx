@@ -15,8 +15,10 @@ import {
   getVaultWithdraws,
   getVaultTrades,
 } from '@/lib/api/vaults';
+import { getVaultInfo } from '@/lib/stellar/vaultFactory';
+import { vaultRowFromOnChain } from '@/types/vault';
 import { formatDate } from '@/lib/utils/format';
-import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
+import { STELLAR_EXPERT_BASE, NULL_ACCOUNT } from '@/lib/utils/constants';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -29,7 +31,24 @@ export default async function VaultDetailPage({
   const id = Number(params.id);
   if (!Number.isInteger(id) || id < 0) notFound();
 
-  const vault = await getVault(id);
+  // B15: the gateway is a projection, not the source of truth. A gateway
+  // outage (or the indexing window right after create_vault) used to 404 a
+  // vault the user just saw — fall back to the on-chain read and mark the
+  // page degraded instead.
+  let vault = null;
+  let degraded = false;
+  try {
+    vault = await getVault(id);
+  } catch {
+    degraded = true; // gateway unreachable — try the chain
+  }
+  if (!vault) {
+    const info = await getVaultInfo(NULL_ACCOUNT, id).catch(() => null);
+    if (info) {
+      vault = vaultRowFromOnChain(info);
+      degraded = true;
+    }
+  }
   if (!vault) notFound();
 
   const [deposits, withdraws, feeClaims, trades] = await Promise.all([
@@ -54,6 +73,15 @@ export default async function VaultDetailPage({
               ← All vaults
             </Link>
           </div>
+
+          {/* B15: chain-fallback state — the numbers are real (on-chain),
+              only the indexed history below may lag. */}
+          {degraded && (
+            <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-2.5 text-sm text-primary">
+              Marketplace data is still syncing — showing live on-chain values.
+              Activity and trade history may be incomplete for a minute.
+            </div>
+          )}
 
           {/* Header */}
           <div className="border-b border-border pb-8">

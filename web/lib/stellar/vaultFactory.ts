@@ -76,11 +76,21 @@ export async function createVault(
   signerPublicKey: string,
   walletId: string,
   name: string,
-): Promise<void> {
+): Promise<number | null> {
   const factory = vaultFactoryContract();
   const args = [toScVal(signerPublicKey, 'address'), toScVal(name, 'string')];
   const xdr = await buildTransaction(signerPublicKey, factory, 'create_vault', args);
-  await signAndSubmit(signerPublicKey, walletId, xdr);
+  const result = await signAndSubmit(signerPublicKey, walletId, xdr);
+  // B16: the contract returns the new vault id — surface it so the UI can
+  // route straight to the fresh vault instead of dead-ending on a grid the
+  // indexer hasn't caught up with yet.
+  try {
+    const rv = (result as { returnValue?: Parameters<typeof scValToNative>[0] })?.returnValue;
+    if (rv) return Number(scValToNative(rv));
+  } catch {
+    /* id extraction is best-effort — creation itself succeeded */
+  }
+  return null;
 }
 
 export async function claimLeaderFees(
