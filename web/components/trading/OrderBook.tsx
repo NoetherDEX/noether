@@ -91,7 +91,7 @@ export function OrderBook({ asset }: OrderBookProps) {
     return (
       <div className="flex flex-col">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[13px] font-medium text-foreground">Order Book</h3>
+          <h3 className="text-[13px] font-medium text-foreground">Open Orders</h3>
         </div>
         <div className="flex items-center justify-center py-10">
           <div className="animate-pulse text-muted-foreground text-xs">Loading…</div>
@@ -104,7 +104,7 @@ export function OrderBook({ asset }: OrderBookProps) {
     <div className="flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[13px] font-medium text-foreground">Order Book</h3>
+        <h3 className="text-[13px] font-medium text-foreground">Open Orders</h3>
         <button
           onClick={() => fetchOrders(false)}
           disabled={isRefreshing}
@@ -112,7 +112,7 @@ export function OrderBook({ asset }: OrderBookProps) {
             'p-1.5 rounded-md hover:bg-surface-3 text-muted-foreground hover:text-foreground transition-colors',
             'disabled:opacity-50 disabled:cursor-not-allowed'
           )}
-          title="Refresh orderbook"
+          title="Refresh open orders"
         >
           <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
         </button>

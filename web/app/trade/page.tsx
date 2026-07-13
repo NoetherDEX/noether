@@ -731,10 +731,17 @@ function TradePage() {
     // Real venue data (pending limit orders / indexer fills) — lived in the
     // old left sidebar; now reachable as tabs so the chart keeps the width.
     {
+      // B10: never present a book-shaped panel of the venue's own resting
+      // orders as an "Order Book" — Noether is oracle-priced (no CLOB), and
+      // the courted audience reads a fake book as a ghost town or a lie.
       id: 'orderbook',
-      label: 'Order Book',
+      label: 'Open Orders',
       content: (
         <div className="max-w-2xl">
+          <p className="mb-3 text-[11px] text-faint">
+            Noether fills at the oracle price — there is no order book. These
+            are the venue&apos;s resting limit/trigger orders awaiting execution.
+          </p>
           <OrderBook asset={selectedAsset} />
         </div>
       ),
