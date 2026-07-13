@@ -24,7 +24,7 @@ import type { ChartType } from '@/components/trading/TradingChart';
 import type { CandleSource } from '@/lib/api/candles';
 import { useLeaderModeStore } from '@/lib/store';
 import { leaderClosePosition } from '@/lib/stellar/vaultFactory';
-import { getVault } from '@/lib/api/vaults';
+import { getVault, getVaultTrades } from '@/lib/api/vaults';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { TIMEFRAMES, NULL_ACCOUNT } from '@/lib/utils/constants';
@@ -218,10 +218,32 @@ function TradePage() {
       if (currentLeaderVault && factoryAddress) {
         // No .catch(() => []) here: an API outage must surface as a failed
         // refresh (rows kept + strip), not as a fake empty vault book.
-        const open = await listOpenPositions(factoryAddress);
+        //
+        // B18 (P0 UI-half): the factory owns EVERY vault's positions — a
+        // leader with two vaults used to see (and could close) the other
+        // vault's positions as their own. Scope the id list to THIS vault
+        // via its indexed leader_open/leader_close trades; if the scoping
+        // read fails we THROW (kept-last-good + strip) rather than fall
+        // back to the unscoped cross-vault list. The contract-side
+        // membership check is C1.
+        const [open, vaultTrades] = await Promise.all([
+          listOpenPositions(factoryAddress),
+          getVaultTrades(currentLeaderVault.id, 200),
+        ]);
+        const opened = new Set<string>();
+        const closed = new Set<string>();
+        for (const t of vaultTrades) {
+          if (t.action === 'open') opened.add(String(t.positionId));
+          else closed.add(String(t.positionId));
+        }
+        const thisVaultIds = new Set(
+          Array.from(opened).filter((id) => !closed.has(id)),
+        );
         contractPositions = await getPositionsByIds(
           publicKey,
-          open.map((p) => p.positionId),
+          open
+            .map((p) => p.positionId)
+            .filter((id) => thisVaultIds.has(String(id))),
         );
       } else {
         // Personal mode: fast path via the indexer API, then fall back to the
