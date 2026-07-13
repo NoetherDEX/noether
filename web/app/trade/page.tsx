@@ -25,7 +25,7 @@ import { leaderClosePosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useWallet } from '@/lib/hooks/useWallet';
-import { TIMEFRAMES } from '@/lib/utils/constants';
+import { TIMEFRAMES, NULL_ACCOUNT } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
 import {
   getPositions,
@@ -410,10 +410,15 @@ function TradePage() {
   // as the effect dep below so the price poll only tears down + restarts
   // when the SET of assets changes — not on every rawPositions reference
   // change (a price tick that mutates currentPrices doesn't change this).
-  const positionAssetKey = useMemo(
-    () => Array.from(new Set(rawPositions.map(p => p.asset))).sort().join(','),
-    [rawPositions],
-  );
+  const positionAssetKey = useMemo(() => {
+    const set = new Set(rawPositions.map(p => p.asset));
+    // B3: ALWAYS stream the selected market too. Before, the venue's own
+    // oracle price only flowed for assets with open positions — first-trade
+    // users priced entries and liq previews off the Binance fallback and the
+    // staleness badge could never fire for them.
+    set.add(selectedAsset);
+    return Array.from(set).sort().join(',');
+  }, [rawPositions, selectedAsset]);
 
   // Live mark prices for assets in open positions. Decoupled from the
   // position-list fetch so PnL / Mark / Net Value stay live without re-running
@@ -424,8 +429,11 @@ function TradePage() {
   // (display only — no RPC/auth needed). Replaces the prior 5s on-chain poll, so
   // marks now refresh ~10x faster.
   useEffect(() => {
-    if (!isConnected || !publicKey || !positionAssetKey) return;
+    // No wallet gate: the SSE stream and the shim read both work with the
+    // read-only null account — every visitor sees the execution price (B3).
+    if (!positionAssetKey) return;
     const assets = positionAssetKey.split(',');
+    const readerKey = publicKey ?? NULL_ACCOUNT;
 
     let cancelled = false;
 
@@ -434,7 +442,7 @@ function TradePage() {
       const updates: Record<string, number> = {};
       await Promise.all(
         assets.map(async (asset) => {
-          const priceData = await getPrice(publicKey, asset);
+          const priceData = await getPrice(readerKey, asset);
           if (priceData) updates[asset] = priceToDisplay(priceData.price);
         }),
       );
@@ -456,7 +464,7 @@ function TradePage() {
       (stale) => {
         if (!cancelled) setPricesStale(stale);
       },
-      publicKey,
+      readerKey,
     );
 
     return () => {
@@ -464,7 +472,7 @@ function TradePage() {
       setPricesStale(false);
       unsubscribe();
     };
-  }, [isConnected, publicKey, positionAssetKey]);
+  }, [publicKey, positionAssetKey]);
 
   // A10: closing — the risk-off action — gets the same toast.promise
   // lifecycle as open/SL/TP: loading state, PnL on success, decoded errors,
