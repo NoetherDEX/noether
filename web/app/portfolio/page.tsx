@@ -1,19 +1,30 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import toast from 'react-hot-toast';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
 import { AccountHealth, PnlChart, AssetAllocation, PortfolioHistory } from '@/components/portfolio';
+import { PositionsList } from '@/components/trading';
 import { useWallet } from '@/lib/hooks/useWallet';
-import { getPositions, toDisplayPosition, getTradeHistory, getCrossMarginBalance } from '@/lib/stellar/market';
+import {
+  getPositions,
+  toDisplayPosition,
+  getTradeHistory,
+  getCrossMarginBalance,
+  closePosition,
+  closePositionCross,
+} from '@/lib/stellar/market';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { fromPrecision } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayPosition, Trade } from '@/types';
 
 function PortfolioPage() {
-  const { isConnected, publicKey, usdcBalance } = useWallet();
+  const { isConnected, publicKey, usdcBalance, sign, refreshBalances } = useWallet();
+  const router = useRouter();
 
   const [positions, setPositions] = useState<DisplayPosition[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -33,8 +44,10 @@ function PortfolioPage() {
   // Last successful oracle read per asset, kept across refresh cycles.
   const lastGoodPricesRef = useRef<Record<string, number>>({});
 
-  // Fetch positions + cross-margin balance from Soroban contract
-  const fetchPositions = useCallback(async () => {
+  // Fetch positions + cross-margin balance from Soroban contract.
+  // showLoading=false for background refreshes — skeletons on first load
+  // only, so the 60s tick stops flashing the whole page (B12).
+  const fetchPositions = useCallback(async (showLoading = true) => {
     if (!publicKey) {
       setPositions([]);
       setCrossMarginBalance(null);
@@ -47,7 +60,7 @@ function PortfolioPage() {
       return;
     }
 
-    setIsLoadingPositions(true);
+    if (showLoading) setIsLoadingPositions(true);
     try {
       const [contractPositions, crossBalanceRaw] = await Promise.all([
         getPositions(publicKey),
@@ -152,22 +165,58 @@ function PortfolioPage() {
     }
   }, [isConnected, publicKey, fetchPositions, fetchTrades]);
 
-  // Auto-refresh every 60 seconds
+  // Auto-refresh every 60 seconds — trades and wallet balances refresh with
+  // positions (B12: the history/net-worth used to drift until a manual
+  // reload), and no skeleton flash on background ticks.
   useEffect(() => {
     if (!isConnected || !publicKey) return;
 
     const interval = setInterval(() => {
-      fetchPositions();
+      fetchPositions(false);
+      fetchTrades();
+      refreshBalances();
     }, 60000);
 
     return () => clearInterval(interval);
-  }, [isConnected, publicKey, fetchPositions]);
+  }, [isConnected, publicKey, fetchPositions, fetchTrades, refreshBalances]);
 
   const retry = () => {
     fetchPositions();
     fetchTrades();
   };
   const isRetrying = isLoadingPositions || isLoadingTrades;
+
+  // B12: the account page manages exposure — closing here uses the exact
+  // toast.promise lifecycle /trade uses, then refreshes everything.
+  const handleClosePosition = async (positionId: number): Promise<void> => {
+    if (!publicKey) return;
+    const pos = positions.find((p) => p.id === positionId);
+    const label = pos ? `${pos.asset} ${pos.direction}` : `position #${positionId}`;
+
+    const closePromise = (async (): Promise<bigint | null> => {
+      if (pos?.marginMode === 'Cross') {
+        const result = await closePositionCross(publicKey, sign, positionId);
+        return result.pnl;
+      }
+      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? 'BTC');
+      return result.pnl;
+    })();
+
+    toast.promise(closePromise, {
+      loading: `Closing ${label}…`,
+      success: (pnl) => {
+        fetchPositions(false);
+        fetchTrades();
+        refreshBalances();
+        if (pnl === null) return `${label} closed`;
+        const pnlUsd = fromPrecision(pnl);
+        return `${label} closed — PnL ${pnlUsd >= 0 ? '+' : '−'}$${Math.abs(pnlUsd).toFixed(2)}`;
+      },
+      error: (err) => (err instanceof Error ? err.message : 'Failed to close position'),
+    });
+
+    await closePromise.catch(() => {});
+  };
 
   // A8: retryable degraded-data banner (failed loads, missing/stale prices)
   const bannerMessages: string[] = [];
@@ -212,6 +261,22 @@ function PortfolioPage() {
             unpricedCount={unpricedCount}
             pricesStale={staleAssets.length > 0}
           />
+
+          {/* Row 1.5 — Open Positions with real management actions (B12):
+              traders expect the account page to manage exposure, not
+              context-switch to /trade for every close. */}
+          {isConnected && (
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <h2 className="text-[13px] font-medium text-foreground mb-3">Open Positions</h2>
+              <PositionsList
+                positions={positions}
+                isLoading={isLoadingPositions}
+                onClosePosition={handleClosePosition}
+                onRefresh={retry}
+                onStartTrading={() => router.push('/trade')}
+              />
+            </div>
+          )}
 
           {/* Row 2 - Performance & Allocation */}
           <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6">

@@ -3,6 +3,7 @@
 import { ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, Shield } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { formatUSD, formatPercent } from '@/lib/utils/format';
+import { ConnectButton } from '@/components/wallet';
 import type { DisplayPosition } from '@/types';
 
 interface AccountHealthProps {
@@ -57,10 +58,27 @@ export function AccountHealth({
       : null;
   const buyingPower = usdcBalance;
 
-  // Calculate margin usage (collateral used / total value)
-  const marginUsed = totalCollateral;
-  const marginUsagePercent =
-    netWorth === null ? null : netWorth > 0 ? (marginUsed / netWorth) * 100 : 0;
+  // B13: ONE canonical health scalar — the same margin-ratio formula and
+  // bands as /trade's CrossMarginBanner (equity / maintenance margin, 1% MM,
+  // liquidation at 100%) — replacing the invented "Safe/Moderate/High"
+  // heuristic that could read "Safe" one tick from liquidation.
+  const totalSize = positions.reduce((sum, p) => sum + p.size, 0);
+  const maintenanceMargin = totalSize * 0.01;
+  const tradingEquity =
+    pnlKnown && crossMarginBalance !== null
+      ? crossMarginBalance + totalCollateral + totalUnrealizedPnl
+      : null;
+  const marginRatio =
+    tradingEquity === null
+      ? null
+      : maintenanceMargin > 0
+      ? (tradingEquity / maintenanceMargin) * 100
+      : Infinity;
+  // Bar shows distance TOWARD liquidation (full bar = liquidatable).
+  const liqProximityPct =
+    marginRatio === null || marginRatio === Infinity
+      ? 0
+      : Math.min(100, 10000 / Math.max(marginRatio, 1));
 
   // Calculate monthly change (mock for now - would need historical data)
   const monthlyChangePercent =
@@ -82,9 +100,14 @@ export function AccountHealth({
           <div className="text-center py-8">
             <Wallet className="w-12 h-12 text-faint mx-auto mb-4" />
             <h3 className="text-lg font-medium text-foreground mb-2">Connect Your Wallet</h3>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground mb-5">
               Connect your wallet to view your portfolio and positions
             </p>
+            {/* B12: the connect card carries the connect ACTION — no hunting
+                for the header button. */}
+            <div className="inline-flex">
+              <ConnectButton />
+            </div>
           </div>
         </div>
       </div>
@@ -120,7 +143,9 @@ export function AccountHealth({
               <span className="font-mono tabular-nums">
                 {formatPercent(monthlyChangePercent)}
               </span>
-              <span className="text-muted-foreground ml-1">this month</span>
+              {/* B13: this figure derives from OPEN positions' PnL — calling
+                  it "this month" was a fabrication. */}
+              <span className="text-muted-foreground ml-1">open PnL</span>
             </div>
           )}
           {/* A9: reconcilable breakdown line — funds parked in the cross-margin pool */}
@@ -168,47 +193,59 @@ export function AccountHealth({
           </div>
         </div>
 
-        {/* Buying Power */}
+        {/* Wallet Balance (was "Buying Power" — it is simply the wallet) */}
         <div className="rounded-lg border border-border bg-surface p-4 flex flex-col justify-center">
           <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-faint mb-2">
             <Shield className="h-3.5 w-3.5" />
-            <span>Buying Power</span>
+            <span>Wallet Balance</span>
           </div>
           <div className="font-mono tabular-nums text-base font-medium text-foreground">
             {formatUSD(buyingPower)}
           </div>
-          <div className="text-xs text-muted-foreground mt-1">Available to trade</div>
+          <div className="text-xs text-muted-foreground mt-1">USDC available to deposit or trade</div>
         </div>
 
-        {/* Margin Usage */}
+        {/* Margin Ratio — the same formula and bands as /trade (B13) */}
         <div className="rounded-lg border border-border bg-surface p-4 flex flex-col justify-center">
           <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-faint mb-2">
-            <span>Margin Usage</span>
+            <span>Margin Ratio</span>
             <span className="font-mono tabular-nums text-foreground">
-              {marginUsagePercent === null ? '—' : `${marginUsagePercent.toFixed(0)}%`}
+              {marginRatio === null
+                ? '—'
+                : marginRatio === Infinity
+                ? '--'
+                : `${marginRatio.toFixed(0)}%`}
             </span>
           </div>
-          {/* Progress bar */}
+          {/* Bar fills TOWARD liquidation (full = liquidatable at 100%) */}
           <div className="h-1.5 bg-surface-2 rounded-sm overflow-hidden">
             <div
               className={cn(
                 'h-full rounded-sm transition-colors',
-                (marginUsagePercent ?? 0) > 80 ? 'bg-short' : (marginUsagePercent ?? 0) > 50 ? 'bg-primary' : 'bg-long'
+                marginRatio !== null && marginRatio !== Infinity && marginRatio <= 100
+                  ? 'bg-short'
+                  : marginRatio !== null && marginRatio !== Infinity && marginRatio <= 300
+                  ? 'bg-primary'
+                  : 'bg-long'
               )}
-              style={{ width: `${Math.min(marginUsagePercent ?? 0, 100)}%` }}
+              style={{ width: `${liqProximityPct}%` }}
             />
           </div>
           <div className="flex justify-between text-xs text-muted-foreground mt-2">
             <span>
-              {marginUsagePercent === null
+              {marginRatio === null
                 ? '—'
-                : marginUsagePercent < 30
-                ? 'Safe'
-                : marginUsagePercent < 60
-                ? 'Moderate'
-                : 'High'}
+                : marginRatio === Infinity
+                ? 'No open margin'
+                : marginRatio > 300
+                ? 'Healthy'
+                : marginRatio > 100
+                ? 'Caution'
+                : 'At Risk'}
             </span>
-            <span className="font-mono tabular-nums">{formatUSD(marginUsed, 0)}</span>
+            <span className="font-mono tabular-nums" title="Maintenance margin (1% of open size)">
+              {formatUSD(maintenanceMargin, 0)}
+            </span>
           </div>
         </div>
       </div>
