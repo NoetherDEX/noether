@@ -7,6 +7,7 @@ export { TradeHistory, TradeHistoryContainer } from './TradeHistory';
 export { AssetSelectorDropdown } from './AssetSelectorDropdown';
 export { RecentTrades } from './RecentTrades';
 export { OrderBook } from './OrderBook';
+export { OraclePriceCard } from './OraclePriceCard';
 export { MobileTradeBar } from './MobileTradeBar';
 export { CrossMarginBanner } from './CrossMarginBanner';
 export { MarketStatsBar } from './MarketStatsBar';

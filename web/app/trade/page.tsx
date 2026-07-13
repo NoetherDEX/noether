@@ -12,6 +12,7 @@ import {
   TradeHistoryContainer,
   RecentTrades,
   OrderBook,
+  OraclePriceCard,
   CrossMarginBanner,
   MobileTradeBar,
   MarketStatsBar,
@@ -84,6 +85,9 @@ function TradePage() {
   const [fundingRate, setFundingRate] = useState<number | null>(null);
   // Global cumulative funding index (PRECISION-scaled) — null until first read.
   const [cumulativeFunding, setCumulativeFunding] = useState<bigint | null>(null);
+  // B10: last signed attestation per asset (ts + round) from the SSE stream —
+  // powers the oracle-transparency card's live-ticking age.
+  const [lastAttestations, setLastAttestations] = useState<Record<string, { ts: number; roundId: number }>>({});
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const [pricesStale, setPricesStale] = useState(false);
   const [assetStats, setAssetStats] = useState<AssetMarketStats | null>(null);
@@ -465,9 +469,10 @@ function TradePage() {
     // through the same callback) and reports staleness for the amber badge.
     const unsubscribe = subscribeLivePrices(
       assets,
-      ({ asset, price }) => {
+      ({ asset, price, timestamp, roundId }) => {
         if (!cancelled) {
           setCurrentPrices(prev => ({ ...prev, [asset]: price }));
+          setLastAttestations(prev => ({ ...prev, [asset]: { ts: timestamp, roundId } }));
         }
       },
       (stale) => {
@@ -747,6 +752,14 @@ function TradePage() {
       label: 'Open Orders',
       content: (
         <div className="max-w-2xl">
+          {/* B10: oracle transparency instead of a fake book */}
+          <OraclePriceCard
+            asset={selectedAsset}
+            markPrice={currentPrices[selectedAsset] || 0}
+            attestation={lastAttestations[selectedAsset] ?? null}
+            fundingRate={fundingRate}
+            stale={pricesStale}
+          />
           <p className="mb-3 text-[11px] text-faint">
             Noether fills at the oracle price — there is no order book. These
             are the venue&apos;s resting limit/trigger orders awaiting execution.
