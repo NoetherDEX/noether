@@ -76,7 +76,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (marginMode !== 'Isolated') setMarginMode('Isolated');
     if (orderType !== 'Market') setOrderType('Market');
   }, [isLeader, marginMode, orderType]);
-  const [crossBalance, setCrossBalance] = useState<number>(0);
+  // null = pool balance unknown (read failed/not loaded) — renders '—' and
+  // disables math that would otherwise run on a fabricated 0.
+  const [crossBalance, setCrossBalance] = useState<number | null>(null);
   const [crossDepositAmount, setCrossDepositAmount] = useState<string>('');
   const [crossWithdrawAmount, setCrossWithdrawAmount] = useState<string>('');
   const [isCrossDepositing, setIsCrossDepositing] = useState(false);
@@ -168,7 +170,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       } catch {}
       try {
         const bal = await getCrossMarginBalance(publicKey);
-        setCrossBalance(Number(bal) / 10_000_000);
+        setCrossBalance(bal == null ? null : Number(bal) / 10_000_000);
       } catch {}
     };
     load();
@@ -220,6 +222,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     // Any unknown PnL (mark unavailable) makes the account estimate wrong —
     // show '—' instead of a fabricated figure.
     if (crossPositions.some(p => !Number.isFinite(p.pnl))) return null;
+    // Unknown pool balance makes the whole estimate unknown.
+    if (crossBalance == null) return null;
     const totalCollateral = crossPositions.reduce((s, p) => s + p.collateral, 0);
     const totalPnl = crossPositions.reduce((s, p) => s + p.pnl, 0);
     const totalSize = crossPositions.reduce((s, p) => s + p.size, 0);
@@ -471,7 +475,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             refreshBalances();
             onSubmit?.();
             onPositionOpened?.();
-            getCrossMarginBalance(publicKey).then(b => setCrossBalance(Number(b) / 10_000_000)).catch(() => {});
+            getCrossMarginBalance(publicKey).then(b => setCrossBalance(b == null ? null : Number(b) / 10_000_000)).catch(() => {});
             return `Cross ${direction} ${asset} position opened!`;
           },
           error: (err) => decodeContractError(err) || 'Failed to open cross position',
@@ -608,7 +612,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       setCrossDepositAmount('');
       refreshBalances();
       const bal = await getCrossMarginBalance(publicKey);
-      setCrossBalance(Number(bal) / 10_000_000);
+      setCrossBalance(bal == null ? null : Number(bal) / 10_000_000);
     } catch (err: any) {
       toast.error(decodeContractError(err) || 'Failed to deposit');
     } finally {
@@ -621,7 +625,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (!publicKey || isCrossWithdrawing) return;
     const amount = parseFloat(crossWithdrawAmount) || 0;
     if (amount < 1) { toast.error('Minimum withdrawal is 1 USDC'); return; }
-    if (amount > crossBalance) { toast.error('Exceeds pool balance'); return; }
+    // Gate only on a KNOWN balance — the contract enforces the real limit.
+    if (crossBalance != null && amount > crossBalance) { toast.error('Exceeds pool balance'); return; }
 
     setIsCrossWithdrawing(true);
     try {
@@ -630,7 +635,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       setCrossWithdrawAmount('');
       refreshBalances();
       const bal = await getCrossMarginBalance(publicKey);
-      setCrossBalance(Number(bal) / 10_000_000);
+      setCrossBalance(bal == null ? null : Number(bal) / 10_000_000);
     } catch (err: any) {
       const msg = err?.message || '';
       if (msg.includes('CrossMarginInsufficientFreeMargin')) {
@@ -714,7 +719,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Pool Balance</span>
-                <span className="font-mono text-foreground">{formatNumber(crossBalance)} USDC</span>
+                <span className="font-mono text-foreground">
+                  {crossBalance == null ? '—' : formatNumber(crossBalance)} USDC
+                </span>
               </div>
             </div>
 
