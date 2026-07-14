@@ -138,7 +138,7 @@ The protocol is funded by [Stellar Community Fund #41](https://communityfund.ste
 - **Public REST + WebSocket API** — [Fastify](https://fastify.dev/) gateway, OpenAPI auto-served at `/docs`. Wallet-challenge authentication issues bearer keys (currently closed-beta — see [Security](#security))
 - **TypeScript SDK** — [`noether-sdk` on npm](https://www.npmjs.com/package/noether-sdk) ships every endpoint plus `WsClient` with auto-reconnect and subscription replay
 - **Python SDK** — [`noether-sdk` on PyPI](https://pypi.org/project/noether-sdk/) mirrors the TS surface (httpx + websockets)
-- **Soroban event indexer** — captures every contract event into a [libSQL/Turso](https://turso.tech/) projection table, ready for analytics
+- **Soroban event indexer** — captures every contract event into a [Postgres (Supabase)](https://supabase.com/) projection table, ready for analytics
 - **Shared `@noether/tx-builders`** — single source of truth for Soroban transaction assembly across api + sdk-ts
 - **Fully open source** (MIT) — npm-workspace monorepo (`api/`, `indexer/`, `sdk-ts/`, `packages/*`) with vitest, CI, and Docker images for Railway
 - **Blue-green testnet deploys** via `scripts/deploy_staging.sh` (deploy → verify → promote)
@@ -190,7 +190,7 @@ Noether consists of six Soroban smart contracts on Stellar, a Next.js trading fr
                 │   Keeper Bot     │                │      Indexer         │
                 │    (Railway)     │                │     (Railway)        │
                 │ Oracle / Liq /   │                │  decode → libSQL     │
-                │ Orders / Funding │                │       / Turso        │
+                │ Orders / Funding │                │      / Supabase      │
                 └──────────────────┘                └──────────┬───────────┘
                                                                │
                                                                ▼
@@ -496,7 +496,7 @@ Tranche 2 introduced a Soroban event indexer feeding a Fastify REST + WebSocket 
 
 ```
   Stellar Soroban ───► Indexer ───► libSQL ───► API Gateway ───► SDKs / Web
-   (getEvents)        (decode &     (Turso)      (Fastify,         (TS, Py,
+   (getEvents)        (decode &   (Supabase)     (Fastify,         (TS, Py,
                        project)                   REST + WS,        frontend)
                                                   closed beta)
 ```
@@ -558,7 +558,7 @@ Rust (Edition 2021) · Soroban SDK 21.0 · Compiled to WASM with `opt-level=z`, 
 ### Frontend
 [![Next.js][nextjs-shield]][nextjs-url] [![TypeScript][typescript-shield]][typescript-url] [![TailwindCSS][tailwind-shield]][tailwind-url] [![React][react-shield]][react-url]
 
-Next.js 14 (App Router) · TypeScript 5.2 · Tailwind CSS · Zustand · Framer Motion · Three.js · TradingView lightweight-charts · `@stellar/stellar-sdk` 14 · `@creit-tech/stellar-wallets-kit` (Freighter + LOBSTR + WalletConnect) · Turso (libSQL) for leaderboard persistence.
+Next.js 14 (App Router) · TypeScript 5.2 · Tailwind CSS · Zustand · Framer Motion · Three.js · TradingView lightweight-charts · `@stellar/stellar-sdk` 14 · `@creit-tech/stellar-wallets-kit` (Freighter + LOBSTR + WalletConnect) · leaderboard via the gateway (`/v1/leaderboard`).
 
 ### Keeper Bot
 [![Node.js][node-shield]][node-url] [![TypeScript][typescript-shield]][typescript-url]
@@ -568,12 +568,12 @@ Node.js · TypeScript · `@stellar/stellar-sdk` · publishes Ed25519-signed Noer
 ### API Gateway (Tranche 2)
 [![Node.js][node-shield]][node-url] [![TypeScript][typescript-shield]][typescript-url]
 
-[Fastify](https://fastify.dev/) · `@fastify/swagger` (OpenAPI at `/docs`) · `@fastify/websocket` · libSQL/Turso · HMAC-peppered bearer keys · tiered rate limiting · vitest · Dockerised for Railway.
+[Fastify](https://fastify.dev/) · `@fastify/swagger` (OpenAPI at `/docs`) · `@fastify/websocket` · Postgres (Supabase) via `@noether/db` · HMAC-peppered bearer keys · tiered rate limiting · vitest · Dockerised for Railway.
 
 ### Indexer (Tranche 2)
 [![Node.js][node-shield]][node-url] [![TypeScript][typescript-shield]][typescript-url]
 
-Soroban `getEvents` polling · per-contract decoders → libSQL/Turso projections · persistent ledger cursor · vitest · Dockerised for Railway.
+Soroban `getEvents` polling · per-contract decoders → Postgres (Supabase) projections · persistent ledger cursor · vitest · Dockerised for Railway.
 
 ### SDKs (Tranche 2)
 
@@ -582,7 +582,7 @@ Soroban `getEvents` polling · per-contract decoders → libSQL/Turso projection
 
 ### Infrastructure
 
-Vercel (frontend) · Railway (keeper + api + indexer) · Stellar Testnet (RPC + Horizon) · Turso (managed libSQL).
+Vercel (frontend) · Railway (keeper + api + indexer) · Stellar Testnet (RPC + Horizon) · Supabase (managed Postgres).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -661,7 +661,7 @@ noether/
 │   ├── shared/             # @noether/shared · precision, contracts loader, network
 │   └── tx-builders/        # @noether/tx-builders · Soroban tx assembly (api + sdk-ts)
 ├── api/                    # Tranche 2 — REST + WebSocket gateway (Fastify)
-├── indexer/                # Tranche 2 — Soroban event indexer (libsql)
+├── indexer/                # Tranche 2 — Soroban event indexer (Postgres)
 ├── sdk-ts/                 # Tranche 2 — public TypeScript SDK (npm)
 ├── sdk-py/                 # Tranche 2 — public Python SDK (PyPI)
 ├── docs/                   # README assets + GIT_WORKFLOW.md, CONTRIBUTING.md
@@ -694,7 +694,7 @@ noether/
 | Vault Manage | `/vaults/[id]/manage` | T2 — leader panel (trade + claim fees) |
 | Referrals | `/referrals` | T2 — register a code, share, claim accrued rewards |
 | API Keys | `/api-keys` | T2 — in-browser issuance of gateway bearer keys (closed beta) |
-| Leaderboard | `/leaderboard` | Top traders by volume and PnL (backed by Turso DB + cron) |
+| Leaderboard | `/leaderboard` | Top traders by volume and PnL (proxied from the gateway `/v1/leaderboard`) |
 | Faucet | `/faucet` | Testnet USDC (up to 1,000/day) |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -815,8 +815,7 @@ NEXT_PUBLIC_NOETHER_API_URL=http://localhost:4000   # api gateway base URL
 FAUCET_ADMIN_SECRET_KEY=S...                        # /faucet payments
 
 # Indexer (Tranche 2)
-LIBSQL_URL="file:./data/indexer.db"   # or libsql://… for Turso
-LIBSQL_AUTH_TOKEN=                    # required for Turso, blank for local
+DATABASE_URL="postgresql://postgres:dev@localhost:5432/postgres"  # Supabase session-pooler URL in prod
 INDEXER_POLL_INTERVAL_MS=2000
 
 # API Gateway (Tranche 2)
@@ -851,7 +850,7 @@ Noether is being delivered in three tranches under [Stellar Community Fund #41](
 - [x] User-created trading vaults — `vault_factory` contract (37 tests) + `/vaults` marketplace + leader manage panel
 - [x] Multi-wallet support — Freighter, LOBSTR, xBull, Albedo, Ledger via Stellar Wallets Kit
 - [x] On-chain referral system — `referral` contract (13 tests) + sticky `?ref=CODE` banner + `/referrals` dashboard
-- [x] Soroban event indexer — libSQL/Turso projections feeding the API gateway
+- [x] Soroban event indexer — Postgres (Supabase) projections feeding the API gateway
 
 Pending operator steps:
 
