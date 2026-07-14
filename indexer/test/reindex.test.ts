@@ -1,8 +1,6 @@
-import { afterAll, describe, expect, it, vi } from 'vitest';
-import { createClient } from '@libsql/client';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { createPgliteDb } from '@noether/db/pglite';
 import type { Logger } from 'pino';
 import { IndexerBus } from '../src/bus.js';
 import { EventRouter, type HandlerContext } from '../src/router.js';
@@ -20,18 +18,11 @@ const noopLogger: Logger = {
   silent: vi.fn(), child: () => noopLogger as Logger,
 } as unknown as Logger;
 
-// Interactive transactions make the local libsql client hand its
-// connection to the transaction and lazily reconnect — for ':memory:'
-// that reconnect is a fresh empty database, so tests use a temp file.
-const tmpDirs: string[] = [];
-afterAll(() => {
-  for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
-});
-
 async function setupDb() {
-  const dir = mkdtempSync(join(tmpdir(), 'noether-indexer-test-'));
-  tmpDirs.push(dir);
-  const db = createClient({ url: `file:${join(dir, 'test.db')}` });
+  // In-memory Postgres (PGlite) behind the production Db surface. Running
+  // the real migration runner here makes 001_baseline.sql the schema under
+  // test.
+  const db = createPgliteDb(new PGlite());
   await runMigrations(db);
   return db;
 }
@@ -118,7 +109,7 @@ describe('reindexProjections', () => {
     expect(trades.rows[0]!.kind).toBe('close');
     expect(String(trades.rows[0]!.pnl)).toBe('-2');
 
-    db.close();
+    await db.close();
   });
 
   it('skips events from contracts that are no longer registered', async () => {
@@ -147,6 +138,6 @@ describe('reindexProjections', () => {
     const rows = await db.execute('SELECT position_id FROM positions');
     expect(rows.rows.map((r) => Number(r.position_id))).toEqual([8]);
 
-    db.close();
+    await db.close();
   });
 });

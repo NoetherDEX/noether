@@ -1,7 +1,7 @@
 /**
  * Indexer entry point.
  *
- * Boots: config → libsql → migrations → RPC → router → handlers (market
+ * Boots: config → Postgres → migrations → RPC → router → handlers (market
  * + vault + referral, conditional on contracts.json having addresses) →
  * poll loop. Captures every event the protocol emits into events_raw
  * and forwards them to the in-process bus.
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
     poller.stop();
     aggregator?.stop();
     healthServer.close();
-    db.close();
+    await db.close().catch(() => {});
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));

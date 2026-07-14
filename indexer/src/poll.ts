@@ -11,7 +11,7 @@
  */
 
 import type { Logger } from 'pino';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import type { rpc as RpcNs, xdr } from '@stellar/stellar-sdk';
 import type { IndexerBus } from './bus.js';
 import type { EventRouter, HandlerContext } from './router.js';
@@ -22,7 +22,7 @@ import { fetchEvents, getLatestLedger, getOldestLedger, parseRetentionError, typ
 import { readCursor, writeCursor, type PollCursor } from './cursor.js';
 
 export interface PollDeps {
-  db: Client;
+  db: Db;
   rpcPool: RpcPool;
   bus: IndexerBus;
   router: EventRouter;

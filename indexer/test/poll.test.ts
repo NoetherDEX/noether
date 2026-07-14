@@ -1,8 +1,7 @@
-import { afterAll, describe, expect, it, vi } from 'vitest';
-import { createClient, type Client } from '@libsql/client';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { createPgliteDb } from '@noether/db/pglite';
+import type { Db } from '@noether/db';
 import { Address, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import type { Logger } from 'pino';
 import { IndexerBus } from '../src/bus.js';
@@ -24,18 +23,11 @@ const noopLogger: Logger = {
   silent: vi.fn(), child: () => noopLogger as Logger,
 } as unknown as Logger;
 
-// Interactive transactions make the local libsql client hand its
-// connection to the transaction and lazily reconnect — for ':memory:'
-// that reconnect is a fresh empty database, so tests use a temp file.
-const tmpDirs: string[] = [];
-afterAll(() => {
-  for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
-});
-
 async function setupDb() {
-  const dir = mkdtempSync(join(tmpdir(), 'noether-indexer-test-'));
-  tmpDirs.push(dir);
-  const db = createClient({ url: `file:${join(dir, 'test.db')}` });
+  // In-memory Postgres (PGlite) behind the production Db surface. Running
+  // the real migration runner here makes 001_baseline.sql the schema under
+  // test.
+  const db = createPgliteDb(new PGlite());
   await runMigrations(db);
   return db;
 }
@@ -77,7 +69,7 @@ interface PollerHandle {
   health(): PollerHealth;
 }
 
-function makePoller(db: Client, router: EventRouter, events: RawEvent[]) {
+function makePoller(db: Db, router: EventRouter, events: RawEvent[]) {
   const rpc = {
     getEvents: vi.fn(async () => ({ events, cursor: 'tok-1', latestLedger: 200 })),
     getLatestLedger: vi.fn(async () => ({ sequence: 150 })),
@@ -135,7 +127,7 @@ describe('poller dead-letter handling', () => {
     expect(Number(cur.rows[0]!.last_ledger)).toBe(102);
     expect(cur.rows[0]!.last_pagination_token).toBe('tok-1');
 
-    db.close();
+    await db.close();
   });
 
   it('archives the raw XDR on events_raw before decoding touches it', async () => {
@@ -160,7 +152,7 @@ describe('poller dead-letter handling', () => {
     // And the XDR must not leak into the decoded payload column.
     expect(String(row.payload_json)).not.toContain('valueXdr');
 
-    db.close();
+    await db.close();
   });
 
   it('dead-letters handler failures and rethrows so the cursor does not advance', async () => {
@@ -184,7 +176,7 @@ describe('poller dead-letter handling', () => {
     const cur = await db.execute('SELECT * FROM poll_cursor');
     expect(cur.rows).toHaveLength(0);
 
-    db.close();
+    await db.close();
   });
 });
 
@@ -229,7 +221,7 @@ describe('poller retention-gap handling', () => {
     expect(poller.health().fatal).toBeNull();
     expect(poller.health().running).toBe(false); // never started — but not stopped by the gap
 
-    db.close();
+    await db.close();
   });
 });
 
@@ -259,6 +251,6 @@ describe('poller cursor CAS', () => {
     const cur = await db.execute('SELECT last_ledger FROM poll_cursor WHERE id = 1');
     expect(Number(cur.rows[0]!.last_ledger)).toBe(999);
 
-    db.close();
+    await db.close();
   });
 });
