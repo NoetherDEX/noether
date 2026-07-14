@@ -1,26 +1,58 @@
 import { NextResponse } from 'next/server';
-import { getDb, ensureSchema } from '@/lib/db';
+import { apiBase } from '@/lib/api/base';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Thin server-side proxy to the gateway's durable leaderboard
+ * (indexer → Postgres → /v1/leaderboard), mapped to the exact
+ * LeaderboardTrader array shape the page has always consumed.
+ *
+ * Replaces the per-minute Horizon-BFS cron + separate Turso DB (retired
+ * 2026-07): the gateway board is scoped to the live market deployment and
+ * already merged with the pre-2026-07-06 legacy baseline.
+ */
+
+interface GatewayLeader {
+  trader: string;
+  /** 7-decimal fixed-point strings. */
+  pnl: string;
+  volume: string;
+  trades: number;
+  liqCount: number;
+}
+
+interface GatewayBoard {
+  sort: string;
+  updatedAt: number | null;
+  leaders: GatewayLeader[];
+}
+
+const SCALE = 10_000_000;
+
 export async function GET() {
   try {
-    await ensureSchema();
-    const db = getDb();
+    const base = apiBase();
+    const res = await fetch(`${base}/v1/leaderboard?sort=volume&limit=200`, {
+      next: { revalidate: 30 },
+    });
+    if (!res.ok) {
+      throw new Error(`gateway responded ${res.status}`);
+    }
+    const board = (await res.json()) as GatewayBoard;
+    if (!Array.isArray(board.leaders)) {
+      throw new Error('gateway leaderboard shape unexpected');
+    }
 
-    const result = await db.execute(
-      'SELECT address, trade_count, total_volume, total_pnl, liq_count, last_updated FROM traders ORDER BY total_volume DESC'
-    );
-
-    const leaderboard = result.rows.map(row => ({
-      address: row.address as string,
-      tradeCount: row.trade_count as number,
-      totalVolume: row.total_volume as number,
-      pnl: row.total_pnl as number,
-      liqCount: (row.liq_count as number) ?? 0,
-      // Cron-sync stamp (unix seconds) — lets the UI show "Updated Xm ago"
-      // instead of presenting stale rankings as live.
-      lastUpdated: (row.last_updated as number) ?? null,
+    const leaderboard = board.leaders.map((l) => ({
+      address: l.trader,
+      tradeCount: l.trades,
+      totalVolume: Number(l.volume) / SCALE,
+      pnl: Number(l.pnl) / SCALE,
+      liqCount: l.liqCount ?? 0,
+      // Index freshness stamp (unix seconds) — lets the UI show
+      // "Updated Xm ago" instead of presenting stale rankings as live.
+      lastUpdated: board.updatedAt ?? null,
     }));
 
     return NextResponse.json(leaderboard, {
@@ -29,7 +61,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error('[Leaderboard] DB read error:', error);
+    console.error('[Leaderboard] gateway proxy error:', error);
     // Never return [] on failure — an empty array is indistinguishable from a
     // genuinely empty board and renders as a confident "No traders yet".
     return NextResponse.json({ error: 'leaderboard_unavailable' }, { status: 500 });

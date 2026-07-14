@@ -17,12 +17,13 @@ const SORT_LABELS: Record<SortField, string> = {
   pnl: 'Realized PnL',
 };
 
-// What each ranking metric actually counts today (opens only / open-side
-// notional / realized price-PnL) — shown in the column-header tooltips.
+// What each ranking metric actually counts today — shown in the
+// column-header tooltips. Live numbers come from the indexer (current
+// market deployment) merged with the pre-July-2026 legacy baseline.
 const COLUMN_DEFS = {
-  trades: 'Positions opened. Closing a position is not counted as a trade yet.',
+  trades: 'Positions opened (live market + legacy history). Closing a position is not counted as a trade.',
   volume:
-    'Notional value of opened positions. Fee-tier volume counts both open and close, so it can read higher.',
+    'Notional traded on the live market — opens plus closes, matching the fee-tier definition — plus legacy open-side volume from before July 2026.',
   pnl: 'Realized PnL from closed positions, before funding and fees.',
 } as const;
 

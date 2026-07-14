@@ -6,7 +6,7 @@ export interface LeaderboardTrader {
   /** Liquidations suffered. >0 flags that PnL is INCOMPLETE — the deployed
    *  isolated-liq event carries no loss figure until the C2 enrichment. */
   liqCount?: number;
-  /** Cron-sync stamp (unix seconds) for the "Updated Xm ago" indicator. */
+  /** Index freshness stamp (unix seconds) for the "Updated Xm ago" indicator. */
   lastUpdated?: number | null;
 }
 
