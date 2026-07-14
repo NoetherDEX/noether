@@ -1,0 +1,43 @@
+{
+  "name": "@noether/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Postgres data layer shared by api + indexer: node-postgres pool behind a libsql-compatible execute/batch/transaction surface (?→$n rewrite, rowsAffected, jsonb-as-string).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pglite": {
+      "types": "./dist/pglite.d.ts",
+      "import": "./dist/pglite.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@types/pg": "^8.20.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.0"
+  },
+  "peerDependencies": {
+    "@electric-sql/pglite": ">=0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@electric-sql/pglite": {
+      "optional": true
+    }
+  }
+}
