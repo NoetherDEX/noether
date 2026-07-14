@@ -64,13 +64,29 @@ export interface RetentionErrorInfo {
 }
 
 /**
+ * Message extraction that survives NON-Error throws. The stellar-sdk
+ * surfaces JSON-RPC failures as plain objects ({ code, message }), so
+ * `String(err)` collapses to "[object Object]" — which made the
+ * retention classifier below miss real out-of-range errors and left the
+ * poller retrying a dead startLedger every tick, forever (the 2026-06-08
+ * → 2026-07-14 production indexer freeze).
+ */
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    return String((err as { message?: unknown }).message ?? '');
+  }
+  return String(err);
+}
+
+/**
  * Classify a getEvents failure as "startLedger/cursor fell out of the
  * RPC retention window". The RPC reports its live range in the message
  * ("startLedger must be within the ledger range: X - Y"); parse it out
  * when present so the caller can clamp without another round-trip.
  */
 export function parseRetentionError(err: unknown): RetentionErrorInfo | null {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   const outOfRange =
     /(startLedger|start ledger|cursor)[^.]*?(must be within|outside|before the oldest|ledger range)/i.test(message) ||
     /outside of retention window/i.test(message);
@@ -120,7 +136,7 @@ export async function fetchEvents(
     } catch (err) {
       lastErr = err;
       if (parseRetentionError(err)) throw err;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       const transient =
         message.includes('TRY_AGAIN_LATER') ||
         message.includes('ECONNRESET') ||

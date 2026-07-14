@@ -21,6 +21,17 @@ describe('parseRetentionError', () => {
     expect(parseRetentionError(new Error('ECONNRESET'))).toBeNull();
     expect(parseRetentionError(new Error('TRY_AGAIN_LATER'))).toBeNull();
   });
+
+  it('classifies PLAIN-OBJECT throws from the stellar-sdk (the 2026-06/07 prod freeze)', () => {
+    // The sdk raises JSON-RPC failures as bare objects, not Error instances —
+    // String(err) is "[object Object]", which silently defeated the clamp and
+    // pinned the production cursor at 2,971,053 for five weeks.
+    expect(
+      parseRetentionError({ code: -32600, message: 'startLedger must be within the ledger range: 3483517 - 3604476' }),
+    ).toEqual({ oldestLedger: 3483517, latestLedger: 3604476 });
+    expect(parseRetentionError({ code: -32600, message: 'something else' })).toBeNull();
+    expect(parseRetentionError(null)).toBeNull();
+  });
 });
 
 describe('fetchEvents failover', () => {
