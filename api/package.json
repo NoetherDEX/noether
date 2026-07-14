@@ -2,7 +2,7 @@
   "name": "@noether/api",
   "version": "0.1.0",
   "private": true,
-  "description": "REST + WebSocket gateway for Noether. Reads from the indexer's libsql, prepares + relays Soroban transactions for trading.",
+  "description": "REST + WebSocket gateway for Noether. Reads from the indexer's Postgres (Supabase), prepares + relays Soroban transactions for trading.",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -19,7 +19,7 @@
     "@fastify/swagger": "^9.4.0",
     "@fastify/swagger-ui": "^5.2.0",
     "@fastify/websocket": "^11.0.1",
-    "@libsql/client": "^0.17.0",
+    "@noether/db": "*",
     "@noether/shared": "*",
     "@noether/types": "*",
     "@stellar/stellar-sdk": "^14.4.3",
@@ -28,6 +28,7 @@
     "fastify-plugin": "^5.0.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "@types/node": "^20.16.0",
     "@types/ws": "^8.5.13",
     "tsx": "^4.21.0",

@@ -1,22 +1,11 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { createClient } from '@libsql/client';
-import { setupTestServer } from './helpers.js';
+import type { Db } from '@noether/db';
+import { makeTestDb, seedSchema, setupTestServer } from './helpers.js';
 
 const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
 
-async function seedEvents(db: ReturnType<typeof createClient>): Promise<void> {
-  await db.execute(`
-    CREATE TABLE events_raw (
-      event_id TEXT PRIMARY KEY,
-      contract_id TEXT NOT NULL,
-      topic TEXT NOT NULL,
-      ledger INTEGER NOT NULL,
-      ledger_close_ts INTEGER NOT NULL,
-      tx_hash TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      inserted_at INTEGER NOT NULL
-    );
-  `);
+async function seedEvents(db: Db): Promise<void> {
+  await seedSchema(db);
   const rows = [
     ['e1', 'position_opened', 100, '{"positionId":1}'],
     ['e2', 'position_opened', 102, '{"positionId":2}'],
@@ -41,7 +30,7 @@ afterEach(async () => {
 
 describe('events route', () => {
   it('GET /v1/events returns recent events', async () => {
-    const db = createClient({ url: ':memory:' });
+    const db = makeTestDb();
     await seedEvents(db);
     const setup = await setupTestServer({ db });
     app = setup.app;
@@ -54,7 +43,7 @@ describe('events route', () => {
   });
 
   it('filters by topic', async () => {
-    const db = createClient({ url: ':memory:' });
+    const db = makeTestDb();
     await seedEvents(db);
     const setup = await setupTestServer({ db });
     app = setup.app;
@@ -71,7 +60,7 @@ describe('events route', () => {
   });
 
   it('filters by ledger range', async () => {
-    const db = createClient({ url: ':memory:' });
+    const db = makeTestDb();
     await seedEvents(db);
     const setup = await setupTestServer({ db });
     app = setup.app;

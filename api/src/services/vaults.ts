@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import { isMissingTable, type Db } from '@noether/db';
 import { TtlCache } from './cache.js';
 
 export interface VaultRow {
@@ -116,7 +116,7 @@ export class VaultsService {
   // /v1/vaults requests doesn't re-run the N+1 round-trips every time.
   private readonly aggCache = new TtlCache<VaultAggregates>(AGG_TTL_MS);
 
-  constructor(private readonly db: Client) {}
+  constructor(private readonly db: Db) {}
 
   async list(opts?: { leader?: string; limit?: number }): Promise<VaultRow[]> {
     const limit = clampLimit(opts?.limit);
@@ -134,8 +134,7 @@ export class VaultsService {
       });
       return result.rows.map((r) => toRow(r as unknown as Record<string, unknown>));
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return [];
+      if (isMissingTable(err)) return [];
       throw err;
     }
   }
@@ -149,8 +148,7 @@ export class VaultsService {
       const row = result.rows[0];
       return row ? toRow(row as unknown as Record<string, unknown>) : null;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return null;
+      if (isMissingTable(err)) return null;
       throw err;
     }
   }
@@ -193,8 +191,7 @@ export class VaultsService {
         };
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return [];
+      if (isMissingTable(err)) return [];
       throw err;
     }
   }
@@ -323,8 +320,7 @@ export class VaultsService {
         return out;
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return [];
+      if (isMissingTable(err)) return [];
       throw err;
     }
   }

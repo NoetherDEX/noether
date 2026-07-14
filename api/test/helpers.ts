@@ -1,4 +1,6 @@
-import { createClient, type Client } from '@libsql/client';
+import { PGlite } from '@electric-sql/pglite';
+import { createPgliteDb } from '@noether/db/pglite';
+import type { Db } from '@noether/db';
 import {
   Account,
   Keypair,
@@ -9,6 +11,11 @@ import {
 import { buildServer, type ServerDeps } from '../src/server.js';
 
 export const TEST_CONFIG_PASSPHRASE = Networks.TESTNET;
+
+/** In-memory Postgres (PGlite) behind the same Db surface production uses. */
+export function makeTestDb(): Db {
+  return createPgliteDb(new PGlite());
+}
 
 /**
  * Build a SEP-10-style signed XDR for the wallet challenge — same flow
@@ -54,8 +61,8 @@ export const TEST_CONFIG: ApiConfig = {
   rpcUrls: ['http://example.invalid'],
   rpcUrl: 'http://example.invalid',
   sourceAccount: 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN',
-  libsqlUrl: ':memory:',
-  libsqlAuthToken: undefined,
+  // Tests always inject a PGlite-backed Db; this URL is never dialed.
+  databaseUrl: 'postgresql://injected-by-tests.invalid/test',
   contracts: {
     network: 'testnet',
     deployedAt: '2026-01-01T00:00:00Z',
@@ -85,11 +92,11 @@ export const TEST_CONFIG: ApiConfig = {
 };
 
 /**
- * Seed the libsql tables used by the API.
- * Mirrors the indexer's migrations 001 + 002 — duplicated here so the API
+ * Seed the Postgres tables used by the API.
+ * Mirrors indexer/migrations/001_baseline.sql — duplicated here so the API
  * test suite stays self-contained.
  */
-export async function seedSchema(db: Client): Promise<void> {
+export async function seedSchema(db: Db): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS api_keys (
       key_id TEXT PRIMARY KEY,
@@ -97,16 +104,16 @@ export async function seedSchema(db: Client): Promise<void> {
       owner TEXT NOT NULL,
       tier TEXT NOT NULL DEFAULT 'standard',
       label TEXT,
-      created_at INTEGER NOT NULL,
-      last_used_at INTEGER,
-      revoked_at INTEGER
+      created_at BIGINT NOT NULL,
+      last_used_at BIGINT,
+      revoked_at BIGINT
     );
   `);
   await db.execute(`
     CREATE TABLE IF NOT EXISTS rate_limit_buckets (
       key_id TEXT NOT NULL,
-      window_start INTEGER NOT NULL,
-      count INTEGER NOT NULL,
+      window_start BIGINT NOT NULL,
+      count BIGINT NOT NULL,
       PRIMARY KEY (key_id, window_start)
     );
   `);
@@ -115,30 +122,49 @@ export async function seedSchema(db: Client): Promise<void> {
       event_id TEXT PRIMARY KEY,
       contract_id TEXT NOT NULL,
       topic TEXT NOT NULL,
-      ledger INTEGER NOT NULL,
-      ledger_close_ts INTEGER NOT NULL,
+      ledger BIGINT NOT NULL,
+      ledger_close_ts BIGINT NOT NULL,
       tx_hash TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      inserted_at INTEGER NOT NULL
+      payload_json JSONB NOT NULL,
+      inserted_at BIGINT NOT NULL
     );
   `);
   await db.execute(`
     CREATE TABLE IF NOT EXISTS positions (
-      position_id INTEGER PRIMARY KEY,
+      position_id BIGINT PRIMARY KEY,
       trader TEXT NOT NULL,
       asset TEXT NOT NULL,
-      direction INTEGER NOT NULL,
+      direction SMALLINT NOT NULL,
       size TEXT NOT NULL,
       entry_price TEXT NOT NULL,
-      opened_at INTEGER NOT NULL,
+      opened_at BIGINT NOT NULL,
       opened_tx_hash TEXT NOT NULL
+    );
+  `);
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS poll_cursor (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_ledger BIGINT NOT NULL,
+      last_pagination_token TEXT,
+      updated_at BIGINT NOT NULL
+    );
+  `);
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS leaderboard_legacy (
+      address TEXT PRIMARY KEY,
+      trade_count BIGINT NOT NULL DEFAULT 0,
+      total_volume NUMERIC NOT NULL DEFAULT 0,
+      total_pnl NUMERIC NOT NULL DEFAULT 0,
+      liq_count BIGINT NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'test',
+      imported_at BIGINT NOT NULL
     );
   `);
 }
 
 export async function setupTestServer(opts?: {
   oraclePrices?: Record<string, [bigint, bigint]>;
-  db?: Client;
+  db?: Db;
   /** Seed events_raw with these rows (only when db not provided manually). */
   seedEvents?: {
     eventId: string;
@@ -165,7 +191,7 @@ export async function setupTestServer(opts?: {
 
   const oracle = new OracleService(reader, FAKE_CONTRACT);
   const markets = new MarketsService(oracle);
-  const db = opts?.db ?? createClient({ url: ':memory:' });
+  const db = opts?.db ?? makeTestDb();
   await seedSchema(db);
   if (opts?.seedEvents) {
     for (const e of opts.seedEvents) {
@@ -222,7 +248,7 @@ export async function setupTestServer(opts?: {
 
   const vaults = new (await import('../src/services/vaults.js')).VaultsService(db);
   const referral = new (await import('../src/services/referral.js')).ReferralReadService(db);
-  const stats = new (await import('../src/services/stats.js')).StatsService(db);
+  const stats = new (await import('../src/services/stats.js')).StatsService(db, FAKE_CONTRACT);
   const deps: ServerDeps = {
     oracle, markets, events, apiKeys, walletAuth, rateLimiter, db,
     orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats,

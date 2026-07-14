@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Client, Row } from '@libsql/client';
+import { isMissingTable, type Db, type Row } from '@noether/db';
 import { mapPositionRow, type PositionRow } from './positions.js';
 
 interface EventQueryString {
@@ -18,7 +18,7 @@ const ORDER_TOPICS = ['order_placed', 'order_executed', 'order_cancelled'];
 
 export async function registerAccountRoutes(
   app: FastifyInstance,
-  db: Client,
+  db: Db,
 ): Promise<void> {
   app.get(
     '/v1/account/me',
@@ -62,7 +62,7 @@ export async function registerAccountRoutes(
       const topicFilter = req.query.topic ? [req.query.topic] : null;
 
       try {
-        const conditions: string[] = [`json_extract(payload_json, '$.trader') = ?`];
+        const conditions: string[] = [`payload_json ->> 'trader' = ?`];
         const args: (string | number)[] = [owner];
         if (topicFilter) {
           conditions.push(`topic = ?`);
@@ -84,8 +84,7 @@ export async function registerAccountRoutes(
         });
         return reply.send({ events: result.rows.map(mapEventRow) });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes('no such table')) {
+        if (isMissingTable(err)) {
           return reply.send({ events: [] });
         }
         throw err;
@@ -120,8 +119,7 @@ export async function registerAccountRoutes(
           events: eventsResult.rows.map(mapEventRow),
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes('no such table')) {
+        if (isMissingTable(err)) {
           return reply.send({ positions: [], events: [] });
         }
         throw err;
@@ -156,8 +154,7 @@ export async function registerAccountRoutes(
         });
         return reply.send({ events: result.rows.map(mapEventRow) });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.includes('no such table')) {
+        if (isMissingTable(err)) {
           return reply.send({ events: [] });
         }
         throw err;
@@ -172,7 +169,7 @@ function traderEventsSql(topics: string[], beforeTs: boolean): string {
   return `
     SELECT event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, inserted_at
     FROM events_raw
-    WHERE json_extract(payload_json, '$.trader') = ?
+    WHERE payload_json ->> 'trader' = ?
       AND topic IN (${placeholders})
       ${cursor}
     ORDER BY ledger DESC, event_id DESC

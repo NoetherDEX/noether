@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 
 interface OpenPositionsQuery {
   trader?: string;
@@ -35,7 +35,7 @@ export function mapPositionRow(r: PositionRow) {
 
 export async function registerPositionsRoutes(
   app: FastifyInstance,
-  db: Client,
+  db: Db,
 ): Promise<void> {
   app.get<{ Querystring: OpenPositionsQuery }>(
     '/v1/positions/open',

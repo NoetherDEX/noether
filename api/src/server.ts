@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import { DEFAULT_HMAC_PEPPER, type ApiConfig } from './config.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerMarketsRoutes } from './routes/markets.js';
@@ -49,7 +49,7 @@ export interface ServerDeps {
   apiKeys: ApiKeyStore;
   walletAuth: WalletAuth;
   rateLimiter: RateLimiter;
-  db: Client;
+  db: Db;
   orders: OrdersRouteDeps;
   tx: TxRoutesDeps;
   wsBus: WsBus;
@@ -165,6 +165,8 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const liveTailer = new LiveTailer({ db, bus: wsBus, log });
   const vaults = new VaultsService(db);
   const referral = new ReferralReadService(db);
-  const stats = new StatsService(db);
+  // Scope leaderboard scans to the live market so retired deployments
+  // never leak into the totals (resolves via CONTRACT_MARKET override).
+  const stats = new StatsService(db, config.contracts.contracts.market);
   return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats };
 }

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 
 export type KeyTier = 'standard' | 'market_maker';
 
@@ -26,7 +26,7 @@ const SECRET_BYTES = 32;
 
 export class ApiKeyStore {
   constructor(
-    private readonly db: Client,
+    private readonly db: Db,
     private readonly pepper: string,
   ) {}
 

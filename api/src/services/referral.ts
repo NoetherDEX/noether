@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import { isMissingTable, type Db } from '@noether/db';
 
 export interface ReferrerRow {
   referrer: string;
@@ -96,7 +96,7 @@ function toClaimRow(row: Record<string, unknown>): ReferralClaimRow {
 }
 
 export class ReferralReadService {
-  constructor(private readonly db: Client) {}
+  constructor(private readonly db: Db) {}
 
   async lookupCode(code: string): Promise<ReferrerRow | null> {
     try {
@@ -107,7 +107,7 @@ export class ReferralReadService {
       const row = result.rows[0];
       return row ? toReferrerRow(row as unknown as Record<string, unknown>) : null;
     } catch (err) {
-      if (this.isMissingTable(err)) return null;
+      if (isMissingTable(err)) return null;
       throw err;
     }
   }
@@ -121,7 +121,7 @@ export class ReferralReadService {
       const row = result.rows[0];
       return row ? toReferrerRow(row as unknown as Record<string, unknown>) : null;
     } catch (err) {
-      if (this.isMissingTable(err)) return null;
+      if (isMissingTable(err)) return null;
       throw err;
     }
   }
@@ -135,7 +135,7 @@ export class ReferralReadService {
       const row = result.rows[0];
       return row ? toBindingRow(row as unknown as Record<string, unknown>) : null;
     } catch (err) {
-      if (this.isMissingTable(err)) return null;
+      if (isMissingTable(err)) return null;
       throw err;
     }
   }
@@ -165,13 +165,9 @@ export class ReferralReadService {
       const result = await this.db.execute({ sql, args });
       return result.rows.map((r) => map(r as unknown as Record<string, unknown>));
     } catch (err) {
-      if (this.isMissingTable(err)) return [];
+      if (isMissingTable(err)) return [];
       throw err;
     }
   }
 
-  private isMissingTable(err: unknown): boolean {
-    const msg = err instanceof Error ? err.message : String(err);
-    return msg.includes('no such table');
-  }
 }

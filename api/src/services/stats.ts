@@ -1,4 +1,4 @@
-import type { Client, Row } from '@libsql/client';
+import { isMissingTable, type Db, type Row } from '@noether/db';
 import { SUPPORTED_ASSETS } from '@noether/shared';
 import { TtlCache } from './cache.js';
 
@@ -18,10 +18,20 @@ export type LeaderboardSort = 'pnl' | 'volume';
 
 export interface LeaderboardEntry {
   trader: string;
-  /** Lifetime realized PnL, 7-dec USDC (sum of position_closed pnl). */
+  /** Realized PnL, 7-dec USDC (live market + legacy baseline). */
   pnl: string;
-  /** Lifetime traded notional, 7-dec (opens + matched closes). */
+  /** Traded notional, 7-dec (opens + matched closes, + legacy baseline). */
   volume: string;
+  /** Trade count (position_opened rows, + legacy baseline). */
+  trades: number;
+  /** Liquidation count (full/partial/cross, + legacy baseline). */
+  liqCount: number;
+}
+
+export interface LeaderboardBoard {
+  /** poll_cursor.updated_at (unix seconds) — when the index last advanced. */
+  updatedAt: number | null;
+  leaders: LeaderboardEntry[];
 }
 
 export interface AssetStats {
@@ -63,13 +73,22 @@ export interface CandlePoint {
  * interest, and realized trade history. position_closed / liquidated
  * payloads carry no size or asset, so realized legs join back to their
  * position_opened event by positionId.
+ *
+ * The leaderboard is scoped to the CURRENT market contract (redeploys used
+ * to leak retired-deployment rows into the totals — the exact bug the web
+ * cron had) and folds in the one-time `leaderboard_legacy` baseline
+ * imported from the retired web pipeline.
  */
 export class StatsService {
   private readonly cache = new TtlCache<AssetStats[]>(STATS_TTL_MS);
-  private readonly lbCache = new TtlCache<LeaderboardEntry[]>(STATS_TTL_MS);
+  private readonly lbCache = new TtlCache<LeaderboardBoard>(STATS_TTL_MS);
   private readonly candleCache = new TtlCache<CandlePoint[]>(STATS_TTL_MS);
 
-  constructor(private readonly db: Client) {}
+  constructor(
+    private readonly db: Db,
+    /** Current market contract id — leaderboard scans are scoped to it. */
+    private readonly marketContractId: string = '',
+  ) {}
 
   /**
    * Trailing 14-day traded notional for one wallet (i128, 7-dec USDC).
@@ -81,23 +100,23 @@ export class StatsService {
     try {
       const opens = await this.db.execute({
         sql: `
-          SELECT json_extract(payload_json, '$.size') AS size
+          SELECT payload_json ->> 'size' AS size
           FROM events_raw
           WHERE topic = 'position_opened'
-            AND json_extract(payload_json, '$.trader') = ?
+            AND payload_json ->> 'trader' = ?
             AND ledger_close_ts >= ?
         `,
         args: [address, since],
       });
       const closes = await this.db.execute({
         sql: `
-          SELECT json_extract(o.payload_json, '$.size') AS size
+          SELECT o.payload_json ->> 'size' AS size
           FROM events_raw c
           JOIN events_raw o
             ON o.topic = 'position_opened'
-           AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
           WHERE c.topic = 'position_closed'
-            AND json_extract(c.payload_json, '$.trader') = ?
+            AND c.payload_json ->> 'trader' = ?
             AND c.ledger_close_ts >= ?
         `,
         args: [address, since],
@@ -142,8 +161,8 @@ export class StatsService {
     try {
       const opens = await this.db.execute({
         sql: `
-          SELECT json_extract(payload_json, '$.asset') AS asset,
-                 json_extract(payload_json, '$.size') AS size
+          SELECT payload_json ->> 'asset' AS asset,
+                 payload_json ->> 'size' AS size
           FROM events_raw
           WHERE topic = 'position_opened'
             AND ledger_close_ts >= ?
@@ -153,12 +172,12 @@ export class StatsService {
       for (const row of opens.rows) bucket(String(row.asset)).volume += BigInt(String(row.size));
       const realized = await this.db.execute({
         sql: `
-          SELECT json_extract(o.payload_json, '$.asset') AS asset,
-                 json_extract(o.payload_json, '$.size') AS size
+          SELECT o.payload_json ->> 'asset' AS asset,
+                 o.payload_json ->> 'size' AS size
           FROM events_raw c
           JOIN events_raw o
             ON o.topic = 'position_opened'
-           AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
           WHERE c.topic IN ('position_closed', 'position_liquidated')
             AND c.ledger_close_ts >= ?
         `,
@@ -186,11 +205,11 @@ export class StatsService {
     const conditions = [`c.topic IN ('position_closed', 'position_liquidated')`];
     const args: (string | number)[] = [];
     if (opts.trader) {
-      conditions.push(`json_extract(c.payload_json, '$.trader') = ?`);
+      conditions.push(`c.payload_json ->> 'trader' = ?`);
       args.push(opts.trader);
     }
     if (opts.asset) {
-      conditions.push(`json_extract(o.payload_json, '$.asset') = ?`);
+      conditions.push(`o.payload_json ->> 'asset' = ?`);
       args.push(opts.asset);
     }
     if (opts.beforeTs !== undefined) {
@@ -206,7 +225,7 @@ export class StatsService {
           FROM events_raw c
           LEFT JOIN events_raw o
             ON o.topic = 'position_opened'
-           AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
           WHERE ${conditions.join(' AND ')}
           ORDER BY c.ledger DESC, c.event_id DESC
           LIMIT ?
@@ -223,15 +242,16 @@ export class StatsService {
   /**
    * Trader leaderboard from the indexer projections — the durable
    * replacement for the web cron that re-scanned Horizon (audit W-5 / P4-26).
-   * Ranks by lifetime realized PnL (sum of position_closed pnl) or by traded
-   * notional (opens + matched closes, mirroring the fee-tier volume model;
-   * liquidations excluded). Sums are folded in BigInt so large i128 totals
-   * stay exact regardless of libsql int mode. Cached briefly to absorb
-   * anonymous polling.
+   * Ranks by realized PnL (sum of position_closed pnl) or traded notional
+   * (opens + matched closes, mirroring the fee-tier volume model). Scoped to
+   * the current market deployment, then merged with the one-time
+   * leaderboard_legacy baseline (pre-2026-07-06 history from the retired web
+   * pipeline). Sums are folded in BigInt so large i128 totals stay exact.
+   * Cached briefly to absorb anonymous polling.
    */
   async leaderboard(
     opts: { sort?: LeaderboardSort; limit?: number } = {},
-  ): Promise<LeaderboardEntry[]> {
+  ): Promise<LeaderboardBoard> {
     const sort: LeaderboardSort = opts.sort === 'volume' ? 'volume' : 'pnl';
     const limit = Math.min(
       MAX_LEADERBOARD_LIMIT,
@@ -240,67 +260,131 @@ export class StatsService {
     return this.lbCache.getOrLoad(`${sort}:${limit}`, () => this.computeLeaderboard(sort, limit));
   }
 
-  private async computeLeaderboard(sort: LeaderboardSort, limit: number): Promise<LeaderboardEntry[]> {
-    const board = new Map<string, { pnl: bigint; volume: bigint }>();
+  private async computeLeaderboard(sort: LeaderboardSort, limit: number): Promise<LeaderboardBoard> {
+    const board = new Map<string, { pnl: bigint; volume: bigint; trades: number; liqCount: number }>();
     const bucket = (trader: string) => {
       let b = board.get(trader);
       if (!b) {
-        b = { pnl: 0n, volume: 0n };
+        b = { pnl: 0n, volume: 0n, trades: 0, liqCount: 0 };
         board.set(trader, b);
       }
       return b;
     };
+    const market = this.marketContractId;
 
     try {
-      const pnl = await this.db.execute(`
-        SELECT json_extract(payload_json, '$.trader') AS trader,
-               json_extract(payload_json, '$.pnl') AS pnl
-        FROM events_raw
-        WHERE topic = 'position_closed'
-      `);
+      const pnl = await this.db.execute({
+        sql: `
+          SELECT payload_json ->> 'trader' AS trader,
+                 payload_json ->> 'pnl' AS pnl
+          FROM events_raw
+          WHERE topic = 'position_closed' AND contract_id = ?
+        `,
+        args: [market],
+      });
       for (const row of pnl.rows) {
         const trader = row.trader == null ? '' : String(row.trader);
         if (trader) bucket(trader).pnl += toBigInt(row.pnl);
       }
-      const opens = await this.db.execute(`
-        SELECT json_extract(payload_json, '$.trader') AS trader,
-               json_extract(payload_json, '$.size') AS size
-        FROM events_raw
-        WHERE topic = 'position_opened'
-      `);
+      const opens = await this.db.execute({
+        sql: `
+          SELECT payload_json ->> 'trader' AS trader,
+                 payload_json ->> 'size' AS size
+          FROM events_raw
+          WHERE topic = 'position_opened' AND contract_id = ?
+        `,
+        args: [market],
+      });
       for (const row of opens.rows) {
         const trader = row.trader == null ? '' : String(row.trader);
-        if (trader) bucket(trader).volume += toBigInt(row.size);
+        if (trader) {
+          const b = bucket(trader);
+          b.volume += toBigInt(row.size);
+          b.trades += 1;
+        }
       }
-      const closes = await this.db.execute(`
-        SELECT json_extract(c.payload_json, '$.trader') AS trader,
-               json_extract(o.payload_json, '$.size') AS size
-        FROM events_raw c
-        JOIN events_raw o
-          ON o.topic = 'position_opened'
-         AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
-        WHERE c.topic = 'position_closed'
-      `);
+      const closes = await this.db.execute({
+        sql: `
+          SELECT c.payload_json ->> 'trader' AS trader,
+                 o.payload_json ->> 'size' AS size
+          FROM events_raw c
+          JOIN events_raw o
+            ON o.topic = 'position_opened'
+           AND o.contract_id = c.contract_id
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
+          WHERE c.topic = 'position_closed' AND c.contract_id = ?
+        `,
+        args: [market],
+      });
       for (const row of closes.rows) {
         const trader = row.trader == null ? '' : String(row.trader);
         if (trader) bucket(trader).volume += toBigInt(row.size);
       }
+      const liqs = await this.db.execute({
+        sql: `
+          SELECT payload_json ->> 'trader' AS trader
+          FROM events_raw
+          WHERE topic IN ('position_liquidated', 'position_partial_liq', 'cross_liq')
+            AND contract_id = ?
+        `,
+        args: [market],
+      });
+      for (const row of liqs.rows) {
+        const trader = row.trader == null ? '' : String(row.trader);
+        if (trader) bucket(trader).liqCount += 1;
+      }
     } catch (err) {
-      if (isMissingTable(err)) return [];
+      if (isMissingTable(err)) return { updatedAt: null, leaders: [] };
       throw err;
+    }
+
+    // One-time baseline from the retired web pipeline (values already in
+    // 7-dec units — the import script scales them). Absent table = no merge.
+    try {
+      const legacy = await this.db.execute(
+        'SELECT address, trade_count, total_volume, total_pnl, liq_count FROM leaderboard_legacy',
+      );
+      for (const row of legacy.rows) {
+        const trader = row.address == null ? '' : String(row.address);
+        if (!trader) continue;
+        const b = bucket(trader);
+        b.pnl += toBigInt(row.total_pnl);
+        b.volume += toBigInt(row.total_volume);
+        b.trades += Number(row.trade_count ?? 0);
+        b.liqCount += Number(row.liq_count ?? 0);
+      }
+    } catch (err) {
+      if (!isMissingTable(err)) throw err;
     }
 
     const entries: LeaderboardEntry[] = [...board.entries()].map(([trader, b]) => ({
       trader,
       pnl: b.pnl.toString(),
       volume: b.volume.toString(),
+      trades: b.trades,
+      liqCount: b.liqCount,
     }));
     entries.sort((a, b) => {
       const av = sort === 'volume' ? BigInt(a.volume) : BigInt(a.pnl);
       const bv = sort === 'volume' ? BigInt(b.volume) : BigInt(b.pnl);
       return bv > av ? 1 : bv < av ? -1 : 0;
     });
-    return entries.slice(0, limit);
+
+    return { updatedAt: await this.cursorUpdatedAt(), leaders: entries.slice(0, limit) };
+  }
+
+  /** poll_cursor.updated_at (ms) → unix seconds; null before first poll. */
+  private async cursorUpdatedAt(): Promise<number | null> {
+    try {
+      const res = await this.db.execute('SELECT updated_at FROM poll_cursor WHERE id = 1');
+      const raw = res.rows[0]?.updated_at;
+      if (raw == null) return null;
+      const ms = Number(raw);
+      return Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : null;
+    } catch (err) {
+      if (isMissingTable(err)) return null;
+      throw err;
+    }
   }
 
   /**
@@ -391,11 +475,6 @@ function toBigInt(value: unknown): bigint {
   } catch {
     return 0n;
   }
-}
-
-function isMissingTable(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes('no such table');
 }
 
 function nowSec(): number {
