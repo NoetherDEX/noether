@@ -71,3 +71,14 @@ Notes:
 - The web-DB hourly histogram shows launch-day activity was ~3 rows, so the
   pre-retention hole is a non-issue; a targeted Horizon top-up remains the
   fallback if a specific wallet reports missing history.
+
+## Deployment record (2026-07-15)
+
+Cutover COMPLETE. Live topology: Azure Container Apps `noether-rg` /
+`noether-env` (Germany West Central) runs `noether-indexer` +
+`noether-api` (registry `noetheracr2026`, images from `az acr build`);
+gateway: `https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io`
+(Vercel `NEXT_PUBLIC_NOETHER_API_URL`, both envs). The 5-week indexer
+freeze root cause (plain-object RPC errors defeating the retention
+clamp) is fixed in `indexer/src/rpc.ts`. Turso stays frozen as rollback
+until ~2026-07-28, then rotate tokens and delete.
