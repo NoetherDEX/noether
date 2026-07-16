@@ -182,6 +182,27 @@ export class IndexerPoller {
         updatedAt: Date.now(),
       };
       if (!(await this.commitCursor(next, cursor?.lastLedger ?? null))) return processed;
+    } else if (
+      !cursor.lastPagingToken &&
+      Number.isFinite(response.latestLedger) &&
+      response.latestLedger > cursor.lastLedger
+    ) {
+      // Heartbeat commit on quiet polls. Without it the cursor only moves
+      // when a batch carries events, so updated_at freezes between on-chain
+      // trades and health's ledgerAgeSeconds — the "indexer is alive" signal
+      // for monitoring (P3-1/D-2) AND the web's gatewayServesThisMarket()
+      // trust gate — reads as a stall on any quiet market. An empty getEvents
+      // response is the node asserting no matching events exist through its
+      // latestLedger (a cursor older than retention errors instead, handled
+      // by clampToRetention), so skipping ahead loses nothing. Deliberately
+      // skipped mid-pagination (lastPagingToken set): that window still has
+      // unread events, and the next event-bearing poll re-syncs the cursor.
+      const next: PollCursor = {
+        lastLedger: response.latestLedger,
+        lastPagingToken: null,
+        updatedAt: Date.now(),
+      };
+      if (!(await this.commitCursor(next, cursor.lastLedger))) return processed;
     }
     if (highestCloseTs !== null) this.lastEventCloseTs = highestCloseTs;
 

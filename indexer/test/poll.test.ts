@@ -10,7 +10,7 @@ import { buildMarketRegistrations } from '../src/handlers/market.js';
 import { runMigrations } from '../src/migrations.js';
 import { IndexerPoller, type PollerHealth } from '../src/poll.js';
 import { RpcPool } from '../src/rpc.js';
-import { writeCursor } from '../src/cursor.js';
+import { readCursor, writeCursor } from '../src/cursor.js';
 import type { RawEvent } from '../src/decoders/market.js';
 
 const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
@@ -252,5 +252,51 @@ describe('poller cursor CAS', () => {
     expect(Number(cur.rows[0]!.last_ledger)).toBe(999);
 
     await db.close();
+  });
+});
+
+describe('poller heartbeat on quiet polls', () => {
+  it('advances the cursor to the node tip when a poll returns zero events', async () => {
+    const db = await setupDb();
+    const router = new EventRouter();
+    await writeCursor(db, { lastLedger: 100, lastPagingToken: null, updatedAt: 1 }, null);
+
+    const poller = makePoller(db, router, []); // mock rpc reports latestLedger 200
+    const processed = await poller.pollOnce();
+    expect(processed).toBe(0);
+
+    const cursor = await readCursor(db);
+    expect(cursor?.lastLedger).toBe(200);
+    expect(cursor?.lastPagingToken).toBeNull();
+    // updated_at refreshed — this is the liveness signal health.ts exposes
+    // as ledgerAgeSeconds and the web trust gate consumes.
+    expect(cursor!.updatedAt).toBeGreaterThan(1);
+  });
+
+  it('does not heartbeat while a pagination token is outstanding', async () => {
+    const db = await setupDb();
+    const router = new EventRouter();
+    await writeCursor(db, { lastLedger: 100, lastPagingToken: 'tok-open', updatedAt: 1 }, null);
+
+    const poller = makePoller(db, router, []);
+    await poller.pollOnce();
+
+    const cursor = await readCursor(db);
+    expect(cursor?.lastLedger).toBe(100);
+    expect(cursor?.lastPagingToken).toBe('tok-open');
+    expect(cursor?.updatedAt).toBe(1);
+  });
+
+  it('never regresses the cursor when the responding node is behind it', async () => {
+    const db = await setupDb();
+    const router = new EventRouter();
+    await writeCursor(db, { lastLedger: 300, lastPagingToken: null, updatedAt: 1 }, null);
+
+    const poller = makePoller(db, router, []); // latestLedger 200 < cursor 300
+    await poller.pollOnce();
+
+    const cursor = await readCursor(db);
+    expect(cursor?.lastLedger).toBe(300);
+    expect(cursor?.updatedAt).toBe(1);
   });
 });
