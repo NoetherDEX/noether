@@ -256,47 +256,39 @@ describe('poller cursor CAS', () => {
 });
 
 describe('poller heartbeat on quiet polls', () => {
-  it('advances the cursor to the node tip when a poll returns zero events', async () => {
+  it('refreshes updated_at on an empty poll without touching ledger or resume token', async () => {
     const db = await setupDb();
     const router = new EventRouter();
-    await writeCursor(db, { lastLedger: 100, lastPagingToken: null, updatedAt: 1 }, null);
+    // Real batches always store a resume token (getEvents returns a cursor),
+    // so the heartbeat must fire with one outstanding — this exact state
+    // (stale updated_at + token set) is what a quiet prod market looks like.
+    await writeCursor(db, { lastLedger: 100, lastPagingToken: 'tok-resume', updatedAt: 1 }, null);
 
-    const poller = makePoller(db, router, []); // mock rpc reports latestLedger 200
+    const poller = makePoller(db, router, []);
     const processed = await poller.pollOnce();
     expect(processed).toBe(0);
 
     const cursor = await readCursor(db);
-    expect(cursor?.lastLedger).toBe(200);
-    expect(cursor?.lastPagingToken).toBeNull();
-    // updated_at refreshed — this is the liveness signal health.ts exposes
-    // as ledgerAgeSeconds and the web trust gate consumes.
+    // updated_at refreshed — the liveness signal health.ts exposes as
+    // ledgerAgeSeconds and the web trust gate consumes...
     expect(cursor!.updatedAt).toBeGreaterThan(1);
+    // ...but resume semantics untouched: the token is the precise resume
+    // position and lastLedger must never advance past it.
+    expect(cursor?.lastLedger).toBe(100);
+    expect(cursor?.lastPagingToken).toBe('tok-resume');
   });
 
-  it('does not heartbeat while a pagination token is outstanding', async () => {
+  it('throttles heartbeat writes while updated_at is fresh', async () => {
     const db = await setupDb();
     const router = new EventRouter();
-    await writeCursor(db, { lastLedger: 100, lastPagingToken: 'tok-open', updatedAt: 1 }, null);
+    const fresh = Date.now();
+    await writeCursor(db, { lastLedger: 100, lastPagingToken: null, updatedAt: fresh }, null);
 
     const poller = makePoller(db, router, []);
     await poller.pollOnce();
 
     const cursor = await readCursor(db);
+    expect(cursor?.updatedAt).toBe(fresh); // within HEARTBEAT_EVERY_MS — no write
     expect(cursor?.lastLedger).toBe(100);
-    expect(cursor?.lastPagingToken).toBe('tok-open');
-    expect(cursor?.updatedAt).toBe(1);
-  });
-
-  it('never regresses the cursor when the responding node is behind it', async () => {
-    const db = await setupDb();
-    const router = new EventRouter();
-    await writeCursor(db, { lastLedger: 300, lastPagingToken: null, updatedAt: 1 }, null);
-
-    const poller = makePoller(db, router, []); // latestLedger 200 < cursor 300
-    await poller.pollOnce();
-
-    const cursor = await readCursor(db);
-    expect(cursor?.lastLedger).toBe(300);
-    expect(cursor?.updatedAt).toBe(1);
   });
 });
