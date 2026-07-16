@@ -1,7 +1,7 @@
 from typing import Any
 
 from ..errors import AuthError
-from ..models import PreparedTransaction
+from ..models import OrderEventRow, PreparedTransaction
 from ..transport import Credentials, Transport
 
 
@@ -37,6 +37,27 @@ class OrdersApi:
     def __init__(self, transport: Transport, credentials: Credentials | None) -> None:
         self._transport = transport
         self._credentials = credentials
+
+    async def open(
+        self,
+        *,
+        trader: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+    ) -> list[OrderEventRow]:
+        """Public — orders folded to open/executed/cancelled, newest first.
+
+        Mirrors GET /v1/orders/open: rows carry only (orderId, trader,
+        triggerPrice, status). Default status='open'; pass status='all' for
+        the executed/cancelled history. Hydrate asset/direction/size on-chain
+        via get_order for the ids returned.
+        """
+        body = await self._transport.request(
+            "GET",
+            "/v1/orders/open",
+            params={"trader": trader, "status": status, "limit": limit},
+        )
+        return [OrderEventRow.model_validate(o) for o in body.get("orders", [])]
 
     async def prepare(self, request: dict[str, Any]) -> PreparedTransaction:
         if self._credentials is None:

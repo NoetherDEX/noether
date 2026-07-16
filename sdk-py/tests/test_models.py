@@ -2,6 +2,7 @@ from noether_sdk.models import (
     HealthStatus,
     MarketSummary,
     OracleSnapshot,
+    OrderEventRow,
     ReferralMeResponse,
     ReferrerRow,
     VaultRow,
@@ -74,3 +75,21 @@ def test_referral_me_with_self_field() -> None:
     assert me.self_ is not None
     assert me.self_.code == "alice"
     assert me.binding is None
+
+
+def test_order_event_row_round_trip() -> None:
+    o = OrderEventRow.model_validate(
+        {
+            "orderId": 7,
+            "trader": "GBMMI26O5464ZC7WPZSOKHADUSVO3DDUAITELZZQ7AOUGJXJPLMCQL4N",
+            "triggerPrice": "810000000",
+            "status": "open",
+            "ledger": 3638107,
+            "ts": 1784207410,
+            "txHash": "47d906d55047beed2a0dfeb46f15d3e3f7f3d7b15490b9abb3596d8d0c29a7f7",
+        }
+    )
+    assert o.order_id == 7
+    assert o.trigger_price == "810000000"  # string precision preserved
+    assert o.status == "open"
+    assert o.tx_hash.startswith("47d906d")
