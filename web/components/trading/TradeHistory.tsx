@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Clock, ExternalLink, Info, RefreshCw, Share2 } from 'lucide-react';
 import { Badge, Tooltip } from '@/components/ui';
 import { formatUSD, formatDateTime, shortenTxHash, priceDecimals } from '@/lib/utils';
@@ -8,6 +9,8 @@ import { cn } from '@/lib/utils/cn';
 import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { getTradeHistory } from '@/lib/stellar/market';
+import { listTrades, toTrade } from '@/lib/api/trades';
+import { gatewayServesThisMarket } from '@/lib/api/gateway';
 import { PnlShareModal } from '@/components/share/PnlShareModal';
 import type { Trade, PnlShareData } from '@/types';
 
@@ -385,51 +388,64 @@ function TradeRow({
   );
 }
 
-// Container component that fetches and displays real trade history
+/**
+ * Fetch one trader's history, preferring the gateway (one HTTPS call) over
+ * the legacy Horizon 100-tx meta-XDR parse. Gateway is used only when it
+ * can speak for THIS market (gatewayServesThisMarket); any gateway error
+ * falls back to the legacy path, and a legacy failure THROWS so React Query
+ * keeps the last-good rows instead of rendering a fake-empty history.
+ */
+async function fetchTradeHistory(publicKey: string): Promise<Trade[]> {
+  let trades: Trade[] | null = null;
+  if (await gatewayServesThisMarket()) {
+    try {
+      trades = (await listTrades({ trader: publicKey, limit: 100 })).map(toTrade);
+    } catch {
+      trades = null; // gateway hiccup — legacy path below
+    }
+  }
+  if (trades === null) trades = await getTradeHistory(publicKey);
+  // Sort by timestamp descending - newest trades first
+  return trades.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+}
+
+// Container component that fetches and displays real trade history.
+// useQuery (global cache) so the rows survive the Tabs unmount — revisiting
+// the tab paints the cached history instantly and revalidates in background.
 export function TradeHistoryContainer() {
   const { isConnected, publicKey } = useWallet();
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const fetchTrades = useCallback(async (showLoading = true) => {
-    if (!publicKey) return;
+  const { data, isPending, isFetching, isError, refetch } = useQuery({
+    queryKey: ['tradeHistory', publicKey],
+    enabled: Boolean(isConnected && publicKey),
+    queryFn: () => fetchTradeHistory(publicKey!),
+  });
 
-    if (showLoading) setIsLoading(true);
-    setIsRefreshing(true);
+  const trades = isConnected && publicKey ? (data ?? []) : [];
 
-    try {
-      const tradeHistory = await getTradeHistory(publicKey);
-      // Sort by timestamp descending - newest trades first
-      tradeHistory.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      setTrades(tradeHistory);
-    } catch (error) {
-      console.error('Failed to fetch trade history:', error);
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  }, [publicKey]);
-
-  const handleRefresh = useCallback(() => {
-    fetchTrades(false);
-  }, [fetchTrades]);
-
-  useEffect(() => {
-    if (!isConnected || !publicKey) {
-      setTrades([]);
-      return;
-    }
-
-    fetchTrades(true);
-  }, [isConnected, publicKey, fetchTrades]);
+  // A failed fetch with nothing cached gets an explicit face + Retry —
+  // previously it silently rendered as "No Trade History". A failed REFRESH
+  // (cached rows exist) keeps showing the last-good rows below instead.
+  if (isError && trades.length === 0 && !isPending) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-10">
+        <p className="text-sm text-muted-foreground">Couldn&apos;t load trade history.</p>
+        <button
+          onClick={() => void refetch()}
+          className="rounded border border-border px-3 py-1.5 text-xs text-foreground hover:bg-secondary"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <TradeHistory
       trades={trades}
-      isLoading={isLoading}
-      isRefreshing={isRefreshing}
-      onRefresh={handleRefresh}
+      isLoading={Boolean(isConnected && publicKey) && isPending}
+      isRefreshing={isFetching}
+      onRefresh={() => void refetch()}
     />
   );
 }

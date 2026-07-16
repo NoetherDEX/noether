@@ -8,7 +8,25 @@ import { useEffect } from 'react';
 // landing first-load. Import the provider file directly so the barrel never
 // enters the layout bundle.
 import { WalletProvider } from '@/components/wallet/WalletProvider';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { assertContractsConfigured, CONTRACTS } from '@/lib/utils/constants';
+
+// Global query cache: the /trade bottom tabs fully unmount on tab switch
+// (Tabs renders only the active tab), so component state dies with them.
+// This cache is what lets a revisited tab paint its last rows instantly and
+// revalidate in the background instead of blanking to a skeleton. Components
+// own their polling via refetchInterval; the faucet page keeps its own
+// nested QueryClient (nearest provider wins — isolated, unaffected).
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 15_000,
+      gcTime: 10 * 60_000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 // Build-time constant: env vars are inlined by Next, so this is identical on
 // server and client (no hydration mismatch).
@@ -39,9 +57,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <WalletProvider>
-      {children}
-      {ROUTER_MISSING && <RouterMissingBanner />}
-    </WalletProvider>
+    <QueryClientProvider client={queryClient}>
+      <WalletProvider>
+        {children}
+        {ROUTER_MISSING && <RouterMissingBanner />}
+      </WalletProvider>
+    </QueryClientProvider>
   );
 }

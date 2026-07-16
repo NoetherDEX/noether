@@ -18,6 +18,8 @@ import {
   closePositionCross,
 } from '@/lib/stellar/market';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
+import { listTrades, toTrade } from '@/lib/api/trades';
+import { gatewayServesThisMarket } from '@/lib/api/gateway';
 import { fromPrecision } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayPosition, Trade } from '@/types';
@@ -134,7 +136,17 @@ function PortfolioPage() {
 
     setIsLoadingTrades(true);
     try {
-      const tradeHistory = await getTradeHistory(publicKey);
+      // Gateway feed first (one HTTPS call, same trust gate as the trade
+      // page); legacy Horizon meta-XDR parse only as fallback.
+      let tradeHistory: Trade[] | null = null;
+      if (await gatewayServesThisMarket()) {
+        try {
+          tradeHistory = (await listTrades({ trader: publicKey, limit: 100 })).map(toTrade);
+        } catch {
+          tradeHistory = null; // gateway hiccup — legacy path below
+        }
+      }
+      if (tradeHistory === null) tradeHistory = await getTradeHistory(publicKey);
       setTrades(tradeHistory);
       setTradesError(false);
     } catch (error) {

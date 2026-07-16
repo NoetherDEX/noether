@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
 import { formatUSD } from '@/lib/utils';
+import { listTrades, type TradeRow } from '@/lib/api/trades';
+import { gatewayServesThisMarket } from '@/lib/api/gateway';
 import { rpc, xdr, scValToNative } from '@stellar/stellar-sdk';
 
 interface GlobalTrade {
@@ -57,6 +60,35 @@ function parseDirection(dirVal: unknown): 'Long' | 'Short' {
 // Create Soroban RPC client
 const sorobanRpc = new rpc.Server(NETWORK.RPC_URL);
 
+/**
+ * Gateway /v1/trades row → GlobalTrade. Mirrors the legacy event parsing:
+ * opens render as Long/Short entries, closes as Close, liquidations as Liq;
+ * rows without a positive size are dropped — which also skips account-level
+ * cross_liquidation rows (no size) exactly like the legacy size guard did.
+ */
+function rowToGlobalTrade(row: TradeRow): GlobalTrade | null {
+  const size = row.size == null ? 0 : Number(row.size) / 1e7;
+  if (size <= 0) return null;
+  let asset = (row.asset ?? 'BTC').toUpperCase();
+  if (asset.length > 5) asset = 'BTC';
+  const side: GlobalTrade['side'] =
+    row.kind === 'open'
+      ? row.direction === 0
+        ? 'Long'
+        : 'Short'
+      : row.kind === 'close'
+        ? 'Close'
+        : 'Liq';
+  return {
+    id: `${row.kind}-${row.positionId ?? 'x'}-${row.txHash}`,
+    asset,
+    side,
+    size,
+    timestamp: new Date(row.ts * 1000),
+    txHash: row.txHash,
+  };
+}
+
 export function RecentTradesSkeleton() {
   return (
     <div className="space-y-1">
@@ -77,13 +109,6 @@ export function RecentTradesSkeleton() {
 }
 
 export function RecentTrades() {
-  const [trades, setTrades] = useState<GlobalTrade[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  // Honest liveness (A14): timestamp of the last SUCCESSFUL poll (null until
-  // one lands) + whether the most recent poll failed. Rendered as
-  // "Updated Xs ago" — never a permanent LIVE pulse the data can't back.
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
-  const [fetchFailed, setFetchFailed] = useState(false);
   const [, setNowTick] = useState(0); // 1s re-render tick for relative times
 
   // Parse a single event into a GlobalTrade
@@ -184,55 +209,50 @@ export function RecentTrades() {
     }
   }, [parseEventToTrade]);
 
-  // Fetch all recent trades from the Market contract
-  const fetchRecentTrades = useCallback(async () => {
-    try {
-      // Get latest ledger to calculate start ledger
-      const latestLedger = await sorobanRpc.getLatestLedger();
-
-      // Use same lookback as Trade History (10000 ledgers = ~14 hours)
-      const LOOKBACK_LEDGERS = 10000;
-      const startLedger = Math.max(1, latestLedger.sequence - LOOKBACK_LEDGERS);
-
-      // Fetch all three event types in parallel
-      const [openedTrades, closedTrades, liquidatedTrades] = await Promise.all([
-        fetchEventsForType(startLedger, 'position_opened'),
-        fetchEventsForType(startLedger, 'position_closed'),
-        fetchEventsForType(startLedger, 'position_liquidated'),
-      ]);
-
-      // Combine all trades
-      const allTrades = [...openedTrades, ...closedTrades, ...liquidatedTrades];
-
-      // Sort by timestamp descending (newest first)
-      allTrades.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-      // Keep only the 20 most recent
-      setTrades(allTrades.slice(0, 20));
-      setLastUpdatedAt(new Date());
-      setFetchFailed(false);
-    } catch (error) {
-      console.error('[RecentTrades] Fetch error:', error);
-      // Keep last-good rows on screen; the header flips to a stale state.
-      setFetchFailed(true);
-    } finally {
-      setIsLoading(false);
+  // Fetch all recent trades — gateway feed first (one HTTPS call, opens
+  // included), legacy 3× getEvents scan when the gateway can't speak for
+  // this market. Throws on total failure so the query flips to the stale
+  // state (never a fake-empty "No trades yet").
+  const fetchAllTrades = useCallback(async (): Promise<GlobalTrade[]> => {
+    if (await gatewayServesThisMarket()) {
+      try {
+        const rows = await listTrades({ includeOpens: true, limit: 40 });
+        return rows
+          .map(rowToGlobalTrade)
+          .filter((t): t is GlobalTrade => t !== null)
+          .slice(0, 20);
+      } catch {
+        // gateway hiccup — legacy scan below
+      }
     }
+
+    const latestLedger = await sorobanRpc.getLatestLedger();
+    // Use same lookback as Trade History (10000 ledgers = ~14 hours)
+    const LOOKBACK_LEDGERS = 10000;
+    const startLedger = Math.max(1, latestLedger.sequence - LOOKBACK_LEDGERS);
+    const [openedTrades, closedTrades, liquidatedTrades] = await Promise.all([
+      fetchEventsForType(startLedger, 'position_opened'),
+      fetchEventsForType(startLedger, 'position_closed'),
+      fetchEventsForType(startLedger, 'position_liquidated'),
+    ]);
+    const allTrades = [...openedTrades, ...closedTrades, ...liquidatedTrades];
+    allTrades.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    return allTrades.slice(0, 20);
   }, [fetchEventsForType]);
 
-  // Initial fetch and polling
-  useEffect(() => {
-    // Initial fetch with slight delay
-    const initialDelay = setTimeout(fetchRecentTrades, 500);
-
-    // Poll every 30 seconds
-    const interval = setInterval(fetchRecentTrades, 30000);
-
-    return () => {
-      clearTimeout(initialDelay);
-      clearInterval(interval);
-    };
-  }, [fetchRecentTrades]);
+  // Global cache (providers.tsx): rows survive the Tabs unmount, so a
+  // revisited tab paints instantly and revalidates in background. RQ keeps
+  // the last-good data through failed refetches — same keep-last-good
+  // semantics the manual state machine implemented (A14).
+  const { data, isPending, isError, dataUpdatedAt, refetch } = useQuery({
+    queryKey: ['recentTrades'],
+    queryFn: fetchAllTrades,
+    refetchInterval: 30_000,
+  });
+  const trades = data ?? [];
+  const isLoading = isPending;
+  const fetchFailed = isError;
+  const lastUpdatedAt = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
 
   // Re-render every second so the relative times ("5s", "Updated 12s ago")
   // stay current between polls.
@@ -298,7 +318,7 @@ export function RecentTrades() {
             <div className="text-center py-8">
               <p className="text-xs text-muted-foreground">Couldn&apos;t load recent trades</p>
               <button
-                onClick={fetchRecentTrades}
+                onClick={() => void refetch()}
                 className="mt-2 text-xs text-primary underline hover:opacity-80 transition-opacity"
               >
                 Retry

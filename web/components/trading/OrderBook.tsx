@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { RefreshCw, ExternalLink, TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { formatUSD, formatPrice } from '@/lib/utils';
@@ -22,77 +23,73 @@ interface OrderBookEntry extends DisplayOrder {
 
 export function OrderBook({ asset }: OrderBookProps) {
   const { publicKey } = useWallet();
-  const [orders, setOrders] = useState<OrderBookEntry[]>([]);
-  const [currentPrice, setCurrentPrice] = useState<number>(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Fetch orders
-  const fetchOrders = useCallback(async (showLoading = true) => {
-    // Use a default public key for read-only queries if not connected
+  // Fetch the book + separator price. Runs without a wallet via the
+  // well-known null account.
+  const fetchBook = useCallback(async (): Promise<{
+    entries: OrderBookEntry[];
+    price: number;
+  }> => {
     const queryKey = publicKey || 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
 
-    if (showLoading) setIsLoading(true);
-    setIsRefreshing(true);
-
-    try {
-      // Fast path: open-order id-hints from the indexer, hydrated per-id.
-      // The legacy whole-market scan (get_all_order_ids + every order) only
-      // runs when the gateway can't speak for this market — staging pointing
-      // at the prod indexer, a stalled cursor, or an API outage.
-      let allOrders: Order[] | null = null;
-      if (await gatewayServesThisMarket()) {
-        try {
-          const hints = await listOrderHints({ status: 'open', limit: 200 });
-          const hydrated =
-            hints.length === 0
-              ? []
-              : await getOrdersByIds(queryKey, hints.map((h) => h.orderId));
-          // Chain stays the authority on status — an order the indexer still
-          // thinks is open may have just filled.
-          allOrders = hydrated.filter((o) => o.status === 'Pending');
-        } catch {
-          allOrders = null; // gateway hiccup — legacy scan below
-        }
+    // Fast path: open-order id-hints from the indexer, hydrated per-id.
+    // The legacy whole-market scan (get_all_order_ids + every order) only
+    // runs when the gateway can't speak for this market — staging pointing
+    // at the prod indexer, a stalled cursor, or an API outage.
+    let allOrders: Order[] | null = null;
+    if (await gatewayServesThisMarket()) {
+      try {
+        const hints = await listOrderHints({ status: 'open', limit: 200 });
+        const hydrated =
+          hints.length === 0
+            ? []
+            : await getOrdersByIds(queryKey, hints.map((h) => h.orderId));
+        // Chain stays the authority on status — an order the indexer still
+        // thinks is open may have just filled.
+        allOrders = hydrated.filter((o) => o.status === 'Pending');
+      } catch {
+        allOrders = null; // gateway hiccup — legacy scan below
       }
-      if (allOrders === null) {
-        allOrders = await getAllPendingOrders(queryKey);
-      }
-
-      // Filter for current asset and only limit entry orders
-      const assetOrders = allOrders
-        .filter(order => order.asset === asset && order.orderType === 'LimitEntry')
-        .map(order => {
-          const displayOrder = toDisplayOrder(order);
-          return {
-            ...displayOrder,
-            stellarExpertUrl: `${STELLAR_EXPERT_BASE}/account/${order.trader}`,
-          };
-        });
-
-      setOrders(assetOrders);
-
-      // Fetch current price
-      if (queryKey !== 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF') {
-        const priceData = await getPrice(queryKey, asset);
-        if (priceData) {
-          setCurrentPrice(priceToDisplay(priceData.price));
-        }
-      }
-    } catch (error) {
-      console.error('Failed to fetch orderbook:', error);
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
     }
+    if (allOrders === null) {
+      allOrders = await getAllPendingOrders(queryKey);
+    }
+
+    // Filter for current asset and only limit entry orders
+    const entries = allOrders
+      .filter(order => order.asset === asset && order.orderType === 'LimitEntry')
+      .map(order => {
+        const displayOrder = toDisplayOrder(order);
+        return {
+          ...displayOrder,
+          stellarExpertUrl: `${STELLAR_EXPERT_BASE}/account/${order.trader}`,
+        };
+      });
+
+    // Separator price (skipped for the null account, as before)
+    let price = 0;
+    if (queryKey !== 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF') {
+      const priceData = await getPrice(queryKey, asset);
+      if (priceData) price = priceToDisplay(priceData.price);
+    }
+    return { entries, price };
   }, [publicKey, asset]);
 
-  // Initial fetch and polling
-  useEffect(() => {
-    fetchOrders(true);
-    const interval = setInterval(() => fetchOrders(false), 30000); // Poll every 30s
-    return () => clearInterval(interval);
-  }, [fetchOrders]);
+  // Cached per (asset, wallet) in the global QueryClient: returning to this
+  // tab — or back to a previously viewed asset — paints instantly from cache
+  // and revalidates in background. Deliberately NO keepPreviousData across
+  // asset switches: showing asset A's resting orders under asset B's header,
+  // even briefly, would be wrong-money data. A failed refetch keeps the
+  // last-good book (RQ retains data on error), matching the old behavior.
+  const { data, isPending, isFetching, refetch } = useQuery({
+    queryKey: ['orderbook', asset, publicKey ?? 'anon'],
+    queryFn: fetchBook,
+    refetchInterval: 30_000,
+  });
+  const orders = data?.entries ?? [];
+  const currentPrice = data?.price ?? 0;
+  const isLoading = isPending;
+  const isRefreshing = isFetching;
 
   // Separate long and short orders
   const longOrders = orders
@@ -128,7 +125,7 @@ export function OrderBook({ asset }: OrderBookProps) {
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-[13px] font-medium text-foreground">Open Orders</h3>
         <button
-          onClick={() => fetchOrders(false)}
+          onClick={() => void refetch()}
           disabled={isRefreshing}
           className={cn(
             'p-1.5 rounded-md hover:bg-surface-3 text-muted-foreground hover:text-foreground transition-colors',
