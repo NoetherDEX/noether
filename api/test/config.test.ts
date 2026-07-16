@@ -68,3 +68,20 @@ describe('production fail-closed startup', () => {
     expect(loadConfig().corsOrigin).toBe('*');
   });
 });
+
+describe('CORS origin parsing', () => {
+  it('splits a comma-separated API_CORS_ORIGIN into a list', () => {
+    setProductionEnv();
+    process.env.API_CORS_ORIGIN =
+      'https://noether.exchange, https://staging.noether.exchange';
+    expect(loadConfig().corsOrigin).toEqual([
+      'https://noether.exchange',
+      'https://staging.noether.exchange',
+    ]);
+  });
+
+  it('keeps a single origin as a plain string', () => {
+    setProductionEnv();
+    expect(loadConfig().corsOrigin).toBe('https://noether.exchange');
+  });
+});
