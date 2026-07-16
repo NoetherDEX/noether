@@ -60,6 +60,19 @@ export interface PositionLiquidatedEvent extends EventEnvelope {
   closePrice: bigint;
 }
 
+/** T3-D4: a partial liquidation closed a tranche; the position SURVIVES. */
+export interface PositionPartialLiqEvent extends EventEnvelope {
+  topic: 'position_partial_liq';
+  positionId: number;
+  trader: StellarAddress;
+  asset: string;
+  direction: number;
+  /** Size of the CLOSED tranche (not the whole position). */
+  size: bigint;
+  keeperReward: bigint;
+  closePrice: bigint;
+}
+
 export interface CrossLiquidatedEvent extends EventEnvelope {
   topic: 'cross_liq';
   trader: StellarAddress;
@@ -103,6 +116,7 @@ export type DecodedMarketEvent =
   | PositionOpenedEvent
   | PositionClosedEvent
   | PositionLiquidatedEvent
+  | PositionPartialLiqEvent
   | CrossLiquidatedEvent
   | OrderPlacedEvent
   | OrderCancelledEvent

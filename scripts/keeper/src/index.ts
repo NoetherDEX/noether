@@ -43,6 +43,8 @@ import { initAlerts, sendAlert } from './alerts';
 import { loadKeeperState, saveKeeperState } from './state';
 import { isCrossLiquidationCandidate, isLiquidationCandidate } from './health';
 import { getReferencePrice } from './reference';
+import { getStorkPrice, getStorkStatus, refreshStorkPrices } from './stork';
+import { sendHeartbeat } from './heartbeat';
 
 // Type-only imports — the @noeracle/sdk package is ESM-only, so the runtime
 // load happens via dynamic import() inside getNoeracle().
@@ -348,6 +350,20 @@ class KeeperBot {
       } finally {
         this.oracleUpdateInProgress = false;
       }
+
+      // Oracle-health heartbeat (T3-D1): one self-report per oracle cycle,
+      // fire-and-forget, including cycles that pushed nothing — a silent
+      // keeper is exactly what the health endpoint needs to expose.
+      sendHeartbeat(this.config, {
+        ts: Date.now(),
+        pushed: pushedAssets,
+        stork: getStorkStatus(this.config),
+        stats: {
+          oracleUpdates: this.stats.oracleUpdates,
+          priceSkips: this.stats.priceSkips,
+          errors: this.stats.errors,
+        },
+      });
     }
 
     // 2. One market snapshot per cycle, shared across all scan phases (K-4).
@@ -399,9 +415,10 @@ class KeeperBot {
    *
    * The keeper acts as the on-chain publisher for the public attestation
    * service — fetches the latest signed round from api.noeracle.org and
-   * relays it to `update_ed25519_persistent` so anyone (oracle_adapter,
-   * shim, off-chain readers) can call `get_price_pers(tag)` and see a
-   * fresh, cryptographically-verified price.
+   * relays it in ONE batched transaction to the hardened
+   * `update_batch_ed25519_persistent` so anyone (shim, off-chain readers)
+   * can call `get_price_pers(tag)` and see a fresh, publisher-gated,
+   * cryptographically-verified price.
    *
    * Publish-path defenses (K-2), applied per asset BEFORE pushing:
    *  1. finite/positive check;
@@ -438,6 +455,17 @@ class KeeperBot {
       return pushed;
     }
 
+    // Stork secondary oracle (T3-D1): one batched fetch per cycle so the
+    // per-asset defense below can cross-check. No key / unreachable →
+    // no-op (fail-open); the defense simply sees "no data".
+    await refreshStorkPrices(this.config, this.config.assets.map(a => a.symbol));
+
+    // Validate every asset first (K-2 defenses unchanged, per asset), then
+    // push the survivors as ONE batched transaction per cycle — the hardened
+    // update_batch_ed25519_persistent takes a whole round in one call, so
+    // the old per-asset tx loop (and its inter-asset sequence delays) is gone.
+    const eligible: Attestation[] = [];
+    const symbolByPair = new Map<string, string>();
     for (const asset of this.config.assets) {
       const pair = `${asset.symbol}/USD`;
       const attestation = attestations.find(a => a.asset === pair);
@@ -456,44 +484,80 @@ class KeeperBot {
         continue;
       }
 
-      try {
-        const result = await this.stellar.updateNoeraclePersistent(attestation);
+      eligible.push(attestation);
+      symbolByPair.set(attestation.asset, asset.symbol);
+    }
 
-        if (result.success) {
-          this.currentPrices.set(asset.symbol, {
-            asset: asset.symbol,
-            price: priceHuman,
+    if (eligible.length === 0) {
+      return pushed;
+    }
+
+    // The batch entrypoint verifies one (timestamp, round_id, publisher) per
+    // call. A normal fetch is one signing round already; if a fetch ever
+    // straddles rounds, push the largest group (highest round on ties) and
+    // let the stragglers catch up next cycle.
+    const groups = new Map<string, Attestation[]>();
+    for (const att of eligible) {
+      const key = `${att.round_id}:${att.timestamp}:${att.publisher}`;
+      const group = groups.get(key);
+      if (group) group.push(att);
+      else groups.set(key, [att]);
+    }
+    const batch = [...groups.values()].sort(
+      (a, b) =>
+        b.length - a.length ||
+        Number(BigInt(b[0].round_id) - BigInt(a[0].round_id)),
+    )[0];
+    if (batch.length < eligible.length) {
+      console.warn(
+        `\n⚠️  Attestation fetch straddled rounds: pushing ${batch.length}/${eligible.length}, rest next cycle`,
+      );
+    }
+
+    try {
+      const result = await this.stellar.updateNoeracleBatchPersistent(batch);
+
+      if (result.success) {
+        for (const attestation of batch) {
+          const symbol = symbolByPair.get(attestation.asset);
+          if (!symbol) continue;
+          this.currentPrices.set(symbol, {
+            asset: symbol,
+            price: attestation.price_human,
             priceScaled: BigInt(attestation.price),
             timestamp: Date.now(),
           });
           // Persist so the circuit breaker survives restarts (K-2)
-          this.state.lastPushedPrices[asset.symbol] = {
-            price: priceHuman,
+          this.state.lastPushedPrices[symbol] = {
+            price: attestation.price_human,
             priceScaled: attestation.price,
             timestamp: Date.now(),
           };
-          saveKeeperState(this.config.stateFilePath, this.state);
-
-          this.stats.oracleUpdates++;
-          pushed.push(asset.symbol);
-          if (this.stats.oracleUpdates <= 3 || this.stats.oracleUpdates % 50 === 0) {
-            console.log(`\n✅ Noeracle ${asset.symbol} = $${priceHuman.toLocaleString()} round=${attestation.round_id} (tx: ${result.txHash?.slice(0,8)}...)`);
-          }
-
-          // P1-4: refresh the vault NAV for this asset now that the oracle
-          // price moved. Permissionless + non-fatal by design.
-          await this.syncAssetPnl(asset.symbol);
-        } else if (result.indeterminate) {
-          console.log(`\n⚠️  Noeracle push for ${asset.symbol} indeterminate (may still land): ${result.txHash}`);
-        } else {
-          console.log(`\n⚠️  Noeracle persistent push FAILED for ${asset.symbol}: ${result.error}`);
+          pushed.push(symbol);
         }
-      } catch (error) {
-        console.error(`\n❌ Noeracle persistent push ERROR for ${asset.symbol}:`, error instanceof Error ? error.message : error);
-      }
+        saveKeeperState(this.config.stateFilePath, this.state);
 
-      // Delay between assets to avoid sequence conflicts on the keeper account
-      await this.sleep(ORACLE_INTER_ASSET_DELAY_MS);
+        this.stats.oracleUpdates++;
+        if (this.stats.oracleUpdates <= 3 || this.stats.oracleUpdates % 50 === 0) {
+          console.log(
+            `\n✅ Noeracle batch: ${pushed.length} assets round=${batch[0].round_id} (tx: ${result.txHash?.slice(0, 8)}...)`,
+          );
+        }
+
+        // P1-4: refresh the vault NAV per asset now that the oracle prices
+        // moved. Permissionless + non-fatal by design; spaced to be gentle
+        // on the keeper account's sequence.
+        for (const symbol of pushed) {
+          await this.syncAssetPnl(symbol);
+          await this.sleep(ORACLE_INTER_ASSET_DELAY_MS);
+        }
+      } else if (result.indeterminate) {
+        console.log(`\n⚠️  Noeracle batch push indeterminate (may still land): ${result.txHash}`);
+      } else {
+        console.log(`\n⚠️  Noeracle batch push FAILED: ${result.error}`);
+      }
+    } catch (error) {
+      console.error(`\n❌ Noeracle batch push ERROR:`, error instanceof Error ? error.message : error);
     }
 
     if (this.stats.oracleUpdates % 10 === 1) {
@@ -565,6 +629,27 @@ class KeeperBot {
       }
     } else {
       console.warn(`\n⚠️  ${symbol}: independent reference unreachable — pushing without cross-check`);
+    }
+
+    // 4. Stork secondary oracle (T3-D1). Fail-open when absent, stale, or
+    //    unreachable — the system must run without it — but an AVAILABLE
+    //    and strongly-divergent Stork blocks this asset's push: two
+    //    independent oracles disagreeing is a compromise signal, not noise.
+    //    Persistent disagreement drives the market stale (#30) for the
+    //    asset: opens halt, closes keep working — the safe failure mode.
+    const stork = getStorkPrice(symbol, this.config.storkMaxAgeMs);
+    if (stork !== null) {
+      const storkDivergencePct = (Math.abs(priceHuman - stork) / stork) * 100;
+      if (storkDivergencePct > this.config.storkMaxDivergencePct) {
+        this.stats.priceSkips++;
+        console.warn(`\n🛑 ${symbol} attestation $${priceHuman} diverges ${storkDivergencePct.toFixed(2)}% from Stork $${stork} — skipping push`);
+        void sendAlert(
+          'critical',
+          `DUAL-SOURCE DISAGREEMENT: ${symbol} Noeracle vs Stork`,
+          `attestation $${priceHuman} vs Stork $${stork} (${storkDivergencePct.toFixed(2)}% > ${this.config.storkMaxDivergencePct}%). One of the two feeds is wrong — investigate before unblocking.`,
+        );
+        return false;
+      }
     }
 
     return true;

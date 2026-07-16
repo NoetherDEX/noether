@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import type { KeyTier } from './apiKeys.js';
 
 export type RateLimitTier = 'public' | KeyTier;
@@ -23,12 +23,12 @@ export interface RateLimitDecision {
 const WINDOW_SEC = 60;
 
 /**
- * libsql-backed fixed-window counter.
+ * Postgres-backed fixed-window counter.
  * For each (bucket, window_start_seconds) pair we maintain a count.
  * Rejects when count > tier.perMinute.
  */
 export class RateLimiter {
-  constructor(private readonly db: Client) {}
+  constructor(private readonly db: Db) {}
 
   async checkAndConsume(bucket: string, tier: RateLimitTier): Promise<RateLimitDecision> {
     const limit = RATE_LIMIT_TIERS[tier].perMinute;
@@ -44,7 +44,7 @@ export class RateLimiter {
       sql: `
         INSERT INTO rate_limit_buckets (key_id, window_start, count)
         VALUES (?, ?, 1)
-        ON CONFLICT (key_id, window_start) DO UPDATE SET count = count + 1
+        ON CONFLICT (key_id, window_start) DO UPDATE SET count = rate_limit_buckets.count + 1
       `,
       args: [bucket, windowStart],
     });
@@ -86,11 +86,12 @@ export class RateLimiter {
 
   private async ensureTable(): Promise<void> {
     if (this.tableEnsured) return;
+    // Keep in sync with indexer/migrations/001_baseline.sql.
     await this.db.execute(`
       CREATE TABLE IF NOT EXISTS rate_limit_buckets (
         key_id        TEXT NOT NULL,
-        window_start  INTEGER NOT NULL,
-        count         INTEGER NOT NULL,
+        window_start  BIGINT NOT NULL,
+        count         BIGINT NOT NULL,
         PRIMARY KEY (key_id, window_start)
       );
     `);
@@ -102,9 +103,9 @@ export class RateLimiter {
         owner         TEXT NOT NULL,
         tier          TEXT NOT NULL DEFAULT 'standard',
         label         TEXT,
-        created_at    INTEGER NOT NULL,
-        last_used_at  INTEGER,
-        revoked_at    INTEGER
+        created_at    BIGINT NOT NULL,
+        last_used_at  BIGINT,
+        revoked_at    BIGINT
       );
     `);
     this.tableEnsured = true;

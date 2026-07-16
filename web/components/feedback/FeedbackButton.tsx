@@ -23,6 +23,8 @@ export function FeedbackButton() {
   const [category, setCategory] = useState<Category>('general');
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [sendFailed, setSendFailed] = useState(false);
 
   if (pathname === '/') return null;
 
@@ -31,25 +33,61 @@ export function FeedbackButton() {
   // coordination; the banner half is handled in ReferralBanner).
   const hideOnMobileTrade = pathname === '/trade';
 
-  const handleSubmit = () => {
+  const categoryLabel = categories.find((c) => c.id === category)?.label ?? 'General';
+  const fullSubject = subject.trim()
+    ? `[${categoryLabel}] ${subject.trim()}`
+    : `[${categoryLabel}] Feedback`;
+  const mailtoHref = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(fullSubject)}&body=${encodeURIComponent(message)}`;
+
+  // B28: POST to the feedback route (Discord webhook). NEVER clear the typed
+  // message on an unverified path — a false success destroys the
+  // highest-value signal a testnet collects. Mailto stays as the fallback
+  // when the webhook isn't configured, and failure keeps everything intact
+  // with a copy option.
+  const handleSubmit = async () => {
     if (!message.trim()) {
       toast.error('Please enter a message');
       return;
     }
+    setIsSending(true);
+    setSendFailed(false);
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category, subject: subject.trim(), message, page: pathname }),
+      });
+      if (res.ok) {
+        toast.success('Feedback sent — thank you!');
+        setCategory('general');
+        setSubject('');
+        setMessage('');
+        setIsOpen(false);
+        return;
+      }
+      if (res.status === 501) {
+        // Webhook not configured — the old mailto path, state kept until
+        // the user actually sends the email themselves.
+        window.open(mailtoHref, '_blank');
+        toast('Email client opened — send it there.', { icon: '✉️' });
+        return;
+      }
+      throw new Error(`feedback route ${res.status}`);
+    } catch {
+      setSendFailed(true);
+      toast.error("Couldn't send — your message is preserved below.");
+    } finally {
+      setIsSending(false);
+    }
+  };
 
-    const categoryLabel = categories.find((c) => c.id === category)?.label ?? 'General';
-    const fullSubject = subject.trim()
-      ? `[${categoryLabel}] ${subject.trim()}`
-      : `[${categoryLabel}] Feedback`;
-
-    const mailto = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(fullSubject)}&body=${encodeURIComponent(message)}`;
-    window.open(mailto, '_blank');
-
-    toast.success('Email client opened!');
-    setCategory('general');
-    setSubject('');
-    setMessage('');
-    setIsOpen(false);
+  const copyMessage = async () => {
+    try {
+      await navigator.clipboard.writeText(`${fullSubject}\n\n${message}`);
+      toast.success('Copied — paste it into an email or Discord.');
+    } catch {
+      toast.error('Clipboard unavailable — select the text and copy manually.');
+    }
   };
 
   return (
@@ -140,23 +178,52 @@ export function FeedbackButton() {
             />
           </div>
 
+          {/* Failure recovery — the typed message is never lost */}
+          {sendFailed && (
+            <div className="rounded-md border border-short/30 bg-short/5 px-3 py-2.5 space-y-2">
+              <p className="text-xs text-short">
+                Sending failed — your message is still here. Copy it or email it instead.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={copyMessage}
+                  className="text-xs font-medium text-foreground underline hover:opacity-80"
+                >
+                  Copy message
+                </button>
+                <a
+                  href={mailtoHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-medium text-foreground underline hover:opacity-80"
+                >
+                  Email instead
+                </a>
+              </div>
+            </div>
+          )}
+
           {/* Destination hint */}
           <p className="text-xs text-faint">
-            This will open your email client to send feedback to{' '}
-            <span className="text-muted-foreground">{SUPPORT_EMAIL}</span>
+            Goes straight to the team. Prefer email?{' '}
+            <a href={mailtoHref} className="text-muted-foreground underline hover:text-foreground">
+              {SUPPORT_EMAIL}
+            </a>
           </p>
 
           {/* Submit */}
           <button
             onClick={handleSubmit}
+            disabled={isSending}
             className="w-full flex items-center justify-center gap-2 px-4 py-3
                        bg-primary text-primary-foreground font-medium rounded-md
                        hover:bg-primary/90 transition-colors duration-200
+                       disabled:opacity-60 disabled:cursor-not-allowed
                        focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background
                        cursor-pointer"
           >
             <Send className="w-4 h-4" />
-            Send Feedback
+            {isSending ? 'Sending…' : 'Send Feedback'}
           </button>
         </div>
       </Modal>

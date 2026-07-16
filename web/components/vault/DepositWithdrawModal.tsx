@@ -13,7 +13,7 @@ import { getVaultTrades } from '@/lib/api/vaults';
 import { VAULT_PRECISION, vaultNav } from '@/types/vault';
 import type { VaultRow } from '@/types/vault';
 import { fmtUsdc7 } from '@/lib/utils/format';
-import { decodeContractError } from '@/lib/utils/contractErrors';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
 
 interface Props {
@@ -62,8 +62,7 @@ function humanizeError(err: unknown, mode: Mode): string {
   ) {
     return 'USDC transfer failed — insufficient USDC balance for this deposit.';
   }
-  const decoded = decodeContractError(err, { contract: 'vault_factory' });
-  return decoded.length > 200 ? `${decoded.slice(0, 200)}…` : decoded;
+  return toUserMessage(err, { contract: 'vault_factory' });
 }
 
 export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props) {
@@ -71,8 +70,12 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
   const [mode, setMode] = useState<Mode>('deposit');
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
-  const [usdcBalance, setUsdcBalance] = useState<bigint>(0n);
-  const [userShares, setUserShares] = useState<bigint>(0n);
+  // null = balance unknown (not loaded / read failed). A failed read must
+  // NEVER fabricate 'Amount exceeds USDC balance (0.0000 available)' for a
+  // funded wallet — gates skip while unknown and simulation catches real
+  // shortfalls pre-sign (B20).
+  const [usdcBalance, setUsdcBalance] = useState<bigint | null>(null);
+  const [userShares, setUserShares] = useState<bigint | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // Capital the leader currently has deployed in open positions — excluded
   // from the liquid NAV a withdrawal is priced at (A20). null = unknown.
@@ -85,8 +88,8 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
   // Load balances when modal opens or wallet changes
   useEffect(() => {
     if (!open || !wallet.address) {
-      setUsdcBalance(0n);
-      setUserShares(0n);
+      setUsdcBalance(null);
+      setUserShares(null);
       return;
     }
     let cancelled = false;
@@ -158,7 +161,8 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
 
   const parsed = parseAmount(amount);
   const maxRaw = mode === 'deposit' ? usdcBalance : userShares;
-  const exceedsBalance = parsed !== null && parsed > maxRaw;
+  // Gate only on a KNOWN balance — the chain enforces the real limit.
+  const exceedsBalance = parsed !== null && maxRaw !== null && parsed > maxRaw;
   // How many positions the leader has open right now. Trades-derived count
   // (paired with the ≈$ figure, 200-row window) and the API aggregate can
   // each miss independently — warn if EITHER says capital is deployed. The
@@ -187,7 +191,7 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
   }
 
   function setMax() {
-    if (maxRaw === 0n) return;
+    if (maxRaw == null || maxRaw === 0n) return;
     setAmount(fmtInputAmount(maxRaw));
   }
 
@@ -197,18 +201,27 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
     if (exceedsBalance) {
       return toast.error(
         mode === 'deposit'
-          ? `Amount exceeds USDC balance (${fmtUsdc7(usdcBalance, 4)} available)`
-          : `Amount exceeds your shares (${fmtUsdc7(userShares, 4)} available)`,
+          ? `Amount exceeds USDC balance (${fmtUsdc7(usdcBalance ?? 0n, 4)} available)`
+          : `Amount exceeds your shares (${fmtUsdc7(userShares ?? 0n, 4)} available)`,
       );
     }
     setBusy(true);
     try {
+      // B20: on a 5s chain the marketplace projection lags the tx by a few
+      // seconds — say so, or "I deposited and TVL didn't move" reads as a
+      // failed transaction.
       if (mode === 'deposit') {
         await depositToVault(wallet.address, wallet.walletId, vault.id, parsed);
-        toast.success(`Deposited ${amount} USDC into ${vault.name}`);
+        toast.success(
+          `Deposited ${amount} USDC into ${vault.name} — marketplace numbers update in a few seconds`,
+          { duration: 6000 },
+        );
       } else {
         await withdrawFromVault(wallet.address, wallet.walletId, vault.id, parsed);
-        toast.success(`Withdrew ${amount} shares from ${vault.name}`);
+        toast.success(
+          `Withdrew ${amount} shares from ${vault.name} — marketplace numbers update in a few seconds`,
+          { duration: 6000 },
+        );
       }
       setAmount('');
       setRefreshKey((k) => k + 1);
@@ -284,7 +297,7 @@ export function DepositWithdrawModal({ open, onClose, vault, onSuccess }: Props)
                 disabled={!connected || maxRaw === 0n}
                 className="text-xs text-primary hover:text-primary/80 disabled:text-faint disabled:cursor-not-allowed transition-colors"
               >
-                Max (<span className="font-mono tabular-nums">{fmtUsdc7(maxRaw, 4)}</span>)
+                Max (<span className="font-mono tabular-nums">{maxRaw == null ? '—' : fmtUsdc7(maxRaw, 4)}</span>)
               </button>
             </div>
             <Input

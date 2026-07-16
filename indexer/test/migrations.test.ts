@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { createClient } from '@libsql/client';
+import { PGlite } from '@electric-sql/pglite';
+import { createPgliteDb } from '@noether/db/pglite';
 import { runMigrations } from '../src/migrations.js';
 
 describe('migration runner', () => {
   it('applies all pending migrations and is idempotent', async () => {
-    const db = createClient({ url: ':memory:' });
+    const db = createPgliteDb(new PGlite());
     const first = await runMigrations(db);
     expect(first.applied.length).toBeGreaterThan(0);
 
     const tables = await db.execute(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+      "SELECT tablename AS name FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
     );
     const names = tables.rows.map((r) => String(r.name));
     expect(names).toContain('events_raw');
@@ -21,6 +22,6 @@ describe('migration runner', () => {
     const second = await runMigrations(db);
     expect(second.applied).toHaveLength(0);
 
-    db.close();
+    await db.close();
   });
 });

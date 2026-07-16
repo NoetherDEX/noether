@@ -146,9 +146,11 @@ export function loadConfig(): KeeperConfig {
       process.env.NEXT_PUBLIC_MARKET_ID ||
       contracts.contracts?.market ||
       '',
-    // Noeracle on-chain contract — keeper publishes signed attestations
-    // here via update_ed25519_persistent. Defaults to the live testnet
-    // deployment so the bot works out-of-the-box.
+    // Noeracle on-chain contract — keeper publishes signed attestation
+    // batches here via the hardened update_batch_ed25519_persistent.
+    // NOTE: requires a post-S-1 Noeracle deployment that exports the
+    // hardened entrypoint; the legacy default below (CAYIP67…) predates
+    // it and must be repointed at cutover.
     noeracleContractId:
       process.env.NEXT_PUBLIC_NOERACLE_ID ||
       contracts.contracts?.noeracle ||
@@ -192,6 +194,18 @@ export function loadConfig(): KeeperConfig {
       process.env.REFERENCE_TICKER_URL || 'https://api.binance.com/api/v3/ticker/price',
     referenceDivergencePct: envFloat('REFERENCE_DIVERGENCE_PCT', 5),
 
+    // Stork secondary oracle (T3-D1). Empty key = disabled = the keeper
+    // runs Noeracle-only, exactly as before — fail-open by design.
+    storkApiKey: process.env.STORK_API_KEY || '',
+    storkRestUrl: process.env.STORK_REST_URL || 'https://rest.jp.stork-oracle.network',
+    storkMaxDivergencePct: envFloat('STORK_MAX_DIVERGENCE_PCT', 1.5),
+    storkMaxAgeMs: envInt('STORK_MAX_AGE_MS', 120_000),
+
+    // Oracle-health heartbeat (T3-D1): POSTed to the api gateway after
+    // every oracle cycle. Empty URL = disabled — fire-and-forget either way.
+    heartbeatUrl: process.env.KEEPER_HEARTBEAT_URL || '',
+    heartbeatSecret: process.env.KEEPER_HEARTBEAT_SECRET || '',
+
     // Alerting (K-1)
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || undefined,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || undefined,
@@ -207,6 +221,11 @@ export function loadConfig(): KeeperConfig {
   }
   if (!config.noeracleContractId) {
     console.warn('⚠️  Warning: NOERACLE_CONTRACT_ID not set. Price publishing will not work.');
+  }
+  if (config.storkApiKey) {
+    console.log('🔐 Stork secondary oracle ENABLED (dual-source cross-validation active)');
+  } else {
+    console.log('ℹ️  Stork secondary oracle disabled (no STORK_API_KEY) — running Noeracle-only');
   }
 
   return config;

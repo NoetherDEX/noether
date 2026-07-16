@@ -13,7 +13,7 @@
  */
 
 import type { Logger } from 'pino';
-import type { Client } from '@libsql/client';
+import { isMissingTable, type Db } from '@noether/db';
 import type { AccountEventPayload, EventPayload, TradePayload, WsBus } from './wsBus.js';
 
 const POSITION_TOPICS = new Set(['position_opened', 'position_closed', 'position_liquidated']);
@@ -25,7 +25,7 @@ const KIND_FOR_TOPIC: Record<string, TradePayload['kind']> = {
 };
 
 export interface LiveTailerOptions {
-  db: Client;
+  db: Db;
   bus: WsBus;
   log: Logger;
   intervalMs?: number;
@@ -73,8 +73,7 @@ export class LiveTailer {
         args: [this.cursorInsertedAt],
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return; // indexer hasn't run yet
+      if (isMissingTable(err)) return; // indexer hasn't run yet
       this.opts.log.warn({ err }, 'live tailer query failed');
       return;
     }

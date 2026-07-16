@@ -29,7 +29,9 @@ interface WalletProviderProps {
  * Fixes the "NOE balance always written as 0" bug — the real value was in
  * the payload we already fetched. No trustline genuinely means 0.
  */
-async function fetchHorizonBalances(publicKey: string): Promise<{ xlm: number; noe: number }> {
+async function fetchHorizonBalances(
+  publicKey: string
+): Promise<{ xlm: number | null; noe: number | null }> {
   try {
     const response = await fetch(`${NETWORK.HORIZON_URL}/accounts/${publicKey}`);
 
@@ -59,8 +61,9 @@ async function fetchHorizonBalances(publicKey: string): Promise<{ xlm: number; n
       noe: noeBalance ? parseFloat(noeBalance.balance) : 0,
     };
   } catch (error) {
+    // Read FAILED — balances are unknown, not zero. Callers render '—'.
     console.error('Failed to fetch Horizon balances:', error);
-    return { xlm: 0, noe: 0 };
+    return { xlm: null, noe: null };
   }
 }
 
@@ -70,7 +73,7 @@ async function fetchHorizonBalances(publicKey: string): Promise<{ xlm: number; n
  * the initial/first-load JS bundle — it only loads once a balance is actually
  * fetched (i.e. after a wallet is connected), never on the marketing landing.
  */
-async function fetchUSDCBalance(publicKey: string): Promise<number> {
+async function fetchUSDCBalance(publicKey: string): Promise<number | null> {
   const { getUSDCBalance } = await import('@/lib/stellar/token');
   return getUSDCBalance(publicKey);
 }

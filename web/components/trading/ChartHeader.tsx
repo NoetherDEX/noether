@@ -42,13 +42,15 @@ export function ChartHeader({ asset, className, compact = false, markPrice = 0 }
 
   // Keep the Binance ticker's price fresh (drives 24h reference stats only
   // when the Noeracle mark isn't streaming yet).
+  // ONE subscription per asset — depending on `ticker` re-keyed this effect
+  // on every self-produced frame (subscribe fetches immediately), turning the
+  // 5s poll into a continuous fetch loop. Functional updater handles null.
   useEffect(() => {
-    if (!ticker) return;
     const unsubscribe = subscribeToPriceUpdates(asset, (newPrice) => {
       setTicker((prev) => (prev ? { ...prev, price: newPrice } : prev));
     });
     return unsubscribe;
-  }, [asset, ticker]);
+  }, [asset]);
 
   // The displayed price prefers the live Noeracle mark (execution source);
   // fall back to the Binance ticker until the first SSE frame arrives.

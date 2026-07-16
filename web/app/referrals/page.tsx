@@ -1,6 +1,13 @@
+import type { Metadata } from 'next';
 import { Header } from '@/components/layout';
 import { ReferralSignIn } from '@/components/referral/ReferralSignIn';
 import { ReferralDashboardOrSignIn } from '@/components/referral/ReferralDashboard';
+
+export const metadata: Metadata = {
+  title: 'Referrals',
+  description:
+    'Create your on-chain referral code — referees get a 4% fee discount, you earn 10% of their fees, enforced by the referral contract.',
+};
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;

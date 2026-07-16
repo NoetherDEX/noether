@@ -122,6 +122,22 @@ class OpenPositionRow(_Base):
     opened_tx_hash: str
 
 
+class OrderEventRow(_Base):
+    """One order_placed event folded to its lifecycle status (GET /v1/orders/open).
+
+    Carries only what the event carries — hydrate asset/direction/size
+    on-chain via get_order for the ids returned.
+    """
+
+    order_id: int
+    trader: str
+    trigger_price: str
+    status: Literal["open", "executed", "cancelled"]
+    ledger: int
+    ts: int
+    tx_hash: str
+
+
 # ─── vaults ────────────────────────────────────────────────────────────────
 
 

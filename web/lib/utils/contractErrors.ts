@@ -110,16 +110,80 @@ const TABLES: Record<ContractErrorContext, Record<number, string>> = {
   referral: REFERRAL_ERROR_MESSAGES,
 };
 
+/** Coerce any thrown value (Error, string, or arbitrary) to a message string. */
+function toMessageString(err: unknown): string {
+  if (typeof err === 'string') return err;
+  if (err != null && typeof (err as { message?: unknown }).message === 'string') {
+    return (err as { message: string }).message;
+  }
+  return err != null ? String(err) : '';
+}
+
+/**
+ * Look up the human-readable message for a numeric contract error code.
+ *
+ * `context` selects the per-contract table (defaults to the NoetherError
+ * market/vault table). For `vault_factory`, codes ≥ 20 fall back to the
+ * NoetherError table: factory codes stop at 15, and leader-trade proxies
+ * surface market-side errors (positions/oracle/orders) through the factory
+ * frame (outside FactoryError's 1-15 range — no collision possible). Returns
+ * null when the code is unknown for the given context.
+ */
+export function messageForCode(
+  code: number,
+  context: ContractErrorContext = 'market'
+): string | null {
+  return (
+    TABLES[context][code] ??
+    (context === 'vault_factory' && code >= 20 ? NOETHER_ERROR_MESSAGES[code] : undefined) ??
+    null
+  );
+}
+
+/**
+ * True when an error looks like a user-initiated wallet rejection (the user
+ * declined / dismissed the signature prompt). Centralized so every signing
+ * path can surface one consistent line instead of the wallet's raw decline
+ * string.
+ */
+const WALLET_REJECTION_RE = /reject|declin|denied|cancel/i;
+export const WALLET_REJECTION_MESSAGE = 'Transaction rejected in wallet';
+export function isWalletRejection(err: unknown): boolean {
+  return WALLET_REJECTION_RE.test(toMessageString(err));
+}
+
+/**
+ * Friendly copy for Stellar transaction-level result codes (the outer
+ * TransactionResultCode, e.g. txBadSeq) — used when a submit fails for a
+ * reason that is NOT a contract revert. Returns null for uninformative codes
+ * (txSuccess / txFailed) so callers fall back to a contract-error message or a
+ * generic line. Intentionally free of the words reject/declin/denied/cancel so
+ * these are never re-interpreted as a wallet rejection downstream.
+ */
+const TX_RESULT_MESSAGES: Record<string, string> = {
+  txBadSeq: 'Wallet transaction was out of sync — please try again',
+  txInsufficientBalance: 'Not enough XLM to cover the network fee — add a little XLM and retry',
+  txInsufficientFee: 'Network fee was too low — please try again',
+  txBadAuth: "Wallet signature didn't match — reconnect your wallet and try again",
+  txBadAuthExtra: "Wallet signature didn't match — reconnect your wallet and try again",
+  txNoAccount: 'Your wallet account is not active on the network yet',
+  txTooLate: 'The transaction expired before it reached the network — please try again',
+  txTooEarly: 'The transaction was submitted too early — please try again',
+  txMalformed: 'The transaction was malformed — please refresh and try again',
+  txSorobanInvalid: 'The network could not process this transaction — please refresh and try again',
+  txInternalError: 'The network had an internal error — please try again',
+};
+export function txResultCodeMessage(name: string): string | null {
+  return TX_RESULT_MESSAGES[name] ?? null;
+}
+
 /**
  * Map a raw Soroban error (e.g. a message containing `Error(Contract, #N)`)
  * to a human-readable string.
  *
  * `opts.contract` selects the error table for the contract the failed call
  * targeted; omitted/undefined defaults to the NoetherError (market/vault)
- * table — the historical behavior. For `vault_factory`, codes ≥ 20 fall
- * back to the NoetherError table: factory codes stop at 15, and the leader
- * trade proxies bubble market-side errors (positions/oracle/orders) through
- * the factory frame.
+ * table — the historical behavior.
  *
  * Falls back to the original message when no known contract error code is
  * found; returns '' for empty/nullish input so callers can chain
@@ -129,23 +193,10 @@ export function decodeContractError(
   err: unknown,
   opts?: { contract?: ContractErrorContext }
 ): string {
-  const message =
-    typeof err === 'string'
-      ? err
-      : err != null && typeof (err as { message?: unknown }).message === 'string'
-        ? (err as { message: string }).message
-        : err != null
-          ? String(err)
-          : '';
+  const message = toMessageString(err);
   const match = message.match(/Error\(Contract, #(\d+)\)/);
   if (match) {
-    const code = Number(match[1]);
-    const context = opts?.contract ?? 'market';
-    const mapped =
-      TABLES[context][code] ??
-      // Factory leader-trade proxies surface market errors (codes ≥ 20,
-      // outside FactoryError's 1-15 range — no collision possible).
-      (context === 'vault_factory' && code >= 20 ? NOETHER_ERROR_MESSAGES[code] : undefined);
+    const mapped = messageForCode(Number(match[1]), opts?.contract ?? 'market');
     if (mapped) return mapped;
   }
   return message;

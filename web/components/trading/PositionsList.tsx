@@ -6,7 +6,7 @@ import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPrice, formatPercent, formatDateTime, priceDecimals } from '@/lib/utils';
 import { formatPairPrice } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
-import type { DisplayPosition, PnlShareData } from '@/types';
+import type { DisplayPosition, DisplayOrder, PnlShareData } from '@/types';
 import { PnlShareModal } from '@/components/share/PnlShareModal';
 
 // Field-value equality for DisplayPosition. The parent's useMemo always
@@ -26,11 +26,15 @@ function positionEquals(a: DisplayPosition, b: DisplayPosition): boolean {
     && a.liquidationPrice === b.liquidationPrice
     && a.leverage === b.leverage
     && a.direction === b.direction
-    && a.marginMode === b.marginMode;
+    && a.marginMode === b.marginMode
+    && a.pendingFunding === b.pendingFunding;
 }
 
 interface PositionsListProps {
   positions: DisplayPosition[];
+  /** B8: the trader's orders (already fetched by the page) — used to show a
+   *  per-row TP/SL cell so protected vs unprotected is visible at a glance. */
+  orders?: DisplayOrder[];
   isLoading?: boolean;
   isRefreshing?: boolean;
   onClosePosition?: (id: number) => Promise<void>;
@@ -43,6 +47,7 @@ interface PositionsListProps {
 
 export function PositionsList({
   positions,
+  orders,
   isLoading,
   isRefreshing,
   onClosePosition,
@@ -53,6 +58,18 @@ export function PositionsList({
 }: PositionsListProps) {
   const [selectedPosition, setSelectedPosition] = useState<DisplayPosition | null>(null);
   const [actionModal, setActionModal] = useState<'close' | 'stop-loss' | 'take-profit' | null>(null);
+
+  // B8: pending SL/TP triggers per position, from the orders the page
+  // already polls — protected vs unprotected at a glance, no extra RPC.
+  const protectionByPosition = new Map<number, { tp?: number; sl?: number }>();
+  for (const o of orders ?? []) {
+    if (o.status !== 'Pending' || !o.positionId) continue;
+    if (o.orderType !== 'StopLoss' && o.orderType !== 'TakeProfit') continue;
+    const entry = protectionByPosition.get(o.positionId) ?? {};
+    if (o.orderType === 'StopLoss') entry.sl = o.triggerPrice;
+    else entry.tp = o.triggerPrice;
+    protectionByPosition.set(o.positionId, entry);
+  }
   const [slTpPrice, setSlTpPrice] = useState('');
   const [slTpSlippage, setSlTpSlippage] = useState(50); // 0.5% default
   const [customSlTpSlippage, setCustomSlTpSlippage] = useState('');
@@ -213,6 +230,13 @@ export function PositionsList({
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Net Value</th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Entry / Mark</th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Liq. Price</th>
+              <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">TP / SL</th>
+              <th
+                className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint"
+                title="Est. accrued funding — settles when the position closes"
+              >
+                Funding
+              </th>
               <th className="text-right px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">PnL</th>
               <th className="text-center px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-faint">Actions</th>
             </tr>
@@ -246,6 +270,7 @@ export function PositionsList({
                   setActionModal('take-profit');
                 }}
                 hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
+                protection={protectionByPosition.get(position.id)}
                 onShare={() => handleShare(position)}
               />
             ))}
@@ -309,6 +334,34 @@ export function PositionsList({
                 <span className="text-muted-foreground">Unrealized PnL</span>
                 <span className={selectedPosition.pnl >= 0 ? 'text-long' : 'text-short'}>
                   {formatUSD(selectedPosition.pnl)} ({formatPercent(selectedPosition.pnlPercent)})
+                </span>
+              </div>
+              {/* B4: funding settles at close — show it BEFORE the signature so
+                  the wallet never reconciles short of the promised number. */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Accrued funding (est.)</span>
+                {selectedPosition.pendingFunding == null ? (
+                  <span className="text-faint">—</span>
+                ) : (
+                  <span className={-selectedPosition.pendingFunding >= 0 ? 'text-long' : 'text-short'}>
+                    {-selectedPosition.pendingFunding >= 0 ? '+' : ''}
+                    {formatUSD(-selectedPosition.pendingFunding)}
+                  </span>
+                )}
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">You receive (est.)</span>
+                <span className="text-foreground font-medium">
+                  {selectedPosition.pendingFunding == null || !Number.isFinite(selectedPosition.pnl)
+                    ? '—'
+                    : formatUSD(
+                        Math.max(
+                          0,
+                          selectedPosition.collateral +
+                            selectedPosition.pnl -
+                            selectedPosition.pendingFunding
+                        )
+                      )}
                 </span>
               </div>
             </div>
@@ -767,6 +820,7 @@ const PositionRow = memo(function PositionRow({
   onSetStopLoss,
   onSetTakeProfit,
   hasSlTpCallbacks,
+  protection,
   onShare,
 }: {
   position: DisplayPosition;
@@ -775,6 +829,7 @@ const PositionRow = memo(function PositionRow({
   onSetStopLoss: () => void;
   onSetTakeProfit: () => void;
   hasSlTpCallbacks: boolean;
+  protection?: { tp?: number; sl?: number };
   onShare: () => void;
 }) {
   // NaN pnl = mark price unknown — render '—' in neutral color, never a
@@ -855,6 +910,41 @@ const PositionRow = memo(function PositionRow({
         </div>
       </td>
 
+      {/* B8: protection at a glance — pending TP / SL triggers, '—' when unprotected */}
+      <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap">
+        <span className={protection?.tp ? 'text-long' : 'text-faint'}>
+          {protection?.tp ? formatPairPrice(position.asset, protection.tp) : '—'}
+        </span>
+        <span className="text-faint"> / </span>
+        <span className={protection?.sl ? 'text-short' : 'text-faint'}>
+          {protection?.sl ? formatPairPrice(position.asset, protection.sl) : '—'}
+        </span>
+      </td>
+
+      {/* B4: est. accrued funding from the trader's POV (+receives / −pays),
+          settles on close — the number promised must be the number paid. */}
+      <td
+        className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap"
+        title="Est. accrued funding — settles when the position closes"
+      >
+        {position.pendingFunding == null ? (
+          <span className="text-faint">—</span>
+        ) : (
+          <span
+            className={
+              -position.pendingFunding > 0
+                ? 'text-long'
+                : -position.pendingFunding < 0
+                ? 'text-short'
+                : 'text-muted-foreground'
+            }
+          >
+            {-position.pendingFunding > 0 ? '+' : ''}
+            {formatUSD(-position.pendingFunding)}
+          </span>
+        )}
+      </td>
+
       <td className="px-3 py-2 text-right">
         {/* formatPercent owns the sign (fixes the '++2.34%' double sign, A32). */}
         <div className={cn('font-mono font-medium', !hasPnl ? 'text-muted-foreground' : isPositive ? 'text-long' : 'text-short')}>
@@ -918,6 +1008,9 @@ const PositionRow = memo(function PositionRow({
   );
 }, (prev, next) => prev.isLiquidationRisk === next.isLiquidationRisk
   && prev.hasSlTpCallbacks === next.hasSlTpCallbacks
+  // B8: the TP/SL cell must re-render when protection orders change.
+  && prev.protection?.tp === next.protection?.tp
+  && prev.protection?.sl === next.protection?.sl
   && positionEquals(prev.position, next.position));
 
 // Mobile card component
@@ -1006,11 +1099,12 @@ const PositionCard = memo(function PositionCard({
           </p>
         ) : (
           <div className="flex gap-2 mb-2">
-            <Button variant="secondary" size="sm" className="flex-1" onClick={onSetStopLoss}>
+            {/* B25: thumbs need ≥44px targets on the mobile cards */}
+            <Button variant="secondary" size="sm" className="flex-1 min-h-[44px]" onClick={onSetStopLoss}>
               <Shield className="w-4 h-4 mr-1" />
               Stop-Loss
             </Button>
-            <Button variant="secondary" size="sm" className="flex-1" onClick={onSetTakeProfit}>
+            <Button variant="secondary" size="sm" className="flex-1 min-h-[44px]" onClick={onSetTakeProfit}>
               <Target className="w-4 h-4 mr-1" />
               Take-Profit
             </Button>
@@ -1019,7 +1113,7 @@ const PositionCard = memo(function PositionCard({
       )}
 
       <div className="flex gap-2">
-        <Button variant="danger" size="sm" className="flex-1" onClick={onClose}>
+        <Button variant="danger" size="sm" className="flex-1 min-h-[44px]" onClick={onClose}>
           Close
         </Button>
       </div>

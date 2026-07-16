@@ -12,20 +12,22 @@ import {
   TradeHistoryContainer,
   RecentTrades,
   OrderBook,
+  OraclePriceCard,
   CrossMarginBanner,
   MobileTradeBar,
   MarketStatsBar,
   TradingViewChart,
 } from '@/components/trading';
 import { LeaderModeSelector } from '@/components/trading/LeaderModeSelector';
+import { FirstSessionChecklist } from '@/components/trading/FirstSessionChecklist';
 import type { ChartType } from '@/components/trading/TradingChart';
 import type { CandleSource } from '@/lib/api/candles';
 import { useLeaderModeStore } from '@/lib/store';
 import { leaderClosePosition } from '@/lib/stellar/vaultFactory';
-import { getVault } from '@/lib/api/vaults';
+import { getVault, getVaultTrades } from '@/lib/api/vaults';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useWallet } from '@/lib/hooks/useWallet';
-import { TIMEFRAMES } from '@/lib/utils/constants';
+import { TIMEFRAMES, NULL_ACCOUNT } from '@/lib/utils/constants';
 import { cn } from '@/lib/utils/cn';
 import {
   getPositions,
@@ -34,13 +36,18 @@ import {
   closePosition,
   closePositionCross,
   getOrders,
+  getOrdersByIds,
   toDisplayOrder,
   setStopLoss,
   setTakeProfit,
   cancelOrder,
   getFundingRate,
+  getCumulativeFundingRate,
+  getRecentLiquidations,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
+import { listOrderHints } from '@/lib/api/orders';
+import { gatewayServesThisMarket } from '@/lib/api/gateway';
 import { getMarketsStats, type AssetMarketStats } from '@/lib/api/markets';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { subscribeLivePrices } from '@/lib/stellar/noeracle';
@@ -60,6 +67,19 @@ function TradePage() {
   // displayed PnL / Mark / Net Value comes from currentPrices below.
   const [rawPositions, setRawPositions] = useState<Position[]>([]);
   const [orders, setOrders] = useState<DisplayOrder[]>([]);
+  // True when the LAST refresh failed — rows keep their last-good values and
+  // a strip explains staleness instead of wiping into "No open positions".
+  const [positionsFetchFailed, setPositionsFetchFailed] = useState(false);
+  const [ordersFetchFailed, setOrdersFetchFailed] = useState(false);
+  // Monotonic sequence guards: overlapping refreshes (the 0/2.5/6s post-trade
+  // burst vs the 60s tick) must never let a STALE response overwrite newer
+  // state — that race could resurrect a just-closed position.
+  const positionsFetchSeq = useRef(0);
+  const ordersFetchSeq = useRef(0);
+  // B1 liquidation vanish-detection: id → isCross of the last applied poll,
+  // plus ids the user just closed themselves (never toast those as liqs).
+  const prevPositionIdsRef = useRef<Map<number, boolean> | null>(null);
+  const expectedCloseIdsRef = useRef<Set<number>>(new Set());
   const [isLoadingPositions, setIsLoadingPositions] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -67,6 +87,11 @@ function TradePage() {
   // null = unknown (RPC failure / entry absent) — rendered as '—', never a
   // healthy-looking +0.0000% (A14).
   const [fundingRate, setFundingRate] = useState<number | null>(null);
+  // Global cumulative funding index (PRECISION-scaled) — null until first read.
+  const [cumulativeFunding, setCumulativeFunding] = useState<bigint | null>(null);
+  // B10: last signed attestation per asset (ts + round) from the SSE stream —
+  // powers the oracle-transparency card's live-ticking age.
+  const [lastAttestations, setLastAttestations] = useState<Record<string, { ts: number; roundId: number }>>({});
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const [pricesStale, setPricesStale] = useState(false);
   const [assetStats, setAssetStats] = useState<AssetMarketStats | null>(null);
@@ -77,11 +102,11 @@ function TradePage() {
   // (React reconciliation handles the in-place text update) without
   // re-fetching the whole position list from the contract.
   const positions = useMemo<DisplayPosition[]>(
-    () => rawPositions.map(p => toDisplayPosition(p, currentPrices[p.asset] || 0)),
-    [rawPositions, currentPrices],
+    () => rawPositions.map(p => toDisplayPosition(p, currentPrices[p.asset] || 0, cumulativeFunding)),
+    [rawPositions, currentPrices, cumulativeFunding],
   );
 
-  const { isConnected, publicKey, walletId, sign, refreshBalances } = useWallet();
+  const { isConnected, publicKey, walletId, sign, refreshBalances, xlmBalance, usdcBalance } = useWallet();
   const { vault: leaderVault, setVault: setLeaderVault } = useLeaderModeStore();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -125,9 +150,55 @@ function TradePage() {
     };
   }, [selectedAsset]);
 
+  // B1: when a position disappears between polls WITHOUT a user-initiated
+  // close, check recent on-chain liquidation events and tell the trader —
+  // margin seized with no record is the worst trust failure a venue can ship.
+  const detectLiquidatedVanish = useCallback(async (current: Map<number, boolean>) => {
+    const prev = prevPositionIdsRef.current;
+    prevPositionIdsRef.current = current;
+    if (!prev || !publicKey) return;
+
+    const vanished = Array.from(prev.keys()).filter(
+      (id) => !current.has(id) && !expectedCloseIdsRef.current.has(id)
+    );
+    // Consume expected closes that have now landed on-chain.
+    for (const id of Array.from(expectedCloseIdsRef.current)) {
+      if (!current.has(id)) expectedCloseIdsRef.current.delete(id);
+    }
+    if (vanished.length === 0) return;
+
+    try {
+      const liqs = await getRecentLiquidations(publicKey);
+      if (liqs.length === 0) return; // order fill / external close — already toasted elsewhere
+      const isolated = new Map(
+        liqs.filter((l) => l.positionId != null).map((l) => [l.positionId as number, l])
+      );
+      const crossLiq = liqs.find((l) => l.positionId === null) ?? null;
+      let crossToasted = false;
+      for (const id of vanished) {
+        const hit = isolated.get(id);
+        if (hit) {
+          toast.error(`Position #${id} liquidated at ${formatUSD(hit.price)}`, {
+            duration: 12000,
+          });
+        } else if (crossLiq && prev.get(id) === true && !crossToasted) {
+          crossToasted = true;
+          const pnlText =
+            crossLiq.totalPnl != null ? ` — total PnL ${formatUSD(crossLiq.totalPnl)}` : '';
+          toast.error(`Cross-margin account liquidated${pnlText}`, { duration: 12000 });
+        }
+      }
+    } catch {
+      // Best-effort: no toast is better than a wrong toast.
+    }
+  }, [publicKey]);
+
   // Fetch positions function - extracted for manual refresh
   const fetchPositions = useCallback(async (showLoading = true) => {
     if (!publicKey) return;
+
+    const seq = ++positionsFetchSeq.current;
+    const isStale = () => seq !== positionsFetchSeq.current;
 
     if (showLoading) setIsLoadingPositions(true);
     setIsRefreshing(true);
@@ -148,37 +219,76 @@ function TradePage() {
       //  - Personal mode: ids for this trader.
       let contractPositions;
       if (currentLeaderVault && factoryAddress) {
-        const open = await listOpenPositions(factoryAddress).catch(() => []);
+        // No .catch(() => []) here: an API outage must surface as a failed
+        // refresh (rows kept + strip), not as a fake empty vault book.
+        //
+        // B18 (P0 UI-half): the factory owns EVERY vault's positions — a
+        // leader with two vaults used to see (and could close) the other
+        // vault's positions as their own. Scope the id list to THIS vault
+        // via its indexed leader_open/leader_close trades; if the scoping
+        // read fails we THROW (kept-last-good + strip) rather than fall
+        // back to the unscoped cross-vault list. The contract-side
+        // membership check is C1.
+        const [open, vaultTrades] = await Promise.all([
+          listOpenPositions(factoryAddress),
+          getVaultTrades(currentLeaderVault.id, 200),
+        ]);
+        const opened = new Set<string>();
+        const closed = new Set<string>();
+        for (const t of vaultTrades) {
+          if (t.action === 'open') opened.add(String(t.positionId));
+          else closed.add(String(t.positionId));
+        }
+        const thisVaultIds = new Set(
+          Array.from(opened).filter((id) => !closed.has(id)),
+        );
         contractPositions = await getPositionsByIds(
           publicKey,
-          open.map((p) => p.positionId),
+          open
+            .map((p) => p.positionId)
+            .filter((id) => thisVaultIds.has(String(id))),
         );
       } else {
-        // Personal mode: fast path via the indexer API, then fall back to the
-        // full contract scan whenever the API yields NOTHING — whether it
-        // errored OR returned empty. Empty-but-OK is not trusted here because
-        // it also happens (a) on staging, where the shared API indexes the
-        // PRODUCTION market and so never has staging-market positions, and
-        // (b) in the brief window after opening before the indexer catches up.
-        // Net effect: never show "no positions" when the chain has them, while
-        // staying fast whenever the API does have the trader's positions. (At
-        // worst this is exactly the old whole-market scan, never slower.)
-        let apiPositions: Awaited<ReturnType<typeof getPositionsByIds>> = [];
+        // Personal mode: fast path via the indexer API. An API ERROR still
+        // falls back to the full contract scan, but a successful EMPTY
+        // response is now trusted when gatewayServesThisMarket() confirms the
+        // gateway (a) resolves THIS build's market contract and (b) has a
+        // fresh indexer cursor. The guard is what makes trusting "empty"
+        // safe: on staging the shared gateway indexes the PRODUCTION market
+        // (address mismatch → never trusted → old scan behavior), and a
+        // stalled indexer demotes the gateway within a minute. The brief
+        // post-trade indexer lag is covered by refreshPositionsAfterTrade's
+        // 0/2.5s/6s burst. Without this, a wallet with ZERO positions always
+        // paid the worst path: a sequential scan of every position id on the
+        // market just to render "No open positions".
+        let apiPositions: Awaited<ReturnType<typeof getPositionsByIds>> | null = null;
         try {
           const open = await listOpenPositions(publicKey);
-          apiPositions = await getPositionsByIds(
-            publicKey,
-            open.map((p) => p.positionId),
-          );
+          if (open.length === 0) {
+            apiPositions = (await gatewayServesThisMarket()) ? [] : null;
+          } else {
+            const hydrated = await getPositionsByIds(
+              publicKey,
+              open.map((p) => p.positionId),
+            );
+            // Every hinted id failed to resolve on-chain (all closed this
+            // instant, or the RPC dropped the reads) — stay defensive: rescan.
+            apiPositions = hydrated.length > 0 ? hydrated : null;
+          }
         } catch {
           // API/indexer unavailable — fall through to the contract scan.
         }
-        contractPositions =
-          apiPositions.length > 0 ? apiPositions : await getPositions(publicKey);
+        contractPositions = apiPositions ?? (await getPositions(publicKey));
       }
 
+      if (isStale()) return;
+
       if (contractPositions.length === 0) {
+        // Genuinely empty (failed reads THROW and land in the catch below).
         setRawPositions([]);
+        setPositionsFetchFailed(false);
+        if (!currentLeaderVault) void detectLiquidatedVanish(new Map());
+        else prevPositionIdsRef.current = null;
         return;
       }
 
@@ -197,15 +307,28 @@ function TradePage() {
         })
       );
 
+      if (isStale()) return;
       setRawPositions(contractPositions);
       setCurrentPrices(prev => ({ ...prev, ...priceMap }));
+      setPositionsFetchFailed(false);
+      if (!currentLeaderVault) {
+        void detectLiquidatedVanish(
+          new Map(contractPositions.map((p) => [p.id, p.marginMode === 'Cross']))
+        );
+      } else {
+        prevPositionIdsRef.current = null;
+      }
     } catch (error) {
       console.error('Failed to fetch positions:', error);
+      // Keep last-good rows; the strip above the tables explains staleness.
+      if (!isStale()) setPositionsFetchFailed(true);
     } finally {
-      setIsLoadingPositions(false);
-      setIsRefreshing(false);
+      if (!isStale()) {
+        setIsLoadingPositions(false);
+        setIsRefreshing(false);
+      }
     }
-  }, [publicKey, factoryAddress]);
+  }, [publicKey, factoryAddress, detectLiquidatedVanish]);
 
   // Manual refresh handler
   const handleRefreshPositions = useCallback(() => {
@@ -225,11 +348,42 @@ function TradePage() {
   const fetchOrders = useCallback(async (showLoading = true) => {
     if (!publicKey) return;
 
+    const seq = ++ordersFetchSeq.current;
+    const isStale = () => seq !== ordersFetchSeq.current;
+
     if (showLoading) setIsLoadingOrders(true);
     setIsRefreshingOrders(true);
 
     try {
-      const contractOrders = await getOrders(publicKey);
+      // Fast path: id-hints from /v1/orders/open (status=all keeps the
+      // executed/cancelled history rows), hydrated per-id on-chain — replaces
+      // getOrders' get_all_order_ids + EVERY-market-order sequential scan.
+      // Same trust rules as positions: hints only count when the gateway
+      // serves THIS market with a fresh cursor; an API error, a mismatched
+      // market, or a suspicious hydration miss falls back to the legacy scan.
+      let contractOrders: Awaited<ReturnType<typeof getOrders>> | null = null;
+      if (await gatewayServesThisMarket()) {
+        try {
+          const hints = await listOrderHints({ trader: publicKey, status: 'all', limit: 200 });
+          if (hints.length === 0) {
+            contractOrders = [];
+          } else {
+            const hydrated = await getOrdersByIds(publicKey, hints.map((h) => h.orderId));
+            // Hydration coming back empty is legitimate when every hinted
+            // order is already resolved (executed/cancelled orders get pruned
+            // from contract storage) — but with an 'open' hint outstanding it
+            // smells like dropped RPC reads, so rescan.
+            const hasOpenHint = hints.some((h) => h.status === 'open');
+            contractOrders = hydrated.length > 0 || !hasOpenHint ? hydrated : null;
+          }
+        } catch {
+          contractOrders = null; // gateway hiccup — legacy scan below
+        }
+      }
+      if (contractOrders === null) {
+        contractOrders = await getOrders(publicKey);
+      }
+      if (isStale()) return;
       const displayOrders = contractOrders.map(toDisplayOrder);
 
       // Detect status changes for toast notifications
@@ -268,11 +422,16 @@ function TradePage() {
       prevOrdersRef.current = newMap;
 
       setOrders(displayOrders);
+      setOrdersFetchFailed(false);
     } catch (error) {
       console.error('Failed to fetch orders:', error);
+      // Keep last-good rows — a failed read is not "no orders".
+      if (!isStale()) setOrdersFetchFailed(true);
     } finally {
-      setIsLoadingOrders(false);
-      setIsRefreshingOrders(false);
+      if (!isStale()) {
+        setIsLoadingOrders(false);
+        setIsRefreshingOrders(false);
+      }
     }
   }, [publicKey, fetchPositions, refreshBalances]);
 
@@ -291,6 +450,10 @@ function TradePage() {
     if (!isConnected || !publicKey) {
       setRawPositions([]);
       setOrders([]);
+      setPositionsFetchFailed(false);
+      setOrdersFetchFailed(false);
+      prevPositionIdsRef.current = null;
+      expectedCloseIdsRef.current.clear();
       return;
     }
 
@@ -303,12 +466,18 @@ function TradePage() {
     return () => clearInterval(interval);
   }, [isConnected, publicKey, leaderVault?.id, fetchPositions, fetchOrders]);
 
-  // Poll funding rate every 60s (updates hourly on-chain, no wallet needed)
+  // Poll funding rate + the cumulative index every 60s (updates hourly
+  // on-chain, no wallet needed). The index feeds the per-position accrued
+  // funding estimate (B4). Keep last-good on failed refreshes.
   useEffect(() => {
-    getFundingRate().then(setFundingRate);
-    const interval = setInterval(() => {
+    const load = () => {
       getFundingRate().then(setFundingRate);
-    }, 60000);
+      getCumulativeFundingRate().then((v) => {
+        if (v != null) setCumulativeFunding(v);
+      });
+    };
+    load();
+    const interval = setInterval(load, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -316,10 +485,15 @@ function TradePage() {
   // as the effect dep below so the price poll only tears down + restarts
   // when the SET of assets changes — not on every rawPositions reference
   // change (a price tick that mutates currentPrices doesn't change this).
-  const positionAssetKey = useMemo(
-    () => Array.from(new Set(rawPositions.map(p => p.asset))).sort().join(','),
-    [rawPositions],
-  );
+  const positionAssetKey = useMemo(() => {
+    const set = new Set(rawPositions.map(p => p.asset));
+    // B3: ALWAYS stream the selected market too. Before, the venue's own
+    // oracle price only flowed for assets with open positions — first-trade
+    // users priced entries and liq previews off the Binance fallback and the
+    // staleness badge could never fire for them.
+    set.add(selectedAsset);
+    return Array.from(set).sort().join(',');
+  }, [rawPositions, selectedAsset]);
 
   // Live mark prices for assets in open positions. Decoupled from the
   // position-list fetch so PnL / Mark / Net Value stay live without re-running
@@ -330,8 +504,11 @@ function TradePage() {
   // (display only — no RPC/auth needed). Replaces the prior 5s on-chain poll, so
   // marks now refresh ~10x faster.
   useEffect(() => {
-    if (!isConnected || !publicKey || !positionAssetKey) return;
+    // No wallet gate: the SSE stream and the shim read both work with the
+    // read-only null account — every visitor sees the execution price (B3).
+    if (!positionAssetKey) return;
     const assets = positionAssetKey.split(',');
+    const readerKey = publicKey ?? NULL_ACCOUNT;
 
     let cancelled = false;
 
@@ -340,7 +517,7 @@ function TradePage() {
       const updates: Record<string, number> = {};
       await Promise.all(
         assets.map(async (asset) => {
-          const priceData = await getPrice(publicKey, asset);
+          const priceData = await getPrice(readerKey, asset);
           if (priceData) updates[asset] = priceToDisplay(priceData.price);
         }),
       );
@@ -354,15 +531,16 @@ function TradePage() {
     // through the same callback) and reports staleness for the amber badge.
     const unsubscribe = subscribeLivePrices(
       assets,
-      ({ asset, price }) => {
+      ({ asset, price, timestamp, roundId }) => {
         if (!cancelled) {
           setCurrentPrices(prev => ({ ...prev, [asset]: price }));
+          setLastAttestations(prev => ({ ...prev, [asset]: { ts: timestamp, roundId } }));
         }
       },
       (stale) => {
         if (!cancelled) setPricesStale(stale);
       },
-      publicKey,
+      readerKey,
     );
 
     return () => {
@@ -370,7 +548,7 @@ function TradePage() {
       setPricesStale(false);
       unsubscribe();
     };
-  }, [isConnected, publicKey, positionAssetKey]);
+  }, [publicKey, positionAssetKey]);
 
   // A10: closing — the risk-off action — gets the same toast.promise
   // lifecycle as open/SL/TP: loading state, PnL on success, decoded errors,
@@ -404,6 +582,8 @@ function TradePage() {
     toast.promise(closePromise, {
       loading: `Closing ${label}…`,
       success: (pnl) => {
+        // User-initiated close — never toast this vanish as a liquidation.
+        expectedCloseIdsRef.current.add(positionId);
         // Refresh positions and balances. The staggered refetch covers the
         // indexer lag so the closed position drops without a manual refresh.
         refreshPositionsAfterTrade();
@@ -589,6 +769,7 @@ function TradePage() {
           <CrossMarginBanner positions={positions} publicKey={publicKey ?? null} />
           <PositionsList
             positions={positions}
+            orders={orders}
             isLoading={isLoadingPositions}
             isRefreshing={isRefreshing}
             onClosePosition={handleClosePosition}
@@ -626,10 +807,25 @@ function TradePage() {
     // Real venue data (pending limit orders / indexer fills) — lived in the
     // old left sidebar; now reachable as tabs so the chart keeps the width.
     {
+      // B10: never present a book-shaped panel of the venue's own resting
+      // orders as an "Order Book" — Noether is oracle-priced (no CLOB), and
+      // the courted audience reads a fake book as a ghost town or a lie.
       id: 'orderbook',
-      label: 'Order Book',
+      label: 'Open Orders',
       content: (
         <div className="max-w-2xl">
+          {/* B10: oracle transparency instead of a fake book */}
+          <OraclePriceCard
+            asset={selectedAsset}
+            markPrice={currentPrices[selectedAsset] || 0}
+            attestation={lastAttestations[selectedAsset] ?? null}
+            fundingRate={fundingRate}
+            stale={pricesStale}
+          />
+          <p className="mb-3 text-[11px] text-faint">
+            Noether fills at the oracle price — there is no order book. These
+            are the venue&apos;s resting limit/trigger orders awaiting execution.
+          </p>
           <OrderBook asset={selectedAsset} />
         </div>
       ),
@@ -645,11 +841,40 @@ function TradePage() {
     },
   ];
 
+  // Failed-refresh strip: rows below keep their last-good values; this makes
+  // the staleness visible instead of letting an RPC outage cosplay as an
+  // empty account.
+  const fetchFailStrip = (positionsFetchFailed || ordersFetchFailed) ? (
+    <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-xs text-primary">
+      <span>
+        Couldn&apos;t refresh{' '}
+        {positionsFetchFailed && ordersFetchFailed
+          ? 'positions & orders'
+          : positionsFetchFailed
+          ? 'positions'
+          : 'orders'}{' '}
+        — showing last known data. Retries every 60s.
+      </span>
+      <button
+        onClick={() => {
+          if (positionsFetchFailed) fetchPositions(false);
+          if (ordersFetchFailed) fetchOrders(false);
+        }}
+        className="underline hover:opacity-80 flex-none"
+      >
+        Retry now
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
       <main className="pt-12">
+        {/* B29: money pages need a page title for screen readers — the visual
+            hierarchy starts at the stats bar, so it's visually hidden. */}
+        <h1 className="sr-only">Trade {selectedAsset}-PERP — Noether</h1>
         {/* Thin market-stats strip: pair selector · mark · 24h stats · OI · funding */}
         <MarketStatsBar
           selectedAsset={selectedAsset}
@@ -778,6 +1003,7 @@ function TradePage() {
             {/* Docked mode: tables live right under the chart, same screen */}
             {dockTables && (
               <div className="border-t border-border px-3 pb-4 lg:h-[360px] lg:flex-none lg:overflow-y-auto custom-scrollbar">
+                {fetchFailStrip}
                 <Tabs tabs={positionTabs} defaultTab={initialTab} onChange={handleTabChange} />
               </div>
             )}
@@ -785,6 +1011,13 @@ function TradePage() {
 
           {/* Order rail — desktop only; mobile trades via the fixed bottom bar */}
           <aside className="hidden lg:block w-[320px] shrink-0">
+            {/* B22: guided first-session funnel — disappears once traded */}
+            <FirstSessionChecklist
+              isConnected={isConnected}
+              xlmBalance={xlmBalance}
+              usdcBalance={usdcBalance}
+              hasTraded={positions.length > 0 || orders.length > 0}
+            />
             <LeaderModeSelector />
             <OrderPanel
               asset={selectedAsset}
@@ -801,6 +1034,7 @@ function TradePage() {
         {/* Positions / Orders / History / venue activity — full-width */}
         {!dockTables && (
           <div className="border-t border-border px-3 sm:px-4 pb-8">
+            {fetchFailStrip}
             <Tabs tabs={positionTabs} defaultTab={initialTab} onChange={handleTabChange} />
           </div>
         )}

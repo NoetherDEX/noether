@@ -60,14 +60,23 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
   };
 
   // The menu is viewport-anchored: close it if the page shifts under it.
+  // Escape closes and returns focus to the trigger (B29).
   useEffect(() => {
     if (!isOpen) return;
     const close = () => setIsOpen(false);
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
     window.addEventListener('resize', close);
     window.addEventListener('scroll', close, true);
+    window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('resize', close);
       window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', onKey);
     };
   }, [isOpen]);
   // Every pair renders from the first frame — prices fill in as fetches
@@ -146,6 +155,9 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
       <button
         ref={triggerRef}
         onClick={() => (isOpen ? setIsOpen(false) : openMenu())}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label="Select trading pair"
         className={cn(
           'flex h-9 items-center gap-2 px-2.5 rounded-md border transition-colors',
           'bg-surface-2 border-border hover:bg-surface-3 hover:border-border-strong',

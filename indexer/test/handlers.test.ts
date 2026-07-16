@@ -1,8 +1,6 @@
-import { afterAll, describe, expect, it, vi } from 'vitest';
-import { createClient } from '@libsql/client';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { createPgliteDb } from '@noether/db/pglite';
 import { Account, Address, Keypair, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { IndexerBus } from '../src/bus.js';
 import { EventRouter, type HandlerContext } from '../src/router.js';
@@ -30,18 +28,11 @@ const noopLogger: Logger = {
   silent: vi.fn(), child: () => noopLogger as Logger,
 } as unknown as Logger;
 
-// Interactive transactions make the local libsql client hand its
-// connection to the transaction and lazily reconnect — for ':memory:'
-// that reconnect is a fresh empty database, so tests use a temp file.
-const tmpDirs: string[] = [];
-afterAll(() => {
-  for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
-});
-
 async function setupDb() {
-  const dir = mkdtempSync(join(tmpdir(), 'noether-indexer-test-'));
-  tmpDirs.push(dir);
-  const db = createClient({ url: `file:${join(dir, 'test.db')}` });
+  // In-memory Postgres (PGlite) behind the production Db surface. Running
+  // the real migration runner here makes 001_baseline.sql the schema under
+  // test.
+  const db = createPgliteDb(new PGlite());
   await runMigrations(db);
   return db;
 }
@@ -84,7 +75,7 @@ describe('market handler', () => {
     const row = rows.rows[0]!;
     expect(row.event_id).toBe('evt-1');
     expect(row.topic).toBe('position_opened');
-    expect(row.ledger).toBe(100);
+    expect(Number(row.ledger)).toBe(100);
     const payload = JSON.parse(row.payload_json as string);
     expect(payload.positionId).toBe(42);
     expect(payload.size).toBe('15000000000');
@@ -93,7 +84,7 @@ describe('market handler', () => {
     expect(seenTrade).toHaveBeenCalledOnce();
     expect(seenTrade.mock.calls[0]?.[0]?.kind).toBe('open');
 
-    db.close();
+    await db.close();
   });
 
   it('insert is idempotent on duplicate event_id', async () => {
@@ -125,7 +116,7 @@ describe('market handler', () => {
     const rows = await db.execute('SELECT COUNT(*) AS n FROM events_raw');
     expect(Number(rows.rows[0]!.n)).toBe(1);
 
-    db.close();
+    await db.close();
   });
 
   it('skips projection and bus emit on duplicate delivery', async () => {
@@ -166,7 +157,7 @@ describe('market handler', () => {
     const positions = await db.execute('SELECT COUNT(*) AS n FROM positions');
     expect(Number(positions.rows[0]!.n)).toBe(1);
 
-    db.close();
+    await db.close();
   });
 });
 
@@ -220,7 +211,7 @@ describe('market trades projection', () => {
     expect(String(row.pnl)).toBe('2000000000');
     expect(row.contract_id).toBe(FAKE_CONTRACT);
 
-    db.close();
+    await db.close();
   });
 
   it('is idempotent — redelivering the same close writes one row', async () => {
@@ -234,7 +225,7 @@ describe('market trades projection', () => {
     const rows = await db.execute('SELECT COUNT(*) AS n FROM trades');
     expect(Number(rows.rows[0]!.n)).toBe(1);
 
-    db.close();
+    await db.close();
   });
 
   it('records a liquidation with null pnl and entry_price', async () => {
@@ -269,7 +260,7 @@ describe('market trades projection', () => {
     expect(row.entry_price).toBeNull();
     expect(row.pnl).toBeNull();
 
-    db.close();
+    await db.close();
   });
 });
 
@@ -338,7 +329,7 @@ describe('referral handler', () => {
     expect(Number(after.rows[0]!.total_earned)).toBe(100);
     expect(Number(after.rows[0]!.claimable)).toBe(100);
 
-    db.close();
+    await db.close();
   });
 });
 
@@ -385,7 +376,7 @@ describe('vault handler idempotency + atomicity', () => {
     expect(deposits.rows[0]!.event_id).toBe('evt-v2');
     expect(deposits.rows[0]!.contract_id).toBe(FAKE_FACTORY);
 
-    db.close();
+    await db.close();
   });
 
   it('rolls back every projection write when one statement in the event fails', async () => {
@@ -420,7 +411,7 @@ describe('vault handler idempotency + atomicity', () => {
     const after = await db.execute('SELECT total_usdc FROM vaults WHERE id = 2');
     expect(Number(after.rows[0]!.total_usdc)).toBe(0);
 
-    db.close();
+    await db.close();
   });
 });
 
@@ -499,6 +490,6 @@ describe('cross_liq projection cleanup', () => {
     // Only the cross_liq trader's rows were verified on-chain.
     expect(rpc.simulateTransaction).toHaveBeenCalledTimes(2);
 
-    db.close();
+    await db.close();
   });
 });

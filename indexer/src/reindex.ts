@@ -15,7 +15,7 @@
 
 import pino from 'pino';
 import type { Logger } from 'pino';
-import type { Client, Row } from '@libsql/client';
+import type { Db, Row } from '@noether/db';
 import type { rpc as RpcNs } from '@stellar/stellar-sdk';
 import { loadConfig } from './config.js';
 import { createDb } from './db.js';
@@ -50,7 +50,7 @@ export interface ReindexResult {
 }
 
 export async function reindexProjections(
-  db: Client,
+  db: Db,
   router: EventRouter,
   rpc: RpcNs.Server,
   log: Logger,
@@ -131,6 +131,6 @@ if (isDirect) {
     log.info({ replayed, failed }, 'Reindex complete');
     if (failed > 0) process.exitCode = 1;
   } finally {
-    db.close();
+    await db.close();
   }
 }

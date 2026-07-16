@@ -4,6 +4,8 @@
  * module-load time and interfering with the Next.js React app.
  */
 
+import { isWalletRejection, WALLET_REJECTION_MESSAGE } from '@/lib/utils/contractErrors';
+
 export const WALLETCONNECT_ID = 'wallet_connect';
 
 export interface SupportedWallet {
@@ -218,6 +220,11 @@ export async function signWithWallet(
     return signedTxXdr;
   } catch (err) {
     console.error('[WalletKit] Signing failed:', err);
+    // A user declining the wallet prompt should read as one clean line in
+    // every flow, not the wallet's raw decline string. Our own account-mismatch
+    // guard (thrown just above) doesn't match this pattern, so it still
+    // propagates unchanged.
+    if (isWalletRejection(err)) throw new Error(WALLET_REJECTION_MESSAGE);
     throw err;
   }
 }

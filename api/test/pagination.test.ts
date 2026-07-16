@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import { createClient, type Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import { Keypair } from '@stellar/stellar-sdk';
-import { setupTestServer } from './helpers.js';
+import { makeTestDb, setupTestServer } from './helpers.js';
 
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;
 
@@ -57,7 +57,7 @@ describe('cursor pagination (before_ts) — A-7', () => {
   });
 
   it('/v1/vaults/:id/trades pages older rows with before_ts', async () => {
-    const db = createClient({ url: ':memory:' });
+    const db = makeTestDb();
     await seedVaultTrades(db);
     const setup = await setupTestServer({ db });
     app = setup.app;
@@ -74,7 +74,7 @@ describe('cursor pagination (before_ts) — A-7', () => {
 
 describe('/v1/positions/open hard LIMIT — A-7', () => {
   it('caps the trader branch at 500 and the global branch at 200', async () => {
-    const db = createClient({ url: ':memory:' });
+    const db = makeTestDb();
     const setup = await setupTestServer({ db });
     app = setup.app;
 
@@ -96,18 +96,18 @@ describe('/v1/positions/open hard LIMIT — A-7', () => {
   });
 });
 
-async function seedVaultTrades(db: Client): Promise<void> {
+async function seedVaultTrades(db: Db): Promise<void> {
   await db.execute(`
     CREATE TABLE vault_trades (
-      id INTEGER PRIMARY KEY,
-      vault_id INTEGER NOT NULL,
-      position_id TEXT NOT NULL,
+      id BIGINT PRIMARY KEY,
+      vault_id BIGINT NOT NULL,
+      position_id BIGINT NOT NULL,
       action TEXT NOT NULL,
       leader TEXT NOT NULL,
       collateral TEXT NOT NULL,
-      pnl TEXT,
-      ledger INTEGER NOT NULL,
-      ts INTEGER NOT NULL,
+      pnl BIGINT,
+      ledger BIGINT NOT NULL,
+      ts BIGINT NOT NULL,
       tx_hash TEXT NOT NULL
     );
   `);

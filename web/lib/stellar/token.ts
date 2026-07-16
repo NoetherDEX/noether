@@ -13,9 +13,12 @@ const sorobanRpc = new rpc.Server(NETWORK.RPC_URL);
 const usdcContract = new Contract(CONTRACTS.USDC_TOKEN);
 
 /**
- * Get USDC balance for an address
+ * Get USDC balance for an address.
+ * Returns null when the read FAILS (RPC/simulation error) — callers must
+ * render '—', never a fabricated 0. Returns 0 only when the account
+ * genuinely doesn't exist on the network (unfunded = holds nothing).
  */
-export async function getUSDCBalance(publicKey: string): Promise<number> {
+export async function getUSDCBalance(publicKey: string): Promise<number | null> {
   try {
     const account = await sorobanRpc.getAccount(publicKey);
 
@@ -40,10 +43,13 @@ export async function getUSDCBalance(publicKey: string): Promise<number> {
       return Number(balance) / TRADING.PRECISION;
     }
 
-    return 0;
+    // Simulation didn't succeed — balance is UNKNOWN, not zero.
+    return null;
   } catch (error) {
+    // Unfunded account: it truly holds no USDC.
+    if (String(error).toLowerCase().includes('not found')) return 0;
     console.error('Error fetching USDC balance:', error);
-    return 0;
+    return null;
   }
 }
 

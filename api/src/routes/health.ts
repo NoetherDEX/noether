@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import { resolvedContracts, type ContractKey, type ContractsManifest } from '@noether/shared';
 
 const ECHOED_KEYS: readonly ContractKey[] = [
@@ -14,7 +14,7 @@ const ECHOED_KEYS: readonly ContractKey[] = [
 ];
 
 export interface HealthDeps {
-  db: Client;
+  db: Db;
   contracts: ContractsManifest;
 }
 

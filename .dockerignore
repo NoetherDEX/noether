@@ -1,15 +1,16 @@
 node_modules
 **/node_modules
 **/dist
+**/*.tsbuildinfo
 **/.next
 **/.turbo
 **/target
 **/test_snapshots
 **/.venv
 
-# Local data + secrets
-.env
-.env.local
+# Local data + secrets — every .env variant except the template
+.env*
+!.env.example
 **/.env.local
 **/data
 *.db

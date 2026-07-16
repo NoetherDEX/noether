@@ -9,13 +9,15 @@ interface StatsBarProps {
   noePrice: number | null;
   /** null until real fee-revenue-based APR can be computed (W-3/P4-15). */
   apy: number | null;
+  /** Insurance buffer balance (T3-D4); null = read failed — renders '—'. */
+  insuranceFund: number | null;
   isLoading?: boolean;
 }
 
 export function StatsBarSkeleton() {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 border-y border-border divide-y sm:divide-y-0 sm:divide-x divide-border">
-      {[1, 2, 3].map((i) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 border-y border-border divide-y sm:divide-y-0 sm:divide-x divide-border">
+      {[1, 2, 3, 4].map((i) => (
         <div key={i} className="py-4 sm:px-6 sm:first:pl-0 sm:last:pr-0">
           <div className="h-3 w-24 bg-surface-2 rounded animate-pulse mb-3" />
           <div className="h-6 w-32 bg-surface-2 rounded animate-pulse" />
@@ -25,13 +27,13 @@ export function StatsBarSkeleton() {
   );
 }
 
-export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
+export function StatsBar({ tvl, noePrice, apy, insuranceFund, isLoading }: StatsBarProps) {
   if (isLoading) {
     return <StatsBarSkeleton />;
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 border-y border-border divide-y sm:divide-y-0 sm:divide-x divide-border">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 border-y border-border divide-y sm:divide-y-0 sm:divide-x divide-border">
       {/* TVL */}
       <div className="py-4 sm:px-6 sm:first:pl-0 sm:last:pr-0">
         <span className="text-[11px] uppercase tracking-wide text-faint">Total Value Locked</span>
@@ -63,6 +65,17 @@ export function StatsBar({ tvl, noePrice, apy, isLoading }: StatsBarProps) {
           <span className="text-lg font-medium font-mono tabular-nums text-foreground">{formatUSD(noePrice, 3)}</span>
         </div>
         <p className="mt-1 text-xs text-muted-foreground hidden md:block">Current market price of NOE token</p>
+      </div>
+
+      {/* Insurance Fund (T3-D4) */}
+      <div className="py-4 sm:px-6 sm:first:pl-0 sm:last:pr-0">
+        <span className="text-[11px] uppercase tracking-wide text-faint">Insurance Fund</span>
+        <div className="mt-1.5">
+          <span className="text-lg font-medium font-mono tabular-nums text-foreground">{formatUSD(insuranceFund)}</span>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground hidden md:block">
+          Pays winning traders before LP funds; fed by liquidation proceeds
+        </p>
       </div>
     </div>
   );

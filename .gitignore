@@ -112,3 +112,10 @@ KNOWN_ISSUES.md
 # NOTE: your OWN wrapper + datafeed ARE meant to be committed — just keep them
 # out of the paths above, e.g. web/components/trading/AdvancedChart.tsx and
 # web/lib/tvchart/datafeed.ts (a folder literally named datafeeds/ is ignored).
+
+# macOS/iCloud sync duplicates ("file 2.ext", "file 3.ext") — these appear
+# whenever iCloud Drive resolves a sync conflict; never commit them.
+* 2.*
+* 3.*
+* 2
+* 3

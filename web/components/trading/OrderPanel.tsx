@@ -50,7 +50,6 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const vaultBalanceUsdc = leaderVault
     ? Number(BigInt(leaderVault.totalUsdc)) / Number(VAULT_PRECISION)
     : 0;
-  const effectiveUsdcBalance = isLeader ? vaultBalanceUsdc : usdcBalance;
   const {
     direction,
     collateral,
@@ -66,6 +65,20 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // Margin mode
   const [marginMode, setMarginMode] = useState<'Isolated' | 'Cross'>('Isolated');
 
+  // B8: trigger-side override for Limit / Stop-Limit. null = the CEX default
+  // for the direction (Long buys the dip / Short shorts the rally). The
+  // contract always accepted the bool — the UI just never exposed it, which
+  // made breakout entries (Long above / Short below) impossible.
+  const [triggerSideOverride, setTriggerSideOverride] = useState<'Above' | 'Below' | null>(null);
+  // Direction change re-derives the sensible default.
+  useEffect(() => {
+    setTriggerSideOverride(null);
+  }, [direction]);
+  const autoLimitSide: 'Above' | 'Below' = direction === 'Long' ? 'Below' : 'Above';
+  const autoStopSide: 'Above' | 'Below' = direction === 'Short' ? 'Above' : 'Below';
+  const limitTriggerSide = triggerSideOverride ?? autoLimitSide;
+  const stopTriggerSide = triggerSideOverride ?? autoStopSide;
+
   // Leader mode lacks vault_factory proxies for Cross / Limit / StopLimit /
   // TrailingStop, so silently snap back to the supported flavour whenever
   // the leader switches in (the UI itself hides those controls below).
@@ -74,7 +87,22 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (marginMode !== 'Isolated') setMarginMode('Isolated');
     if (orderType !== 'Market') setOrderType('Market');
   }, [isLeader, marginMode, orderType]);
-  const [crossBalance, setCrossBalance] = useState<number>(0);
+  // null = pool balance unknown (read failed/not loaded) — renders '—' and
+  // disables math that would otherwise run on a fabricated 0.
+  const [crossBalance, setCrossBalance] = useState<number | null>(null);
+
+  // B6: what an order can actually SPEND. In Cross mode the contract funds
+  // collateral from the pool and auto-deposits only the wallet shortfall —
+  // validating against the wallet alone false-blocked pool-funded opens.
+  // null when any component is unknown (gates skip; chain enforces).
+  const spendableBalance: number | null = isLeader
+    ? vaultBalanceUsdc
+    : marginMode === 'Cross'
+    ? crossBalance == null || usdcBalance == null
+      ? null
+      : crossBalance + usdcBalance
+    : usdcBalance;
+
   const [crossDepositAmount, setCrossDepositAmount] = useState<string>('');
   const [crossWithdrawAmount, setCrossWithdrawAmount] = useState<string>('');
   const [isCrossDepositing, setIsCrossDepositing] = useState(false);
@@ -166,7 +194,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       } catch {}
       try {
         const bal = await getCrossMarginBalance(publicKey);
-        setCrossBalance(Number(bal) / 10_000_000);
+        setCrossBalance(bal == null ? null : Number(bal) / 10_000_000);
       } catch {}
     };
     load();
@@ -218,6 +246,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     // Any unknown PnL (mark unavailable) makes the account estimate wrong —
     // show '—' instead of a fabricated figure.
     if (crossPositions.some(p => !Number.isFinite(p.pnl))) return null;
+    // Unknown pool balance makes the whole estimate unknown.
+    if (crossBalance == null) return null;
     const totalCollateral = crossPositions.reduce((s, p) => s + p.collateral, 0);
     const totalPnl = crossPositions.reduce((s, p) => s + p.pnl, 0);
     const totalSize = crossPositions.reduce((s, p) => s + p.size, 0);
@@ -283,13 +313,19 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (!trailingPositionId) errors.push('Select a position');
     if (positions.find(p => p.id === Number(trailingPositionId))?.marginMode === 'Cross')
       errors.push('Unavailable for cross-margin positions (contract fix pending)');
-    if (xlmBalance < 1) errors.push('Need XLM for gas fees');
+    if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
   } else {
     if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
-    if (collateralNum > effectiveUsdcBalance)
-      errors.push(isLeader ? 'Vault balance too low' : 'Insufficient USDC balance');
+    if (spendableBalance != null && collateralNum > spendableBalance)
+      errors.push(
+        isLeader
+          ? 'Vault balance too low'
+          : marginMode === 'Cross'
+          ? 'Exceeds pool + wallet balance'
+          : 'Insufficient USDC balance'
+      );
     if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
-    if (xlmBalance < 1) errors.push('Need XLM for gas fees');
+    if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
     if (isLeader && marginMode === 'Cross')
       errors.push('Leader trades support isolated margin only');
     if (isLeader && orderType !== 'Market')
@@ -302,6 +338,25 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (orderType === 'StopLimit') {
       if (!(parseFloat(stopPrice) > 0)) errors.push('Enter stop price');
       if (!(parseFloat(limitPrice) > 0)) errors.push('Enter limit price');
+    }
+    // B8: wrong-side TP/SL used to fail only AFTER the open confirmed and
+    // the signature was spent — leaving the position unprotected. Validate
+    // against the live mark before anything is signed.
+    if (canAttachTpSl && assetPrice > 0) {
+      const tpNum = parseFloat(attachTp) || 0;
+      const slNum = parseFloat(attachSl) || 0;
+      if (tpNum > 0 && (direction === 'Long' ? tpNum <= assetPrice : tpNum >= assetPrice))
+        errors.push(
+          direction === 'Long'
+            ? 'Take Profit must be above the current price for a Long'
+            : 'Take Profit must be below the current price for a Short'
+        );
+      if (slNum > 0 && (direction === 'Long' ? slNum >= assetPrice : slNum <= assetPrice))
+        errors.push(
+          direction === 'Long'
+            ? 'Stop Loss must be below the current price for a Long'
+            : 'Stop Loss must be above the current price for a Short'
+        );
     }
   }
 
@@ -390,7 +445,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       // Stop-limit order
       const stopPriceNum = parseFloat(stopPrice) || 0;
       const limitPriceNum = parseFloat(limitPrice) || 0;
-      const triggerAbove = direction === 'Short';
+      const triggerAbove = stopTriggerSide === 'Above';
       try {
         const encodedTif = timeInForce | (reduceOnly ? 0x100 : 0);
         await placeStopLimitOrder(publicKey, sign, {
@@ -469,7 +524,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             refreshBalances();
             onSubmit?.();
             onPositionOpened?.();
-            getCrossMarginBalance(publicKey).then(b => setCrossBalance(Number(b) / 10_000_000)).catch(() => {});
+            getCrossMarginBalance(publicKey).then(b => setCrossBalance(b == null ? null : Number(b) / 10_000_000)).catch(() => {});
             return `Cross ${direction} ${asset} position opened!`;
           },
           error: (err) => decodeContractError(err) || 'Failed to open cross position',
@@ -521,11 +576,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       const triggerPriceNum = parseFloat(triggerPrice) || 0;
       const triggerPricePrecision = toPrecision(triggerPriceNum);
 
-      // Determine trigger condition based on direction and price
-      // Long: buy when price goes BELOW trigger (dip buy)
-      // Short: sell when price goes ABOVE trigger (rally short)
-      const triggerCondition: TriggerCondition =
-        direction === 'Long' ? 'Below' : 'Above';
+      // B8: default is the CEX convention (Long buys the dip / Short shorts
+      // the rally); the Above/Below pills let breakout entries flip it.
+      const triggerCondition: TriggerCondition = limitTriggerSide;
 
       // Encode time_in_force: bits 0-7 = TIF mode, bit 8 = reduce_only
       const encodedTif = timeInForce | (reduceOnly ? 0x100 : 0);
@@ -572,9 +625,12 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     setIsSubmitting(false);
   };
 
-  // Percentage buttons for collateral — uses the active source (wallet or vault)
+  // Percentage buttons for collateral — sized off what an order can actually
+  // spend (wallet, pool + wallet in Cross, or the vault in leader mode).
+  // No-op while the balance is unknown (never size an order off a fabricated 0).
   const handlePercentage = (pct: number) => {
-    setCollateral(Math.floor(effectiveUsdcBalance * (pct / 100)).toString());
+    if (spendableBalance == null) return;
+    setCollateral(Math.floor(spendableBalance * (pct / 100)).toString());
   };
 
   // Cross-margin deposit handler
@@ -582,7 +638,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (!publicKey || isCrossDepositing) return;
     const amount = parseFloat(crossDepositAmount) || 0;
     if (amount < 1) { toast.error('Minimum deposit is 1 USDC'); return; }
-    if (amount > usdcBalance) {
+    // Skip the gate while the balance is unknown — simulation catches real
+    // shortfalls pre-sign; a failed read must not brick a funded wallet.
+    if (usdcBalance != null && amount > usdcBalance) {
       // A11: route broke users to funds instead of dead-ending them.
       toast.error(
         <span>
@@ -602,7 +660,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       setCrossDepositAmount('');
       refreshBalances();
       const bal = await getCrossMarginBalance(publicKey);
-      setCrossBalance(Number(bal) / 10_000_000);
+      setCrossBalance(bal == null ? null : Number(bal) / 10_000_000);
     } catch (err: any) {
       toast.error(decodeContractError(err) || 'Failed to deposit');
     } finally {
@@ -615,7 +673,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (!publicKey || isCrossWithdrawing) return;
     const amount = parseFloat(crossWithdrawAmount) || 0;
     if (amount < 1) { toast.error('Minimum withdrawal is 1 USDC'); return; }
-    if (amount > crossBalance) { toast.error('Exceeds pool balance'); return; }
+    // Gate only on a KNOWN balance — the contract enforces the real limit.
+    if (crossBalance != null && amount > crossBalance) { toast.error('Exceeds pool balance'); return; }
 
     setIsCrossWithdrawing(true);
     try {
@@ -624,7 +683,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       setCrossWithdrawAmount('');
       refreshBalances();
       const bal = await getCrossMarginBalance(publicKey);
-      setCrossBalance(Number(bal) / 10_000_000);
+      setCrossBalance(bal == null ? null : Number(bal) / 10_000_000);
     } catch (err: any) {
       const msg = err?.message || '';
       if (msg.includes('CrossMarginInsufficientFreeMargin')) {
@@ -708,7 +767,9 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Pool Balance</span>
-                <span className="font-mono text-foreground">{formatNumber(crossBalance)} USDC</span>
+                <span className="font-mono text-foreground">
+                  {crossBalance == null ? '—' : formatNumber(crossBalance)} USDC
+                </span>
               </div>
             </div>
 
@@ -782,7 +843,17 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           ).map((type) => (
             <button
               key={type}
-              onClick={() => setOrderType(type)}
+              onClick={() => {
+                if (type === orderType) return;
+                setOrderType(type);
+                // B7: TIF / Reduce-Only are per-order settings, not sticky
+                // panel state. A Reduce-Only toggled while exploring Limit
+                // silently made a later Stop-Limit entry un-fillable,
+                // escrowing collateral with zero explanation.
+                setTimeInForce(0);
+                setReduceOnly(false);
+                setTriggerSideOverride(null);
+              }}
               className={cn(
                 'rounded-[4px] px-1 py-1.5 text-[11px] font-medium transition-colors',
                 orderType === type
@@ -849,16 +920,16 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
-              {isLeader ? 'Vault balance' : 'Balance'}:{' '}
+              {isLeader ? 'Vault balance' : marginMode === 'Cross' ? 'Spendable (pool + wallet)' : 'Balance'}:{' '}
               <span className="font-mono text-foreground">
-                {formatNumber(effectiveUsdcBalance)}
+                {spendableBalance == null ? '—' : formatNumber(spendableBalance)}
               </span>{' '}
               USDC
             </span>
           </div>
           {/* A11: connected wallets with no funds get routed to the faucet
               instead of dead-ending on a disabled money page. */}
-          {isConnected && !isLeader && (usdcBalance === 0 || xlmBalance < 1) && (
+          {isConnected && !isLeader && (usdcBalance === 0 || (xlmBalance != null && xlmBalance < 1)) && (
             <div className="border-l-2 border-primary/60 pl-3 space-y-1">
               {usdcBalance === 0 && (
                 <p className="text-xs text-primary">
@@ -868,7 +939,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                   </Link>
                 </p>
               )}
-              {xlmBalance < 1 && (
+              {xlmBalance != null && xlmBalance < 1 && (
                 <p className="text-xs text-primary/80">
                   Low XLM for gas — the{' '}
                   <Link href="/faucet" className="underline hover:opacity-80">
@@ -979,11 +1050,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
               </div>
-              <p className="text-[11px] text-faint">
-                {direction === 'Long'
-                  ? 'Order triggers when price drops to this level'
-                  : 'Order triggers when price rises to this level'}
-              </p>
+              {/* B8: expose the trigger side — breakout entries need it */}
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-faint mr-1">Triggers when mark is</span>
+                {(['Above', 'Below'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setTriggerSideOverride(s)}
+                    aria-pressed={limitTriggerSide === s}
+                    className={cn(
+                      'px-2 py-0.5 rounded-sm text-[11px] font-medium transition-colors',
+                      limitTriggerSide === s
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+                <span className="text-[11px] text-faint">this price</span>
+              </div>
             </div>
 
             {/* Slippage Tolerance */}
@@ -1132,6 +1219,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 aria-label="Stop price in USD"
                 className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
               />
+              {/* B8: expose the stop's activation side */}
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-faint mr-1">Activates when mark is</span>
+                {(['Above', 'Below'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setTriggerSideOverride(s)}
+                    aria-pressed={stopTriggerSide === s}
+                    className={cn(
+                      'px-2 py-0.5 rounded-sm text-[11px] font-medium transition-colors',
+                      stopTriggerSide === s
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+                <span className="text-[11px] text-faint">the stop</span>
+              </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between">
@@ -1254,8 +1362,44 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 />
               </div>
             </div>
+            {/* B8: projected PnL per level, so the trader sees what each
+                trigger is worth before signing. */}
+            {(() => {
+              const entry = effectiveEntryPrice ?? (assetPrice > 0 ? assetPrice : null);
+              if (!entry || positionSize <= 0) return null;
+              const lines: React.ReactNode[] = [];
+              const tpNum = parseFloat(attachTp) || 0;
+              const slNum = parseFloat(attachSl) || 0;
+              const project = (level: number) =>
+                positionSize * ((level - entry) / entry) * (direction === 'Long' ? 1 : -1);
+              if (tpNum > 0) {
+                const pnl = project(tpNum);
+                const pct = collateralNum > 0 ? (pnl / collateralNum) * 100 : null;
+                lines.push(
+                  <span key="tp" className={pnl >= 0 ? 'text-long' : 'text-short'}>
+                    TP = {pnl >= 0 ? '+' : ''}{formatUSD(pnl)}
+                    {pct != null ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)` : ''}
+                  </span>
+                );
+              }
+              if (slNum > 0) {
+                const pnl = project(slNum);
+                const pct = collateralNum > 0 ? (pnl / collateralNum) * 100 : null;
+                lines.push(
+                  <span key="sl" className={pnl >= 0 ? 'text-long' : 'text-short'}>
+                    SL = {pnl >= 0 ? '+' : ''}{formatUSD(pnl)}
+                    {pct != null ? ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)` : ''}
+                  </span>
+                );
+              }
+              if (lines.length === 0) return null;
+              return (
+                <p className="text-[11px] font-mono flex items-center gap-3">{lines}</p>
+              );
+            })()}
             <p className="text-[11px] text-faint">
-              Attached as separate signatures right after the position opens.
+              Attached as separate signatures right after the position opens
+              (1 of 2: open · 2 of 2: TP/SL).
             </p>
           </div>
         )}
@@ -1270,6 +1414,33 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <span className="text-xs text-muted-foreground">Position Size</span>
               <span className="font-mono text-xs text-foreground">{formatUSD(positionSize)}</span>
             </div>
+
+            {/* B6: the contract funds Cross opens from the pool and pulls only
+                the shortfall from the wallet — say so before the signature. */}
+            {marginMode === 'Cross' && crossBalance != null && collateralNum > crossBalance && (
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">Auto-deposit from wallet</span>
+                <span className="font-mono text-xs text-primary">
+                  {formatNumber(collateralNum - crossBalance)} USDC
+                </span>
+              </div>
+            )}
+
+            {/* B7: every flag the order encodes is echoed at the point of
+                signature — no invisible TIF/Reduce-Only riding along. */}
+            {(orderType === 'Limit' || orderType === 'StopLimit') && (
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">Flags</span>
+                <span className={cn('font-mono text-xs', reduceOnly ? 'text-primary' : 'text-foreground')}>
+                  {[
+                    timeInForce === 1 ? 'IOC' : timeInForce === 2 ? 'Post Only' : 'GTC',
+                    reduceOnly ? 'Reduce-Only' : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
+              </div>
+            )}
 
             {/* Effective entry: trigger (Limit) / limit price (Stop-Limit) /
                 mark (Market) — the price the contract will actually fill at,
@@ -1368,8 +1539,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           </div>
         </div>
 
-        {/* Errors */}
-        {errors.length > 0 && collateralNum > 0 && (
+        {/* Errors — Trail Stop has no collateral input, so its blockers must
+            render unconditionally (they were invisible behind the old
+            collateralNum > 0 gate while the CTA sat disabled). */}
+        {errors.length > 0 && (orderType === 'TrailingStop' || collateralNum > 0) && (
           <div className="border-l-2 border-short/60 pl-3 space-y-1">
             {errors.map((error, i) => (
               <div key={i} className="flex items-center gap-2 text-xs text-short">

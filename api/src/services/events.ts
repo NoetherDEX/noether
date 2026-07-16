@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import { isMissingTable, type Db } from '@noether/db';
 
 export interface RawEventRow {
   eventId: string;
@@ -25,7 +25,7 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
 
 export class EventsService {
-  constructor(private readonly db: Client) {}
+  constructor(private readonly db: Db) {}
 
   async list(query: EventQuery = {}): Promise<RawEventRow[]> {
     const limit = Math.min(MAX_LIMIT, Math.max(1, query.limit ?? DEFAULT_LIMIT));
@@ -70,8 +70,7 @@ export class EventsService {
       // events_raw is owned by the indexer. If the indexer hasn't run yet
       // against this DB the table won't exist — return empty rather than
       // 500ing, so the API stays usable before the indexer's first poll.
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) {
+      if (isMissingTable(err)) {
         return [];
       }
       throw err;

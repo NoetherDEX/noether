@@ -6,13 +6,14 @@ import { ShareLinkCard } from './ShareLinkCard';
 import { ReferralTradesTable, ReferralClaimsTable } from './ReferralActivity';
 import { CreateCodeCard, makeOptimisticReferrerRow } from './CreateCodeCard';
 import { ClaimFeesCard } from './ClaimFeesCard';
-import { useSessionAuthStore } from '@/lib/store';
+import { useSessionAuthStore, signOutAndRevoke } from '@/lib/store';
 import {
   getReferralMe,
   getReferralTrades,
   getReferralClaims,
 } from '@/lib/api/referral';
 import { formatDate } from '@/lib/utils/format';
+import { toUserMessage } from '@/lib/utils/userError';
 import type {
   ReferrerRow,
   ReferralTradeRow,
@@ -40,7 +41,6 @@ const INITIAL: DashboardState = {
 
 export function ReferralDashboard() {
   const auth = useSessionAuthStore();
-  const clearAuth = useSessionAuthStore((s) => s.clearAuth);
   const [state, setState] = useState<DashboardState>(INITIAL);
   // Bridges the indexer lag after create_code — see ReferralSignIn.
   const [optimisticSelf, setOptimisticSelf] = useState<ReferrerRow | null>(null);
@@ -81,7 +81,7 @@ export function ReferralDashboard() {
         setState({
           ...INITIAL,
           loading: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: toUserMessage(err),
         });
       }
     })();
@@ -108,7 +108,7 @@ export function ReferralDashboard() {
         <p className="text-sm text-short">Could not load dashboard: {state.error}</p>
         <button
           type="button"
-          onClick={clearAuth}
+          onClick={() => void signOutAndRevoke()}
           className="text-xs underline text-muted-foreground hover:text-foreground"
         >
           Sign out and retry
@@ -139,7 +139,7 @@ export function ReferralDashboard() {
         <div className="text-right">
           <button
             type="button"
-            onClick={clearAuth}
+            onClick={() => void signOutAndRevoke()}
             className="text-xs underline text-muted-foreground hover:text-foreground"
           >
             Sign out
@@ -161,7 +161,7 @@ export function ReferralDashboard() {
       <div className="text-right">
         <button
           type="button"
-          onClick={clearAuth}
+          onClick={() => void signOutAndRevoke()}
           className="text-xs underline text-muted-foreground hover:text-foreground"
         >
           Sign out

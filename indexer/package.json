@@ -2,7 +2,7 @@
   "name": "@noether/indexer",
   "version": "0.0.0",
   "private": true,
-  "description": "Soroban event indexer. Polls getEvents, decodes contract events, persists to libsql, emits to in-process bus for the API/WS gateway.",
+  "description": "Soroban event indexer. Polls getEvents, decodes contract events, persists to Postgres (Supabase), emits to in-process bus for the API/WS gateway.",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -17,7 +17,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.0",
+    "@noether/db": "*",
     "@noether/shared": "*",
     "@noether/types": "*",
     "@stellar/stellar-sdk": "^14.4.3",
@@ -25,6 +25,7 @@
     "pino": "^9.5.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "@types/node": "^20.16.0",
     "tsx": "^4.21.0",
     "typescript": "^5.6.3",

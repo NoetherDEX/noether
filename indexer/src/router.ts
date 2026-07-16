@@ -7,13 +7,13 @@
  */
 
 import type { Logger } from 'pino';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import type { rpc as RpcNs } from '@stellar/stellar-sdk';
 import type { IndexerBus } from './bus.js';
 import type { DecodedMarketEvent } from './types/events.js';
 
 export interface HandlerContext {
-  db: Client;
+  db: Db;
   rpc: RpcNs.Server;
   bus: IndexerBus;
   log: Logger;

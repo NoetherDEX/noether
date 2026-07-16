@@ -14,3 +14,6 @@ noether_common = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+# Synthetic Stork payload signing for relay_stork tests (host-side only)
+k256 = { version = "0.13", features = ["ecdsa"] }
+sha3 = "0.10"

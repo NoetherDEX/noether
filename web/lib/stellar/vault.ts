@@ -217,6 +217,41 @@ export async function getNoePrice(publicKey?: string | null): Promise<bigint | n
 }
 
 /**
+ * Read the insurance buffer balance (`get_buffer_balance`) — the fund that
+ * pays winning traders before LP value is touched, accumulated from a share
+ * of liquidation proceeds (T3-D4). Returns null on failure (render '—',
+ * never a fabricated $0). Works logged-out via NULL_ACCOUNT.
+ */
+export async function getInsuranceFundBalance(publicKey?: string | null): Promise<bigint | null> {
+  try {
+    const { TransactionBuilder, BASE_FEE, Account } = await import('@stellar/stellar-sdk');
+
+    const account = publicKey
+      ? await sorobanRpc.getAccount(publicKey)
+      : new Account(NULL_ACCOUNT, '0');
+    const operation = vaultContract.call('get_buffer_balance');
+
+    const transaction = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK.PASSPHRASE,
+    })
+      .addOperation(operation)
+      .setTimeout(300)
+      .build();
+
+    const result = await sorobanRpc.simulateTransaction(transaction);
+
+    if (rpc.Api.isSimulationSuccess(result) && result.result?.retval) {
+      return scValToNative(result.result.retval) as bigint;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read the vault's deposit fee in basis points from the contract
  * (`get_deposit_fee`) — replaces the hardcoded "0.3%" UI literals (A31).
  * Returns null on failure (render '—', never assume a rate).

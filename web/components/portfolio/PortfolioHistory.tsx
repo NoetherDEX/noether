@@ -128,7 +128,58 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
               <p className="text-sm text-muted-foreground">No trade history yet</p>
             </div>
           ) : (
-            <table className="w-full">
+            <>
+            {/* B25: card layout below sm — a 9-column table on a 390px screen
+                reads as a broken panel. Same null-honesty as the rows. */}
+            <div className="sm:hidden divide-y divide-border">
+              {trades.map((trade) => (
+                <div key={trade.id} className="p-3 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-[13px] text-foreground">
+                      {trade.asset}-PERP{' '}
+                      <span className={cn('text-xs font-medium', trade.direction === 'Long' ? 'text-long' : 'text-short')}>
+                        {trade.direction}
+                      </span>
+                    </span>
+                    {trade.pnl == null ? (
+                      <span className="font-mono tabular-nums text-[13px] text-muted-foreground">—</span>
+                    ) : (
+                      <span
+                        className={cn(
+                          'font-mono tabular-nums text-[13px] font-medium',
+                          trade.pnl >= 0 ? 'text-long' : 'text-short'
+                        )}
+                      >
+                        {trade.pnl >= 0 ? '+' : '-'}${Math.abs(trade.pnl).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between font-mono tabular-nums text-xs text-muted-foreground">
+                    <span>${trade.size.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                    <span>
+                      {trade.entryPrice != null
+                        ? `$${trade.entryPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                        : '—'}
+                      {' → '}
+                      ${trade.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-faint">
+                    <span className="font-mono tabular-nums">{formatDate(trade.timestamp)}</span>
+                    <a
+                      href={getStellarExpertUrl(trade.txHash)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 hover:text-muted-foreground transition-colors font-mono min-h-[32px]"
+                    >
+                      {trade.txHash.slice(0, 6)}…
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <table className="w-full hidden sm:table">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left text-[11px] font-medium uppercase tracking-wide text-faint px-4 py-2">Date</th>
@@ -223,6 +274,7 @@ export function PortfolioHistory({ trades, transfers = [], isLoading }: Portfoli
                 ))}
               </tbody>
             </table>
+            </>
           )
         ) : (
           // Transfers tab

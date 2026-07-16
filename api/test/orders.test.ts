@@ -276,3 +276,80 @@ describe('POST /v1/tx/submit', () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+describe('GET /v1/orders/open', () => {
+  const OTHER_CONTRACT = 'CBAWCGMUS3DN57KXYKHHZ6Y7T7C27AFLCEBMHGCQXW5AUPF3X5XJBC4M';
+  const traderA = Keypair.random().publicKey();
+  const traderB = Keypair.random().publicKey();
+
+  /** placed #1 (A, open), #2 (A, executed), #3 (B, cancelled), #9 (other market). */
+  function seed() {
+    return [
+      { eventId: 'op-1', topic: 'order_placed', ledger: 100,
+        payload: { topic: 'order_placed', orderId: 1, trader: traderA, triggerPrice: '650000000' } },
+      { eventId: 'op-2', topic: 'order_placed', ledger: 101,
+        payload: { topic: 'order_placed', orderId: 2, trader: traderA, triggerPrice: '660000000' } },
+      { eventId: 'ox-2', topic: 'order_executed', ledger: 105,
+        payload: { topic: 'order_executed', orderId: 2, keeperReward: '100' } },
+      { eventId: 'op-3', topic: 'order_placed', ledger: 102,
+        payload: { topic: 'order_placed', orderId: 3, trader: traderB, triggerPrice: '670000000' } },
+      { eventId: 'oc-3', topic: 'order_cancelled', ledger: 106,
+        payload: { topic: 'order_cancelled', orderId: 3, reason: 'user' } },
+      { eventId: 'op-9', topic: 'order_placed', ledger: 103, contractId: OTHER_CONTRACT,
+        payload: { topic: 'order_placed', orderId: 9, trader: traderA, triggerPrice: '680000000' } },
+    ];
+  }
+
+  it('returns only unresolved orders on the current market by default', async () => {
+    const setup = await setupTestServer({ seedEvents: seed() });
+    app = setup.app;
+    const res = await app.inject({ method: 'GET', url: '/v1/orders/open' });
+    expect(res.statusCode).toBe(200);
+    const { orders } = res.json() as { orders: { orderId: number; status: string }[] };
+    expect(orders).toHaveLength(1);
+    expect(orders[0]!.orderId).toBe(1);
+    expect(orders[0]!.status).toBe('open');
+  });
+
+  it('folds terminal events into statuses with status=all, scoped to trader', async () => {
+    const setup = await setupTestServer({ seedEvents: seed() });
+    app = setup.app;
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/orders/open?trader=${traderA}&status=all`,
+    });
+    expect(res.statusCode).toBe(200);
+    const { orders } = res.json() as {
+      orders: { orderId: number; status: string; trader: string; triggerPrice: string }[];
+    };
+    // Newest first; the other-market order_placed (#9) must NOT leak in.
+    expect(orders.map((o) => o.orderId)).toEqual([2, 1]);
+    expect(orders[0]!.status).toBe('executed');
+    expect(orders[1]!.status).toBe('open');
+    expect(orders[1]!.triggerPrice).toBe('650000000');
+    expect(orders.every((o) => o.trader === traderA)).toBe(true);
+  });
+
+  it('includes cancelled orders in status=all and respects limit', async () => {
+    const setup = await setupTestServer({ seedEvents: seed() });
+    app = setup.app;
+    const all = await app.inject({ method: 'GET', url: '/v1/orders/open?status=all' });
+    const { orders } = all.json() as { orders: { orderId: number; status: string }[] };
+    expect(orders.map((o) => o.orderId)).toEqual([3, 2, 1]);
+    expect(orders[0]!.status).toBe('cancelled');
+
+    const limited = await app.inject({ method: 'GET', url: '/v1/orders/open?status=all&limit=1' });
+    expect((limited.json() as { orders: unknown[] }).orders).toHaveLength(1);
+  });
+
+  it('returns an empty list for a trader with no orders', async () => {
+    const setup = await setupTestServer({ seedEvents: seed() });
+    app = setup.app;
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/orders/open?trader=${Keypair.random().publicKey()}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { orders: unknown[] }).orders).toEqual([]);
+  });
+});

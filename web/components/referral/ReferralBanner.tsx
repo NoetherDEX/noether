@@ -15,6 +15,7 @@ import { lookupReferralCode } from '@/lib/api/referral';
 import { useWalletStore } from '@/lib/store';
 import { useWalletContext } from '@/components/wallet/WalletProvider';
 import type { ReferrerRow } from '@/types/referral';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
 
 // Lazy chunk: the wallet picker only loads if a disconnected visitor actually
@@ -104,12 +105,7 @@ export function ReferralBanner() {
         setCode(null);
       }, 1800);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      let friendly = msg;
-      if (/Error\(Contract, #10\)/.test(msg)) friendly = 'That referral code does not exist.';
-      else if (/Error\(Contract, #11\)/.test(msg)) friendly = 'You already have a referrer bound to your wallet.';
-      else if (/Error\(Contract, #12\)/.test(msg)) friendly = "You can't refer yourself.";
-      toast.error(friendly.slice(0, 200));
+      toast.error(toUserMessage(err, { contract: 'referral' }));
     } finally {
       setBusy(false);
     }

@@ -30,11 +30,19 @@ export function CreateVaultModal({ open, onClose }: Props) {
     }
     setBusy(true);
     try {
-      await createVault(wallet.address, wallet.walletId, name);
+      const newId = await createVault(wallet.address, wallet.walletId, name);
       toast.success(`Vault "${name}" created`);
       setName('');
       onClose();
-      router.refresh();
+      // B16: router.refresh() cannot re-run the marketplace's client
+      // useEffect, so the success toast used to be contradicted by an
+      // unchanged grid. Go straight to the new vault (the detail page
+      // falls back to the on-chain read while the indexer catches up).
+      if (newId != null) {
+        router.push(`/vaults/${newId}`);
+      } else {
+        router.refresh();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast.error(`Failed: ${msg.slice(0, 200)}`);

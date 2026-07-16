@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 
 export interface PollCursor {
   lastLedger: number;
@@ -9,7 +9,7 @@ export interface PollCursor {
 /**
  * Read the singleton cursor row. Returns null if not yet initialized.
  */
-export async function readCursor(db: Client): Promise<PollCursor | null> {
+export async function readCursor(db: Db): Promise<PollCursor | null> {
   const result = await db.execute('SELECT last_ledger, last_pagination_token, updated_at FROM poll_cursor WHERE id = 1');
   const row = result.rows[0];
   if (!row) return null;
@@ -27,15 +27,16 @@ export async function readCursor(db: Client): Promise<PollCursor | null> {
  * the caller must stop instead of double-applying (I-4).
  */
 export async function writeCursor(
-  db: Client,
+  db: Db,
   cursor: PollCursor,
   expectedLastLedger: number | null,
 ): Promise<boolean> {
   if (expectedLastLedger === null) {
     const result = await db.execute({
       sql: `
-        INSERT OR IGNORE INTO poll_cursor (id, last_ledger, last_pagination_token, updated_at)
+        INSERT INTO poll_cursor (id, last_ledger, last_pagination_token, updated_at)
         VALUES (1, ?, ?, ?)
+        ON CONFLICT (id) DO NOTHING
       `,
       args: [cursor.lastLedger, cursor.lastPagingToken, cursor.updatedAt],
     });

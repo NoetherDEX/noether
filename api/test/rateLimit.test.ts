@@ -30,7 +30,7 @@ describe('rate limiter', () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const window = nowSec - (nowSec % 60);
     await setup.db.execute({
-      sql: `INSERT OR REPLACE INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?)`,
+      sql: `INSERT INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?) ON CONFLICT (key_id, window_start) DO UPDATE SET count = EXCLUDED.count`,
       args: [`ip:127.0.0.1`, window, RATE_LIMIT_TIERS.public.perMinute + 1],
     });
     const res = await app.inject({ method: 'GET', url: '/v1/markets' });
@@ -46,7 +46,7 @@ describe('rate limiter', () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const window = nowSec - (nowSec % 60);
     await setup.db.execute({
-      sql: `INSERT OR REPLACE INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?)`,
+      sql: `INSERT INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?) ON CONFLICT (key_id, window_start) DO UPDATE SET count = EXCLUDED.count`,
       args: [`ip:127.0.0.1`, window, RATE_LIMIT_TIERS.public.perMinute + 1000],
     });
     const res = await app.inject({ method: 'GET', url: '/v1/health' });
@@ -86,11 +86,11 @@ describe('rate limiter', () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const window = nowSec - (nowSec % 60);
     await setup.db.execute({
-      sql: `INSERT OR REPLACE INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?)`,
+      sql: `INSERT INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?) ON CONFLICT (key_id, window_start) DO UPDATE SET count = EXCLUDED.count`,
       args: ['ip:1.2.3.4', window - 120, 5],
     });
     await setup.db.execute({
-      sql: `INSERT OR REPLACE INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?)`,
+      sql: `INSERT INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?) ON CONFLICT (key_id, window_start) DO UPDATE SET count = EXCLUDED.count`,
       args: ['ip:1.2.3.4', window, 5],
     });
     await setup.deps.rateLimiter.sweepExpired();

@@ -19,7 +19,7 @@ import {
   rpc,
   scValToNative,
 } from '@stellar/stellar-sdk';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import type { Logger } from 'pino';
 
 // Any well-formed Stellar pubkey works as the simulation source — same
@@ -54,7 +54,7 @@ export async function fetchOnChainPosition(
 }
 
 export async function cleanupCrossLiquidatedPositions(
-  db: Client,
+  db: Db,
   rpcServer: rpc.Server,
   marketAddress: string,
   trader: string,

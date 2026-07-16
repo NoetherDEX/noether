@@ -6,6 +6,12 @@
  * Migrations are applied in lexical order; each is recorded in
  * `schema_versions` so subsequent runs are idempotent.
  *
+ * Statements inside a file are separated by `--# split` markers and run
+ * one at a time (extended-protocol queries cannot batch statements), but
+ * each migration file + its schema_versions record commit as ONE
+ * transaction — Postgres DDL is transactional, so a half-applied
+ * migration rolls back instead of stranding the schema.
+ *
  * Usage:
  *   npm run migrate          # apply pending migrations
  *   tsx src/migrations.ts    # same, direct invocation
@@ -14,7 +20,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import { loadConfig } from './config.js';
 import { createDb } from './db.js';
 
@@ -31,12 +37,12 @@ interface Migration {
   sql: string;
 }
 
-async function ensureSchemaVersionsTable(db: Client): Promise<void> {
+async function ensureSchemaVersionsTable(db: Db): Promise<void> {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS schema_versions (
-      id          INTEGER PRIMARY KEY,
+      id          BIGINT PRIMARY KEY,
       name        TEXT NOT NULL,
-      applied_at  INTEGER NOT NULL
+      applied_at  BIGINT NOT NULL
     );
   `);
 }
@@ -60,7 +66,7 @@ async function loadMigrations(): Promise<Migration[]> {
   return migrations;
 }
 
-async function appliedIds(db: Client): Promise<Set<number>> {
+async function appliedIds(db: Db): Promise<Set<number>> {
   const result = await db.execute('SELECT id FROM schema_versions');
   const ids = new Set<number>();
   for (const row of result.rows) {
@@ -69,7 +75,7 @@ async function appliedIds(db: Client): Promise<Set<number>> {
   return ids;
 }
 
-export async function runMigrations(db: Client): Promise<{ applied: Migration[] }> {
+export async function runMigrations(db: Db): Promise<{ applied: Migration[] }> {
   await ensureSchemaVersionsTable(db);
   const migrations = await loadMigrations();
   const already = await appliedIds(db);
@@ -78,22 +84,25 @@ export async function runMigrations(db: Client): Promise<{ applied: Migration[] 
   for (const m of migrations) {
     if (already.has(m.id)) continue;
 
-    // Split on `--# split` markers if a migration needs multiple statements.
-    // libsql `execute` handles single statements; for multi-statement migrations
-    // we split on a marker comment so callers stay in control.
     const statements = m.sql
       .split(/^--#\s*split\s*$/gim)
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
 
-    for (const stmt of statements) {
-      await db.execute(stmt);
+    const tx = await db.transaction('write');
+    try {
+      for (const stmt of statements) {
+        await tx.execute(stmt);
+      }
+      await tx.execute({
+        sql: 'INSERT INTO schema_versions (id, name, applied_at) VALUES (?, ?, ?)',
+        args: [m.id, m.name, Date.now()],
+      });
+      await tx.commit();
+    } catch (err) {
+      await tx.rollback();
+      throw err;
     }
-
-    await db.execute({
-      sql: 'INSERT INTO schema_versions (id, name, applied_at) VALUES (?, ?, ?)',
-      args: [m.id, m.name, Date.now()],
-    });
     applied.push(m);
   }
 
@@ -115,6 +124,6 @@ if (isDirect) {
       }
     }
   } finally {
-    db.close();
+    await db.close();
   }
 }

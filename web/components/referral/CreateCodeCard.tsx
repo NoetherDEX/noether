@@ -7,6 +7,7 @@ import { useWalletStore } from '@/lib/store';
 import { createReferralCode, lookupCode, type CodeAvailability } from '@/lib/stellar/referral';
 import { DISCORD_URL } from '@/lib/utils/constants';
 import type { ReferrerRow } from '@/types/referral';
+import { toUserMessage } from '@/lib/utils/userError';
 import toast from 'react-hot-toast';
 
 const MIN = 3;
@@ -31,17 +32,6 @@ export function makeOptimisticReferrerRow(address: string, code: string): Referr
     claimable: '0',
     updatedAt: now,
   };
-}
-
-/** Pretty-print common on-chain referral errors. */
-function humanize(raw: string): string {
-  const s = raw || '';
-  if (/Error\(Contract, #6\)/.test(s)) return 'Code is too short (min 3 characters).';
-  if (/Error\(Contract, #7\)/.test(s)) return 'Code is too long (max 16 characters).';
-  if (/Error\(Contract, #8\)/.test(s)) return 'That code is already taken.';
-  if (/Error\(Contract, #9\)/.test(s)) return 'You already have a code registered.';
-  if (/Error\(Contract, #5\)/.test(s)) return 'Invalid parameter.';
-  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
 }
 
 const VALID_RE = /^[A-Za-z0-9_-]+$/;
@@ -112,9 +102,8 @@ export function CreateCodeCard({ onCreated }: Props) {
       setAvailable(null);
       onCreated(trimmed);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
       console.error('[referral] register failed', err);
-      toast.error(`Failed: ${humanize(msg)}`);
+      toast.error(`Failed: ${toUserMessage(err, { contract: 'referral' })}`);
     } finally {
       setBusy(false);
     }

@@ -59,9 +59,12 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
       hint: 'USDC sitting in the vault — excludes capital deployed in open positions',
     },
     {
-      label: 'APY',
+      label: vault.apyKind === 'inception' ? 'Since inception' : 'APY',
       value: fmtBps(vault.apyBps, true),
-      hint: 'Annualised closed-trade PnL / TVL',
+      hint:
+        vault.apyKind === 'inception'
+          ? 'Raw return since the vault was created — too young (<7 days) to annualise honestly'
+          : 'Annualised closed-trade PnL / TVL',
       tone: apyTone,
     },
     {

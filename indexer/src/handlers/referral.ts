@@ -1,9 +1,9 @@
-import type { Client, Transaction } from '@libsql/client';
+import type { Db, DbTransaction } from '@noether/db';
 import type { ReferralEvent } from '@noether/types';
 import type { Handler, HandlerContext } from '../router.js';
 import type { DecodedMarketEvent } from '../types/events.js';
 
-type DbConn = Client | Transaction;
+type DbConn = Db | DbTransaction;
 
 async function persistRaw(
   db: DbConn,
@@ -15,9 +15,10 @@ async function persistRaw(
     event as ReferralEvent & { topicXdr?: string[]; valueXdr?: string };
   const result = await db.execute({
     sql: `
-      INSERT OR IGNORE INTO events_raw (
+      INSERT INTO events_raw (
         event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, topic_xdr, value_xdr, inserted_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (event_id) DO NOTHING
     `,
     args: [
       eventId,
@@ -60,8 +61,9 @@ async function applyEvent(
     case 'referrer_set': {
       const bound = await db.execute({
         sql: `
-          INSERT OR IGNORE INTO referral_bindings (referee, referrer, code, bound_at, tx_hash, contract_id)
+          INSERT INTO referral_bindings (referee, referrer, code, bound_at, tx_hash, contract_id)
           VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT (referee) DO NOTHING
         `,
         args: [event.referee, event.referrer, event.code, event.ledgerCloseTs, event.txHash, contractId],
       });
@@ -79,8 +81,9 @@ async function applyEvent(
     case 'trade_recorded': {
       const inserted = await db.execute({
         sql: `
-          INSERT OR IGNORE INTO referral_trades (referee, referrer, original_fee, discount, payout, ledger, ts, tx_hash, event_id, contract_id)
+          INSERT INTO referral_trades (referee, referrer, original_fee, discount, payout, ledger, ts, tx_hash, event_id, contract_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (event_id) DO NOTHING
         `,
         args: [
           event.referee,
@@ -118,8 +121,9 @@ async function applyEvent(
     case 'claimed': {
       const inserted = await db.execute({
         sql: `
-          INSERT OR IGNORE INTO referral_claims (referrer, amount, ledger, ts, tx_hash, event_id, contract_id)
+          INSERT INTO referral_claims (referrer, amount, ledger, ts, tx_hash, event_id, contract_id)
           VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (event_id) DO NOTHING
         `,
         args: [
           event.referrer,
@@ -141,7 +145,7 @@ async function applyEvent(
   }
 }
 
-async function rollbackQuietly(tx: Transaction): Promise<void> {
+async function rollbackQuietly(tx: DbTransaction): Promise<void> {
   try {
     await tx.rollback();
   } catch {

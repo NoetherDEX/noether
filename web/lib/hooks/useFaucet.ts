@@ -77,15 +77,22 @@ export function useFaucet(publicKey: string | null) {
   const {
     data: accountExists,
     isLoading: isCheckingAccount,
+    error: accountCheckError,
   } = useQuery({
     queryKey: ['account-exists', publicKey],
     queryFn: async (): Promise<boolean> => {
       if (!publicKey) return false;
       const response = await fetch(`${NETWORK.HORIZON_URL}/accounts/${publicKey}`);
-      return response.ok;
+      if (response.ok) return true;
+      // Only a 404 means the account genuinely doesn't exist. Any other
+      // failure (Horizon outage, rate limit) is UNKNOWN — surface an error
+      // instead of telling a funded user their account "was not found".
+      if (response.status === 404) return false;
+      throw new Error(`Horizon error: ${response.status}`);
     },
     enabled: !!publicKey,
     staleTime: 10000,
+    retry: 1,
   });
 
   // Update account status
@@ -96,8 +103,12 @@ export function useFaucet(publicKey: string | null) {
       setAccountStatus('active');
     } else if (accountExists === false) {
       setAccountStatus('not_found');
+    } else if (accountCheckError) {
+      // Horizon read failed — status unknown, never a confident "not found".
+      setAccountStatus('error');
+      setAccountError('Could not check your account on Horizon — retrying shortly.');
     }
-  }, [accountExists, isCheckingAccount]);
+  }, [accountExists, isCheckingAccount, accountCheckError]);
 
   // Update trustline status based on fetched data
   useEffect(() => {
@@ -283,11 +294,12 @@ export function useFaucet(publicKey: string | null) {
     claimUsdc,
     isClaiming: claimMutation.isPending,
 
-    // Data
+    // Data — null = the history read failed (render '—', never fake stats).
     isLoading: isLoadingHistory,
-    claimedToday: faucetData?.claimedToday || 0,
-    remainingToday: faucetData?.remainingToday || DAILY_LIMIT_USDC,
-    totalAllTime: faucetData?.totalAllTime || 0,
+    claimedToday: faucetData ? faucetData.claimedToday : null,
+    remainingToday: faucetData ? faucetData.remainingToday : null,
+    totalAllTime: faucetData ? faucetData.totalAllTime : null,
+    historyError: !!historyError && !faucetData,
     dailyLimit: DAILY_LIMIT_USDC,
     history: historyWithTotals,
 

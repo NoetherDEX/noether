@@ -12,11 +12,17 @@ export interface ApiConfig {
   rpcUrl: string;
   /** Public key whose account will be used as source for read-only simulations. */
   sourceAccount: string;
-  /** libsql URL for the indexer database (read-only consumer). */
-  libsqlUrl: string;
-  libsqlAuthToken: string | undefined;
+  /** Postgres URL for the indexer database (Supabase session pooler). */
+  databaseUrl: string;
   contracts: ContractsManifest;
   ws: WsLimits;
+  /**
+   * Shared secret the keeper presents on POST /v1/oracle/heartbeat.
+   * Optional: unset disables the heartbeat ingest (oracle health then
+   * serves the on-chain-only view) — deliberately NOT a fail-closed boot
+   * requirement.
+   */
+  keeperHeartbeatSecret?: string;
 }
 
 /** WebSocket abuse controls (audit A-5). All overridable via env. */
@@ -38,6 +44,12 @@ export function loadConfig(): ApiConfig {
   if (process.env.NODE_ENV === 'production') {
     assertProductionEnv(corsOrigin);
   }
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    // No local-file fallback exists on Postgres. Tests inject their own db,
+    // so this only fires for a real boot with missing env.
+    throw new Error('DATABASE_URL is not set (postgresql://…). The libsql LIBSQL_URL/LIBSQL_AUTH_TOKEN pair was retired in the Supabase migration.');
+  }
   return {
     network,
     host: process.env.API_HOST ?? '0.0.0.0',
@@ -47,8 +59,8 @@ export function loadConfig(): ApiConfig {
     rpcUrls,
     rpcUrl: rpcUrls[0]!,
     sourceAccount: process.env.API_SOURCE_ACCOUNT ?? contracts.admin,
-    libsqlUrl: process.env.LIBSQL_URL ?? 'file:../indexer/data/indexer.db',
-    libsqlAuthToken: process.env.LIBSQL_AUTH_TOKEN || undefined,
+    databaseUrl,
+    keeperHeartbeatSecret: process.env.KEEPER_HEARTBEAT_SECRET || undefined,
     contracts,
     ws: {
       maxConnections: Number(process.env.WS_MAX_CONNECTIONS ?? 1000),

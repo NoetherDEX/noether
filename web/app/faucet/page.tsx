@@ -32,6 +32,7 @@ function FaucetPage() {
     remainingToday,
     dailyLimit,
     totalAllTime,
+    historyError,
     history,
   } = useFaucet(publicKey);
 
@@ -61,6 +62,14 @@ function FaucetPage() {
             <>
               {/* How It Works */}
               <HowItWorks />
+
+              {/* Faucet data unavailable — stats below show '—', not zeros */}
+              {historyError && (
+                <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-2.5 text-sm text-primary">
+                  Couldn&apos;t load your claim history — limits and totals show
+                  &lsquo;—&rsquo; until it refreshes (retries automatically).
+                </div>
+              )}
 
               {/* Trustline + Claim Section (side by side on desktop) */}
               <div className="grid lg:grid-cols-2 gap-8">

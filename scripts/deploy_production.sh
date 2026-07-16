@@ -149,7 +149,7 @@ init_contract "vault" --id "$PROD_VAULT_ID" --source "$ADMIN" --network testnet 
 # the MarketConfig from a file with i128 fields as STRINGS (inline i128 is rejected).
 MKTCFG="$(mktemp)"
 cat > "$MKTCFG" <<'JSON'
-{"min_collateral":"100000000","max_leverage":10,"maintenance_margin_bps":100,"liquidation_fee_bps":500,"trading_fee_bps":10,"base_funding_rate_bps":1,"max_position_size":"1000000000000","max_price_staleness":60,"max_oracle_deviation_bps":100,"base_maker_fee_bps":2,"base_taker_fee_bps":5}
+{"min_collateral":"100000000","max_leverage":10,"maintenance_margin_bps":100,"liquidation_fee_bps":500,"trading_fee_bps":10,"base_funding_rate_bps":1,"max_position_size":"1000000000000","max_price_staleness":60,"max_oracle_deviation_bps":100,"base_maker_fee_bps":2,"base_taker_fee_bps":5,"partial_liq_min_notional":"10000000000","partial_liq_tranche_bps":2000,"partial_liq_cooldown_secs":30,"insurance_buffer_share_bps":1000}
 JSON
 init_contract "market (oracle → shim)" --id "$PROD_MARKET_ID" --source "$ADMIN" --network testnet -- initialize \
   --admin "$ADMIN_PK" --oracle_adapter "$SHIM" --vault "$PROD_VAULT_ID" \

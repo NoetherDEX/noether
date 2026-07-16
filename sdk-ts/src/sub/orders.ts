@@ -72,8 +72,42 @@ export interface PreparedTransaction {
   minResourceFee?: string;
 }
 
+export type OrderEventStatus = 'open' | 'executed' | 'cancelled';
+
+export interface OrderEventRow {
+  orderId: number;
+  trader: string;
+  /** 7-dec trigger price as emitted by order_placed. */
+  triggerPrice: string;
+  status: OrderEventStatus;
+  ledger: number;
+  ts: number;
+  txHash: string;
+}
+
+export interface OpenOrdersQuery {
+  trader?: string;
+  /** Default 'open'; 'all' includes executed/cancelled (order history). */
+  status?: 'open' | 'all';
+  limit?: number;
+}
+
 export class OrdersApi {
   constructor(private readonly transport: Transport, private readonly credentials: Credentials | null) {}
+
+  /**
+   * Public — orders folded to open/executed/cancelled from the indexer's
+   * order_placed / order_executed / order_cancelled events, newest first.
+   * Carries only (orderId, trader, triggerPrice, status); hydrate asset /
+   * direction / size on-chain via get_order for the ids returned.
+   */
+  async open(query: OpenOrdersQuery = {}): Promise<OrderEventRow[]> {
+    const res = await this.transport.request<{ orders: OrderEventRow[] }>({
+      path: '/v1/orders/open',
+      query: { trader: query.trader, status: query.status, limit: query.limit },
+    });
+    return res.orders;
+  }
 
   async prepare(request: PrepareRequest): Promise<PreparedTransaction> {
     if (!this.credentials) throw new Error('orders.prepare requires an authenticated client');

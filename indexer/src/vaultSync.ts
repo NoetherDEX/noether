@@ -19,7 +19,7 @@ import {
   scValToNative,
   xdr,
 } from '@stellar/stellar-sdk';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import type { Logger } from 'pino';
 
 // Any well-formed Stellar pubkey works as the simulation source — we
@@ -71,7 +71,7 @@ export async function fetchOnChainVault(
 }
 
 export async function syncVaultRow(
-  db: Client,
+  db: Db,
   rpcServer: rpc.Server,
   vaultFactoryAddress: string,
   vaultId: number,
@@ -111,7 +111,7 @@ export async function syncVaultRow(
  * decrement, or before this on-chain sync existed).
  */
 export async function reconcileAllVaults(
-  db: Client,
+  db: Db,
   rpcServer: rpc.Server,
   vaultFactoryAddress: string,
   networkPassphrase: string,

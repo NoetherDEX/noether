@@ -1,9 +1,9 @@
-import type { Client, Transaction } from '@libsql/client';
+import type { Db, DbTransaction } from '@noether/db';
 import type { DecodedMarketEvent } from '../types/events.js';
 import type { Handler, HandlerContext } from '../router.js';
 import { cleanupCrossLiquidatedPositions } from '../positionSync.js';
 
-type DbConn = Client | Transaction;
+type DbConn = Db | DbTransaction;
 
 /**
  * Market handler: persist the decoded event to events_raw, maintain the
@@ -91,6 +91,19 @@ function emitBus(ctx: HandlerContext, event: DecodedMarketEvent): void {
         asset: event.asset,
       });
       break;
+    case 'position_partial_liq':
+      // The position SURVIVES (T3-D4) — no position-removal fan-out; the
+      // closed tranche is still a liquidation fill for trade consumers.
+      ctx.bus.emit('trade', {
+        kind: 'liquidation',
+        positionId: event.positionId,
+        trader: event.trader,
+        price: event.closePrice,
+        size: event.size,
+        ts: event.ledgerCloseTs,
+        asset: event.asset,
+      });
+      break;
     case 'order_placed':
       ctx.bus.emit('order', { orderId: event.orderId, state: 'placed' });
       break;
@@ -113,7 +126,7 @@ function emitBus(ctx: HandlerContext, event: DecodedMarketEvent): void {
   }
 }
 
-async function rollbackQuietly(tx: Transaction): Promise<void> {
+async function rollbackQuietly(tx: DbTransaction): Promise<void> {
   try {
     await tx.rollback();
   } catch {
@@ -126,9 +139,18 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
     case 'position_opened':
       await db.execute({
         sql: `
-          INSERT OR REPLACE INTO positions
+          INSERT INTO positions
             (position_id, trader, asset, direction, size, entry_price, opened_at, opened_tx_hash, contract_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (position_id) DO UPDATE SET
+            trader = EXCLUDED.trader,
+            asset = EXCLUDED.asset,
+            direction = EXCLUDED.direction,
+            size = EXCLUDED.size,
+            entry_price = EXCLUDED.entry_price,
+            opened_at = EXCLUDED.opened_at,
+            opened_tx_hash = EXCLUDED.opened_tx_hash,
+            contract_id = EXCLUDED.contract_id
         `,
         args: [
           event.positionId,
@@ -150,6 +172,18 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
         args: [event.positionId],
       });
       return;
+    case 'position_partial_liq':
+      // Shrink the surviving position by the closed tranche. size stays
+      // TEXT for read parity; do the arithmetic through numeric casts.
+      await db.execute({
+        sql: `
+          UPDATE positions
+          SET size = ((size)::numeric - (?)::numeric)::text
+          WHERE position_id = ?
+        `,
+        args: [event.size.toString(), event.positionId],
+      });
+      return;
     default:
       return;
   }
@@ -159,18 +193,25 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
  * Realized-trade projection (I-8): one row per close / liquidation into
  * the `trades` table (migration 017). position_closed carries entry_price
  * and pnl; position_liquidated carries neither, so both stay NULL for
- * liquidation rows. Keyed on the Soroban event_id via INSERT OR IGNORE so
+ * liquidation rows. Keyed on the Soroban event_id via ON CONFLICT DO NOTHING so
  * a live redelivery or a `reindex` replay writes exactly once.
  */
 async function recordRealizedTrade(db: DbConn, event: DecodedMarketEvent): Promise<void> {
-  if (event.topic !== 'position_closed' && event.topic !== 'position_liquidated') return;
+  if (
+    event.topic !== 'position_closed' &&
+    event.topic !== 'position_liquidated' &&
+    event.topic !== 'position_partial_liq'
+  ) {
+    return;
+  }
   const isClose = event.topic === 'position_closed';
   await db.execute({
     sql: `
-      INSERT OR IGNORE INTO trades (
+      INSERT INTO trades (
         event_id, position_id, trader, asset, direction, kind, size,
         entry_price, close_price, pnl, ledger, ts, tx_hash, contract_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (event_id) DO NOTHING
     `,
     args: [
       event.id,
@@ -195,9 +236,10 @@ async function insertEvent(db: DbConn, event: DecodedMarketEvent): Promise<boole
   const payload = serialisePayload(event);
   const result = await db.execute({
     sql: `
-      INSERT OR IGNORE INTO events_raw (
+      INSERT INTO events_raw (
         event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, topic_xdr, value_xdr, inserted_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (event_id) DO NOTHING
     `,
     args: [
       event.id,
@@ -234,6 +276,7 @@ const MARKET_TOPICS: DecodedMarketEvent['topic'][] = [
   'position_opened',
   'position_closed',
   'position_liquidated',
+  'position_partial_liq',
   'cross_liq',
   'order_placed',
   'order_cancelled',

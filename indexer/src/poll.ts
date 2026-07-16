@@ -11,7 +11,7 @@
  */
 
 import type { Logger } from 'pino';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import type { rpc as RpcNs, xdr } from '@stellar/stellar-sdk';
 import type { IndexerBus } from './bus.js';
 import type { EventRouter, HandlerContext } from './router.js';
@@ -22,7 +22,7 @@ import { fetchEvents, getLatestLedger, getOldestLedger, parseRetentionError, typ
 import { readCursor, writeCursor, type PollCursor } from './cursor.js';
 
 export interface PollDeps {
-  db: Client;
+  db: Db;
   rpcPool: RpcPool;
   bus: IndexerBus;
   router: EventRouter;
@@ -50,6 +50,8 @@ export interface PollerHealth {
 
 const DEFAULT_RETENTION_WARN_LEDGERS = 10_000;
 const DEFAULT_RETENTION_CHECK_EVERY_MS = 600_000;
+/** Max staleness of poll_cursor.updated_at before a quiet poll rewrites it. */
+const HEARTBEAT_EVERY_MS = 30_000;
 
 export class IndexerPoller {
   private running = false;
@@ -182,6 +184,25 @@ export class IndexerPoller {
         updatedAt: Date.now(),
       };
       if (!(await this.commitCursor(next, cursor?.lastLedger ?? null))) return processed;
+    } else if (Date.now() - cursor.updatedAt >= HEARTBEAT_EVERY_MS) {
+      // Heartbeat on quiet polls: refresh updated_at ONLY. Without it the
+      // cursor row is written only when a batch carries events, so
+      // updated_at freezes between on-chain trades and health's
+      // ledgerAgeSeconds — the "indexer is alive" signal for monitoring
+      // (P3-1/D-2) AND the web's gatewayServesThisMarket() trust gate —
+      // reads as a stall on any quiet market. lastLedger and the pagination
+      // token are deliberately NOT touched: the stored token (present after
+      // every real batch — getEvents always returns a resume cursor) is the
+      // precise resume position, and advancing lastLedger past it would skip
+      // events should the token ever become unusable (e.g. across an RPC
+      // pool rotation). Throttled so a quiet market costs one row write per
+      // HEARTBEAT_EVERY_MS, not one per 2s poll.
+      const next: PollCursor = {
+        lastLedger: cursor.lastLedger,
+        lastPagingToken: cursor.lastPagingToken,
+        updatedAt: Date.now(),
+      };
+      if (!(await this.commitCursor(next, cursor.lastLedger))) return processed;
     }
     if (highestCloseTs !== null) this.lastEventCloseTs = highestCloseTs;
 

@@ -1,0 +1,23 @@
+{
+  "name": "noether-migrate-turso-to-supabase",
+  "version": "0.0.0",
+  "private": true,
+  "description": "One-shot Turso (libsql) → Supabase (Postgres) data migration: table copy, legacy leaderboard import, parity report, cursor rewind. Standalone on purpose — keeps the retired @libsql/client out of the monorepo workspaces.",
+  "type": "module",
+  "scripts": {
+    "copy": "tsx copy.ts",
+    "legacy": "tsx legacy-import.ts",
+    "parity": "tsx parity.ts",
+    "rewind-cursor": "tsx rewind-cursor.ts"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.0",
+    "pg": "^8.22.0",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "@types/pg": "^8.20.0",
+    "typescript": "^5.6.3"
+  }
+}

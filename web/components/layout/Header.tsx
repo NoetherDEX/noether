@@ -45,12 +45,13 @@ export function Header() {
         {/* Desktop Navigation Links */}
         <nav className="hidden md:flex items-center gap-1 h-full">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={isActive ? 'page' : undefined}
                 className={cn(
                   'relative flex items-center h-full px-3 text-[13px] font-medium transition-colors',
                   isActive
@@ -97,13 +98,14 @@ export function Header() {
           {/* Menu panel */}
           <div className="absolute top-12 left-0 right-0 bg-surface border-b border-border p-3 space-y-0.5">
             {navItems.map((item) => {
-              const isActive = pathname === item.href;
+              const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
 
               return (
                 <Link
                   key={item.href}
                   href={item.href}
                   onClick={() => setMobileOpen(false)}
+                  aria-current={isActive ? 'page' : undefined}
                   className={cn(
                     'block px-3 py-3 rounded-md text-sm font-medium transition-colors',
                     isActive

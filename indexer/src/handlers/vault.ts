@@ -16,14 +16,14 @@
  * so the router treats them identically.
  */
 
-import type { Client, Transaction } from '@libsql/client';
+import type { Db, DbTransaction } from '@noether/db';
 import type { VaultEvent } from '@noether/types';
 import type { Handler, HandlerContext } from '../router.js';
 import type { DecodedMarketEvent } from '../types/events.js';
 import { syncVaultRow } from '../vaultSync.js';
 
 type AnyEvent = DecodedMarketEvent;
-type DbConn = Client | Transaction;
+type DbConn = Db | DbTransaction;
 
 interface RawShape {
   id: string;
@@ -50,9 +50,10 @@ async function persistRaw(db: DbConn, raw: RawShape, event: VaultEvent): Promise
     event as VaultEvent & { topicXdr?: string[]; valueXdr?: string };
   const result = await db.execute({
     sql: `
-      INSERT OR IGNORE INTO events_raw (
+      INSERT INTO events_raw (
         event_id, contract_id, topic, ledger, ledger_close_ts, tx_hash, payload_json, topic_xdr, value_xdr, inserted_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (event_id) DO NOTHING
     `,
     args: [
       raw.id,
@@ -75,10 +76,23 @@ async function upsertVault(db: DbConn, event: VaultEvent, contractId: string): P
     case 'vault_created':
       await db.execute({
         sql: `
-          INSERT OR REPLACE INTO vaults (
+          INSERT INTO vaults (
             id, leader, name, created_at, total_usdc, circulating_shares,
             hwm_nav, realized_pnl, leader_shares, profit_share_bps, paused, contract_id, updated_at
           ) VALUES (?, ?, ?, ?, 0, 0, 10000000, 0, 0, 1000, 0, ?, ?)
+          ON CONFLICT (id) DO UPDATE SET
+            leader = EXCLUDED.leader,
+            name = EXCLUDED.name,
+            created_at = EXCLUDED.created_at,
+            total_usdc = EXCLUDED.total_usdc,
+            circulating_shares = EXCLUDED.circulating_shares,
+            hwm_nav = EXCLUDED.hwm_nav,
+            realized_pnl = EXCLUDED.realized_pnl,
+            leader_shares = EXCLUDED.leader_shares,
+            profit_share_bps = EXCLUDED.profit_share_bps,
+            paused = EXCLUDED.paused,
+            contract_id = EXCLUDED.contract_id,
+            updated_at = EXCLUDED.updated_at
         `,
         args: [event.vaultId, event.leader, event.name, event.ledgerCloseTs, contractId, Date.now()],
       });
@@ -187,8 +201,9 @@ async function logActivity(db: DbConn, event: VaultEvent, eventId: string, contr
     case 'deposit':
       await db.execute({
         sql: `
-          INSERT OR IGNORE INTO vault_deposits (vault_id, depositor, amount, shares, ledger, ts, tx_hash, event_id, contract_id)
+          INSERT INTO vault_deposits (vault_id, depositor, amount, shares, ledger, ts, tx_hash, event_id, contract_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (event_id) DO NOTHING
         `,
         args: [
           event.vaultId,
@@ -206,8 +221,9 @@ async function logActivity(db: DbConn, event: VaultEvent, eventId: string, contr
     case 'withdraw':
       await db.execute({
         sql: `
-          INSERT OR IGNORE INTO vault_withdraws (vault_id, depositor, shares, usdc_out, ledger, ts, tx_hash, event_id, contract_id)
+          INSERT INTO vault_withdraws (vault_id, depositor, shares, usdc_out, ledger, ts, tx_hash, event_id, contract_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (event_id) DO NOTHING
         `,
         args: [
           event.vaultId,
@@ -225,8 +241,9 @@ async function logActivity(db: DbConn, event: VaultEvent, eventId: string, contr
     case 'fees_claimed':
       await db.execute({
         sql: `
-          INSERT OR IGNORE INTO vault_fee_claims (vault_id, leader, amount, new_nav, ledger, ts, tx_hash, event_id, contract_id)
+          INSERT INTO vault_fee_claims (vault_id, leader, amount, new_nav, ledger, ts, tx_hash, event_id, contract_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (event_id) DO NOTHING
         `,
         args: [
           event.vaultId,
@@ -244,9 +261,10 @@ async function logActivity(db: DbConn, event: VaultEvent, eventId: string, contr
     case 'leader_open':
       await db.execute({
         sql: `
-          INSERT OR IGNORE INTO vault_trades
+          INSERT INTO vault_trades
             (vault_id, position_id, action, leader, collateral, ledger, ts, tx_hash, contract_id)
           VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (vault_id, position_id, action, tx_hash) DO NOTHING
         `,
         args: [
           event.vaultId,
@@ -269,11 +287,11 @@ async function logActivity(db: DbConn, event: VaultEvent, eventId: string, contr
       // factory's leader_close handler runs.
       const closeLookup = await db.execute({
         sql: `
-          SELECT json_extract(payload_json, '$.pnl') AS pnl
+          SELECT payload_json ->> 'pnl' AS pnl
           FROM events_raw
           WHERE topic = 'position_closed'
             AND tx_hash = ?
-            AND CAST(json_extract(payload_json, '$.positionId') AS INTEGER) = ?
+            AND (payload_json ->> 'positionId')::bigint = ?
           LIMIT 1
         `,
         args: [event.txHash, Number(event.positionId)],
@@ -282,9 +300,10 @@ async function logActivity(db: DbConn, event: VaultEvent, eventId: string, contr
 
       await db.execute({
         sql: `
-          INSERT OR IGNORE INTO vault_trades
+          INSERT INTO vault_trades
             (vault_id, position_id, action, leader, collateral, pnl, ledger, ts, tx_hash, contract_id)
-          VALUES (?, ?, 'close', ?, 0, ?, ?, ?, ?, ?)
+          VALUES (?, ?, 'close', ?, '0', ?, ?, ?, ?, ?)
+          ON CONFLICT (vault_id, position_id, action, tx_hash) DO NOTHING
         `,
         args: [
           event.vaultId,
@@ -304,7 +323,7 @@ async function logActivity(db: DbConn, event: VaultEvent, eventId: string, contr
   }
 }
 
-async function rollbackQuietly(tx: Transaction): Promise<void> {
+async function rollbackQuietly(tx: DbTransaction): Promise<void> {
   try {
     await tx.rollback();
   } catch {

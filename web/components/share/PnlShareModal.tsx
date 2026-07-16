@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
 import { PnlShareCard } from './PnlShareCard';
@@ -13,9 +13,27 @@ interface PnlShareModalProps {
   data: PnlShareData | null;
 }
 
+// The card renders at a fixed 480px so the downloaded PNG is always crisp
+// and identical — the MODAL scales it visually to fit small screens (B25:
+// it used to overflow its own modal on phones).
+const CARD_WIDTH = 480;
+
 export function PnlShareModal({ isOpen, onClose, data }: PnlShareModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    const update = () => setScale(Math.min(1, el.clientWidth / CARD_WIDTH));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isOpen]);
 
   if (!data) return null;
 
@@ -34,7 +52,13 @@ export function PnlShareModal({ isOpen, onClose, data }: PnlShareModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Share Trade" size="md">
       <div className="flex flex-col items-center gap-4">
-        <PnlShareCard ref={cardRef} data={data} />
+        {/* zoom (not transform) so layout height shrinks with the visual —
+            the download capture targets the card node itself, unaffected. */}
+        <div ref={wrapRef} className="w-full flex justify-center">
+          <div style={{ zoom: scale }}>
+            <PnlShareCard ref={cardRef} data={data} />
+          </div>
+        </div>
 
         <Button
           variant="primary"

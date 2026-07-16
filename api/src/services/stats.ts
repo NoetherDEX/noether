@@ -1,4 +1,4 @@
-import type { Client, Row } from '@libsql/client';
+import { isMissingTable, type Db, type Row } from '@noether/db';
 import { SUPPORTED_ASSETS } from '@noether/shared';
 import { TtlCache } from './cache.js';
 
@@ -8,6 +8,8 @@ export const VOLUME_WINDOW_SEC = 14 * DAY_SEC;
 const STATS_TTL_MS = 5_000;
 const DEFAULT_TRADES_LIMIT = 50;
 const MAX_TRADES_LIMIT = 200;
+const DEFAULT_ORDERS_LIMIT = 50;
+const MAX_ORDERS_LIMIT = 200;
 const DEFAULT_LEADERBOARD_LIMIT = 50;
 const MAX_LEADERBOARD_LIMIT = 200;
 const DEFAULT_CANDLES_LIMIT = 500;
@@ -18,10 +20,20 @@ export type LeaderboardSort = 'pnl' | 'volume';
 
 export interface LeaderboardEntry {
   trader: string;
-  /** Lifetime realized PnL, 7-dec USDC (sum of position_closed pnl). */
+  /** Realized PnL, 7-dec USDC (live market + legacy baseline). */
   pnl: string;
-  /** Lifetime traded notional, 7-dec (opens + matched closes). */
+  /** Traded notional, 7-dec (opens + matched closes, + legacy baseline). */
   volume: string;
+  /** Trade count (position_opened rows, + legacy baseline). */
+  trades: number;
+  /** Liquidation count (full/partial/cross, + legacy baseline). */
+  liqCount: number;
+}
+
+export interface LeaderboardBoard {
+  /** poll_cursor.updated_at (unix seconds) — when the index last advanced. */
+  updatedAt: number | null;
+  leaders: LeaderboardEntry[];
 }
 
 export interface AssetStats {
@@ -34,15 +46,29 @@ export interface AssetStats {
 }
 
 export interface RealizedTradeRow {
-  positionId: number;
+  /** Null for account-level rows (cross_liquidation carries no position id). */
+  positionId: number | null;
   trader: string;
-  kind: 'close' | 'liquidation';
+  kind: 'open' | 'close' | 'liquidation' | 'cross_liquidation';
   asset: string | null;
   direction: number | null;
   size: string | null;
   entryPrice: string | null;
   closePrice: string | null;
   pnl: string | null;
+  ledger: number;
+  ts: number;
+  txHash: string;
+}
+
+export type OrderEventStatus = 'open' | 'executed' | 'cancelled';
+
+export interface OrderEventRow {
+  orderId: number;
+  trader: string;
+  /** 7-dec trigger price as emitted by order_placed. */
+  triggerPrice: string;
+  status: OrderEventStatus;
   ledger: number;
   ts: number;
   txHash: string;
@@ -63,13 +89,22 @@ export interface CandlePoint {
  * interest, and realized trade history. position_closed / liquidated
  * payloads carry no size or asset, so realized legs join back to their
  * position_opened event by positionId.
+ *
+ * The leaderboard is scoped to the CURRENT market contract (redeploys used
+ * to leak retired-deployment rows into the totals — the exact bug the web
+ * cron had) and folds in the one-time `leaderboard_legacy` baseline
+ * imported from the retired web pipeline.
  */
 export class StatsService {
   private readonly cache = new TtlCache<AssetStats[]>(STATS_TTL_MS);
-  private readonly lbCache = new TtlCache<LeaderboardEntry[]>(STATS_TTL_MS);
+  private readonly lbCache = new TtlCache<LeaderboardBoard>(STATS_TTL_MS);
   private readonly candleCache = new TtlCache<CandlePoint[]>(STATS_TTL_MS);
 
-  constructor(private readonly db: Client) {}
+  constructor(
+    private readonly db: Db,
+    /** Current market contract id — leaderboard scans are scoped to it. */
+    private readonly marketContractId: string = '',
+  ) {}
 
   /**
    * Trailing 14-day traded notional for one wallet (i128, 7-dec USDC).
@@ -81,23 +116,23 @@ export class StatsService {
     try {
       const opens = await this.db.execute({
         sql: `
-          SELECT json_extract(payload_json, '$.size') AS size
+          SELECT payload_json ->> 'size' AS size
           FROM events_raw
           WHERE topic = 'position_opened'
-            AND json_extract(payload_json, '$.trader') = ?
+            AND payload_json ->> 'trader' = ?
             AND ledger_close_ts >= ?
         `,
         args: [address, since],
       });
       const closes = await this.db.execute({
         sql: `
-          SELECT json_extract(o.payload_json, '$.size') AS size
+          SELECT o.payload_json ->> 'size' AS size
           FROM events_raw c
           JOIN events_raw o
             ON o.topic = 'position_opened'
-           AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
           WHERE c.topic = 'position_closed'
-            AND json_extract(c.payload_json, '$.trader') = ?
+            AND c.payload_json ->> 'trader' = ?
             AND c.ledger_close_ts >= ?
         `,
         args: [address, since],
@@ -142,8 +177,8 @@ export class StatsService {
     try {
       const opens = await this.db.execute({
         sql: `
-          SELECT json_extract(payload_json, '$.asset') AS asset,
-                 json_extract(payload_json, '$.size') AS size
+          SELECT payload_json ->> 'asset' AS asset,
+                 payload_json ->> 'size' AS size
           FROM events_raw
           WHERE topic = 'position_opened'
             AND ledger_close_ts >= ?
@@ -153,12 +188,12 @@ export class StatsService {
       for (const row of opens.rows) bucket(String(row.asset)).volume += BigInt(String(row.size));
       const realized = await this.db.execute({
         sql: `
-          SELECT json_extract(o.payload_json, '$.asset') AS asset,
-                 json_extract(o.payload_json, '$.size') AS size
+          SELECT o.payload_json ->> 'asset' AS asset,
+                 o.payload_json ->> 'size' AS size
           FROM events_raw c
           JOIN events_raw o
             ON o.topic = 'position_opened'
-           AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
           WHERE c.topic IN ('position_closed', 'position_liquidated')
             AND c.ledger_close_ts >= ?
         `,
@@ -180,35 +215,89 @@ export class StatsService {
   }
 
   async recentTrades(
-    opts: { trader?: string; asset?: string; beforeTs?: number; limit?: number } = {},
+    opts: {
+      trader?: string;
+      asset?: string;
+      beforeTs?: number;
+      limit?: number;
+      /** Also emit position_opened events as kind:'open' rows (Recent Trades tab). */
+      includeOpens?: boolean;
+    } = {},
   ): Promise<RealizedTradeRow[]> {
     const limit = Math.min(MAX_TRADES_LIMIT, Math.max(1, opts.limit ?? DEFAULT_TRADES_LIMIT));
-    const conditions = [`c.topic IN ('position_closed', 'position_liquidated')`];
+
+    // Three UNION ALL branches over events_raw, one per row family. Every
+    // branch selects the same column list (topic disambiguates in the
+    // mapper); each assembles its own conditions so the ? placeholders line
+    // up per branch. The opens branch aliases the row's OWN payload as
+    // open_payload_json so the mapper reads asset/direction/size/entryPrice
+    // through one code path for every kind.
+    const branchColumns = (openPayload: string) => `
+        SELECT c.topic AS topic, c.ledger AS ledger, c.event_id AS event_id,
+               c.ledger_close_ts AS ts, c.tx_hash AS tx_hash,
+               c.payload_json AS payload_json, ${openPayload} AS open_payload_json`;
+    const branches: string[] = [];
     const args: (string | number)[] = [];
-    if (opts.trader) {
-      conditions.push(`json_extract(c.payload_json, '$.trader') = ?`);
-      args.push(opts.trader);
+    const sharedConditions = (out: string[], list: (string | number)[]) => {
+      if (opts.trader) {
+        out.push(`c.payload_json ->> 'trader' = ?`);
+        list.push(opts.trader);
+      }
+      if (opts.beforeTs !== undefined) {
+        out.push(`c.ledger_close_ts < ?`);
+        list.push(opts.beforeTs);
+      }
+    };
+
+    // Realized closes + isolated liquidations, joined to their open.
+    {
+      const conditions = [`c.topic IN ('position_closed', 'position_liquidated')`];
+      sharedConditions(conditions, args);
+      if (opts.asset) {
+        conditions.push(`o.payload_json ->> 'asset' = ?`);
+        args.push(opts.asset);
+      }
+      branches.push(`${branchColumns('o.payload_json')}
+        FROM events_raw c
+        LEFT JOIN events_raw o
+          ON o.topic = 'position_opened'
+         AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
+        WHERE ${conditions.join(' AND ')}`);
     }
-    if (opts.asset) {
-      conditions.push(`json_extract(o.payload_json, '$.asset') = ?`);
-      args.push(opts.asset);
+
+    // Cross-margin account liquidations. The contract emits ONE account-level
+    // cross_liq (trader, totalPnl, keeperReward) and NO per-position events,
+    // so these rows carry null position fields — and are skipped entirely
+    // under an asset filter (they have no asset to match).
+    if (!opts.asset) {
+      const conditions = [`c.topic = 'cross_liq'`];
+      sharedConditions(conditions, args);
+      branches.push(`${branchColumns('NULL')}
+        FROM events_raw c
+        WHERE ${conditions.join(' AND ')}`);
     }
-    if (opts.beforeTs !== undefined) {
-      conditions.push(`c.ledger_close_ts < ?`);
-      args.push(opts.beforeTs);
+
+    // Opens, opt-in: the Recent Trades tab shows Long/Short entries alongside
+    // closes and liquidations.
+    if (opts.includeOpens) {
+      const conditions = [`c.topic = 'position_opened'`];
+      sharedConditions(conditions, args);
+      if (opts.asset) {
+        conditions.push(`c.payload_json ->> 'asset' = ?`);
+        args.push(opts.asset);
+      }
+      branches.push(`${branchColumns('c.payload_json')}
+        FROM events_raw c
+        WHERE ${conditions.join(' AND ')}`);
     }
+
     try {
       const result = await this.db.execute({
         sql: `
-          SELECT c.topic AS topic, c.ledger AS ledger, c.ledger_close_ts AS ts,
-                 c.tx_hash AS tx_hash, c.payload_json AS payload_json,
-                 o.payload_json AS open_payload_json
-          FROM events_raw c
-          LEFT JOIN events_raw o
-            ON o.topic = 'position_opened'
-           AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
-          WHERE ${conditions.join(' AND ')}
-          ORDER BY c.ledger DESC, c.event_id DESC
+          SELECT * FROM (
+            ${branches.join('\n          UNION ALL\n')}
+          ) merged
+          ORDER BY ledger DESC, event_id DESC
           LIMIT ?
         `,
         args: [...args, limit],
@@ -221,17 +310,80 @@ export class StatsService {
   }
 
   /**
+   * Order lifecycle fold over events_raw: order_placed rows resolved to
+   * open / executed / cancelled by joining the terminal events on orderId.
+   * The order_placed payload carries only (orderId, trader, triggerPrice) —
+   * asset/direction/size live on-chain — so this is an id-hint feed: clients
+   * hydrate detail per id (get_order) for JUST the ids returned here instead
+   * of scanning every order id on the market (web KNOWN_ISSUES P-1).
+   * Scoped to the current market deployment for the same reason the
+   * leaderboard is: pre-redeploy order_placed events with no terminal event
+   * would otherwise surface as phantom forever-open orders.
+   */
+  async listOrders(
+    opts: { trader?: string; status?: 'open' | 'all'; limit?: number } = {},
+  ): Promise<OrderEventRow[]> {
+    const limit = Math.min(MAX_ORDERS_LIMIT, Math.max(1, opts.limit ?? DEFAULT_ORDERS_LIMIT));
+    const openOnly = opts.status !== 'all';
+    // Correlated probe for a terminal event of the given topic. Inlined
+    // (not a placeholder) so it can appear in both WHERE and SELECT.
+    const terminal = (topic: 'order_executed' | 'order_cancelled') => `EXISTS (
+      SELECT 1 FROM events_raw t
+      WHERE t.topic = '${topic}'
+        AND t.contract_id = p.contract_id
+        AND (t.payload_json ->> 'orderId') = (p.payload_json ->> 'orderId')
+    )`;
+    const conditions = [`p.topic = 'order_placed'`];
+    const args: (string | number)[] = [];
+    if (this.marketContractId) {
+      conditions.push(`p.contract_id = ?`);
+      args.push(this.marketContractId);
+    }
+    if (opts.trader) {
+      conditions.push(`p.payload_json ->> 'trader' = ?`);
+      args.push(opts.trader);
+    }
+    if (openOnly) {
+      conditions.push(`NOT ${terminal('order_executed')}`);
+      conditions.push(`NOT ${terminal('order_cancelled')}`);
+    }
+    try {
+      const result = await this.db.execute({
+        sql: `
+          SELECT p.payload_json AS payload_json,
+                 p.ledger AS ledger, p.ledger_close_ts AS ts, p.tx_hash AS tx_hash,
+                 CASE
+                   WHEN ${terminal('order_executed')} THEN 'executed'
+                   WHEN ${terminal('order_cancelled')} THEN 'cancelled'
+                   ELSE 'open'
+                 END AS status
+          FROM events_raw p
+          WHERE ${conditions.join(' AND ')}
+          ORDER BY p.ledger DESC, p.event_id DESC
+          LIMIT ?
+        `,
+        args: [...args, limit],
+      });
+      return result.rows.map(mapOrderEventRow);
+    } catch (err) {
+      if (isMissingTable(err)) return [];
+      throw err;
+    }
+  }
+
+  /**
    * Trader leaderboard from the indexer projections — the durable
    * replacement for the web cron that re-scanned Horizon (audit W-5 / P4-26).
-   * Ranks by lifetime realized PnL (sum of position_closed pnl) or by traded
-   * notional (opens + matched closes, mirroring the fee-tier volume model;
-   * liquidations excluded). Sums are folded in BigInt so large i128 totals
-   * stay exact regardless of libsql int mode. Cached briefly to absorb
-   * anonymous polling.
+   * Ranks by realized PnL (sum of position_closed pnl) or traded notional
+   * (opens + matched closes, mirroring the fee-tier volume model). Scoped to
+   * the current market deployment, then merged with the one-time
+   * leaderboard_legacy baseline (pre-2026-07-06 history from the retired web
+   * pipeline). Sums are folded in BigInt so large i128 totals stay exact.
+   * Cached briefly to absorb anonymous polling.
    */
   async leaderboard(
     opts: { sort?: LeaderboardSort; limit?: number } = {},
-  ): Promise<LeaderboardEntry[]> {
+  ): Promise<LeaderboardBoard> {
     const sort: LeaderboardSort = opts.sort === 'volume' ? 'volume' : 'pnl';
     const limit = Math.min(
       MAX_LEADERBOARD_LIMIT,
@@ -240,67 +392,131 @@ export class StatsService {
     return this.lbCache.getOrLoad(`${sort}:${limit}`, () => this.computeLeaderboard(sort, limit));
   }
 
-  private async computeLeaderboard(sort: LeaderboardSort, limit: number): Promise<LeaderboardEntry[]> {
-    const board = new Map<string, { pnl: bigint; volume: bigint }>();
+  private async computeLeaderboard(sort: LeaderboardSort, limit: number): Promise<LeaderboardBoard> {
+    const board = new Map<string, { pnl: bigint; volume: bigint; trades: number; liqCount: number }>();
     const bucket = (trader: string) => {
       let b = board.get(trader);
       if (!b) {
-        b = { pnl: 0n, volume: 0n };
+        b = { pnl: 0n, volume: 0n, trades: 0, liqCount: 0 };
         board.set(trader, b);
       }
       return b;
     };
+    const market = this.marketContractId;
 
     try {
-      const pnl = await this.db.execute(`
-        SELECT json_extract(payload_json, '$.trader') AS trader,
-               json_extract(payload_json, '$.pnl') AS pnl
-        FROM events_raw
-        WHERE topic = 'position_closed'
-      `);
+      const pnl = await this.db.execute({
+        sql: `
+          SELECT payload_json ->> 'trader' AS trader,
+                 payload_json ->> 'pnl' AS pnl
+          FROM events_raw
+          WHERE topic = 'position_closed' AND contract_id = ?
+        `,
+        args: [market],
+      });
       for (const row of pnl.rows) {
         const trader = row.trader == null ? '' : String(row.trader);
         if (trader) bucket(trader).pnl += toBigInt(row.pnl);
       }
-      const opens = await this.db.execute(`
-        SELECT json_extract(payload_json, '$.trader') AS trader,
-               json_extract(payload_json, '$.size') AS size
-        FROM events_raw
-        WHERE topic = 'position_opened'
-      `);
+      const opens = await this.db.execute({
+        sql: `
+          SELECT payload_json ->> 'trader' AS trader,
+                 payload_json ->> 'size' AS size
+          FROM events_raw
+          WHERE topic = 'position_opened' AND contract_id = ?
+        `,
+        args: [market],
+      });
       for (const row of opens.rows) {
         const trader = row.trader == null ? '' : String(row.trader);
-        if (trader) bucket(trader).volume += toBigInt(row.size);
+        if (trader) {
+          const b = bucket(trader);
+          b.volume += toBigInt(row.size);
+          b.trades += 1;
+        }
       }
-      const closes = await this.db.execute(`
-        SELECT json_extract(c.payload_json, '$.trader') AS trader,
-               json_extract(o.payload_json, '$.size') AS size
-        FROM events_raw c
-        JOIN events_raw o
-          ON o.topic = 'position_opened'
-         AND json_extract(o.payload_json, '$.positionId') = json_extract(c.payload_json, '$.positionId')
-        WHERE c.topic = 'position_closed'
-      `);
+      const closes = await this.db.execute({
+        sql: `
+          SELECT c.payload_json ->> 'trader' AS trader,
+                 o.payload_json ->> 'size' AS size
+          FROM events_raw c
+          JOIN events_raw o
+            ON o.topic = 'position_opened'
+           AND o.contract_id = c.contract_id
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
+          WHERE c.topic = 'position_closed' AND c.contract_id = ?
+        `,
+        args: [market],
+      });
       for (const row of closes.rows) {
         const trader = row.trader == null ? '' : String(row.trader);
         if (trader) bucket(trader).volume += toBigInt(row.size);
       }
+      const liqs = await this.db.execute({
+        sql: `
+          SELECT payload_json ->> 'trader' AS trader
+          FROM events_raw
+          WHERE topic IN ('position_liquidated', 'position_partial_liq', 'cross_liq')
+            AND contract_id = ?
+        `,
+        args: [market],
+      });
+      for (const row of liqs.rows) {
+        const trader = row.trader == null ? '' : String(row.trader);
+        if (trader) bucket(trader).liqCount += 1;
+      }
     } catch (err) {
-      if (isMissingTable(err)) return [];
+      if (isMissingTable(err)) return { updatedAt: null, leaders: [] };
       throw err;
+    }
+
+    // One-time baseline from the retired web pipeline (values already in
+    // 7-dec units — the import script scales them). Absent table = no merge.
+    try {
+      const legacy = await this.db.execute(
+        'SELECT address, trade_count, total_volume, total_pnl, liq_count FROM leaderboard_legacy',
+      );
+      for (const row of legacy.rows) {
+        const trader = row.address == null ? '' : String(row.address);
+        if (!trader) continue;
+        const b = bucket(trader);
+        b.pnl += toBigInt(row.total_pnl);
+        b.volume += toBigInt(row.total_volume);
+        b.trades += Number(row.trade_count ?? 0);
+        b.liqCount += Number(row.liq_count ?? 0);
+      }
+    } catch (err) {
+      if (!isMissingTable(err)) throw err;
     }
 
     const entries: LeaderboardEntry[] = [...board.entries()].map(([trader, b]) => ({
       trader,
       pnl: b.pnl.toString(),
       volume: b.volume.toString(),
+      trades: b.trades,
+      liqCount: b.liqCount,
     }));
     entries.sort((a, b) => {
       const av = sort === 'volume' ? BigInt(a.volume) : BigInt(a.pnl);
       const bv = sort === 'volume' ? BigInt(b.volume) : BigInt(b.pnl);
       return bv > av ? 1 : bv < av ? -1 : 0;
     });
-    return entries.slice(0, limit);
+
+    return { updatedAt: await this.cursorUpdatedAt(), leaders: entries.slice(0, limit) };
+  }
+
+  /** poll_cursor.updated_at (ms) → unix seconds; null before first poll. */
+  private async cursorUpdatedAt(): Promise<number | null> {
+    try {
+      const res = await this.db.execute('SELECT updated_at FROM poll_cursor WHERE id = 1');
+      const raw = res.rows[0]?.updated_at;
+      if (raw == null) return null;
+      const ms = Number(raw);
+      return Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : null;
+    } catch (err) {
+      if (isMissingTable(err)) return null;
+      throw err;
+    }
   }
 
   /**
@@ -341,6 +557,7 @@ function mapRealizedRow(row: Row): RealizedTradeRow {
     trader?: string;
     pnl?: string;
     closePrice?: string;
+    totalPnl?: string;
   };
   const open =
     row.open_payload_json == null
@@ -351,17 +568,51 @@ function mapRealizedRow(row: Row): RealizedTradeRow {
           size?: string;
           entryPrice?: string;
         });
-  const kind = String(row.topic) === 'position_liquidated' ? 'liquidation' : 'close';
+  const topic = String(row.topic);
+  const kind: RealizedTradeRow['kind'] =
+    topic === 'position_opened'
+      ? 'open'
+      : topic === 'cross_liq'
+        ? 'cross_liquidation'
+        : topic === 'position_liquidated'
+          ? 'liquidation'
+          : 'close';
   return {
-    positionId: Number(payload.positionId ?? 0),
+    // cross_liq is account-level: no position id (and no asset/size below).
+    positionId: kind === 'cross_liquidation' ? null : Number(payload.positionId ?? 0),
     trader: String(payload.trader ?? ''),
     kind,
     asset: open?.asset ?? null,
     direction: open?.direction ?? null,
     size: open?.size ?? null,
     entryPrice: open?.entryPrice ?? null,
-    closePrice: payload.closePrice ?? null,
-    pnl: kind === 'close' ? (payload.pnl ?? null) : null,
+    closePrice: kind === 'open' ? null : (payload.closePrice ?? null),
+    // Closes carry per-position pnl; cross liquidations carry the account
+    // total. Opens and isolated liquidations have none (liq events omit pnl).
+    pnl:
+      kind === 'close'
+        ? (payload.pnl ?? null)
+        : kind === 'cross_liquidation'
+          ? (payload.totalPnl ?? null)
+          : null,
+    ledger: Number(row.ledger),
+    ts: Number(row.ts),
+    txHash: String(row.tx_hash),
+  };
+}
+
+function mapOrderEventRow(row: Row): OrderEventRow {
+  const payload = JSON.parse(String(row.payload_json)) as {
+    orderId?: number;
+    trader?: string;
+    triggerPrice?: string;
+  };
+  const status = String(row.status);
+  return {
+    orderId: Number(payload.orderId ?? 0),
+    trader: String(payload.trader ?? ''),
+    triggerPrice: String(payload.triggerPrice ?? '0'),
+    status: status === 'executed' || status === 'cancelled' ? status : 'open',
     ledger: Number(row.ledger),
     ts: Number(row.ts),
     txHash: String(row.tx_hash),
@@ -391,11 +642,6 @@ function toBigInt(value: unknown): bigint {
   } catch {
     return 0n;
   }
-}
-
-function isMissingTable(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes('no such table');
 }
 
 function nowSec(): number {

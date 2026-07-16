@@ -121,7 +121,10 @@ export function VaultPnlSummary({
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-6 border-t border-border mt-4">
-          <Tile label="APY" value={fmtBps(vault.apyBps, true)} />
+          <Tile
+            label={vault.apyKind === 'inception' ? 'Since inception' : 'APY'}
+            value={fmtBps(vault.apyBps, true)}
+          />
           <Tile label="Max drawdown" value={fmtBps(vault.drawdownBps)} />
           <Tile label="Inflow" value={`$${fmtUsdc7(totalDeposits)}`} />
           <Tile label="Outflow" value={`$${fmtUsdc7(totalWithdraws + totalFees)}`} />

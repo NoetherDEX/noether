@@ -6,6 +6,7 @@ import { Header } from '@/components/layout';
 import { WalletProvider, WalletModal } from '@/components/wallet';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { fromPrecision, toPrecision, formatNumber } from '@/lib/utils';
+import { NULL_ACCOUNT } from '@/lib/utils/constants';
 import { decodeContractError } from '@/lib/utils/contractErrors';
 import { debugLog } from '@/lib/utils/debug';
 import {
@@ -24,6 +25,7 @@ import {
   getNoePrice,
   getVaultDepositFeeBps,
   getVaultWithdrawFeeBps,
+  getInsuranceFundBalance,
 } from '@/lib/stellar/vault';
 import {
   hasNoeTrustline,
@@ -44,11 +46,13 @@ function VaultPage() {
     noePrice: number | null;
     apy: number | null;
     noeBalance: number | null;
+    insuranceFund: number | null;
   }>({
     tvl: null,
     noePrice: null,
     apy: null, // real APR needs fee-revenue history (P4-15); hidden until then
     noeBalance: 0,
+    insuranceFund: null,
   });
 
   // On-chain deposit/withdraw fees in basis points (30 = 0.30%); null = unknown
@@ -68,22 +72,29 @@ function VaultPage() {
   const [withdrawPhase, setWithdrawPhase] = useState<1 | 2 | null>(null);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
-  // Fetch pool data. NOE price + fee reads simulate from NULL_ACCOUNT, so
-  // they work logged-out; TVL/balance/trustline reads need a wallet.
-  const fetchPoolData = useCallback(async () => {
+  // Fetch pool data. Every pool-level read (NOE price, fees, insurance, TVL)
+  // simulates from NULL_ACCOUNT when logged out — a prospective LP must see
+  // the real pool, not fabricated blanks (B14). Only the personal
+  // balance/trustline reads need a wallet. showLoading=false keeps
+  // post-action refreshes from flashing the page back to skeletons.
+  const fetchPoolData = useCallback(async (showLoading = true) => {
+    const source = publicKey ?? NULL_ACCOUNT;
     const publicReads = Promise.all([
-      getNoePrice(publicKey),
-      getVaultDepositFeeBps(publicKey),
-      getVaultWithdrawFeeBps(publicKey),
+      getNoePrice(source),
+      getVaultDepositFeeBps(source),
+      getVaultWithdrawFeeBps(source),
+      getInsuranceFundBalance(source),
+      getVaultUsdcBalance(source),
     ]);
 
     if (!publicKey) {
-      const [noePrice, depFeeBps, wdFeeBps] = await publicReads;
+      const [noePrice, depFeeBps, wdFeeBps, insuranceFund, vaultBalance] = await publicReads;
       setPoolStats({
-        tvl: null,
+        tvl: vaultBalance,
         noePrice: noePrice != null ? fromPrecision(noePrice) : null,
         apy: null,
         noeBalance: 0,
+        insuranceFund: insuranceFund != null ? fromPrecision(insuranceFund) : null,
       });
       setDepositFeeBps(depFeeBps);
       setWithdrawFeeBps(wdFeeBps);
@@ -91,12 +102,11 @@ function VaultPage() {
       return;
     }
 
-    setIsLoading(true);
+    if (showLoading) setIsLoading(true);
     try {
-      const [[noePrice, depFeeBps, wdFeeBps], vaultBalance, noeBalance, trustlineStatus] =
+      const [[noePrice, depFeeBps, wdFeeBps, insuranceFund, vaultBalance], noeBalance, trustlineStatus] =
         await Promise.all([
           publicReads,
-          getVaultUsdcBalance(publicKey),
           getNoeBalance(publicKey, publicKey),
           hasNoeTrustline(publicKey),
         ]);
@@ -113,6 +123,7 @@ function VaultPage() {
         noePrice: noePriceNum != null && isNaN(noePriceNum) ? null : noePriceNum,
         apy: null, // real APR needs fee-revenue history (P4-15); hidden until then
         noeBalance: noeBalanceNum,
+        insuranceFund: insuranceFund != null ? fromPrecision(insuranceFund) : null,
       });
       setDepositFeeBps(depFeeBps);
       setWithdrawFeeBps(wdFeeBps);
@@ -160,7 +171,7 @@ function VaultPage() {
       );
       setDepositAmount('');
       // Refresh pool stats and balances after deposit
-      await Promise.all([fetchPoolData(), refreshBalances()]);
+      await Promise.all([fetchPoolData(false), refreshBalances()]);
     } catch (error) {
       toast.error(decodeContractError(error, { contract: 'vault' }) || 'Deposit failed');
     } finally {
@@ -185,7 +196,7 @@ function VaultPage() {
       );
       setWithdrawAmount('');
       // Refresh pool stats and balances after withdrawal
-      await Promise.all([fetchPoolData(), refreshBalances()]);
+      await Promise.all([fetchPoolData(false), refreshBalances()]);
     } catch (error) {
       const detail = decodeContractError(error, { contract: 'vault' });
       toast.error(
@@ -243,6 +254,7 @@ function VaultPage() {
             tvl={poolStats.tvl}
             noePrice={poolStats.noePrice}
             apy={poolStats.apy}
+            insuranceFund={poolStats.insuranceFund}
             isLoading={isLoading && isConnected}
           />
 

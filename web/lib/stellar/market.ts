@@ -19,9 +19,14 @@ interface RawPosition {
   size: bigint;
   entry_price: bigint; // snake_case from contract
   liquidation_price: bigint; // snake_case from contract
-  opened_at: number | bigint; // snake_case from contract
-  last_funding_at: number | bigint;
-  accumulated_funding: bigint;
+  /** Unix seconds when opened. Current struct calls it `timestamp`. */
+  timestamp?: number | bigint;
+  /** Cumulative funding index snapshot at open (PRECISION-scaled). */
+  entry_cumulative_funding?: bigint;
+  /** Legacy field names from the pre-cumulative-funding struct — kept so a
+   *  stale deployment can't NaN the parse. */
+  opened_at?: number | bigint;
+  accumulated_funding?: bigint;
   margin_mode?: number | bigint; // 0 = Isolated, 1 = Cross
 }
 
@@ -38,9 +43,10 @@ function parsePosition(raw: RawPosition): Position {
     size: raw.size,
     entryPrice: raw.entry_price,
     liquidationPrice: raw.liquidation_price,
-    openedAt: Number(raw.opened_at),
-    lastFundingAt: Number(raw.last_funding_at),
-    accumulatedFunding: raw.accumulated_funding,
+    // The deployed struct's field is `timestamp`; the old parser read the
+    // long-renamed `opened_at`, silently producing Invalid Dates.
+    openedAt: Number(raw.timestamp ?? raw.opened_at ?? 0),
+    entryCumulativeFunding: BigInt(raw.entry_cumulative_funding ?? raw.accumulated_funding ?? 0),
     marginMode: Number(raw.margin_mode ?? 0) === 1 ? 'Cross' : 'Isolated',
   };
 }
@@ -228,7 +234,9 @@ export async function getPositions(traderPublicKey: string): Promise<Position[]>
     );
 
     if (!rpc.Api.isSimulationSuccess(idsResult) || !idsResult.result?.retval) {
-      return [];
+      // A failed read is NOT an empty account — throw so callers can keep
+      // last-good rows and show an error instead of "No open positions".
+      throw new Error('get_all_position_ids simulation failed');
     }
 
     const allIds = (scValToNative(idsResult.result.retval) as (number | bigint)[]).map(Number);
@@ -255,7 +263,8 @@ export async function getPositions(traderPublicKey: string): Promise<Position[]>
     return positions;
   } catch (error) {
     console.error('Error fetching positions:', error);
-    return [];
+    // Propagate: failure must stay distinguishable from "no positions".
+    throw error instanceof Error ? error : new Error('Failed to fetch positions');
   }
 }
 
@@ -273,10 +282,15 @@ async function buildSimulateTransaction(
   method: string,
   args: ReturnType<typeof toScVal>[]
 ) {
-  const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
+  const { TransactionBuilder, BASE_FEE, Account } = await import('@stellar/stellar-sdk');
   const { NETWORK } = await import('@/lib/utils/constants');
 
-  const account = await sorobanRpc.getAccount(publicKey);
+  // Locally-built Account with a dummy sequence: simulateTransaction ignores
+  // sequence numbers (see the NULL_ACCOUNT note in constants.ts), so the
+  // getAccount fetch this used to do was a wasted round-trip that DOUBLED
+  // every read — and the per-id readers amplified it once per position/order.
+  // Submission paths still fetch the real account in client.ts.
+  const account = new Account(publicKey, '0');
   const operation = marketContract.call(method, ...args);
 
   return new TransactionBuilder(account, {
@@ -293,7 +307,10 @@ async function buildSimulateTransaction(
  */
 export function toDisplayPosition(
   position: Position,
-  currentPrice: number
+  currentPrice: number,
+  /** Current global cumulative funding index (PRECISION-scaled) — enables
+   *  the per-position accrued-funding estimate (B4). null/omitted = unknown. */
+  cumulativeFunding?: bigint | null
 ): DisplayPosition {
   const entryPrice = bigIntToNumber(position.entryPrice);
   const collateral = bigIntToNumber(position.collateral);
@@ -322,6 +339,19 @@ export function toDisplayPosition(
     leverage: isNaN(leverage) ? 0 : leverage,
     openedAt: new Date(position.openedAt * 1000),
     marginMode: position.marginMode || 'Isolated',
+    // B4: mirrors the contract's close-time settlement —
+    // calculate_cumulative_funding(size, direction, entry_snapshot, current).
+    // Positive = the position PAYS this on close. null = index unknown.
+    pendingFunding:
+      cumulativeFunding == null
+        ? null
+        : (() => {
+            const delta = cumulativeFunding - position.entryCumulativeFunding;
+            // size(7dp) × delta(PRECISION-scaled) / PRECISION → 7dp USDC
+            const raw = (position.size * delta) / 10_000_000n;
+            const usd = Number(raw) / 10_000_000;
+            return position.direction === 'Long' ? usd : -usd;
+          })(),
   };
 }
 
@@ -507,6 +537,56 @@ function parseClosePositionFromTransaction(
               fee: undefined,
               timestamp: new Date(tx.created_at),
             };
+          } else if (firstTopic === 'position_liquidated') {
+            // (position_id, trader, asset, direction, size, keeper_reward, current_price)
+            const eventData = scValToNative(data);
+            if (!Array.isArray(eventData)) continue;
+            const trader = eventData[1] as string;
+            if (trader !== traderPublicKey) continue;
+            const dirVal = eventData[3];
+            const direction: Direction =
+              typeof dirVal === 'number'
+                ? dirVal === 0 ? 'Long' : 'Short'
+                : typeof dirVal === 'object' && dirVal !== null && 'Short' in dirVal
+                ? 'Short'
+                : 'Long';
+            return {
+              id: tx.id,
+              txHash: tx.hash,
+              trader,
+              asset: String(eventData[2] ?? 'Unknown'),
+              direction,
+              type: 'liquidation',
+              size: bigIntToNumber(BigInt(eventData[4] ?? 0)),
+              price: bigIntToNumber(BigInt(eventData[6] ?? 0)),
+              // Entry/PnL are NOT in the deployed event (C2 adds them) —
+              // undefined renders '—', never a fabricated figure.
+              entryPrice: undefined,
+              pnl: undefined,
+              fee: undefined,
+              timestamp: new Date(tx.created_at),
+            };
+          } else if (firstTopic === 'cross_liq') {
+            // (trader, total_pnl, keeper_reward) — one event for the whole
+            // cross account; rendered as a single 'Cross account' row.
+            const eventData = scValToNative(data);
+            if (!Array.isArray(eventData)) continue;
+            const trader = eventData[0] as string;
+            if (trader !== traderPublicKey) continue;
+            return {
+              id: tx.id,
+              txHash: tx.hash,
+              trader,
+              asset: 'CROSS',
+              direction: 'Long',
+              type: 'liquidation',
+              size: 0,
+              price: 0,
+              entryPrice: undefined,
+              pnl: bigIntToNumber(BigInt(eventData[1] ?? 0)),
+              fee: undefined,
+              timestamp: new Date(tx.created_at),
+            };
           }
         }
       } catch {
@@ -535,23 +615,32 @@ async function getTradeHistoryFromEvents(traderPublicKey: string): Promise<Trade
 
     debugLog(`[TradeHistory] Fetching events from ledger ${startLedger} to ${latestLedger.sequence}`);
 
-    // Try position_closed first (what contract actually emits)
+    // Closes AND liquidations — a liquidated trader must find the record
+    // in their history, not a silent gap (B1).
     const response = await sorobanRpc.getEvents({
       startLedger,
       filters: [
         {
           type: 'contract',
           contractIds: [CONTRACTS.MARKET],
-          topics: [
-            [xdr.ScVal.scvSymbol('position_closed').toXDR('base64')],
-          ],
+          topics: [[xdr.ScVal.scvSymbol('position_closed').toXDR('base64')]],
+        },
+        {
+          type: 'contract',
+          contractIds: [CONTRACTS.MARKET],
+          topics: [[xdr.ScVal.scvSymbol('position_liquidated').toXDR('base64')]],
+        },
+        {
+          type: 'contract',
+          contractIds: [CONTRACTS.MARKET],
+          topics: [[xdr.ScVal.scvSymbol('cross_liq').toXDR('base64')]],
         },
       ],
       limit: 100,
     });
 
     if (!response.events || response.events.length === 0) {
-      debugLog('[TradeHistory] No position_closed events found');
+      debugLog('[TradeHistory] No close/liquidation events found');
       return [];
     }
 
@@ -559,6 +648,75 @@ async function getTradeHistoryFromEvents(traderPublicKey: string): Promise<Trade
     return parseEventsToTrades(response.events, traderPublicKey);
   } catch (error) {
     console.error('Error fetching trade history from events:', error);
+    return [];
+  }
+}
+
+/** One recent liquidation touching the trader (B1 vanish-toast source). */
+export interface RecentLiquidation {
+  /** null = whole cross account was liquidated (cross_liq). */
+  positionId: number | null;
+  /** Liquidation price for isolated positions; 0 for cross events. */
+  price: number;
+  /** Total account PnL for cross liquidations; null for isolated. */
+  totalPnl: number | null;
+}
+
+/**
+ * Best-effort scan of recent position_liquidated / cross_liq events for one
+ * trader, so the UI can say "Position #N liquidated at $X" when a row
+ * vanishes between polls instead of deleting it silently (B1). Errors return
+ * [] — no toast is better than a wrong toast.
+ */
+export async function getRecentLiquidations(
+  traderPublicKey: string,
+  lookbackLedgers = 240 // ≈ 20 minutes of ledgers
+): Promise<RecentLiquidation[]> {
+  try {
+    const latestLedger = await sorobanRpc.getLatestLedger();
+    const startLedger = Math.max(1, latestLedger.sequence - lookbackLedgers);
+    const response = await sorobanRpc.getEvents({
+      startLedger,
+      filters: [
+        {
+          type: 'contract',
+          contractIds: [CONTRACTS.MARKET],
+          topics: [[xdr.ScVal.scvSymbol('position_liquidated').toXDR('base64')]],
+        },
+        {
+          type: 'contract',
+          contractIds: [CONTRACTS.MARKET],
+          topics: [[xdr.ScVal.scvSymbol('cross_liq').toXDR('base64')]],
+        },
+      ],
+      limit: 50,
+    });
+
+    const out: RecentLiquidation[] = [];
+    for (const event of response.events ?? []) {
+      try {
+        const topic = event.topic?.length ? String(scValToNative(event.topic[0])) : '';
+        const data = scValToNative(event.value);
+        if (!Array.isArray(data)) continue;
+        if (topic === 'position_liquidated') {
+          if ((data[1] as string) !== traderPublicKey) continue;
+          out.push({
+            positionId: Number(data[0]),
+            price: bigIntToNumber(BigInt(data[6] ?? 0)),
+            totalPnl: null,
+          });
+        } else if (topic === 'cross_liq') {
+          if ((data[0] as string) !== traderPublicKey) continue;
+          out.push({
+            positionId: null,
+            price: 0,
+            totalPnl: bigIntToNumber(BigInt(data[1] ?? 0)),
+          });
+        }
+      } catch {}
+    }
+    return out;
+  } catch {
     return [];
   }
 }
@@ -819,11 +977,15 @@ export async function cancelOrder(
 
 /**
  * Get all orders for a trader (read-only).
- * Uses get_all_order_ids + get_order since get_orders was removed for WASM size.
+ * Uses get_all_order_ids + get_order since get_orders was removed for WASM
+ * size — the cost scales with EVERY order the market has stored, not the
+ * trader's. FALLBACK path: the trade page prefers /v1/orders/open id-hints
+ * + getOrdersByIds and only lands here when the gateway can't speak for
+ * this market (see gatewayServesThisMarket).
  */
 export async function getOrders(traderPublicKey: string): Promise<Order[]> {
   try {
-    const allIds = await getAllOrderIds(traderPublicKey);
+    const allIds = await getAllOrderIds(traderPublicKey, true);
     const orders: Order[] = [];
 
     for (const id of allIds) {
@@ -840,14 +1002,17 @@ export async function getOrders(traderPublicKey: string): Promise<Order[]> {
     return orders;
   } catch (error) {
     console.error('Error fetching orders:', error);
-    return [];
+    // Propagate: failure must stay distinguishable from "no orders".
+    throw error instanceof Error ? error : new Error('Failed to fetch orders');
   }
 }
 
 /**
- * Get all pending order IDs (for orderbook) - read-only
+ * Get all pending order IDs (for orderbook) - read-only.
+ * `strict` makes a failed read THROW instead of returning [] — used by
+ * getOrders so an RPC outage never masquerades as an empty account.
  */
-export async function getAllOrderIds(publicKey: string): Promise<number[]> {
+export async function getAllOrderIds(publicKey: string, strict = false): Promise<number[]> {
   try {
     const result = await sorobanRpc.simulateTransaction(
       await buildSimulateTransaction(publicKey, 'get_all_order_ids', [])
@@ -858,9 +1023,11 @@ export async function getAllOrderIds(publicKey: string): Promise<number[]> {
       return ids.map(id => Number(id));
     }
 
+    if (strict) throw new Error('get_all_order_ids simulation failed');
     return [];
   } catch (error) {
     console.error('Error fetching all order IDs:', error);
+    if (strict) throw error instanceof Error ? error : new Error('Failed to fetch order ids');
     return [];
   }
 }
@@ -889,8 +1056,25 @@ export async function getOrderById(publicKey: string, orderId: number): Promise<
 }
 
 /**
+ * Hydrate a specific set of order IDs (read-only).
+ * Mirrors getPositionsByIds: the indexer-backed /v1/orders/open endpoint
+ * supplies WHICH ids belong to the trader (or are open market-wide) and only
+ * those are read on-chain — replacing the get_all_order_ids + every-order
+ * scan whose cost grew with the whole market's order history (P-1).
+ * Ids that no longer resolve on-chain (pruned/just-executed) are dropped.
+ */
+export async function getOrdersByIds(source: string, orderIds: number[]): Promise<Order[]> {
+  if (orderIds.length === 0) return [];
+  const results = await Promise.all(orderIds.map((id) => getOrderById(source, id)));
+  return results.filter((order): order is Order => order !== null);
+}
+
+/**
  * Get all pending orders for orderbook (read-only)
- * Fetches all order IDs and then fetches each order's details
+ * Fetches all order IDs and then fetches each order's details.
+ * FALLBACK path — the order book prefers /v1/orders/open id-hints +
+ * getOrdersByIds and only lands here when the gateway can't speak for
+ * this market (see gatewayServesThisMarket).
  */
 export async function getAllPendingOrders(publicKey: string): Promise<Order[]> {
   try {
@@ -963,6 +1147,64 @@ function parseEventsToTrades(events: rpc.Api.EventResponse[], traderPublicKey: s
       if (!eventData) continue;
 
       const data = scValToNative(eventData);
+
+      // Dispatch by topic — the query returns closes AND liquidations (B1).
+      let topicName = '';
+      try {
+        topicName = event.topic?.length ? String(scValToNative(event.topic[0])) : '';
+      } catch {}
+
+      if (topicName === 'position_liquidated') {
+        // (position_id, trader, asset, direction, size, keeper_reward, current_price)
+        if (!Array.isArray(data)) continue;
+        const trader = data[1] as string;
+        if (trader !== traderPublicKey) continue;
+        const dirVal = data[3];
+        const direction: Direction =
+          typeof dirVal === 'number'
+            ? dirVal === 0 ? 'Long' : 'Short'
+            : typeof dirVal === 'object' && dirVal !== null && 'Short' in dirVal
+            ? 'Short'
+            : 'Long';
+        trades.push({
+          id: `${event.id}`,
+          txHash: event.txHash,
+          trader,
+          asset: String(data[2] ?? 'Unknown'),
+          direction,
+          type: 'liquidation',
+          size: bigIntToNumber(BigInt(data[4] ?? 0)),
+          price: bigIntToNumber(BigInt(data[6] ?? 0)),
+          // Entry/PnL are not in the deployed event (C2 adds them) — '—'.
+          entryPrice: undefined,
+          pnl: undefined,
+          fee: undefined,
+          timestamp: new Date(event.ledgerClosedAt || Date.now()),
+        });
+        continue;
+      }
+
+      if (topicName === 'cross_liq') {
+        // (trader, total_pnl, keeper_reward)
+        if (!Array.isArray(data)) continue;
+        const trader = data[0] as string;
+        if (trader !== traderPublicKey) continue;
+        trades.push({
+          id: `${event.id}`,
+          txHash: event.txHash,
+          trader,
+          asset: 'CROSS',
+          direction: 'Long',
+          type: 'liquidation',
+          size: 0,
+          price: 0,
+          entryPrice: undefined,
+          pnl: bigIntToNumber(BigInt(data[1] ?? 0)),
+          fee: undefined,
+          timestamp: new Date(event.ledgerClosedAt || Date.now()),
+        });
+        continue;
+      }
 
       // Extract fields from the NEW event format
       let trader: string = traderPublicKey;
@@ -1320,6 +1562,34 @@ export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
  * Returns null when the rate is unknown (RPC failure or the storage entry
  * is absent) — callers must render '—', never a healthy-looking 0.
  */
+/**
+ * Read the global cumulative funding index (PRECISION-scaled i128) straight
+ * from contract storage. Positions snapshot this at open; pending funding =
+ * size × (current − snapshot) / PRECISION, signed by direction (B4).
+ * Returns null when unknown — callers render '—', never assert 0.
+ */
+export async function getCumulativeFundingRate(): Promise<bigint | null> {
+  try {
+    const key = xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract: new Address(CONTRACTS.MARKET).toScAddress(),
+        key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('CumulativeFundingRate')]),
+        durability: xdr.ContractDataDurability.persistent(),
+      })
+    );
+
+    const entries = await sorobanRpc.getLedgerEntries(key);
+    if (entries.entries && entries.entries.length > 0) {
+      const val = scValToNative(entries.entries[0].val.contractData().val());
+      return typeof val === 'bigint' ? val : BigInt(Number(val));
+    }
+    // Entry absent = funding has never accrued — the index is genuinely 0.
+    return 0n;
+  } catch {
+    return null;
+  }
+}
+
 export async function getFundingRate(): Promise<number | null> {
   try {
     const PRECISION = 10_000_000;

@@ -37,12 +37,14 @@ COPY indexer/package.json ./indexer/
 COPY sdk-ts/package.json ./sdk-ts/
 COPY packages/types/package.json ./packages/types/
 COPY packages/shared/package.json ./packages/shared/
+COPY packages/db/package.json ./packages/db/
 COPY packages/tx-builders/package.json ./packages/tx-builders/
 RUN npm ci --omit=dev --ignore-scripts
 
 # Bring in built artifacts.
 COPY --from=builder /repo/packages/types/dist       ./packages/types/dist
 COPY --from=builder /repo/packages/shared/dist      ./packages/shared/dist
+COPY --from=builder /repo/packages/db/dist          ./packages/db/dist
 COPY --from=builder /repo/packages/tx-builders/dist ./packages/tx-builders/dist
 COPY --from=builder /repo/api/dist                  ./api/dist
 

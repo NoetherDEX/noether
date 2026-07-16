@@ -13,3 +13,31 @@
     display: none !important;
   }
 }
+
+/* ============================================================
+   Hero entrance — pure CSS so the headline/CTAs are VISIBLE in
+   the SSR HTML and paint as soon as styles load, instead of
+   shipping framer-motion's inline opacity:0 and waiting for the
+   whole JS bundle to hydrate (LCP was 4.3s because of that).
+   `backwards` keeps the from-state during the stagger delay.
+   ============================================================ */
+@keyframes hero-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-enter {
+  animation: hero-fade-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-enter {
+    animation: none;
+  }
+}

@@ -135,7 +135,7 @@ export interface KeeperConfig {
 
   // Contract addresses
   marketContractId: string;
-  /** Noeracle on-chain contract — destination for update_ed25519_persistent. */
+  /** Noeracle on-chain contract — destination for update_batch_ed25519_persistent. */
   noeracleContractId: string;
   vaultContractId: string;
   /** Router — extended by the TTL job (P3-9). */
@@ -168,6 +168,22 @@ export interface KeeperConfig {
   referenceTickerUrl: string;
   /** Skip the push when attestation vs reference diverges more than this %. */
   referenceDivergencePct: number;
+
+  // Stork secondary oracle (T3-D1) — fail-open: empty key disables it.
+  /** Stork API token (Authorization: Basic <token>). Empty = disabled. */
+  storkApiKey: string;
+  /** Stork Core REST base URL. */
+  storkRestUrl: string;
+  /** Skip the push when attestation vs Stork diverges more than this %. */
+  storkMaxDivergencePct: number;
+  /** Ignore cached Stork prices older than this (stale data must not veto). */
+  storkMaxAgeMs: number;
+
+  // Oracle-health heartbeat (T3-D1) — fail-open: empty URL disables it.
+  /** api gateway heartbeat ingest URL (…/v1/oracle/heartbeat). */
+  heartbeatUrl: string;
+  /** Shared secret sent as x-keeper-secret. */
+  heartbeatSecret: string;
 
   // Alerting (K-1)
   discordWebhookUrl?: string;

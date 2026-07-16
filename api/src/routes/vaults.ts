@@ -36,6 +36,7 @@ const VAULT_SCHEMA = {
     tradeCount: { type: 'integer' },
     drawdownBps: { type: 'integer' },
     apyBps: { type: 'integer' },
+    apyKind: { type: 'string', enum: ['annualized', 'inception'] },
     closedTradePnl: { type: 'string' },
   },
   required: ['id', 'leader', 'name', 'createdAt', 'totalUsdc', 'circulatingShares'],

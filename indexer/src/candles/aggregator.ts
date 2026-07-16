@@ -12,7 +12,7 @@
  * this only needs to persist CLOSED candles — keeping writes to one per bucket.
  */
 
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import type { Logger } from 'pino';
 import {
   CANDLE_INTERVALS,
@@ -38,7 +38,7 @@ export interface CandleAggregatorStatus {
 }
 
 export interface CandleAggregatorOpts {
-  db: Client;
+  db: Db;
   log: Logger;
   noeracleApiUrl: string;
   assets: string[];

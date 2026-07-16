@@ -9,7 +9,7 @@
  */
 
 import { createServer, type Server } from 'node:http';
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 import type { Logger } from 'pino';
 import { readCursor, type PollCursor } from './cursor.js';
 import type { PollerHealth } from './poll.js';
@@ -17,7 +17,7 @@ import type { CandleAggregatorStatus } from './candles/aggregator.js';
 
 export interface HealthServerOpts {
   port: number;
-  db: Client;
+  db: Db;
   log: Logger;
   maxPollAgeMs: number;
   source: { health(): PollerHealth };

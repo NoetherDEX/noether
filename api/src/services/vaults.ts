@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import { isMissingTable, type Db } from '@noether/db';
 import { TtlCache } from './cache.js';
 
 export interface VaultRow {
@@ -22,8 +22,14 @@ export interface VaultRow {
   tradeCount?: number;
   /** Drawdown in basis points = (hwm - nav) / hwm × 10000, floor 0. */
   drawdownBps?: number;
-  /** Annualised yield in basis points (closedTradePnl / TVL × 365 / days). */
+  /** Yield in basis points, SIGNED (losing vaults are negative). Annualised
+   *  only when the vault is ≥7 days old; younger vaults report the raw
+   *  since-inception return (see apyKind) — annualising a days-old track
+   *  record fabricates triple-digit APYs. */
   apyBps?: number;
+  /** 'annualized' (≥7d old) or 'inception' (younger — apyBps is the raw
+   *  since-inception return, NOT an annual rate). */
+  apyKind?: 'annualized' | 'inception';
   /**
    * Sum of pnl from every leader_close in vault_trades (7-dec USDC,
    * signed). This is the "lifetime PnL from closed trades returned
@@ -80,6 +86,7 @@ export interface VaultAggregates {
   tradeCount: number;
   drawdownBps: number;
   apyBps: number;
+  apyKind: 'annualized' | 'inception';
   closedTradePnl: string;
 }
 
@@ -109,7 +116,7 @@ export class VaultsService {
   // /v1/vaults requests doesn't re-run the N+1 round-trips every time.
   private readonly aggCache = new TtlCache<VaultAggregates>(AGG_TTL_MS);
 
-  constructor(private readonly db: Client) {}
+  constructor(private readonly db: Db) {}
 
   async list(opts?: { leader?: string; limit?: number }): Promise<VaultRow[]> {
     const limit = clampLimit(opts?.limit);
@@ -127,8 +134,7 @@ export class VaultsService {
       });
       return result.rows.map((r) => toRow(r as unknown as Record<string, unknown>));
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return [];
+      if (isMissingTable(err)) return [];
       throw err;
     }
   }
@@ -142,8 +148,7 @@ export class VaultsService {
       const row = result.rows[0];
       return row ? toRow(row as unknown as Record<string, unknown>) : null;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return null;
+      if (isMissingTable(err)) return null;
       throw err;
     }
   }
@@ -186,8 +191,7 @@ export class VaultsService {
         };
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return [];
+      if (isMissingTable(err)) return [];
       throw err;
     }
   }
@@ -240,6 +244,7 @@ export class VaultsService {
     const v = vault ?? (await this.get(vaultId));
     let drawdownBps = 0;
     let apyBps = 0;
+    let apyKind: 'annualized' | 'inception' = 'annualized';
     if (v) {
       const total = BigInt(v.totalUsdc);
       const shares = BigInt(v.circulatingShares);
@@ -256,13 +261,24 @@ export class VaultsService {
       const lifetime = BigInt(closedTradePnl);
       const nowSec = Math.floor(Date.now() / 1000);
       const days = Math.max(1, (nowSec - v.createdAt) / 86_400);
-      if (total > 0n && lifetime > 0n) {
-        // closedTradePnl / total * 10000 → bps for the lifetime, scale to year
+      if (total > 0n && lifetime !== 0n) {
+        // SIGNED: a losing vault must show a negative yield, never a
+        // neutral 0.00% (the primary allocation metric can't be a number
+        // that mathematically cannot go negative).
         const lifeBps = Number((lifetime * 10_000n) / total);
-        apyBps = Math.round((lifeBps * 365) / days);
+        if (days >= 7) {
+          apyBps = Math.round((lifeBps * 365) / days);
+        } else {
+          // Too young to annualise honestly — report the raw
+          // since-inception return and flag it via apyKind.
+          apyBps = lifeBps;
+          apyKind = 'inception';
+        }
+      } else if (days < 7) {
+        apyKind = 'inception';
       }
     }
-    return { depositorCount, openPositions, tradeCount, drawdownBps, apyBps, closedTradePnl };
+    return { depositorCount, openPositions, tradeCount, drawdownBps, apyBps, apyKind, closedTradePnl };
   }
 
   private async activity(
@@ -304,8 +320,7 @@ export class VaultsService {
         return out;
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('no such table')) return [];
+      if (isMissingTable(err)) return [];
       throw err;
     }
   }

@@ -22,6 +22,7 @@ import {
 } from '@noether/tx-builders/market';
 import type { TxBuildContext, PreparedTx } from '@noether/tx-builders';
 import { isSupportedAsset } from '@noether/shared';
+import type { StatsService } from '../services/stats.js';
 
 interface OpenPositionBody {
   op: 'open_position' | 'open_position_cross';
@@ -194,7 +195,71 @@ export interface OrdersRouteDeps {
   };
 }
 
-export async function registerOrderRoutes(app: FastifyInstance, deps: OrdersRouteDeps): Promise<void> {
+interface OrdersOpenQuery {
+  trader?: string;
+  status?: 'open' | 'all';
+  limit?: number;
+}
+
+const ORDER_EVENT_SCHEMA = {
+  type: 'object',
+  properties: {
+    orderId: { type: 'integer' },
+    trader: { type: 'string' },
+    triggerPrice: { type: 'string' },
+    status: { type: 'string', enum: ['open', 'executed', 'cancelled'] },
+    ledger: { type: 'integer' },
+    ts: { type: 'integer' },
+    txHash: { type: 'string' },
+  },
+  required: ['orderId', 'trader', 'triggerPrice', 'status', 'ledger', 'ts', 'txHash'],
+} as const;
+
+export async function registerOrderRoutes(
+  app: FastifyInstance,
+  deps: OrdersRouteDeps,
+  stats: StatsService,
+): Promise<void> {
+  // Public id-hint feed (no auth — mirrors /v1/positions/open). order_placed
+  // events folded against order_executed / order_cancelled; detail
+  // (asset, direction, size) is NOT here — clients hydrate per id on-chain.
+  app.get<{ Querystring: OrdersOpenQuery }>(
+    '/v1/orders/open',
+    {
+      schema: {
+        description:
+          'Orders placed on the current market, folded to open / executed / cancelled, newest first. ' +
+          'order_placed events carry only (orderId, trader, triggerPrice) — hydrate detail on-chain ' +
+          'via get_order for the ids returned. Default status=open; status=all includes resolved ' +
+          'orders (order history). Use this to avoid iterating every on-chain order id.',
+        tags: ['orders'],
+        querystring: {
+          type: 'object',
+          properties: {
+            trader: { type: 'string', minLength: 56, maxLength: 56 },
+            status: { type: 'string', enum: ['open', 'all'] },
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { orders: { type: 'array', items: ORDER_EVENT_SCHEMA } },
+            required: ['orders'],
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const rows = await stats.listOrders({
+        trader: req.query.trader?.trim() || undefined,
+        status: req.query.status,
+        limit: req.query.limit,
+      });
+      return reply.send({ orders: rows });
+    },
+  );
+
   const builders = {
     openPosition: deps.builders?.openPosition ?? buildOpenPositionTx,
     closePosition: deps.builders?.closePosition ?? buildClosePositionTx,

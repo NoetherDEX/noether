@@ -12,6 +12,7 @@ import { listVaults } from '@/lib/api/vaults';
 import { vaultRowFromOnChain, vaultNav, type VaultRow } from '@/types/vault';
 import { CONTRACTS } from '@/lib/utils/constants';
 import { fmtUsdc7 } from '@/lib/utils/format';
+import { toUserMessage } from '@/lib/utils/userError';
 
 function shortenAddress(addr: string): string {
   if (addr.length <= 12) return addr;
@@ -38,6 +39,11 @@ export default function VaultsPage() {
   const [vaults, setVaults] = useState<VaultRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // B17: the browsing job — sortable/filterable/searchable, TVL-first
+  // (the old oldest-first unsortable grid failed it).
+  const [sortBy, setSortBy] = useState<'tvl' | 'apy' | 'newest' | 'depositors'>('tvl');
+  const [hidePaused, setHidePaused] = useState(false);
+  const [search, setSearch] = useState('');
   // Live NOE price for the protocol-vault panel — null means "unknown",
   // rendered as '—' (never a fabricated $1.000).
   const [noePrice, setNoePrice] = useState<bigint | null>(null);
@@ -79,6 +85,7 @@ export default function VaultsPage() {
             return {
               ...base,
               apyBps: enrich.apyBps,
+              apyKind: enrich.apyKind,
               drawdownBps: enrich.drawdownBps,
               depositorCount: enrich.depositorCount,
               openPositions: enrich.openPositions,
@@ -90,7 +97,7 @@ export default function VaultsPage() {
         setErr(null);
       } catch (e) {
         if (cancelled) return;
-        setErr(e instanceof Error ? e.message : String(e));
+        setErr(toUserMessage(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -105,6 +112,34 @@ export default function VaultsPage() {
     !loading && !err
       ? vaults.reduce((acc, v) => acc + BigInt(v.totalUsdc), 0n)
       : null;
+
+  // B17: filter + sort applied client-side over the loaded rows.
+  const q = search.trim().toLowerCase();
+  const visibleVaults = vaults
+    .filter((v) => (hidePaused ? !v.paused : true))
+    .filter(
+      (v) =>
+        !q ||
+        v.name.toLowerCase().includes(q) ||
+        v.leader.toLowerCase().includes(q)
+    )
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'apy':
+          // nulls (no aggregate yet) sink to the bottom
+          return (b.apyBps ?? Number.NEGATIVE_INFINITY) - (a.apyBps ?? Number.NEGATIVE_INFINITY);
+        case 'newest':
+          return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+        case 'depositors':
+          return (b.depositorCount ?? -1) - (a.depositorCount ?? -1);
+        case 'tvl':
+        default: {
+          const at = BigInt(a.totalUsdc);
+          const bt = BigInt(b.totalUsdc);
+          return bt > at ? 1 : bt < at ? -1 : 0;
+        }
+      }
+    });
 
   return (
     <div className="min-h-screen bg-background">
@@ -242,7 +277,53 @@ export default function VaultsPage() {
               </div>
             )}
 
-            {!loading && !err && <LeaderVaultTable vaults={vaults} />}
+            {/* B17: browse controls — sort, paused filter, leader/name search */}
+            {!loading && !err && vaults.length > 0 && (
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1 bg-surface-2 rounded-md p-0.5">
+                  {(
+                    [
+                      ['tvl', 'TVL'],
+                      ['apy', 'Yield'],
+                      ['newest', 'Newest'],
+                      ['depositors', 'Depositors'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setSortBy(key)}
+                      aria-pressed={sortBy === key}
+                      className={`px-2.5 py-1 rounded-sm text-xs font-medium transition-colors ${
+                        sortBy === key
+                          ? 'bg-surface-3 text-primary'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hidePaused}
+                    onChange={(e) => setHidePaused(e.target.checked)}
+                    className="accent-[hsl(var(--primary))]"
+                  />
+                  Hide paused
+                </label>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search name or leader…"
+                  aria-label="Search vaults by name or leader address"
+                  className="ml-auto h-8 w-full sm:w-56 bg-surface-2 border border-border rounded-md px-3 text-xs text-foreground placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong"
+                />
+              </div>
+            )}
+
+            {!loading && !err && <LeaderVaultTable vaults={visibleVaults} />}
           </section>
         </div>
       </main>
@@ -341,6 +422,14 @@ function LeaderVaultTable({ vaults }: { vaults: VaultRow[] }) {
                 </td>
                 <td className={`pr-4 text-right font-mono tabular-nums text-sm ${apyClass}`}>
                   {fmtBps(v.apyBps, true)}
+                  {v.apyKind === 'inception' && (
+                    <span
+                      className="text-faint"
+                      title="Since inception — vault is under 7 days old, not an annualized rate"
+                    >
+                      {' '}*
+                    </span>
+                  )}
                 </td>
                 <td className="pr-4 text-right font-mono tabular-nums text-sm text-foreground">
                   {fmtBps(v.drawdownBps)}

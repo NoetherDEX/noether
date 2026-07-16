@@ -2,12 +2,12 @@
  * One-time Binance history seed for a fresh candles table (the operator's
  * "seed once from Binance, native going forward" choice).
  *
- * INSERT OR IGNORE only fills MISSING buckets, so it never overwrites a candle
+ * ON CONFLICT DO NOTHING only fills MISSING buckets, so it never overwrites a candle
  * the aggregator has already written natively. We seed a given (asset, interval)
  * only when it has zero rows, so restarts don't re-fetch or clobber.
  */
 
-import type { Client } from '@libsql/client';
+import type { Db } from '@noether/db';
 
 // Multiple endpoints because Binance geo-blocks some regions (mirrors the web
 // price proxy). 451/403 → try the next base.
@@ -48,7 +48,7 @@ export function hasBinancePair(asset: string): boolean {
  * Returns the number of bars inserted (0 if already seeded or no feed).
  */
 export async function seedFromBinance(
-  db: Client,
+  db: Db,
   asset: string,
   interval: string,
   limit: number,
@@ -66,8 +66,9 @@ export async function seedFromBinance(
   if (klines.length === 0) return 0;
 
   const stmts = klines.map((k) => ({
-    sql: `INSERT OR IGNORE INTO candles (asset, interval, bucket_ts, open, high, low, close, volume)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+    sql: `INSERT INTO candles (asset, interval, bucket_ts, open, high, low, close, volume)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+          ON CONFLICT (asset, interval, bucket_ts) DO NOTHING`,
     args: [asset, interval, k.bucketTs, k.open, k.high, k.low, k.close] as (string | number | bigint)[],
   }));
   for (let i = 0; i < stmts.length; i += SEED_CHUNK) {
