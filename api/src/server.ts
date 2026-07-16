@@ -117,7 +117,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
   await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth));
   await app.register((instance) => registerAccountRoutes(instance, deps.db));
-  await app.register((instance) => registerOrderRoutes(instance, deps.orders));
+  await app.register((instance) => registerOrderRoutes(instance, deps.orders, deps.stats));
   await app.register((instance) => registerTxRoutes(instance, deps.tx));
   await app.register((instance) => registerVaultRoutes(instance, deps.vaults));
   await app.register((instance) => registerReferralRoutes(instance, deps.referral));

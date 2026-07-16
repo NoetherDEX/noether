@@ -8,6 +8,8 @@ export const VOLUME_WINDOW_SEC = 14 * DAY_SEC;
 const STATS_TTL_MS = 5_000;
 const DEFAULT_TRADES_LIMIT = 50;
 const MAX_TRADES_LIMIT = 200;
+const DEFAULT_ORDERS_LIMIT = 50;
+const MAX_ORDERS_LIMIT = 200;
 const DEFAULT_LEADERBOARD_LIMIT = 50;
 const MAX_LEADERBOARD_LIMIT = 200;
 const DEFAULT_CANDLES_LIMIT = 500;
@@ -53,6 +55,19 @@ export interface RealizedTradeRow {
   entryPrice: string | null;
   closePrice: string | null;
   pnl: string | null;
+  ledger: number;
+  ts: number;
+  txHash: string;
+}
+
+export type OrderEventStatus = 'open' | 'executed' | 'cancelled';
+
+export interface OrderEventRow {
+  orderId: number;
+  trader: string;
+  /** 7-dec trigger price as emitted by order_placed. */
+  triggerPrice: string;
+  status: OrderEventStatus;
   ledger: number;
   ts: number;
   txHash: string;
@@ -233,6 +248,68 @@ export class StatsService {
         args: [...args, limit],
       });
       return result.rows.map(mapRealizedRow);
+    } catch (err) {
+      if (isMissingTable(err)) return [];
+      throw err;
+    }
+  }
+
+  /**
+   * Order lifecycle fold over events_raw: order_placed rows resolved to
+   * open / executed / cancelled by joining the terminal events on orderId.
+   * The order_placed payload carries only (orderId, trader, triggerPrice) —
+   * asset/direction/size live on-chain — so this is an id-hint feed: clients
+   * hydrate detail per id (get_order) for JUST the ids returned here instead
+   * of scanning every order id on the market (web KNOWN_ISSUES P-1).
+   * Scoped to the current market deployment for the same reason the
+   * leaderboard is: pre-redeploy order_placed events with no terminal event
+   * would otherwise surface as phantom forever-open orders.
+   */
+  async listOrders(
+    opts: { trader?: string; status?: 'open' | 'all'; limit?: number } = {},
+  ): Promise<OrderEventRow[]> {
+    const limit = Math.min(MAX_ORDERS_LIMIT, Math.max(1, opts.limit ?? DEFAULT_ORDERS_LIMIT));
+    const openOnly = opts.status !== 'all';
+    // Correlated probe for a terminal event of the given topic. Inlined
+    // (not a placeholder) so it can appear in both WHERE and SELECT.
+    const terminal = (topic: 'order_executed' | 'order_cancelled') => `EXISTS (
+      SELECT 1 FROM events_raw t
+      WHERE t.topic = '${topic}'
+        AND t.contract_id = p.contract_id
+        AND (t.payload_json ->> 'orderId') = (p.payload_json ->> 'orderId')
+    )`;
+    const conditions = [`p.topic = 'order_placed'`];
+    const args: (string | number)[] = [];
+    if (this.marketContractId) {
+      conditions.push(`p.contract_id = ?`);
+      args.push(this.marketContractId);
+    }
+    if (opts.trader) {
+      conditions.push(`p.payload_json ->> 'trader' = ?`);
+      args.push(opts.trader);
+    }
+    if (openOnly) {
+      conditions.push(`NOT ${terminal('order_executed')}`);
+      conditions.push(`NOT ${terminal('order_cancelled')}`);
+    }
+    try {
+      const result = await this.db.execute({
+        sql: `
+          SELECT p.payload_json AS payload_json,
+                 p.ledger AS ledger, p.ledger_close_ts AS ts, p.tx_hash AS tx_hash,
+                 CASE
+                   WHEN ${terminal('order_executed')} THEN 'executed'
+                   WHEN ${terminal('order_cancelled')} THEN 'cancelled'
+                   ELSE 'open'
+                 END AS status
+          FROM events_raw p
+          WHERE ${conditions.join(' AND ')}
+          ORDER BY p.ledger DESC, p.event_id DESC
+          LIMIT ?
+        `,
+        args: [...args, limit],
+      });
+      return result.rows.map(mapOrderEventRow);
     } catch (err) {
       if (isMissingTable(err)) return [];
       throw err;
@@ -446,6 +523,24 @@ function mapRealizedRow(row: Row): RealizedTradeRow {
     entryPrice: open?.entryPrice ?? null,
     closePrice: payload.closePrice ?? null,
     pnl: kind === 'close' ? (payload.pnl ?? null) : null,
+    ledger: Number(row.ledger),
+    ts: Number(row.ts),
+    txHash: String(row.tx_hash),
+  };
+}
+
+function mapOrderEventRow(row: Row): OrderEventRow {
+  const payload = JSON.parse(String(row.payload_json)) as {
+    orderId?: number;
+    trader?: string;
+    triggerPrice?: string;
+  };
+  const status = String(row.status);
+  return {
+    orderId: Number(payload.orderId ?? 0),
+    trader: String(payload.trader ?? ''),
+    triggerPrice: String(payload.triggerPrice ?? '0'),
+    status: status === 'executed' || status === 'cancelled' ? status : 'open',
     ledger: Number(row.ledger),
     ts: Number(row.ts),
     txHash: String(row.tx_hash),
