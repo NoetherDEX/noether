@@ -282,10 +282,15 @@ async function buildSimulateTransaction(
   method: string,
   args: ReturnType<typeof toScVal>[]
 ) {
-  const { TransactionBuilder, BASE_FEE } = await import('@stellar/stellar-sdk');
+  const { TransactionBuilder, BASE_FEE, Account } = await import('@stellar/stellar-sdk');
   const { NETWORK } = await import('@/lib/utils/constants');
 
-  const account = await sorobanRpc.getAccount(publicKey);
+  // Locally-built Account with a dummy sequence: simulateTransaction ignores
+  // sequence numbers (see the NULL_ACCOUNT note in constants.ts), so the
+  // getAccount fetch this used to do was a wasted round-trip that DOUBLED
+  // every read — and the per-id readers amplified it once per position/order.
+  // Submission paths still fetch the real account in client.ts.
+  const account = new Account(publicKey, '0');
   const operation = marketContract.call(method, ...args);
 
   return new TransactionBuilder(account, {
@@ -972,7 +977,11 @@ export async function cancelOrder(
 
 /**
  * Get all orders for a trader (read-only).
- * Uses get_all_order_ids + get_order since get_orders was removed for WASM size.
+ * Uses get_all_order_ids + get_order since get_orders was removed for WASM
+ * size — the cost scales with EVERY order the market has stored, not the
+ * trader's. FALLBACK path: the trade page prefers /v1/orders/open id-hints
+ * + getOrdersByIds and only lands here when the gateway can't speak for
+ * this market (see gatewayServesThisMarket).
  */
 export async function getOrders(traderPublicKey: string): Promise<Order[]> {
   try {
@@ -1047,8 +1056,25 @@ export async function getOrderById(publicKey: string, orderId: number): Promise<
 }
 
 /**
+ * Hydrate a specific set of order IDs (read-only).
+ * Mirrors getPositionsByIds: the indexer-backed /v1/orders/open endpoint
+ * supplies WHICH ids belong to the trader (or are open market-wide) and only
+ * those are read on-chain — replacing the get_all_order_ids + every-order
+ * scan whose cost grew with the whole market's order history (P-1).
+ * Ids that no longer resolve on-chain (pruned/just-executed) are dropped.
+ */
+export async function getOrdersByIds(source: string, orderIds: number[]): Promise<Order[]> {
+  if (orderIds.length === 0) return [];
+  const results = await Promise.all(orderIds.map((id) => getOrderById(source, id)));
+  return results.filter((order): order is Order => order !== null);
+}
+
+/**
  * Get all pending orders for orderbook (read-only)
- * Fetches all order IDs and then fetches each order's details
+ * Fetches all order IDs and then fetches each order's details.
+ * FALLBACK path — the order book prefers /v1/orders/open id-hints +
+ * getOrdersByIds and only lands here when the gateway can't speak for
+ * this market (see gatewayServesThisMarket).
  */
 export async function getAllPendingOrders(publicKey: string): Promise<Order[]> {
   try {

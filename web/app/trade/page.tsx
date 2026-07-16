@@ -36,6 +36,7 @@ import {
   closePosition,
   closePositionCross,
   getOrders,
+  getOrdersByIds,
   toDisplayOrder,
   setStopLoss,
   setTakeProfit,
@@ -45,6 +46,8 @@ import {
   getRecentLiquidations,
 } from '@/lib/stellar/market';
 import { listOpenPositions } from '@/lib/api/positions';
+import { listOrderHints } from '@/lib/api/orders';
+import { gatewayServesThisMarket } from '@/lib/api/gateway';
 import { getMarketsStats, type AssetMarketStats } from '@/lib/api/markets';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { subscribeLivePrices } from '@/lib/stellar/noeracle';
@@ -246,27 +249,36 @@ function TradePage() {
             .filter((id) => thisVaultIds.has(String(id))),
         );
       } else {
-        // Personal mode: fast path via the indexer API, then fall back to the
-        // full contract scan whenever the API yields NOTHING — whether it
-        // errored OR returned empty. Empty-but-OK is not trusted here because
-        // it also happens (a) on staging, where the shared API indexes the
-        // PRODUCTION market and so never has staging-market positions, and
-        // (b) in the brief window after opening before the indexer catches up.
-        // Net effect: never show "no positions" when the chain has them, while
-        // staying fast whenever the API does have the trader's positions. (At
-        // worst this is exactly the old whole-market scan, never slower.)
-        let apiPositions: Awaited<ReturnType<typeof getPositionsByIds>> = [];
+        // Personal mode: fast path via the indexer API. An API ERROR still
+        // falls back to the full contract scan, but a successful EMPTY
+        // response is now trusted when gatewayServesThisMarket() confirms the
+        // gateway (a) resolves THIS build's market contract and (b) has a
+        // fresh indexer cursor. The guard is what makes trusting "empty"
+        // safe: on staging the shared gateway indexes the PRODUCTION market
+        // (address mismatch → never trusted → old scan behavior), and a
+        // stalled indexer demotes the gateway within a minute. The brief
+        // post-trade indexer lag is covered by refreshPositionsAfterTrade's
+        // 0/2.5s/6s burst. Without this, a wallet with ZERO positions always
+        // paid the worst path: a sequential scan of every position id on the
+        // market just to render "No open positions".
+        let apiPositions: Awaited<ReturnType<typeof getPositionsByIds>> | null = null;
         try {
           const open = await listOpenPositions(publicKey);
-          apiPositions = await getPositionsByIds(
-            publicKey,
-            open.map((p) => p.positionId),
-          );
+          if (open.length === 0) {
+            apiPositions = (await gatewayServesThisMarket()) ? [] : null;
+          } else {
+            const hydrated = await getPositionsByIds(
+              publicKey,
+              open.map((p) => p.positionId),
+            );
+            // Every hinted id failed to resolve on-chain (all closed this
+            // instant, or the RPC dropped the reads) — stay defensive: rescan.
+            apiPositions = hydrated.length > 0 ? hydrated : null;
+          }
         } catch {
           // API/indexer unavailable — fall through to the contract scan.
         }
-        contractPositions =
-          apiPositions.length > 0 ? apiPositions : await getPositions(publicKey);
+        contractPositions = apiPositions ?? (await getPositions(publicKey));
       }
 
       if (isStale()) return;
@@ -343,7 +355,34 @@ function TradePage() {
     setIsRefreshingOrders(true);
 
     try {
-      const contractOrders = await getOrders(publicKey);
+      // Fast path: id-hints from /v1/orders/open (status=all keeps the
+      // executed/cancelled history rows), hydrated per-id on-chain — replaces
+      // getOrders' get_all_order_ids + EVERY-market-order sequential scan.
+      // Same trust rules as positions: hints only count when the gateway
+      // serves THIS market with a fresh cursor; an API error, a mismatched
+      // market, or a suspicious hydration miss falls back to the legacy scan.
+      let contractOrders: Awaited<ReturnType<typeof getOrders>> | null = null;
+      if (await gatewayServesThisMarket()) {
+        try {
+          const hints = await listOrderHints({ trader: publicKey, status: 'all', limit: 200 });
+          if (hints.length === 0) {
+            contractOrders = [];
+          } else {
+            const hydrated = await getOrdersByIds(publicKey, hints.map((h) => h.orderId));
+            // Hydration coming back empty is legitimate when every hinted
+            // order is already resolved (executed/cancelled orders get pruned
+            // from contract storage) — but with an 'open' hint outstanding it
+            // smells like dropped RPC reads, so rescan.
+            const hasOpenHint = hints.some((h) => h.status === 'open');
+            contractOrders = hydrated.length > 0 || !hasOpenHint ? hydrated : null;
+          }
+        } catch {
+          contractOrders = null; // gateway hiccup — legacy scan below
+        }
+      }
+      if (contractOrders === null) {
+        contractOrders = await getOrders(publicKey);
+      }
       if (isStale()) return;
       const displayOrders = contractOrders.map(toDisplayOrder);
 

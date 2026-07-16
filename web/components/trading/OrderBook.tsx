@@ -4,11 +4,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, ExternalLink, TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { formatUSD, formatPrice } from '@/lib/utils';
-import { getAllPendingOrders, toDisplayOrder } from '@/lib/stellar/market';
+import { getAllPendingOrders, getOrdersByIds, toDisplayOrder } from '@/lib/stellar/market';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
+import { listOrderHints } from '@/lib/api/orders';
+import { gatewayServesThisMarket } from '@/lib/api/gateway';
 import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useWallet } from '@/lib/hooks/useWallet';
-import type { DisplayOrder } from '@/types';
+import type { DisplayOrder, Order } from '@/types';
 
 interface OrderBookProps {
   asset: string;
@@ -34,8 +36,28 @@ export function OrderBook({ asset }: OrderBookProps) {
     setIsRefreshing(true);
 
     try {
-      // Fetch all pending orders
-      const allOrders = await getAllPendingOrders(queryKey);
+      // Fast path: open-order id-hints from the indexer, hydrated per-id.
+      // The legacy whole-market scan (get_all_order_ids + every order) only
+      // runs when the gateway can't speak for this market — staging pointing
+      // at the prod indexer, a stalled cursor, or an API outage.
+      let allOrders: Order[] | null = null;
+      if (await gatewayServesThisMarket()) {
+        try {
+          const hints = await listOrderHints({ status: 'open', limit: 200 });
+          const hydrated =
+            hints.length === 0
+              ? []
+              : await getOrdersByIds(queryKey, hints.map((h) => h.orderId));
+          // Chain stays the authority on status — an order the indexer still
+          // thinks is open may have just filled.
+          allOrders = hydrated.filter((o) => o.status === 'Pending');
+        } catch {
+          allOrders = null; // gateway hiccup — legacy scan below
+        }
+      }
+      if (allOrders === null) {
+        allOrders = await getAllPendingOrders(queryKey);
+      }
 
       // Filter for current asset and only limit entry orders
       const assetOrders = allOrders

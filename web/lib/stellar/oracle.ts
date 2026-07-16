@@ -20,17 +20,17 @@ const oracleContract = new Contract(CONTRACTS.NOERACLE_SHIM);
  * NEVER coerce a null price to 0 (`priceMap[asset] || 0` paints an open long
  * as a −100% loss on one flaky RPC response).
  *
- * `publicKey` is only the simulation source; pass null/undefined for
- * logged-out reads (uses the well-known NULL_ACCOUNT, no getAccount fetch).
+ * `publicKey` is only the simulation source; null/undefined uses the
+ * well-known NULL_ACCOUNT. No account is ever fetched — simulateTransaction
+ * ignores sequence numbers, so the getAccount round-trip connected wallets
+ * used to pay here only doubled the read.
  */
 export async function getPrice(
   publicKey: string | null | undefined,
   asset: string
 ): Promise<PriceData | null> {
   try {
-    const account = publicKey
-      ? await sorobanRpc.getAccount(publicKey)
-      : new Account(NULL_ACCOUNT, '0');
+    const account = new Account(publicKey ?? NULL_ACCOUNT, '0');
     const operation = oracleContract.call('lastprice', toScVal(asset, 'symbol'));
 
     const transaction = new TransactionBuilder(account, {
