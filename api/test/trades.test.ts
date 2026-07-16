@@ -13,7 +13,7 @@ const traderA = Keypair.random().publicKey();
 const traderB = Keypair.random().publicKey();
 
 interface TradeRow {
-  positionId: number;
+  positionId: number | null;
   trader: string;
   kind: string;
   asset: string | null;
@@ -38,6 +38,8 @@ beforeEach(async () => {
       { eventId: 't6', topic: 'position_closed', ledger: 202, txHash: 'h3', payload: { topic: 'position_closed', positionId: 3, trader: traderB, pnl: '-9', closePrice: '580000000000' } },
       // realized event whose open predates indexer history → null enrichment
       { eventId: 't7', topic: 'position_closed', ledger: 203, txHash: 'h4', payload: { topic: 'position_closed', positionId: 99, trader: traderB, pnl: '1', closePrice: '1000000000' } },
+      // account-level cross-margin liquidation — no positionId/asset/size
+      { eventId: 't8', topic: 'cross_liq', ledger: 204, txHash: 'h5', payload: { topic: 'cross_liq', trader: traderA, totalPnl: '-4200', keeperReward: '55' } },
     ],
   });
   app = setup.app;
@@ -48,7 +50,18 @@ describe('GET /v1/trades', () => {
     const res = await app!.inject({ method: 'GET', url: '/v1/trades' });
     expect(res.statusCode).toBe(200);
     const { trades } = res.json() as { trades: TradeRow[] };
-    expect(trades.map((t) => t.positionId)).toEqual([99, 3, 2, 1]);
+    expect(trades.map((t) => t.positionId)).toEqual([null, 99, 3, 2, 1]);
+
+    const crossRow = trades[0]!;
+    expect(crossRow.kind).toBe('cross_liquidation');
+    expect(crossRow.trader).toBe(traderA);
+    expect(crossRow.pnl).toBe('-4200'); // account-total pnl from the event
+    expect(crossRow.asset).toBeNull();
+    expect(crossRow.direction).toBeNull();
+    expect(crossRow.size).toBeNull();
+    expect(crossRow.entryPrice).toBeNull();
+    expect(crossRow.closePrice).toBeNull();
+    expect(crossRow.txHash).toBe('h5');
 
     const closeRow = trades.find((t) => t.positionId === 1)!;
     expect(closeRow.kind).toBe('close');
@@ -75,19 +88,21 @@ describe('GET /v1/trades', () => {
     expect(orphan.pnl).toBe('1');
   });
 
-  it('filters by trader', async () => {
+  it('filters by trader (cross_liquidation rows included for their trader)', async () => {
     const res = await app!.inject({ method: 'GET', url: `/v1/trades?trader=${traderA}` });
     expect(res.statusCode).toBe(200);
     const { trades } = res.json() as { trades: TradeRow[] };
-    expect(trades.map((t) => t.positionId)).toEqual([2, 1]);
+    expect(trades.map((t) => t.positionId)).toEqual([null, 2, 1]);
+    expect(trades[0]!.kind).toBe('cross_liquidation');
     expect(trades.every((t) => t.trader === traderA)).toBe(true);
   });
 
-  it('filters by asset (case-insensitive) and drops rows without a known open', async () => {
+  it('filters by asset (case-insensitive), dropping open-less rows AND asset-less cross rows', async () => {
     const res = await app!.inject({ method: 'GET', url: '/v1/trades?asset=btc' });
     expect(res.statusCode).toBe(200);
     const { trades } = res.json() as { trades: TradeRow[] };
     expect(trades.map((t) => t.positionId)).toEqual([3, 1]);
+    expect(trades.some((t) => t.kind === 'cross_liquidation')).toBe(false);
   });
 
   it('honours the limit parameter', async () => {
@@ -95,7 +110,44 @@ describe('GET /v1/trades', () => {
     expect(res.statusCode).toBe(200);
     const { trades } = res.json() as { trades: TradeRow[] };
     expect(trades).toHaveLength(1);
-    expect(trades[0]!.positionId).toBe(99);
+    expect(trades[0]!.kind).toBe('cross_liquidation'); // ledger 204 is newest
+  });
+
+  it('includes position_opened rows as kind:open only when include_opens=true', async () => {
+    const without = await app!.inject({ method: 'GET', url: '/v1/trades' });
+    const withoutRows = (without.json() as { trades: TradeRow[] }).trades;
+    expect(withoutRows.some((t) => t.kind === 'open')).toBe(false);
+
+    const res = await app!.inject({ method: 'GET', url: '/v1/trades?include_opens=true' });
+    expect(res.statusCode).toBe(200);
+    const { trades } = res.json() as { trades: TradeRow[] };
+    // 5 default rows + 3 opens, still newest-first overall
+    expect(trades.map((t) => `${t.kind}:${t.positionId}`)).toEqual([
+      'cross_liquidation:null',
+      'close:99',
+      'close:3',
+      'liquidation:2',
+      'close:1',
+      'open:3',
+      'open:2',
+      'open:1',
+    ]);
+
+    const openRow = trades.find((t) => t.kind === 'open' && t.positionId === 1)!;
+    expect(openRow.trader).toBe(traderA);
+    expect(openRow.asset).toBe('BTC');
+    expect(openRow.direction).toBe(0);
+    expect(openRow.size).toBe('10000000000');
+    expect(openRow.entryPrice).toBe('600000000000');
+    expect(openRow.closePrice).toBeNull();
+    expect(openRow.pnl).toBeNull();
+  });
+
+  it('combines include_opens with the asset filter', async () => {
+    const res = await app!.inject({ method: 'GET', url: '/v1/trades?include_opens=true&asset=ETH' });
+    expect(res.statusCode).toBe(200);
+    const { trades } = res.json() as { trades: TradeRow[] };
+    expect(trades.map((t) => `${t.kind}:${t.positionId}`)).toEqual(['liquidation:2', 'open:2']);
   });
 
   it('rejects an out-of-range limit', async () => {

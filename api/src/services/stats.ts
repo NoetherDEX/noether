@@ -46,9 +46,10 @@ export interface AssetStats {
 }
 
 export interface RealizedTradeRow {
-  positionId: number;
+  /** Null for account-level rows (cross_liquidation carries no position id). */
+  positionId: number | null;
   trader: string;
-  kind: 'close' | 'liquidation';
+  kind: 'open' | 'close' | 'liquidation' | 'cross_liquidation';
   asset: string | null;
   direction: number | null;
   size: string | null;
@@ -214,35 +215,89 @@ export class StatsService {
   }
 
   async recentTrades(
-    opts: { trader?: string; asset?: string; beforeTs?: number; limit?: number } = {},
+    opts: {
+      trader?: string;
+      asset?: string;
+      beforeTs?: number;
+      limit?: number;
+      /** Also emit position_opened events as kind:'open' rows (Recent Trades tab). */
+      includeOpens?: boolean;
+    } = {},
   ): Promise<RealizedTradeRow[]> {
     const limit = Math.min(MAX_TRADES_LIMIT, Math.max(1, opts.limit ?? DEFAULT_TRADES_LIMIT));
-    const conditions = [`c.topic IN ('position_closed', 'position_liquidated')`];
+
+    // Three UNION ALL branches over events_raw, one per row family. Every
+    // branch selects the same column list (topic disambiguates in the
+    // mapper); each assembles its own conditions so the ? placeholders line
+    // up per branch. The opens branch aliases the row's OWN payload as
+    // open_payload_json so the mapper reads asset/direction/size/entryPrice
+    // through one code path for every kind.
+    const branchColumns = (openPayload: string) => `
+        SELECT c.topic AS topic, c.ledger AS ledger, c.event_id AS event_id,
+               c.ledger_close_ts AS ts, c.tx_hash AS tx_hash,
+               c.payload_json AS payload_json, ${openPayload} AS open_payload_json`;
+    const branches: string[] = [];
     const args: (string | number)[] = [];
-    if (opts.trader) {
-      conditions.push(`c.payload_json ->> 'trader' = ?`);
-      args.push(opts.trader);
+    const sharedConditions = (out: string[], list: (string | number)[]) => {
+      if (opts.trader) {
+        out.push(`c.payload_json ->> 'trader' = ?`);
+        list.push(opts.trader);
+      }
+      if (opts.beforeTs !== undefined) {
+        out.push(`c.ledger_close_ts < ?`);
+        list.push(opts.beforeTs);
+      }
+    };
+
+    // Realized closes + isolated liquidations, joined to their open.
+    {
+      const conditions = [`c.topic IN ('position_closed', 'position_liquidated')`];
+      sharedConditions(conditions, args);
+      if (opts.asset) {
+        conditions.push(`o.payload_json ->> 'asset' = ?`);
+        args.push(opts.asset);
+      }
+      branches.push(`${branchColumns('o.payload_json')}
+        FROM events_raw c
+        LEFT JOIN events_raw o
+          ON o.topic = 'position_opened'
+         AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
+        WHERE ${conditions.join(' AND ')}`);
     }
-    if (opts.asset) {
-      conditions.push(`o.payload_json ->> 'asset' = ?`);
-      args.push(opts.asset);
+
+    // Cross-margin account liquidations. The contract emits ONE account-level
+    // cross_liq (trader, totalPnl, keeperReward) and NO per-position events,
+    // so these rows carry null position fields — and are skipped entirely
+    // under an asset filter (they have no asset to match).
+    if (!opts.asset) {
+      const conditions = [`c.topic = 'cross_liq'`];
+      sharedConditions(conditions, args);
+      branches.push(`${branchColumns('NULL')}
+        FROM events_raw c
+        WHERE ${conditions.join(' AND ')}`);
     }
-    if (opts.beforeTs !== undefined) {
-      conditions.push(`c.ledger_close_ts < ?`);
-      args.push(opts.beforeTs);
+
+    // Opens, opt-in: the Recent Trades tab shows Long/Short entries alongside
+    // closes and liquidations.
+    if (opts.includeOpens) {
+      const conditions = [`c.topic = 'position_opened'`];
+      sharedConditions(conditions, args);
+      if (opts.asset) {
+        conditions.push(`c.payload_json ->> 'asset' = ?`);
+        args.push(opts.asset);
+      }
+      branches.push(`${branchColumns('c.payload_json')}
+        FROM events_raw c
+        WHERE ${conditions.join(' AND ')}`);
     }
+
     try {
       const result = await this.db.execute({
         sql: `
-          SELECT c.topic AS topic, c.ledger AS ledger, c.ledger_close_ts AS ts,
-                 c.tx_hash AS tx_hash, c.payload_json AS payload_json,
-                 o.payload_json AS open_payload_json
-          FROM events_raw c
-          LEFT JOIN events_raw o
-            ON o.topic = 'position_opened'
-           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
-          WHERE ${conditions.join(' AND ')}
-          ORDER BY c.ledger DESC, c.event_id DESC
+          SELECT * FROM (
+            ${branches.join('\n          UNION ALL\n')}
+          ) merged
+          ORDER BY ledger DESC, event_id DESC
           LIMIT ?
         `,
         args: [...args, limit],
@@ -502,6 +557,7 @@ function mapRealizedRow(row: Row): RealizedTradeRow {
     trader?: string;
     pnl?: string;
     closePrice?: string;
+    totalPnl?: string;
   };
   const open =
     row.open_payload_json == null
@@ -512,17 +568,33 @@ function mapRealizedRow(row: Row): RealizedTradeRow {
           size?: string;
           entryPrice?: string;
         });
-  const kind = String(row.topic) === 'position_liquidated' ? 'liquidation' : 'close';
+  const topic = String(row.topic);
+  const kind: RealizedTradeRow['kind'] =
+    topic === 'position_opened'
+      ? 'open'
+      : topic === 'cross_liq'
+        ? 'cross_liquidation'
+        : topic === 'position_liquidated'
+          ? 'liquidation'
+          : 'close';
   return {
-    positionId: Number(payload.positionId ?? 0),
+    // cross_liq is account-level: no position id (and no asset/size below).
+    positionId: kind === 'cross_liquidation' ? null : Number(payload.positionId ?? 0),
     trader: String(payload.trader ?? ''),
     kind,
     asset: open?.asset ?? null,
     direction: open?.direction ?? null,
     size: open?.size ?? null,
     entryPrice: open?.entryPrice ?? null,
-    closePrice: payload.closePrice ?? null,
-    pnl: kind === 'close' ? (payload.pnl ?? null) : null,
+    closePrice: kind === 'open' ? null : (payload.closePrice ?? null),
+    // Closes carry per-position pnl; cross liquidations carry the account
+    // total. Opens and isolated liquidations have none (liq events omit pnl).
+    pnl:
+      kind === 'close'
+        ? (payload.pnl ?? null)
+        : kind === 'cross_liquidation'
+          ? (payload.totalPnl ?? null)
+          : null,
     ledger: Number(row.ledger),
     ts: Number(row.ts),
     txHash: String(row.tx_hash),
