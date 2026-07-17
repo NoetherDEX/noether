@@ -90,6 +90,12 @@ const FACTORY_ERROR_MESSAGES: Record<number, string> = {
   13: 'Amount too large — arithmetic overflow',
   14: 'Could not compute the vault share price — please retry',
   15: 'No performance fees to claim yet',
+  // L0-20: fund isolation + full-NAV valuation
+  16: 'That position or order does not belong to this vault',
+  17: 'Capital is deployed in open positions — wait for the leader to free liquidity before withdrawing this much',
+  18: 'Could not value the vault right now (price feed unavailable) — please retry',
+  19: 'This vault has too many open positions and orders — close some first',
+  20: 'Vault creation is currently restricted (allowlist or max-vaults cap)',
 };
 
 /** ReferralError — contracts/referral/src/types.rs. */
@@ -131,11 +137,11 @@ function toMessageString(err: unknown): string {
  * Look up the human-readable message for a numeric contract error code.
  *
  * `context` selects the per-contract table (defaults to the NoetherError
- * market/vault table). For `vault_factory`, codes ≥ 20 fall back to the
- * NoetherError table: factory codes stop at 15, and leader-trade proxies
- * surface market-side errors (positions/oracle/orders) through the factory
- * frame (outside FactoryError's 1-15 range — no collision possible). Returns
- * null when the code is unknown for the given context.
+ * market/vault table). For `vault_factory`, codes ≥ 21 fall back to the
+ * NoetherError table: FactoryError now owns 1-20 (L0-20 added 16-20), and
+ * leader-trade proxies surface market-side errors (positions/oracle/orders,
+ * all ≥ 21 except the practically-unreachable PositionNotFound=20) through
+ * the factory frame. Returns null when the code is unknown for the context.
  */
 export function messageForCode(
   code: number,
@@ -143,7 +149,7 @@ export function messageForCode(
 ): string | null {
   return (
     TABLES[context][code] ??
-    (context === 'vault_factory' && code >= 20 ? NOETHER_ERROR_MESSAGES[code] : undefined) ??
+    (context === 'vault_factory' && code >= 21 ? NOETHER_ERROR_MESSAGES[code] : undefined) ??
     null
   );
 }
