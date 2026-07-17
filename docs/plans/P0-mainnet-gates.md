@@ -39,7 +39,7 @@
 | L0-18 | External audit, published (operator/process — the mainnet critical path) | L | operator | operator-track | L0-1..L0-6, L0-8..L0-15, L0-20, L1-1..L1-3, L1-5, L1-8, L1-18, L1-20..L1-24, L1-26, L1-28..L1-30, L2-1, L2-4, L2-6, L2-11 | todo |
 | L0-19 | Second keeper + router execution path (liveness) | M | mixed | offchain-now | — | todo |
 | L0-20 | vault_factory fund isolation (V-1) + NAV valuation (V-4) — or hard launch gate | M | mixed | batch-1-redeploy | — | todo |
-| L0-21 | tx-builders arity fix + SDK republish (ships NOW, no redeploy needed) | S | offchain | offchain-now | — | todo |
+| L0-21 | tx-builders arity fix + SDK republish (ships NOW, no redeploy needed) | S | offchain | offchain-now | — | done (2026-07-17, code + CI guard; npm/PyPI 0.1.2 publish = operator step, tracked in L1-14) |
 
 ## Redeploy Batch 1 manifest
 
@@ -1769,7 +1769,7 @@ PROCESS SPEC. Submit NOW — the 2-4 month scheduling lead overlaps Batch-1 deve
 
 ### L0-21 · tx-builders arity fix + SDK republish (ships NOW, no redeploy needed)
 
-**Status:** todo · **Effort:** S · **Lane:** offchain · **Ships in:** offchain-now · **Needs:** — · **Blocks:** L0-6, L0-10, L1-2, L1-4, L1-14, L2-1, L2-6
+**Status:** done (2026-07-17 — commits 11f4272 + 8e22aac: builders at 9/10/5 args, timeInForce/reduceOnly + TP limitPrice through prepare + both SDKs, snapshots regenerated, live-simulation guard passing 10/10 vs the PROD deployment; remaining: 0.1.2 npm/PyPI publish, operator, tracked in L1-14) · **Effort:** S · **Lane:** offchain · **Ships in:** offchain-now · **Needs:** — · **Blocks:** L0-6, L0-10, L1-2, L1-4, L1-14, L2-1, L2-6
 **Cross-refs:** AUDIT S-2 · AUDIT S-7 · TASKS P4-19 · TASKS P4-23 · TASKS P4-22 · TASKS P4-24 (e2e harness used for acceptance) · LIGHTER-GAP §Platform, API & trust (P0/S order-op parity row) · LIGHTER-GAP §Order types & execution (P1/S programmatic order-surface parity row) · LIGHTER-GAP preamble P0 #19 · KNOWN_ISSUES (currently NO entry — this item adds one; verified untracked)
 **Gap rows:** Platform, API & trust — order-op API/SDK parity with the deployed contract (arity regression + inexpressible TIF/reduce-only/take-limit) · Order types & execution — programmatic order-surface parity: TIF/reduce-only/take-limit inexpressible via API and three tx-builders arity-broken vs the deployed contract · Platform, API & trust — SDK coverage of shipped market-data endpoints + publish the fixed Python SDK (the publish-the-fixed-0.1.2 half — endpoint coverage itself is L1-14)
 
