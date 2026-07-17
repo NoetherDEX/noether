@@ -15,15 +15,17 @@
 - **Noeracle upstream (L0-8/L0-9):** built by Claude in `/Users/yahya/Desktop/Stellar/Noeracle`, reviewed + deployed by Yahya; runs parallel with Wave 1. See the scout notes in the Noeracle manifest section below.
 - **Phase 0 (before Wave 1):** plan docs committed · L0-21 shipped (off-chain, production-broken) · coordination registries locked (below) · operator drafts delivered (L0-18 audit email, L0-16 multisig staging drill).
 
+> **Wave 1 checkpoint (2026-07-17).** The solvency spine's CONTRACT surface is done and committed on staging in five per-item commits (L0-3 → L0-4 → L0-5 → L0-2 → L0-1): shortfall claims + amortizer, bounded-penalty liquidation with residual refunds, staged cross liquidation, bad-debt ledger + buffer draw + cross account-funds cap, and ADL (trigger + permissionless adl_close + shortfall auto-flip + router adl_with_price). 238 workspace contract tests green (+42 this wave); market.wasm 79,994 B OPTIMIZED vs the 131,072 B limit (~51 KB headroom). Noeracle L0-8/L0-9 contract side is parallel-complete on that repo's `feat/l08-l09-quorum-ring` (40 tests, ~13 KB optimized) awaiting founder review. Item statuses stay `in-progress` until the wave's OFF-CHAIN SWEEP lands: indexer decoders/migration 003 (deploy-before-promotion requirement), keeper #83 skips + AdlManager, api shortfall/ADL-queue/stats surfaces, SDK mirrors, web copy, docs event tables. Table rows carry the interim status; item headers update at item-done.
+
 ## Tracking table
 
 | ID | Title | Effort | Lane | Ships in | Needs | Status |
 |----|-------|--------|------|----------|-------|--------|
-| L0-1 | ADL execution mechanism (pool-model auto-deleveraging) | L | mixed | batch-1-redeploy | L0-2 | todo |
-| L0-2 | Bad-debt ledger + insurance-buffer draw at liquidation | M | mixed | batch-1-redeploy | — | todo |
-| L0-3 | Shortfall repayment path (claimable liabilities) | M | mixed | batch-1-redeploy | L0-2 | todo |
-| L0-4 | Non-confiscatory liquidation (bounded penalty + residual refund) | M | contracts | batch-1-redeploy | — | todo |
-| L0-5 | Staged cross-margin liquidation (tranches + close-out tier) | M | mixed | batch-1-redeploy | L0-4 | todo |
+| L0-1 | ADL execution mechanism (pool-model auto-deleveraging) | L | mixed | batch-1-redeploy | L0-2 | in-progress — contracts+tests done 2026-07-17 (commit 06b6a05-ish, see git log); off-chain halves pending sweep |
+| L0-2 | Bad-debt ledger + insurance-buffer draw at liquidation | M | mixed | batch-1-redeploy | — | in-progress — contracts+tests done 2026-07-17; off-chain halves pending sweep |
+| L0-3 | Shortfall repayment path (claimable liabilities) | M | mixed | batch-1-redeploy | L0-2 | in-progress — contracts+tests done 2026-07-17; off-chain halves pending sweep |
+| L0-4 | Non-confiscatory liquidation (bounded penalty + residual refund) | M | contracts | batch-1-redeploy | — | in-progress — contracts+tests done 2026-07-17; off-chain halves pending sweep |
+| L0-5 | Staged cross-margin liquidation (tranches + close-out tier) | M | mixed | batch-1-redeploy | L0-4 | in-progress — contracts+tests done 2026-07-17; off-chain halves pending sweep |
 | L0-6 | Partial close + add/remove margin on open positions (PROMOTED to P0, founder decision 2026-07-17) | L | mixed | batch-1-redeploy | L0-21 | todo |
 | L0-7 | O-1 production cutover to authenticated Noeracle writes (operator) | S | operator | batch-1-redeploy | — | todo |
 | L0-8 | Multi-source price integrity: 2-of-3 publisher quorum + median (with fail-closed interim) | L | mixed | noeracle-upstream | L0-7, L0-19 | todo |
