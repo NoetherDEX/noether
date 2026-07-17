@@ -1,0 +1,52 @@
+# Live-simulation arity guard (plan item L0-21).
+#
+# The offline XDR snapshot tests pin what tx-builders BUILD; they cannot see
+# drift against the DEPLOYED contract (the July 2026 arity break shipped with
+# green snapshots). This job simulates every market builder against the real
+# deployment recorded in contracts.json, so an arity/shape mismatch fails CI
+# even when every offline test passes.
+name: builder-simulation
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - 'packages/tx-builders/**'
+      - 'contracts/market/**'
+      - 'contracts.json'
+      - '.github/workflows/builder-simulation.yml'
+  pull_request:
+    paths:
+      - 'packages/tx-builders/**'
+      - 'contracts/market/**'
+      - 'contracts.json'
+      - '.github/workflows/builder-simulation.yml'
+  schedule:
+    # Weekly sweep — catches drift introduced by a redeploy that touched
+    # nothing in this repo's watched paths (e.g. contracts.json updated later).
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: builder-simulation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulate:
+    name: Simulate builders vs deployed market
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:packages
+      - name: Simulate every market op against contracts.json
+        working-directory: packages/tx-builders
+        env:
+          SIMULATE_RPC_URL: https://soroban-testnet.stellar.org
+          SIMULATE_NETWORK: testnet
+        run: npx vitest run test/simulation.test.ts
