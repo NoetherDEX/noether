@@ -861,6 +861,42 @@ impl VaultContract {
         Ok(covered)
     }
 
+    /// Pay USDC from the insurance buffer to an address (L0-1: the ADL
+    /// better-than-mark compensation). Market-only; caps at the spendable
+    /// buffer AND the vault's physical balance net of the earmarked
+    /// ShortfallReserve. Returns the amount actually paid.
+    pub fn pay_from_buffer(env: Env, to: Address, amount: i128) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        let market_contract = get_market_contract(&env);
+        market_contract.require_auth();
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+
+        let buffer = get_buffer_balance(&env);
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        let spendable_balance = token_client.balance(&env.current_contract_address())
+            - storage::get_shortfall_reserve(&env);
+
+        let mut pay = if amount > buffer { buffer } else { amount };
+        if pay > spendable_balance {
+            pay = spendable_balance;
+        }
+        if pay > 0 {
+            token_client.transfer(&env.current_contract_address(), &to, &pay);
+            set_buffer_balance(&env, buffer - pay);
+        } else {
+            pay = 0;
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "buffer_paid"),),
+            (to.clone(), amount, pay),
+        );
+        Ok(pay)
+    }
+
     /// Lifetime bankrupt losses the buffer absorbed.
     pub fn get_cum_bad_debt_covered(env: Env) -> i128 {
         storage::get_cum_bad_debt_covered(&env)
@@ -1434,6 +1470,30 @@ mod tests {
         assert_eq!(t.vault.get_buffer_balance(), 0);
         assert_eq!(t.vault.get_cum_bad_debt_covered(), 10 * PRECISION);
         assert_eq!(t.vault.get_cum_bad_debt_lp_absorbed(), 25 * PRECISION);
+    }
+
+    #[test]
+    fn pay_from_buffer_market_only_auth() {
+        let t = setup(100 * PRECISION);
+        t.vault.fund_buffer(&(10 * PRECISION));
+        let someone = Address::generate(&t.env);
+        t.env.set_auths(&[]);
+        assert!(t.vault.try_pay_from_buffer(&someone, &PRECISION).is_err());
+    }
+
+    #[test]
+    fn pay_from_buffer_caps_at_spendable_buffer() {
+        let t = setup(100 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+        let to = Address::generate(&t.env);
+        t.vault.fund_buffer(&(10 * PRECISION));
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(10 * PRECISION));
+
+        // Request 25 with a 10 buffer: pays exactly the buffer.
+        let paid = t.vault.pay_from_buffer(&to, &(25 * PRECISION));
+        assert_eq!(paid, 10 * PRECISION);
+        assert_eq!(usdc.balance(&to), 10 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 0);
     }
 
     #[test]

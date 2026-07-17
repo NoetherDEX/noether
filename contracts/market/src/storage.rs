@@ -86,6 +86,9 @@ pub enum DataKey {
     /// Ledger timestamp of the last STAGED cross-account liquidation round
     /// (L0-5 grace period) — account-scoped, cleared on full close.
     CrossPartialLiqTs(Address),
+    /// ADL solvency flag per asset (L0-1): while set, new opens are
+    /// rejected and adl_close may force-realize winners at mark.
+    AdlActive(Symbol),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -320,6 +323,16 @@ pub fn set_cross_partial_liq_ts(env: &Env, trader: &Address, ts: u64) {
 
 pub fn remove_cross_partial_liq_ts(env: &Env, trader: &Address) {
     env.storage().persistent().remove(&DataKey::CrossPartialLiqTs(trader.clone()));
+}
+
+pub fn get_adl_active(env: &Env, asset: &Symbol) -> bool {
+    env.storage().persistent().get(&DataKey::AdlActive(asset.clone())).unwrap_or(false)
+}
+
+pub fn set_adl_active(env: &Env, asset: &Symbol, active: bool) {
+    let key = DataKey::AdlActive(asset.clone());
+    env.storage().persistent().set(&key, &active);
+    extend_persistent_ttl(env, &key);
 }
 
 pub fn delete_position(env: &Env, id: u64, trader: &Address) {

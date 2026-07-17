@@ -208,6 +208,16 @@ pub struct MarketConfig {
     /// Below this share of aggregate MM (bps; 6_667 = 2/3 MM) a cross
     /// account is closed out in full instead of staged (L0-5).
     pub cross_close_out_bps: u32,
+    /// ADL trips when payable winner uPnL × this ratio (bps) exceeds the
+    /// pool's coverage (buffer + LP USDC): 12_500 = trigger when coverage
+    /// < 1.25× payable uPnL (L0-1).
+    pub adl_trigger_ratio_bps: u32,
+    /// Hysteresis: the ADL flag clears only once coverage ≥ this ratio of
+    /// payable uPnL (bps; must be ≥ the trigger ratio) (L0-1).
+    pub adl_clear_ratio_bps: u32,
+    /// Optional better-than-mark compensation paid from the buffer to an
+    /// ADL'd winner, bps of closed notional (0 = disabled) (L0-1).
+    pub adl_compensation_bps: u32,
 }
 
 impl Default for MarketConfig {
@@ -232,6 +242,9 @@ impl Default for MarketConfig {
             penalty_keeper_share_bps: 5_000,          // 50% of penalty -> keeper, rest -> buffer
             cross_liq_restore_target_bps: 15_000,     // staged cross stops at 1.5x MM (L0-5)
             cross_close_out_bps: 6_667,               // full close-out below 2/3 MM (L0-5)
+            adl_trigger_ratio_bps: 12_500,            // ADL when coverage < 1.25x payable uPnL
+            adl_clear_ratio_bps: 15_000,              // clear only above 1.5x (hysteresis)
+            adl_compensation_bps: 0,                  // better-than-mark comp disabled at launch
         }
     }
 }

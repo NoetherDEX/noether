@@ -250,6 +250,32 @@ impl NoetherRouterContract {
         Ok(reward)
     }
 
+    /// Verify + store a fresh price, then force-realize an ADL candidate
+    /// against it in the same tx (L0-1) — forced realizations settle on a
+    /// fresh mark rather than a stale lenient-path print. Mirrors
+    /// liquidate_with_price. `asset` MUST be the position's asset.
+    pub fn adl_with_price(
+        env: Env,
+        caller: Address,
+        position_id: u64,
+        asset: Symbol,
+        price: i128,
+        timestamp: u64,
+        round_id: u64,
+        pubkeys: Vec<BytesN<32>>,
+        sigs: Vec<BytesN<64>>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        caller.require_auth();
+
+        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (caller, position_id).into_val(&env);
+        let realized: i128 = env.invoke_contract(&market, &Symbol::new(&env, "adl_close"), args);
+        Ok(realized)
+    }
+
     /// Verify + store a fresh price, then execute the pending order
     /// against it. `asset` MUST be the order's asset. Returns the keeper
     /// fee (0 = order cancelled rather than executed).

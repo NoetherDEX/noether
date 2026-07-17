@@ -233,6 +233,8 @@ impl MarketContract {
             || config.penalty_keeper_share_bps > BASIS_POINTS
             || config.cross_liq_restore_target_bps <= BASIS_POINTS
             || config.cross_close_out_bps >= BASIS_POINTS
+            || config.adl_clear_ratio_bps < config.adl_trigger_ratio_bps
+            || config.adl_compensation_bps > 100
         {
             return Err(NoetherError::InvalidParameter);
         }
@@ -308,6 +310,12 @@ impl MarketContract {
         trader.require_auth();
 
         let config = get_config(&env);
+
+        // No new exposure during a solvency event (L0-1) — reuses #82,
+        // the same "no capacity" answer OI caps give.
+        if get_adl_active(&env, &asset) {
+            return Err(NoetherError::OpenInterestCapExceeded);
+        }
 
         if collateral < config.min_collateral {
             return Err(NoetherError::InsufficientCollateral);
@@ -940,45 +948,51 @@ impl MarketContract {
             return Err(NoetherError::InvalidParameter); // Not a cross-margin position
         }
 
-        // Get current price and settle through the shared leg helper (L0-5).
-        // Outflow cap = this account's own funds: pool balance + the leg's
-        // collateral (L0-2 — never other traders' custody funds).
+        // Get current price and settle through the shared close core (L0-5).
         let current_price = Self::get_oracle_price(&env, &pos.asset, false)?;
-        let account_funds = get_cross_margin_balance(&env, &trader)
+        let pnl = Self::settle_cross_close(&env, &pos, current_price);
+
+        // Record volume (trader-initiated closes only — ADL doesn't count)
+        record_volume_only(&env, &trader, pos.size);
+
+        extend_instance_ttl(&env);
+        Ok(pnl)
+    }
+
+    /// Shared cross-close settlement core (L0-1/L0-5): used by
+    /// close_position_cross (behind its auth/pause gates) and adl_close.
+    /// Outflow cap = the account's own funds (L0-2); deficit legs debit the
+    /// shared pool down to zero; emits position_closed. Returns pnl.
+    fn settle_cross_close(env: &Env, pos: &Position, current_price: i128) -> i128 {
+        let trader = pos.trader.clone();
+        let account_funds = get_cross_margin_balance(env, &trader)
             .checked_add(pos.collateral).unwrap_or(pos.collateral);
         let (pnl, pool_delta, loss_wanted, loss_transferred) =
-            Self::close_cross_leg(&env, &pos, current_price, account_funds);
+            Self::close_cross_leg(env, pos, current_price, account_funds);
         if loss_wanted > loss_transferred {
-            let vault_address = get_vault(&env);
+            let vault_address = get_vault(env);
             Self::record_bad_debt(
-                &env, &vault_address, &trader,
-                &Symbol::new(&env, "CROSS"), loss_wanted - loss_transferred,
+                env, &vault_address, &trader,
+                &Symbol::new(env, "CROSS"), loss_wanted - loss_transferred,
             );
         }
 
         // Return remaining equity to the cross pool (NOT trader wallet).
-        // A deficit leg (pool_delta < 0) debits the pool down to zero —
-        // cross legs share one pool by definition.
         if pool_delta != 0 {
-            let current_balance = get_cross_margin_balance(&env, &trader);
+            let current_balance = get_cross_margin_balance(env, &trader);
             let mut new_balance = current_balance.checked_add(pool_delta).unwrap_or(current_balance);
             if new_balance < 0 {
                 new_balance = 0;
             }
-            set_cross_margin_balance(&env, &trader, new_balance);
+            set_cross_margin_balance(env, &trader, new_balance);
         }
 
-        // Record volume
-        record_volume_only(&env, &trader, pos.size);
-
-        extend_instance_ttl(&env);
-
         env.events().publish(
-            (Symbol::new(&env, "position_closed"),),
-            (position_id, trader, pos.asset, pos.direction, pos.size, pos.entry_price, current_price, pnl),
+            (Symbol::new(env, "position_closed"),),
+            (pos.id, trader, pos.asset.clone(), pos.direction, pos.size, pos.entry_price, current_price, pnl),
         );
 
-        Ok(pnl)
+        pnl
     }
 
     /// Shared cross-leg settlement (L0-5), used by close_position_cross and
@@ -1009,6 +1023,7 @@ impl MarketContract {
 
         let vault_address = get_vault(env);
         let paid = Self::settle_with_vault(env, &vault_address, &trader, pnl);
+        Self::flag_adl_on_shortfall(env, &pos.asset, pnl, paid);
 
         let usdc_token = get_usdc_token(env);
         let token_client = token::Client::new(env, &usdc_token);
@@ -1276,6 +1291,141 @@ impl MarketContract {
         );
 
         Ok(total_keeper)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Auto-deleveraging (L0-1) — the terminal backstop between insurance
+    // depletion and short-paying winners. In the pool model the vault is
+    // the counterparty of every winner, so ADL = force-realizing the
+    // highest-ranked winners at the oracle mark: they are paid IN FULL
+    // (zero slippage by construction) and lose only future upside.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Permissionless solvency check: flips the asset's ADL flag on when
+    /// pool coverage (buffer + LP USDC) falls under adl_trigger_ratio_bps
+    /// of the payable winner uPnL, and off again above the clear ratio
+    /// (hysteresis). Returns the flag. Pause-exempt, lenient price read —
+    /// it must work in exactly the stress states it exists for.
+    pub fn check_adl_trigger(env: Env, asset: Symbol) -> Result<bool, NoetherError> {
+        require_initialized(&env)?;
+        let config = get_config(&env);
+        let price = Self::get_oracle_price(&env, &asset, false)?;
+
+        let (lk, ls, sk, ss) = get_asset_exposure(&env, &asset);
+        let long_upnl = (price * lk) / PRECISION - ls;
+        let short_upnl = ss - (price * sk) / PRECISION;
+        let mut payable: i128 = 0;
+        if long_upnl > 0 {
+            payable += long_upnl;
+        }
+        if short_upnl > 0 {
+            payable += short_upnl;
+        }
+
+        let vault_address = get_vault(&env);
+        let no_args: Vec<soroban_sdk::Val> = Vec::new(&env);
+        let buffer: i128 = env.invoke_contract(
+            &vault_address, &Symbol::new(&env, "get_buffer_balance"), no_args.clone(),
+        );
+        let lp: i128 = env.invoke_contract(
+            &vault_address, &Symbol::new(&env, "get_total_usdc"), no_args,
+        );
+        let coverage = buffer + lp;
+
+        let bps = BASIS_POINTS as i128;
+        let active = get_adl_active(&env, &asset);
+        if !active
+            && payable > 0
+            && coverage * bps < payable * (config.adl_trigger_ratio_bps as i128)
+        {
+            set_adl_active(&env, &asset, true);
+            env.events().publish(
+                (Symbol::new(&env, "adl_triggered"),),
+                (asset.clone(), 0u32, payable, coverage),
+            );
+            extend_instance_ttl(&env);
+            return Ok(true);
+        }
+        if active
+            && (payable == 0 || coverage * bps >= payable * (config.adl_clear_ratio_bps as i128))
+        {
+            set_adl_active(&env, &asset, false);
+            env.events().publish(
+                (Symbol::new(&env, "adl_cleared"),),
+                (asset.clone(), 0u32, payable, coverage),
+            );
+            extend_instance_ttl(&env);
+            return Ok(false);
+        }
+        Ok(active)
+    }
+
+    /// Whether ADL is active for an asset.
+    pub fn is_adl_active(env: Env, asset: Symbol) -> bool {
+        get_adl_active(&env, &asset)
+    }
+
+    /// Force-realize a winning position at the oracle mark while ADL is
+    /// active for its asset (L0-1). Permissionless — the on-chain gates
+    /// (flag active + net winner) are the consensus; the keeper's ranking
+    /// walk is advisory ordering. Pause-exempt (same class as liquidate).
+    /// The trader is paid in full through the normal close settlement and
+    /// optionally compensated from the buffer (adl_compensation_bps).
+    pub fn adl_close(env: Env, caller: Address, position_id: u64) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        caller.require_auth();
+
+        let pos = get_position(&env, position_id).ok_or(NoetherError::PositionNotFound)?;
+        if !get_adl_active(&env, &pos.asset) {
+            return Err(NoetherError::AdlNotActive);
+        }
+        let config = get_config(&env);
+        let price = Self::get_oracle_price(&env, &pos.asset, false)?;
+
+        let cumulative = get_cumulative_funding_rate(&env);
+        let funding = calculate_cumulative_funding(
+            pos.size, pos.direction, pos.entry_cumulative_funding, cumulative,
+        );
+        let pnl = calculate_pnl(&pos, price)?;
+        if pnl - funding <= 0 {
+            return Err(NoetherError::AdlNotEligible);
+        }
+
+        // Advisory ranking score for the event tape:
+        // adl_rank = PnL% (bps of collateral) × leverage.
+        let score = if pos.collateral > 0 {
+            (pnl * (BASIS_POINTS as i128) / pos.collateral) * (pos.leverage as i128)
+        } else {
+            0
+        };
+
+        let realized = if pos.margin_mode == 1 {
+            Self::settle_cross_close(&env, &pos, price)
+        } else {
+            Self::settle_isolated_close(&env, &pos, price, 0, None, None)?
+        };
+
+        // Optional better-than-mark compensation from the buffer (the
+        // Lighter prelaunch analog; 0 = disabled at launch).
+        let comp = pos.size * (config.adl_compensation_bps as i128) / (BASIS_POINTS as i128);
+        if comp > 0 {
+            let vault_address = get_vault(&env);
+            let args: Vec<soroban_sdk::Val> = (pos.trader.clone(), comp).into_val(&env);
+            let _paid: i128 = env.invoke_contract(
+                &vault_address, &Symbol::new(&env, "pay_from_buffer"), args,
+            );
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "adl_executed"),),
+            (
+                position_id, pos.trader.clone(), pos.asset.clone(), pos.direction,
+                pos.size, price, realized, score,
+            ),
+        );
+
+        extend_instance_ttl(&env);
+        Ok(realized)
     }
 
     /// Get cross-margin balance for a trader (pool balance only).
@@ -2298,6 +2448,7 @@ impl MarketContract {
 
         let vault_address = get_vault(env);
         let paid = Self::settle_with_vault(env, &vault_address, &position.trader, pnl);
+        Self::flag_adl_on_shortfall(env, &position.asset, pnl, paid);
 
         // L0-2: the gap between owed loss+funding and this position's own
         // collateral is bad debt — book it (buffer draw + event) instead of
@@ -2501,6 +2652,20 @@ impl MarketContract {
         if amount > 0 {
             let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
             let _: () = env.invoke_contract(vault, &Symbol::new(env, "fund_buffer"), args);
+        }
+    }
+
+    /// Any short-paid winner is proof the pool cannot cover its liabilities:
+    /// flip the asset's ADL flag immediately, with no keeper involvement
+    /// (L0-1). reason=1 distinguishes the shortfall path from the
+    /// coverage-ratio trigger (reason=0).
+    fn flag_adl_on_shortfall(env: &Env, asset: &Symbol, pnl: i128, paid: i128) {
+        if pnl > 0 && paid < pnl && !get_adl_active(env, asset) {
+            set_adl_active(env, asset, true);
+            env.events().publish(
+                (Symbol::new(env, "adl_triggered"),),
+                (asset.clone(), 1u32, 0i128, 0i128),
+            );
         }
     }
 
@@ -4418,6 +4583,183 @@ mod tests {
         let price_after = vault.get_noe_price();
         let diff = if price_after > price_before { price_after - price_before } else { price_before - price_after };
         assert!(diff <= 2, "NOE price must stay flat when the buffer covers (diff {} strops)", diff);
+    }
+
+    // ── L0-1: auto-deleveraging ─────────────────────────────────────────
+
+    /// 200-USDC pool, two 10×5 XLM longs (asset cap lifted), then a 3×
+    /// pump: payable winner uPnL (~199) overwhelms coverage (~199.4) at
+    /// the 1.25× trigger ratio. Returns (test, t1, t2, pos1, pos2).
+    fn adl_scenario(cross_second: bool) -> (TestEnv, Address, Address, Position, Position) {
+        let test = setup_with_vault_deposit(200 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        vault::Client::new(&test.env, &test.vault_id).set_asset_cap(&xlm, &10_000);
+
+        let t1 = fund_trader(&test, 100 * PRECISION);
+        let t2 = fund_trader(&test, 100 * PRECISION);
+        let p1 = test.market.open_position(&t1, &xlm, &(10 * PRECISION), &5, &Direction::Long);
+        let p2 = if cross_second {
+            test.market.open_position_cross(&t2, &xlm, &(10 * PRECISION), &5, &Direction::Long)
+        } else {
+            test.market.open_position(&t2, &xlm, &(10 * PRECISION), &5, &Direction::Long)
+        };
+
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(3 * PRECISION / 10));
+        (test, t1, t2, p1, p2)
+    }
+
+    #[test]
+    fn test_adl_close_rejected_when_flag_inactive() {
+        let (test, t1, _t2, p1, _p2) = adl_scenario(false);
+        // Flag never flipped: adl_close must refuse even a huge winner.
+        let res = test.market.try_adl_close(&t1, &p1.id);
+        assert_eq!(res, Err(Ok(NoetherError::AdlNotActive)));
+    }
+
+    #[test]
+    fn test_check_adl_trigger_flips_on_low_coverage() {
+        let (test, _t1, _t2, _p1, _p2) = adl_scenario(false);
+        let xlm = Symbol::new(&test.env, "XLM");
+        assert!(!test.market.is_adl_active(&xlm));
+        assert!(test.market.check_adl_trigger(&xlm));
+        assert!(test.market.is_adl_active(&xlm));
+    }
+
+    #[test]
+    fn test_check_adl_trigger_clears_with_hysteresis() {
+        let (test, _t1, _t2, _p1, _p2) = adl_scenario(false);
+        let xlm = Symbol::new(&test.env, "XLM");
+        assert!(test.market.check_adl_trigger(&xlm));
+
+        // Fresh LP capital lifts coverage above the 1.5× clear ratio.
+        let whale = fund_trader(&test, 1_000 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        vault.deposit(&whale, &(500 * PRECISION));
+        assert!(!test.market.check_adl_trigger(&xlm));
+        assert!(!test.market.is_adl_active(&xlm));
+    }
+
+    #[test]
+    fn test_adl_close_pays_isolated_winner_in_full() {
+        let (test, t1, _t2, p1, _p2) = adl_scenario(false);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        assert!(test.market.check_adl_trigger(&xlm));
+
+        let w0 = usdc.balance(&t1);
+        let anyone = fund_trader(&test, PRECISION);
+        let realized = test.market.adl_close(&anyone, &p1.id);
+
+        // Paid IN FULL at the mark: collateral + pnl to the wallet, zero
+        // slippage by construction; only future upside is lost.
+        let pnl = p1.size * (3 * PRECISION / 10 - p1.entry_price) / p1.entry_price;
+        assert_eq!(realized, pnl);
+        assert_eq!(usdc.balance(&t1) - w0, p1.collateral + pnl);
+        assert!(test.market.get_position(&p1.id).is_none());
+    }
+
+    #[test]
+    fn test_adl_close_credits_cross_pool() {
+        let (test, _t1, t2, _p1, p2) = adl_scenario(true);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        assert!(test.market.check_adl_trigger(&xlm));
+
+        let w0 = usdc.balance(&t2);
+        let anyone = fund_trader(&test, PRECISION);
+        let pnl = test.market.adl_close(&anyone, &p2.id);
+
+        // Cross ADL settles to the POOL, not the wallet.
+        assert_eq!(usdc.balance(&t2), w0);
+        assert_eq!(test.market.get_cross_margin_balance(&t2), p2.collateral + pnl);
+    }
+
+    #[test]
+    fn test_adl_close_rejects_losing_position() {
+        let (test, _t1, _t2, _p1, _p2) = adl_scenario(false);
+        let xlm = Symbol::new(&test.env, "XLM");
+        // A short opened before the pump is deep underwater after it.
+        let loser = fund_trader(&test, 100 * PRECISION);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION / 10));
+        let short = test.market.open_position(&loser, &xlm, &(10 * PRECISION), &2, &Direction::Short);
+        oracle.set_price(&xlm, &(3 * PRECISION / 10));
+        assert!(test.market.check_adl_trigger(&xlm));
+
+        let anyone = fund_trader(&test, PRECISION);
+        let res = test.market.try_adl_close(&anyone, &short.id);
+        assert_eq!(res, Err(Ok(NoetherError::AdlNotEligible)));
+    }
+
+    #[test]
+    fn test_shortfall_settle_auto_flags_adl() {
+        let test = setup_with_vault_deposit(30 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+        vault.set_asset_cap(&xlm, &10_000);
+        let trader = fund_trader(&test, 100 * PRECISION);
+        let pos = test.market.open_position(&trader, &xlm, &(10 * PRECISION), &2, &Direction::Long);
+
+        // 3× pump: the winner's ~40 USDC claim beats the ~30 pool — the
+        // short-paid close itself must flip the flag, no keeper involved.
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(3 * PRECISION / 10));
+        assert!(!test.market.is_adl_active(&xlm));
+        test.market.close_position(&trader, &pos.id);
+        assert!(test.market.is_adl_active(&xlm));
+        assert!(vault.get_shortfall() > 0, "sanity: the flip came from a real shortfall");
+    }
+
+    #[test]
+    fn test_adl_close_works_while_paused() {
+        let (test, t1, _t2, p1, _p2) = adl_scenario(false);
+        let xlm = Symbol::new(&test.env, "XLM");
+        assert!(test.market.check_adl_trigger(&xlm));
+
+        test.market.pause();
+        let anyone = fund_trader(&test, PRECISION);
+        let realized = test.market.adl_close(&anyone, &p1.id);
+        assert!(realized > 0);
+        test.market.unpause();
+        let _ = t1;
+    }
+
+    #[test]
+    fn test_open_blocked_while_adl_active() {
+        let (test, _t1, _t2, _p1, _p2) = adl_scenario(false);
+        let xlm = Symbol::new(&test.env, "XLM");
+        assert!(test.market.check_adl_trigger(&xlm));
+
+        let newcomer = fund_trader(&test, 100 * PRECISION);
+        let res = test.market.try_open_position(&newcomer, &xlm, &(10 * PRECISION), &2, &Direction::Long);
+        assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+    }
+
+    #[test]
+    fn test_adl_event_shape() {
+        use soroban_sdk::testutils::Events;
+        use soroban_sdk::TryFromVal;
+        let (test, _t1, _t2, p1, _p2) = adl_scenario(false);
+        let xlm = Symbol::new(&test.env, "XLM");
+        assert!(test.market.check_adl_trigger(&xlm));
+
+        let anyone = fund_trader(&test, PRECISION);
+        test.market.adl_close(&anyone, &p1.id);
+
+        let events = test.env.events().all();
+        let mut adl_executed = 0u32;
+        for e in events.iter() {
+            let topics = e.1;
+            if let Some(first) = topics.first() {
+                if let Ok(s) = Symbol::try_from_val(&test.env, &first) {
+                    if s == Symbol::new(&test.env, "adl_executed") {
+                        adl_executed += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(adl_executed, 1);
     }
 
     // ── L0-5: staged cross-margin liquidation ───────────────────────────

@@ -139,4 +139,10 @@ pub enum NoetherError {
     /// grace period and cannot be liquidated again yet (bankruptcy
     /// overrides the grace period)
     LiquidationCooldown = 83,
+    /// adl_close called while ADL is not active for the position's asset
+    /// (L0-1; check_adl_trigger or a shortfall settle flips the flag)
+    AdlNotActive = 84,
+    /// adl_close target is not a net winner at the current mark — only
+    /// positive-uPnL positions are ADL candidates (L0-1)
+    AdlNotEligible = 85,
 }
