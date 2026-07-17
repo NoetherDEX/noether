@@ -821,6 +821,56 @@ impl VaultContract {
         storage::get_buffer_balance(&env)
     }
 
+    /// Cover bankrupt-liquidation losses from the insurance buffer (L0-2).
+    /// Market-only. ACCOUNTING-ONLY — no token moves: the bad-debt USDC was
+    /// never collected, and the buffer's tokens already sit in the vault.
+    /// Moving `covered` from the buffer bucket into total_usdc offsets the
+    /// NAV drop the uncollected loss causes at close, 1:1 — NOE price stays
+    /// flat when the buffer covers and falls by exactly the LP-absorbed
+    /// remainder when it cannot. Returns the covered amount.
+    ///
+    /// Spend rule: the ShortfallReserve is a DISJOINT bucket (never inside
+    /// BufferBalance), so every buffer spender — winner payouts in
+    /// settle_pnl, this draw, claim_shortfall's buffer leg — reads the same
+    /// BufferBalance and can never touch earmarked repayment funds.
+    pub fn draw_buffer(env: Env, amount: i128) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        let market_contract = get_market_contract(&env);
+        market_contract.require_auth();
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+
+        let buffer = get_buffer_balance(&env);
+        let covered = if amount > buffer { buffer } else { amount };
+        if covered > 0 {
+            set_buffer_balance(&env, buffer - covered);
+            set_total_usdc(&env, get_total_usdc(&env) + covered);
+        }
+        storage::set_cum_bad_debt_covered(
+            &env, storage::get_cum_bad_debt_covered(&env) + covered,
+        );
+        storage::set_cum_bad_debt_lp_absorbed(
+            &env, storage::get_cum_bad_debt_lp_absorbed(&env) + (amount - covered),
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "buffer_drawn"),),
+            (amount, covered),
+        );
+        Ok(covered)
+    }
+
+    /// Lifetime bankrupt losses the buffer absorbed.
+    pub fn get_cum_bad_debt_covered(env: Env) -> i128 {
+        storage::get_cum_bad_debt_covered(&env)
+    }
+
+    /// Lifetime bankrupt losses that fell through to LP NAV.
+    pub fn get_cum_bad_debt_lp_absorbed(env: Env) -> i128 {
+        storage::get_cum_bad_debt_lp_absorbed(&env)
+    }
+
     /// Set the aggregate reservation cap (bps of AUM). Admin only.
     pub fn set_reserve_cap(env: Env, bps: u32) -> Result<(), NoetherError> {
         require_admin(&env)?;
@@ -1354,6 +1404,44 @@ mod tests {
         let paid = t.vault.claim_shortfall(&w);
         assert_eq!(paid, 20 * PRECISION);
         t.vault.unpause();
+    }
+
+    // ── L0-2: bad-debt draw ─────────────────────────────────────────────
+
+    #[test]
+    fn draw_buffer_moves_buffer_into_lp_accounting() {
+        let t = setup(100 * PRECISION);
+        t.vault.fund_buffer(&(50 * PRECISION));
+        let aum_before = t.vault.get_aum();
+
+        let covered = t.vault.draw_buffer(&(30 * PRECISION));
+        assert_eq!(covered, 30 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 20 * PRECISION);
+        // The covered amount moved INTO LP accounting (buffer is outside
+        // AUM, total_usdc is inside) — the offset half of NAV flatness.
+        assert_eq!(t.vault.get_aum() - aum_before, 30 * PRECISION);
+        assert_eq!(t.vault.get_cum_bad_debt_covered(), 30 * PRECISION);
+        assert_eq!(t.vault.get_cum_bad_debt_lp_absorbed(), 0);
+    }
+
+    #[test]
+    fn draw_buffer_partial_cover_returns_actual() {
+        let t = setup(100 * PRECISION);
+        t.vault.fund_buffer(&(10 * PRECISION));
+
+        let covered = t.vault.draw_buffer(&(35 * PRECISION));
+        assert_eq!(covered, 10 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert_eq!(t.vault.get_cum_bad_debt_covered(), 10 * PRECISION);
+        assert_eq!(t.vault.get_cum_bad_debt_lp_absorbed(), 25 * PRECISION);
+    }
+
+    #[test]
+    fn draw_buffer_market_only_auth() {
+        let t = setup(100 * PRECISION);
+        t.vault.fund_buffer(&(10 * PRECISION));
+        t.env.set_auths(&[]);
+        assert!(t.vault.try_draw_buffer(&PRECISION).is_err());
     }
 
     #[test]

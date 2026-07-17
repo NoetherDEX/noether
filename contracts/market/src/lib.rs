@@ -670,10 +670,13 @@ impl MarketContract {
             );
             actual_keeper_reward = keeper_cut;
         } else {
-            // Bankrupt: unchanged — full collateral to the vault (buffer
-            // share via config, 0 at the L0-4 migration), keeper 0 (the
-            // buffer-funded bankruptcy bounty is L1-23; bad-debt booking
-            // is L0-2).
+            // Bankrupt: full collateral to the vault (buffer share via
+            // config, 0 at the L0-4 migration), keeper 0 (the buffer-funded
+            // bankruptcy bounty is L1-23). The uncollectable gap is booked
+            // as bad debt (L0-2): buffer draw + on-chain event.
+            Self::record_bad_debt(
+                &env, &vault_address, &position.trader, &position.asset, -remaining,
+            );
             let vault_receives = position.collateral;
             if vault_receives > 0 {
                 token_client.transfer(&env.current_contract_address(), &vault_address, &vault_receives);
@@ -937,9 +940,21 @@ impl MarketContract {
             return Err(NoetherError::InvalidParameter); // Not a cross-margin position
         }
 
-        // Get current price and settle through the shared leg helper (L0-5)
+        // Get current price and settle through the shared leg helper (L0-5).
+        // Outflow cap = this account's own funds: pool balance + the leg's
+        // collateral (L0-2 — never other traders' custody funds).
         let current_price = Self::get_oracle_price(&env, &pos.asset, false)?;
-        let (pnl, pool_delta) = Self::close_cross_leg(&env, &pos, current_price);
+        let account_funds = get_cross_margin_balance(&env, &trader)
+            .checked_add(pos.collateral).unwrap_or(pos.collateral);
+        let (pnl, pool_delta, loss_wanted, loss_transferred) =
+            Self::close_cross_leg(&env, &pos, current_price, account_funds);
+        if loss_wanted > loss_transferred {
+            let vault_address = get_vault(&env);
+            Self::record_bad_debt(
+                &env, &vault_address, &trader,
+                &Symbol::new(&env, "CROSS"), loss_wanted - loss_transferred,
+            );
+        }
 
         // Return remaining equity to the cross pool (NOT trader wallet).
         // A deficit leg (pool_delta < 0) debits the pool down to zero —
@@ -968,13 +983,22 @@ impl MarketContract {
 
     /// Shared cross-leg settlement (L0-5), used by close_position_cross and
     /// the staged cross liquidation: settles PnL with the vault, moves
-    /// loss + funding (defensively capped at the market's token balance),
-    /// unwinds OI / attached orders / indexes and deletes the position.
-    /// Returns (realized pnl, signed pool delta = collateral + effective_pnl
-    /// − funding) — the CALLER applies the delta to CrossMarginBalance,
+    /// loss + funding, unwinds OI / attached orders / indexes and deletes
+    /// the position. The loss transfer is capped at min(max_outflow, the
+    /// market's token balance) — max_outflow is the ACCOUNT's own funds
+    /// (L0-2: a bankrupt account's debt must never be paid out of other
+    /// traders' custody funds held at the market). Returns (realized pnl,
+    /// signed pool delta = collateral + effective_pnl − funding,
+    /// loss_wanted, loss_transferred) — the CALLER applies the pool delta,
     /// which lets the liquidation loop run a signed running pool so deficit
-    /// legs consume later legs' remainders (order-independent residual).
-    fn close_cross_leg(env: &Env, pos: &Position, current_price: i128) -> (i128, i128) {
+    /// legs consume later legs' remainders (order-independent residual),
+    /// and books wanted − transferred as bad debt.
+    fn close_cross_leg(
+        env: &Env,
+        pos: &Position,
+        current_price: i128,
+        max_outflow: i128,
+    ) -> (i128, i128, i128, i128) {
         let trader = pos.trader.clone();
         let cumulative = get_cumulative_funding_rate(env);
         let funding = calculate_cumulative_funding(
@@ -991,7 +1015,7 @@ impl MarketContract {
         let market_addr = env.current_contract_address();
 
         // Loss + funding move to the vault, credited on receipt; capped at
-        // the market's real balance (excess = bad debt, booked by L0-2).
+        // the account's funds AND the market's real balance.
         let mut to_vault: i128 = 0;
         if pnl < 0 {
             to_vault += -pnl;
@@ -999,12 +1023,17 @@ impl MarketContract {
         if funding > 0 {
             to_vault += funding;
         }
+        let mut transferred: i128 = 0;
         if to_vault > 0 {
             let bal = token_client.balance(&market_addr);
-            let transfer = if to_vault > bal { bal } else { to_vault };
-            if transfer > 0 {
-                token_client.transfer(&market_addr, &vault_address, &transfer);
-                Self::credit_vault_receipt(env, &vault_address, transfer);
+            let cap = if max_outflow < bal { max_outflow } else { bal };
+            transferred = if to_vault > cap { cap } else { to_vault };
+            if transferred < 0 {
+                transferred = 0;
+            }
+            if transferred > 0 {
+                token_client.transfer(&market_addr, &vault_address, &transferred);
+                Self::credit_vault_receipt(env, &vault_address, transferred);
             }
         }
 
@@ -1018,7 +1047,7 @@ impl MarketContract {
         remove_cross_margin_position(env, &trader, pos.id);
         delete_position(env, pos.id, &trader);
 
-        (pnl, pool_delta)
+        (pnl, pool_delta, to_vault, transferred)
     }
 
     // is_cross_liquidatable removed for WASM size - keeper simulates liquidate_cross_account
@@ -1116,12 +1145,17 @@ impl MarketContract {
 
         // Signed running pool: leg remainders credit it, deficit legs debit
         // it (possibly below zero mid-loop), penalties come out of the
-        // positive part. Written back clamped at the end.
+        // positive part. Written back clamped at the end. In parallel,
+        // remaining_account_funds bounds every loss transfer to the
+        // account's OWN money (pool balance + closed legs' collateral) —
+        // the L0-2 fix for bankrupt debt spending other traders' custody.
         let start_balance = get_cross_margin_balance(&env, &trader);
         let mut running_pool: i128 = start_balance;
+        let mut remaining_account_funds: i128 = start_balance;
         let mut total_pnl: i128 = 0;
         let mut total_keeper: i128 = 0;
         let mut total_penalty: i128 = 0;
+        let mut total_bad_debt: i128 = 0;
 
         let mut idx = 0u32;
         while idx < cands.len() {
@@ -1136,7 +1170,14 @@ impl MarketContract {
                 _ => continue,
             };
 
-            let (pnl, pool_delta) = Self::close_cross_leg(&env, &pos, current_price);
+            remaining_account_funds = remaining_account_funds
+                .checked_add(pos.collateral).unwrap_or(remaining_account_funds);
+            let (pnl, pool_delta, loss_wanted, loss_transferred) =
+                Self::close_cross_leg(&env, &pos, current_price, remaining_account_funds);
+            remaining_account_funds -= loss_transferred;
+            if loss_wanted > loss_transferred {
+                total_bad_debt += loss_wanted - loss_transferred;
+            }
             total_pnl += pnl;
             running_pool = running_pool.checked_add(pool_delta).unwrap_or(running_pool);
 
@@ -1168,6 +1209,9 @@ impl MarketContract {
                     keeper_cut_leg = k;
                     total_keeper += k;
                     total_penalty += penalty;
+                    // Penalty payouts are the trader's money leaving the
+                    // market — they consume account funds too.
+                    remaining_account_funds -= k + b;
                 }
             }
 
@@ -1193,6 +1237,15 @@ impl MarketContract {
                     break;
                 }
             }
+        }
+
+        // Book the account's uncollectable debt once, account-scoped (L0-2):
+        // buffer draw + bad_debt_recorded with the CROSS sentinel asset.
+        if total_bad_debt > 0 {
+            Self::record_bad_debt(
+                &env, &vault_address, &trader,
+                &Symbol::new(&env, "CROSS"), total_bad_debt,
+            );
         }
 
         // Write the pool back (clamped); bankrupt accounts force-zero.
@@ -2246,6 +2299,14 @@ impl MarketContract {
         let vault_address = get_vault(env);
         let paid = Self::settle_with_vault(env, &vault_address, &position.trader, pnl);
 
+        // L0-2: the gap between owed loss+funding and this position's own
+        // collateral is bad debt — book it (buffer draw + event) instead of
+        // letting it land on LP NAV silently.
+        let remaining = position.collateral + pnl - funding;
+        if remaining < 0 {
+            Self::record_bad_debt(env, &vault_address, &position.trader, &position.asset, -remaining);
+        }
+
         let usdc_token = get_usdc_token(env);
         let token_client = token::Client::new(env, &usdc_token);
 
@@ -2441,6 +2502,22 @@ impl MarketContract {
             let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
             let _: () = env.invoke_contract(vault, &Symbol::new(env, "fund_buffer"), args);
         }
+    }
+
+    /// Book a bankrupt-liquidation loss (L0-2): the vault's insurance buffer
+    /// covers what it can (accounting draw — the USDC was never collected),
+    /// the rest lands on LP NAV, and BOTH are made visible on-chain via
+    /// bad_debt_recorded(trader, asset, amount, buffer_covered, lp_absorbed).
+    fn record_bad_debt(env: &Env, vault: &Address, trader: &Address, asset: &Symbol, amount: i128) {
+        if amount <= 0 {
+            return;
+        }
+        let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
+        let covered: i128 = env.invoke_contract(vault, &Symbol::new(env, "draw_buffer"), args);
+        env.events().publish(
+            (Symbol::new(env, "bad_debt_recorded"),),
+            (trader.clone(), asset.clone(), amount, covered, amount - covered),
+        );
     }
 
     /// Liquidation price from the ACTUAL collateral/size ratio — the
@@ -4205,6 +4282,142 @@ mod tests {
         // Conservation: market outflow == loss transfer + penalty + residual
         // == the position's collateral.
         assert_eq!(m0 - usdc.balance(&test.market_id), pos.collateral);
+    }
+
+    // ── L0-2: bad-debt ledger + buffer draw ─────────────────────────────
+
+    #[test]
+    fn test_bankrupt_isolated_liquidation_records_bad_debt() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        // Pre-fund the buffer so part of the debt is covered.
+        vault.fund_buffer(&(20 * PRECISION));
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
+
+        test.market.liquidate(&keeper, &pos.id);
+
+        // bad_debt = |collateral + pnl| (funding 0). pnl = size × −15%.
+        let pnl = pos.size * (PRECISION * 850 / 10_000 - pos.entry_price) / pos.entry_price;
+        let bad_debt = -(pos.collateral + pnl);
+        assert!(bad_debt > 0);
+        // Buffer covered its 20, the rest fell to LP — both ledgered.
+        assert_eq!(vault.get_cum_bad_debt_covered(), 20 * PRECISION);
+        assert_eq!(vault.get_cum_bad_debt_lp_absorbed(), bad_debt - 20 * PRECISION);
+        assert_eq!(vault.get_buffer_balance(), pos.collateral / 10); // refilled by the 10% share
+    }
+
+    #[test]
+    fn test_bankrupt_trader_close_records_bad_debt() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
+
+        // The trader closes their own bankrupt position — same booking.
+        test.market.close_position(&trader, &pos.id);
+
+        let pnl = pos.size * (PRECISION * 850 / 10_000 - pos.entry_price) / pos.entry_price;
+        let bad_debt = -(pos.collateral + pnl);
+        assert_eq!(
+            vault.get_cum_bad_debt_covered() + vault.get_cum_bad_debt_lp_absorbed(),
+            bad_debt
+        );
+    }
+
+    #[test]
+    fn test_cross_bankrupt_liq_caps_at_account_funds() {
+        let test = setup();
+        let victim = fund_trader(&test, 1_000 * PRECISION);
+        let bystander = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let btc = Symbol::new(&test.env, "BTC");
+
+        // Bystander's ISOLATED collateral is custody money at the market.
+        let bpos = test.market.open_position(&bystander, &btc, &(100 * PRECISION), &2, &Direction::Long);
+        // Victim's cross position goes deep bankrupt.
+        let vpos = test.market.open_position_cross(&victim, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
+
+        let market_before = usdc.balance(&test.market_id);
+        test.market.liquidate_cross_account(&keeper, &victim);
+        let outflow = market_before - usdc.balance(&test.market_id);
+
+        // The market paid out at most the VICTIM's own funds — the
+        // bystander's collateral stays in custody (the L0-2 cap fix).
+        assert_eq!(outflow, vpos.collateral);
+        assert!(usdc.balance(&test.market_id) >= bpos.collateral);
+
+        // The uncollectable remainder is booked as CROSS bad debt.
+        let pnl = vpos.size * (PRECISION * 850 / 10_000 - vpos.entry_price) / vpos.entry_price;
+        let wanted = -pnl;
+        assert_eq!(
+            vault.get_cum_bad_debt_covered() + vault.get_cum_bad_debt_lp_absorbed(),
+            wanted - vpos.collateral
+        );
+    }
+
+    #[test]
+    fn test_bad_debt_lp_absorbed_when_buffer_empty() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
+
+        test.market.liquidate(&keeper, &pos.id);
+
+        let pnl = pos.size * (PRECISION * 850 / 10_000 - pos.entry_price) / pos.entry_price;
+        let bad_debt = -(pos.collateral + pnl);
+        // Empty buffer at draw time: everything falls to LP, none covered.
+        assert_eq!(vault.get_cum_bad_debt_covered(), 0);
+        assert_eq!(vault.get_cum_bad_debt_lp_absorbed(), bad_debt);
+    }
+
+    #[test]
+    fn test_noe_price_flat_when_buffer_covers_bankruptcy() {
+        // insurance_buffer_share_bps = 0 (the L0-4 migration value) makes
+        // the invariance exact: mark removal − receipts − draw nets to zero.
+        let cfg = MarketConfig { insurance_buffer_share_bps: 0, ..MarketConfig::default() };
+        let test = setup_with_config(cfg);
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        vault.fund_buffer(&(60 * PRECISION)); // more than the coming debt
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
+
+        // Mark the vault's uPnL at the crashed price, then measure.
+        test.market.sync_asset_pnl(&xlm);
+        let price_before = vault.get_noe_price();
+
+        test.market.liquidate(&keeper, &pos.id);
+
+        let price_after = vault.get_noe_price();
+        let diff = if price_after > price_before { price_after - price_before } else { price_before - price_after };
+        assert!(diff <= 2, "NOE price must stay flat when the buffer covers (diff {} strops)", diff);
     }
 
     // ── L0-5: staged cross-margin liquidation ───────────────────────────

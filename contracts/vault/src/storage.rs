@@ -58,6 +58,10 @@ pub enum DataKey {
     /// Share of buffer inflows routed to the shortfall reserve while any
     /// shortfall is outstanding, in bps (default 5000 = 50%).
     ShortfallInflowBps,
+    /// Lifetime bankrupt-loss amount the insurance buffer absorbed (L0-2).
+    CumBadDebtCovered,
+    /// Lifetime bankrupt-loss amount that fell through to LP NAV (L0-2).
+    CumBadDebtLpAbsorbed,
     /// Protocol-owned first-loss insurance buffer (7 decimals). Pays trader
     /// wins BEFORE LP value; fed by seed + liquidation penalties + fee share
     /// + net losses. NOT part of LP AUM / NOE price (P5-6).
@@ -239,6 +243,24 @@ pub fn get_cum_shortfall_repaid(env: &Env) -> i128 {
 pub fn set_cum_shortfall_repaid(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::CumShortfallRepaid, &amount);
     extend_ttl(env, &DataKey::CumShortfallRepaid);
+}
+
+pub fn get_cum_bad_debt_covered(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::CumBadDebtCovered).unwrap_or(0)
+}
+
+pub fn set_cum_bad_debt_covered(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::CumBadDebtCovered, &amount);
+    extend_ttl(env, &DataKey::CumBadDebtCovered);
+}
+
+pub fn get_cum_bad_debt_lp_absorbed(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::CumBadDebtLpAbsorbed).unwrap_or(0)
+}
+
+pub fn set_cum_bad_debt_lp_absorbed(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::CumBadDebtLpAbsorbed, &amount);
+    extend_ttl(env, &DataKey::CumBadDebtLpAbsorbed);
 }
 
 pub fn get_shortfall_inflow_bps(env: &Env) -> u32 {
