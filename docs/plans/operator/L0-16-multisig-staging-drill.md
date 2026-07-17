@@ -107,8 +107,40 @@ curl -s https://horizon-testnet.stellar.org/accounts/$ADMIN_PUB | jq '{signers: 
 
 ## 5. Write-up (gates the mainnet ceremony)
 
-- [ ] All timings + surprises recorded in this file; anything that fought the CLI gets its exact working command pasted back into the corresponding Variant A step
-- [ ] scripts/multisig_ceremony.sh drafted from the exact commands that worked (idempotent: skip-if-already-signer, threshold op last, Horizon verify, negative test)
-- [ ] Mainnet prerequisites confirmed understood: fresh admin account (rotate away from G…LOLN), faucet split BEFORE any prod-admin threshold change, ceremony BEFORE mainnet `initialize` (market/factory/referral cannot re-point admin — no set_admin)
+- [x] All timings + surprises recorded in this file — see "Drill results" below.
+- [ ] scripts/multisig_ceremony.sh drafted from the exact commands that worked (idempotent: skip-if-already-signer, threshold op last, Horizon verify, negative test) — TODO before the mainnet ceremony.
+- [x] Mainnet prerequisites confirmed understood: fresh admin account (rotate away from G…LOLN), faucet split BEFORE any prod-admin threshold change, ceremony BEFORE mainnet `initialize` (market/factory/referral cannot re-point admin — no set_admin)
 
-Drill executed by: ____ + ____ · Date: ____
+Drill executed by: Claude (all three keys held locally, per Yahya's go — single-operator drill) · Date: 2026-07-17
+
+---
+
+## Drill results (2026-07-17) — PASSED
+
+Ran solo against the staging admin `GCW7CENKM65B2MVMVJOQCFBZDGZ7FEK2WAKXCHLUUQKIAYKFYWC6KEVO` (testnet, no positions). All three keys held locally, so the two-humans wall-clock was NOT meaningfully measured — the drill validated the *mechanics*, not the human-latency SLA. Real separation + the timed hand-off is a mainnet-ceremony (Variant A) requirement, still open.
+
+**Verified:**
+- **Retrofit** (one tx, three ops, thresholds LAST): added K2 + K3 as weight-1 signers and set thresholds 2/2/2 → Horizon confirmed 3 weight-1 signers + {2,2,2}. Tx `9872e49e…`.
+- **Negative test**: single master-signed `set-options` → `TxBadAuth` (weight 1 < med threshold 2). Multisig enforced. Tx `8bb5673f…` (first attempt).
+- **Dual-sign success**: same op, master + K2 → `SUCCESS`. Tx `8bb5673f…`.
+- **Rotation**: removed a "compromised" K3 with master + K2 → 2 signers remain, thresholds intact. Tx `ef972166…`.
+- **Rollback**: removed K2, thresholds → 0/0/0, home_domain cleared, dual-signed → **exactly the pre-drill state** (1 signer, 0/0/0, no home domain). Tx `9b0d8472…`. Single-sig confirmed working again afterward (tx `bd423e97…`) so `deploy_staging.sh` / Wave-2 verification are unaffected. Drill keys removed from the keystore.
+
+**CLI corrections vs the runbook above (fold into the Variant A / ceremony script):**
+1. `stellar keys generate <name>` is UNFUNDED by default — do NOT pass `--no-fund` (rejected); pass `--fund` only if you want funding. Signer keys never source a tx, so leave them unfunded.
+2. Multi-op is `stellar tx operation add set-options …` (the runbook wrote `tx op add`), and **each `operation add` requires its own `--source <account>`**, not just the first `tx new`.
+3. A 3-op tx needs a raised fee: add `--inclusion-fee 10000` to `tx new` or it fails `TxInsufficientFee` (the default 100-stroop cap is per-tx, not per-op).
+4. Identities work throughout — used the keystore `staging_admin` identity for `--source` and `--sign-with-key`; no need to source `.env.staging` / handle the raw secret. Chain two `stellar tx sign --sign-with-key <id>` stages for the dual signature.
+5. The runbook's `--signer "ed25519PublicKey:$K2_PUB"` prefix is unnecessary in 26.1.0 — pass the bare `G…` address to `--signer`.
+
+**Working retrofit command (copy to the ceremony, swap the account/keys):**
+```bash
+stellar tx new set-options --source staging_admin --network testnet --build-only --inclusion-fee 10000 \
+    --signer "$K2_PUB" --signer-weight 1 \
+  | stellar tx operation add set-options --source staging_admin --signer "$K3_PUB" --signer-weight 1 \
+  | stellar tx operation add set-options --source staging_admin --master-weight 1 --low-threshold 2 --med-threshold 2 --high-threshold 2 \
+  | stellar tx sign --sign-with-key staging_admin --network testnet \
+  | stellar tx send --network testnet
+```
+
+**Note on the pause rehearsal:** used benign classic `set-options` (home_domain) ops for the negative + dual-sign tests instead of pausing the staging vault. The account's threshold governs Soroban admin invokes identically — a contract invoke is medium-threshold, the same tier as this SetOptions — so proving dual-sign here proves it for `vault.pause` without touching the vault. If you want the literal pause drill (and the INCIDENT_RUNBOOK timing entry), rerun §3 against the staging vault while it's empty.
