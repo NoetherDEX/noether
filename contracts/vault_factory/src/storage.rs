@@ -6,7 +6,7 @@
 
 use soroban_sdk::{Address, Env, Vec};
 
-use crate::types::{FactoryError, StorageKey, VaultInfo};
+use crate::types::{FactoryError, MAX_OPEN_PER_VAULT, StorageKey, VaultInfo};
 
 use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
 const INSTANCE_TTL_THRESHOLD: u32 = TTL_THRESHOLD;
@@ -158,4 +158,130 @@ pub fn get_vault_list(env: &Env) -> Vec<u32> {
         .persistent()
         .get(&StorageKey::VaultList)
         .unwrap_or_else(|| Vec::new(env))
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// L0-20: position/order → vault ownership maps + per-vault open lists
+// ───────────────────────────────────────────────────────────────────────
+
+pub fn get_position_vault(env: &Env, position_id: u64) -> Option<u32> {
+    env.storage().persistent().get(&StorageKey::PositionVault(position_id))
+}
+
+pub fn set_position_vault(env: &Env, position_id: u64, vault_id: u32) {
+    let key = StorageKey::PositionVault(position_id);
+    env.storage().persistent().set(&key, &vault_id);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+}
+
+pub fn remove_position_vault(env: &Env, position_id: u64) {
+    env.storage().persistent().remove(&StorageKey::PositionVault(position_id));
+}
+
+pub fn get_order_vault(env: &Env, order_id: u64) -> Option<u32> {
+    env.storage().persistent().get(&StorageKey::OrderVault(order_id))
+}
+
+pub fn set_order_vault(env: &Env, order_id: u64, vault_id: u32) {
+    let key = StorageKey::OrderVault(order_id);
+    env.storage().persistent().set(&key, &vault_id);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+}
+
+pub fn remove_order_vault(env: &Env, order_id: u64) {
+    env.storage().persistent().remove(&StorageKey::OrderVault(order_id));
+}
+
+pub fn get_vault_positions(env: &Env, vault_id: u32) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::VaultPositions(vault_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn get_vault_orders(env: &Env, vault_id: u32) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::VaultOrders(vault_id))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Total open slots (positions + pending orders) a vault currently holds.
+fn open_slot_count(env: &Env, vault_id: u32) -> u32 {
+    get_vault_positions(env, vault_id).len() + get_vault_orders(env, vault_id).len()
+}
+
+pub fn push_vault_position(env: &Env, vault_id: u32, position_id: u64) -> Result<(), FactoryError> {
+    if open_slot_count(env, vault_id) >= MAX_OPEN_PER_VAULT {
+        return Err(FactoryError::TooManyOpenSlots);
+    }
+    let key = StorageKey::VaultPositions(vault_id);
+    let mut list = get_vault_positions(env, vault_id);
+    list.push_back(position_id);
+    env.storage().persistent().set(&key, &list);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+    Ok(())
+}
+
+pub fn remove_vault_position(env: &Env, vault_id: u32, position_id: u64) {
+    let key = StorageKey::VaultPositions(vault_id);
+    let list = get_vault_positions(env, vault_id);
+    let mut next: Vec<u64> = Vec::new(env);
+    for i in 0..list.len() {
+        let id = list.get(i).unwrap();
+        if id != position_id {
+            next.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &next);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+}
+
+pub fn push_vault_order(env: &Env, vault_id: u32, order_id: u64) -> Result<(), FactoryError> {
+    if open_slot_count(env, vault_id) >= MAX_OPEN_PER_VAULT {
+        return Err(FactoryError::TooManyOpenSlots);
+    }
+    let key = StorageKey::VaultOrders(vault_id);
+    let mut list = get_vault_orders(env, vault_id);
+    list.push_back(order_id);
+    env.storage().persistent().set(&key, &list);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+    Ok(())
+}
+
+pub fn remove_vault_order(env: &Env, vault_id: u32, order_id: u64) {
+    let key = StorageKey::VaultOrders(vault_id);
+    let list = get_vault_orders(env, vault_id);
+    let mut next: Vec<u64> = Vec::new(env);
+    for i in 0..list.len() {
+        let id = list.get(i).unwrap();
+        if id != order_id {
+            next.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &next);
+    env.storage().persistent().extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// L0-20: leader allowlist + max-active-vaults gate (instance)
+// ───────────────────────────────────────────────────────────────────────
+
+pub fn get_leader_allowlist(env: &Env) -> Vec<Address> {
+    env.storage()
+        .instance()
+        .get(&StorageKey::LeaderAllowlist)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn set_leader_allowlist(env: &Env, list: &Vec<Address>) {
+    env.storage().instance().set(&StorageKey::LeaderAllowlist, list);
+}
+
+pub fn get_max_vaults(env: &Env) -> u32 {
+    env.storage().instance().get(&StorageKey::MaxActiveVaults).unwrap_or(0)
+}
+
+pub fn set_max_vaults(env: &Env, max: u32) {
+    env.storage().instance().set(&StorageKey::MaxActiveVaults, &max);
 }

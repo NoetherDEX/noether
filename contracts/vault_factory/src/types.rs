@@ -22,6 +22,10 @@ pub const PRECISION: i128 = 10_000_000;
 /// Basis points denominator.
 pub const BPS_DENOM: u32 = 10_000;
 
+/// Max concurrent open positions + pending orders a single vault may hold
+/// (L0-20). Bounds the full-NAV cross-contract read loop's gas.
+pub const MAX_OPEN_PER_VAULT: u32 = 16;
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct VaultInfo {
@@ -68,6 +72,21 @@ pub enum StorageKey {
     VaultList,
     /// Whether `initialize` has been called (one-shot).
     Initialized,
+    // ── L0-20: per-vault fund isolation ──
+    /// position_id → owning vault id. The market's sole trader is the
+    /// factory, so this map is what stops one leader closing another
+    /// vault's position.
+    PositionVault(u64),
+    /// pending order_id → owning vault id (same guard for orders).
+    OrderVault(u64),
+    /// vault_id → its open position ids (`Vec<u64>`, capped MAX_OPEN_PER_VAULT).
+    VaultPositions(u32),
+    /// vault_id → its pending order ids (`Vec<u64>`, capped MAX_OPEN_PER_VAULT).
+    VaultOrders(u32),
+    /// Instance — leader creation allowlist (`Vec<Address>`; empty = permissionless).
+    LeaderAllowlist,
+    /// Instance — max active vaults (`u32`; 0 = unlimited).
+    MaxActiveVaults,
 }
 
 #[contracterror]
@@ -89,4 +108,18 @@ pub enum FactoryError {
     Overflow = 13,
     NavCalculationFailed = 14,
     NoFeesToClaim = 15,
+    // ── L0-20 ──
+    /// A leader op referenced a position/order not owned by its vault.
+    NotVaultPosition = 16,
+    /// Withdrawal priced fairly at full NAV but exceeds the vault's LIQUID
+    /// cash — capital is deployed in open positions; wait for the leader to
+    /// free it (a distinct liveness error, never a silent NAV haircut).
+    LiquidityDeployed = 17,
+    /// Full-NAV valuation could not read a position's equity or an order
+    /// (oracle/market failure) — deposits/withdrawals/claims fail-close.
+    ValuationUnavailable = 18,
+    /// The vault already holds MAX_OPEN_PER_VAULT positions + orders.
+    TooManyOpenSlots = 19,
+    /// create_vault blocked by the leader allowlist or the max-vaults cap.
+    CreationRestricted = 20,
 }

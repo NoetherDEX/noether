@@ -651,7 +651,11 @@
                     "storage": [
                       {
                         "key": {
-                          "symbol": "next_id"
+                          "vec": [
+                            {
+                              "symbol": "NextOid"
+                            }
+                          ]
                         },
                         "val": {
                           "u64": 0
@@ -659,7 +663,23 @@
                       },
                       {
                         "key": {
-                          "symbol": "usdc"
+                          "vec": [
+                            {
+                              "symbol": "NextPid"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": 0
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Usdc"
+                            }
+                          ]
                         },
                         "val": {
                           "address": "CBUSYNQKASUYFWYC3M2GUEDMX4AIVWPALDBYJPNK6554BREHTGZ2IUNF"
