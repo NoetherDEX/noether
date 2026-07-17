@@ -134,6 +134,21 @@ pub fn calculate_cross_maintenance_margin(
     agg.maintenance_margin
 }
 
+/// Aggregate initial (used) margin for all cross positions (L1-5).
+/// IM_agg = Σ size_i / leverage_i — price-free, so an oracle failure can
+/// never fabricate free-margin headroom. This is the withdraw/open floor;
+/// maintenance margin (a strictly smaller number at 1-10x) stays the
+/// liquidation trigger, leaving the IM→MM span as the de-risk band.
+pub fn calculate_cross_used_margin(
+    env: &Env,
+    trader: &Address,
+) -> i128 {
+    let no_price = |_: &Symbol| -> i128 { 0 };
+    // maintenance_margin_bps is irrelevant to used_margin; pass 0.
+    let agg = aggregate_cross_positions(env, trader, 0, &no_price);
+    agg.used_margin
+}
+
 /// Check if a cross-margin account should be liquidated.
 pub fn is_cross_account_liquidatable(
     env: &Env,

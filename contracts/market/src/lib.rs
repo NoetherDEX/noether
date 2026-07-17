@@ -357,10 +357,14 @@ impl MarketContract {
                     Self::get_oracle_price(&env, asset, false).unwrap_or(0)
                 };
                 let equity = position::calculate_cross_equity(&env, &trader, &get_price);
-                let mm = position::calculate_cross_maintenance_margin(
-                    &env, &trader, config.maintenance_margin_bps,
-                );
-                if equity < mm + collateral {
+                // L1-5: gate on INITIAL margin. The new position's own IM
+                // equals its collateral (size/leverage == collateral), so this
+                // reads "post-open equity covers post-open IM_agg". MM stays
+                // the liquidation trigger only. With L1-3 auto-net landing in
+                // the same batch, opposite-direction opens reduce first and
+                // only the risk-increasing remainder reaches this gate.
+                let used_margin = position::calculate_cross_used_margin(&env, &trader);
+                if equity < used_margin + collateral {
                     return Err(NoetherError::CrossMarginInsufficientFreeMargin);
                 }
             }
@@ -1271,8 +1275,7 @@ impl MarketContract {
             return Err(NoetherError::CrossMarginInsufficientBalance);
         }
 
-        // Check free margin: can't withdraw if it would make account liquidatable
-        let config = get_config(&env);
+        // Free-margin gate: can't withdraw below the initial-margin band.
         let position_ids = get_cross_margin_position_ids(&env, &trader);
 
         if !position_ids.is_empty() {
@@ -1284,12 +1287,13 @@ impl MarketContract {
             };
             let equity_before = position::calculate_cross_equity(&env, &trader, &get_price);
             let equity_after = equity_before - amount;
-            let maintenance_margin = position::calculate_cross_maintenance_margin(
-                &env, &trader, config.maintenance_margin_bps,
-            );
-
-            // Equity after withdrawal must exceed maintenance margin
-            if equity_after <= maintenance_margin {
+            // L1-5: gate on INITIAL margin (Σ size/leverage), not maintenance.
+            // Strictly-less so withdrawing exactly TO the IM boundary is
+            // allowed; MM (a smaller number) stays purely the liq trigger, so
+            // a funding tick or wick can't drop a just-withdrawn account
+            // straight through the de-risk band into liquidation.
+            let used_margin = position::calculate_cross_used_margin(&env, &trader);
+            if equity_after < used_margin {
                 return Err(NoetherError::CrossMarginInsufficientFreeMargin);
             }
         }
@@ -5327,12 +5331,16 @@ mod tests {
             let keeper = fund_trader(&test, 10 * PRECISION);
             let btc = Symbol::new(&test.env, "BTC");
             let xlm = Symbol::new(&test.env, "XLM");
+            // L1-5: fund $210 so the second 100@5x open clears the IM gate on a
+            // $10 buffer; shed that $10 by dropping XLM to 81% (−$95 vs −$85)
+            // so equity lands at ~$30 exactly as before the gate tightened.
+            test.market.deposit_cross_margin(&trader, &(210 * PRECISION));
             test.market.open_position_cross(&trader, &btc, &(100 * PRECISION), &5, &Direction::Long, &0);
             test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
-            // Drop both ~17% → each leg loses ~85% of collateral, equity ~$30.
+            // Drop BTC ~17% and XLM ~19% → equity ~$30 (buffer-compensated).
             let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
             oracle.set_price(&btc, &(60_000 * PRECISION * 83 / 100));
-            oracle.set_price(&xlm, &(PRECISION / 10 * 83 / 100));
+            oracle.set_price(&xlm, &(PRECISION / 10 * 81 / 100));
             test.market.try_liquidate_cross_account(&keeper, &trader).is_ok()
         };
         // Ladder MM $35 > equity $30 → liquidatable; legacy MM $10 < $30 → not.
@@ -5425,6 +5433,191 @@ mod tests {
         assert_eq!(reward, 0);
         assert_eq!(usdc.balance(&trader) - bal_after_place, 100 * PRECISION);
         assert_eq!(test.market.get_order(&order.id).unwrap().status, OrderStatus::CancelledSlippage);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // L1-5 · Account initial-margin band (withdraw/open gate above MM)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_withdraw_to_im_boundary_allowed() {
+        // Withdrawing exactly TO the IM boundary (equity_after == used_margin)
+        // is allowed — the gate is strictly-less.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        // Boundary from chain truth (no price move → uPnL = funding = 0).
+        let pool = test.market.get_cross_margin_balance(&trader);
+        let p = test.market.get_position(&pos.id).unwrap();
+        let used = p.size / (p.leverage as i128);
+        let equity = pool + p.collateral;
+        let free = equity - used;
+
+        test.market.withdraw_cross_margin(&trader, &free); // succeeds at the boundary
+        assert_eq!(test.market.get_cross_margin_balance(&trader), pool - free);
+    }
+
+    #[test]
+    fn test_withdraw_below_im_rejected_77() {
+        // One unit past the IM boundary is rejected with #77 — and crucially
+        // this unit is INSIDE the old MM band (MM << IM), so it pins the
+        // tightening: pre-L1-5 this withdrawal was allowed.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        let pool = test.market.get_cross_margin_balance(&trader);
+        let p = test.market.get_position(&pos.id).unwrap();
+        let free = (pool + p.collateral) - p.size / (p.leverage as i128);
+
+        assert!(matches!(
+            test.market.try_withdraw_cross_margin(&trader, &(free + 1)),
+            Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
+        ));
+    }
+
+    #[test]
+    fn test_open_rejected_when_free_margin_below_new_collateral() {
+        // A second cross open whose collateral exceeds free margin (equity −
+        // IM_agg) is rejected with #77. free+1 is still well within the old
+        // MM headroom, so this rejection is IM-specific.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.deposit_cross_margin(&trader, &(300 * PRECISION));
+        let p1 = test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        let pool = test.market.get_cross_margin_balance(&trader);
+        let p = test.market.get_position(&p1.id).unwrap();
+        let free = (pool + p.collateral) - p.size / (p.leverage as i128);
+
+        assert!(matches!(
+            test.market.try_open_position_cross(
+                &trader, &xlm, &(free + 1), &5, &Direction::Long, &0,
+            ),
+            Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
+        ));
+    }
+
+    #[test]
+    fn test_open_allowed_at_exact_im() {
+        // The mirror of the above: opening with collateral == free margin sits
+        // exactly on the boundary (equity == IM_agg + collateral) and succeeds.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.deposit_cross_margin(&trader, &(300 * PRECISION));
+        let p1 = test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        let pool = test.market.get_cross_margin_balance(&trader);
+        let p = test.market.get_position(&p1.id).unwrap();
+        let free = (pool + p.collateral) - p.size / (p.leverage as i128);
+
+        let p2 = test.market.open_position_cross(
+            &trader, &xlm, &free, &5, &Direction::Long, &0,
+        );
+        assert!(test.market.get_position(&p2.id).is_some());
+    }
+
+    #[test]
+    fn test_liquidation_still_at_mm_not_im() {
+        // Seed equity strictly between MM_agg and IM_agg: withdrawal is blocked
+        // (#77, IM gate) while the account is NOT liquidatable (#78, MM trigger).
+        // Proves the IM→MM span is a de-risk band, not a liquidation zone.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        // 10x long: used = 10% of size, mm = 1% of size. Deposit leaves a
+        // real pool so the withdraw path reaches the free-margin gate (not #76).
+        test.market.deposit_cross_margin(&trader, &(200 * PRECISION));
+        test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
+        );
+        // Drop to $0.085 (uPnL ≈ −150): equity ≈ 50 ∈ (mm ≈ 10, used = 100).
+        oracle.set_price(&xlm, &(PRECISION * 85 / 1000));
+
+        // Withdraw blocked at IM …
+        assert!(matches!(
+            test.market.try_withdraw_cross_margin(&trader, &(1 * PRECISION)),
+            Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
+        ));
+        // … yet the account is NOT liquidatable (MM is the trigger, untouched).
+        assert!(matches!(
+            test.market.try_liquidate_cross_account(&keeper, &trader),
+            Err(Ok(NoetherError::CrossMarginNotLiquidatable))
+        ));
+    }
+
+    #[test]
+    fn test_oracle_failure_still_blocks_withdraw() {
+        // A price-free IM computation means an oracle failure (price → 0, so
+        // the lenient read errors and equity collapses) can never fabricate
+        // headroom: the withdraw stays blocked, fail-safe.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        // Small pool ($20 after the open) so a total loss can bite: deposit
+        // $120, open 100@5x (size 500, used = 100). Live-price equity ≈ $120
+        // leaves plenty of headroom; a price-0 read collapses it.
+        test.market.deposit_cross_margin(&trader, &(120 * PRECISION));
+        test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        // Oracle returns 0 → get_oracle_price errs → equity closure yields 0
+        // for the leg → uPnL = −size collapses equity below IM. A $5 withdraw
+        // (well within the $20 pool, so not an #76 balance reject) that would
+        // clear at the live price is now blocked.
+        oracle.set_price(&xlm, &0);
+        assert!(matches!(
+            test.market.try_withdraw_cross_margin(&trader, &(5 * PRECISION)),
+            Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
+        ));
+    }
+
+    #[test]
+    fn test_im_exceeds_mm_for_all_leverages() {
+        // Structural invariant the gates rely on: initial margin (size/leverage)
+        // strictly exceeds maintenance margin (size × mm_bps/10000) at every
+        // allowed leverage and every L0-12 ladder preset. If it ever inverted
+        // (mm_bps ≥ 10000/leverage) the withdraw/open gate would sit BELOW the
+        // liquidation trigger — this pins that it can't.
+        let size: i128 = 1_000 * PRECISION;
+        // Legacy flat MM = 100 bps (1%), leverage 1..=10.
+        for lev in 1..=10i128 {
+            let im = size / lev;
+            let mm = size * 100 / 10_000;
+            assert!(im > mm, "IM must exceed MM at {}x (legacy 1% MM)", lev);
+        }
+        // L0-12 ladder presets carry mm_bps = im_bps/2, so IM = 2×MM by
+        // construction — check the presets these tests actually configure.
+        for &(lev, im_bps) in &[(5i128, 2_000i128), (10, 1_000), (25, 400)] {
+            let im = size / lev;
+            let mm = size * (im_bps / 2) / 10_000;
+            assert!(im > mm, "IM must exceed MM at {}x (ladder im_bps={})", lev, im_bps);
+        }
     }
 
     #[test]
@@ -5969,10 +6162,17 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
         let eth = Symbol::new(&test.env, "ETH");
+        // L1-5: two 100@10x legs need $200 initial margin; fund $210 up front
+        // so the second open clears the IM gate on a $10 fee buffer (pool ends
+        // at $10). One unit of xlm_price_bps_of_entry is 0.1% of the $0.10
+        // entry = $1 of uPnL on the 1000-size leg, so dropping it 10 units
+        // sheds exactly the $10 buffer — pre-liquidation equity (every caller's
+        // band) is preserved to the dollar.
+        test.market.deposit_cross_margin(&trader, &(210 * PRECISION));
         let p1 = test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let p2 = test.market.open_position_cross(&trader, &eth, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
-        oracle.set_price(&xlm, &(PRECISION * xlm_price_bps_of_entry / 10_000));
+        oracle.set_price(&xlm, &(PRECISION * (xlm_price_bps_of_entry - 10) / 10_000));
         oracle.set_price(&eth, &eth_price);
         (test, trader, p1, p2)
     }
