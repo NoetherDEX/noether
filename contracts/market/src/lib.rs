@@ -43,7 +43,7 @@ use noether_common::{
     Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
     VolumeRecord, BASIS_POINTS, PRECISION,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
-    calculate_trading_fee, calculate_funding_rate, calculate_cumulative_funding,
+    calculate_trading_fee, calculate_cumulative_funding, funding_velocity,
     should_liquidate,
 };
 
@@ -408,7 +408,7 @@ impl MarketContract {
             leverage,
             liquidation_price,
             timestamp: env.ledger().timestamp(),
-            entry_cumulative_funding: get_cumulative_funding_rate(&env),
+            entry_cumulative_funding: Self::cum_funding(&env, &asset),
             margin_mode: if cross { 1 } else { 0 },
         };
 
@@ -515,7 +515,7 @@ impl MarketContract {
 
         // Calculate PnL and funding
         let pnl = calculate_pnl(&position, current_price)?;
-        let cumulative = get_cumulative_funding_rate(&env);
+        let cumulative = Self::cum_funding(&env, &position.asset);
         let funding = calculate_cumulative_funding(
             position.size, position.direction,
             position.entry_cumulative_funding, cumulative,
@@ -731,48 +731,140 @@ impl MarketContract {
     /// Funding balances long/short interest:
     /// - If more longs than shorts: longs pay shorts
     /// - If more shorts than longs: shorts pay longs
+    /// Apply per-market funding (L0-13). Permissionless, same no-arg
+    /// signature the keeper already calls. Loops every listed pair and
+    /// accrues each asset's own SIP-279 velocity-based rate (clamped),
+    /// driven by that asset's TIME-WEIGHTED skew — so a quiet pair cannot
+    /// collect carry off another pair's imbalance, and a keeper outage
+    /// under-accrues (the dt cap kills the M-7 retroactive window) rather
+    /// than pricing hours at one instant's skew. Returns
+    /// FundingIntervalNotElapsed (#55) only when NOTHING was due, preserving
+    /// the keeper's applied|not-due tri-state.
     pub fn apply_funding(env: Env) -> Result<(), NoetherError> {
         require_initialized(&env)?;
+        let now = env.ledger().timestamp();
+        // Progress = a pair was seeded OR accrued this call. Seeding must
+        // count: returning Err would roll back the seed, so a pure-seed
+        // tick reports Ok (no funding_applied event) and #55 fires only
+        // when every configured pair is already seeded and not yet due.
+        let mut progressed = false;
 
-        let current_time = env.ledger().timestamp();
-        let last_funding = get_last_funding_time(&env);
+        for (sym, _) in noether_common::assets::PAIR_TAGS {
+            let asset = Symbol::new(&env, sym);
+            // Unconfigured pairs accrue nothing (fail-open, not fail-closed —
+            // funding is a settlement mechanic, not a risk gate).
+            let params = match get_asset_risk(&env, &asset) {
+                Some(p) => p,
+                None => continue,
+            };
+            let (mut cum, prev_rate, last_ts) = get_funding_state(&env, &asset);
 
-        // Require at least 1 hour between funding applications
-        if current_time < last_funding + 3600 {
+            // First touch: seed last_ts so the window starts here.
+            if last_ts == 0 {
+                set_funding_state(&env, &asset, &(cum, prev_rate, now));
+                progressed = true;
+                continue;
+            }
+            if now < last_ts + 3600 {
+                continue;
+            }
+
+            // M-7 kill: one reading never prices more than one hour of
+            // velocity (dt_eff caps the STEP). The average skew is still
+            // fair over the real window; a keeper outage under-accrues.
+            let dt_eff = if now - last_ts > 3600 { 3600 } else { now - last_ts };
+            let avg_skew = Self::close_skew_window(&env, &asset, now);
+
+            // SIP-279 velocity (PRECISION-scaled bps) → fraction-units, then
+            // clamp the RATE (not the step) to ±funding_clamp_bps/h.
+            let step_bps = funding_velocity(
+                avg_skew, params.skew_scale, params.max_funding_velocity_bps, dt_eff,
+            );
+            let step_frac = step_bps / (BASIS_POINTS as i128);
+            let limit = (params.funding_clamp_bps as i128) * PRECISION / (BASIS_POINTS as i128);
+            let mut new_rate = prev_rate + step_frac;
+            if new_rate > limit {
+                new_rate = limit;
+            } else if new_rate < -limit {
+                new_rate = -limit;
+            }
+
+            let hours = (dt_eff / 3600) as i128; // exactly 1 given the cap
+            cum += new_rate * hours;
+            set_funding_state(&env, &asset, &(cum, new_rate, now));
+
+            env.events().publish(
+                (Symbol::new(&env, "funding_applied"),),
+                (asset.clone(), new_rate, hours as u64, cum),
+            );
+            progressed = true;
+        }
+
+        if !progressed {
             return Err(NoetherError::FundingIntervalNotElapsed);
         }
-
-        let hours_elapsed = (current_time - last_funding) / 3600;
-        if hours_elapsed == 0 {
-            return Ok(());
-        }
-
-        let config = get_config(&env);
-        let total_long = get_total_long_size(&env);
-        let total_short = get_total_short_size(&env);
-
-        // Calculate funding rate
-        let funding_rate = calculate_funding_rate(
-            total_long,
-            total_short,
-            config.base_funding_rate_bps,
-        );
-
-        // Store current rate for reference
-        set_current_funding_rate(&env, funding_rate);
-        set_last_funding_time(&env, current_time);
-
-        // Accumulate into cumulative rate (enables accurate per-position funding)
-        let cumulative = get_cumulative_funding_rate(&env);
-        let new_cumulative = cumulative + funding_rate * (hours_elapsed as i128);
-        set_cumulative_funding_rate(&env, new_cumulative);
-
-        env.events().publish(
-            (Symbol::new(&env, "funding_applied"),),
-            (funding_rate, hours_elapsed),
-        );
-
         Ok(())
+    }
+
+    /// Migrate the single global funding index into per-asset indices
+    /// (L0-13). Admin-only, run inside the upgrade pause window after
+    /// migrate_config + set_asset_risk. Seeds every pair's index at the
+    /// legacy global cumulative value so every open position's pending
+    /// funding is preserved by delta-continuity — no per-position writes.
+    pub fn migrate_funding(env: Env) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        require_admin(&env)?;
+        let now = env.ledger().timestamp();
+        let legacy = get_cumulative_funding_rate(&env);
+        for (sym, _) in noether_common::assets::PAIR_TAGS {
+            let asset = Symbol::new(&env, sym);
+            set_funding_state(&env, &asset, &(legacy, 0, now));
+            env.events().publish(
+                (Symbol::new(&env, "funding_migrated"),),
+                (asset, legacy),
+            );
+        }
+        Ok(())
+    }
+
+    /// One asset's cumulative funding index (L0-13). The per-market
+    /// replacement for the global get_cumulative_funding_rate at every
+    /// settlement/snapshot site.
+    fn cum_funding(env: &Env, asset: &Symbol) -> i128 {
+        get_funding_state(env, asset).0
+    }
+
+    /// Accrue the skew integral for the window since the last touch, using
+    /// the skew that held over it (L0-13). Called by adjust_oi before every
+    /// exposure mutation.
+    fn accrue_skew_integral(env: &Env, asset: &Symbol, skew_now: i128) {
+        let now = env.ledger().timestamp();
+        let (integral, last) = get_skew_integral(env, asset);
+        if last == 0 {
+            set_skew_integral(env, asset, &(0, now));
+            return;
+        }
+        let dt = (now - last) as i128;
+        set_skew_integral(env, asset, &(integral + skew_now * dt, now));
+    }
+
+    /// Close the skew window: fold the final sub-interval and return the
+    /// time-weighted average skew over the integral's OWN window
+    /// [last_touch → now] (NOT dt_eff — dividing by dt_eff would inflate a
+    /// multi-hour window's average). Resets the integral. Falls back to the
+    /// instantaneous skew when the window is empty (fresh deploy first hour).
+    fn close_skew_window(env: &Env, asset: &Symbol, now: u64) -> i128 {
+        let (lk, ls, sk, ss) = get_asset_exposure(env, asset);
+        let _ = (lk, sk);
+        let inst = ls - ss;
+        let (integral, last) = get_skew_integral(env, asset);
+        set_skew_integral(env, asset, &(0, now));
+        let window = if last == 0 { 0 } else { (now - last) as i128 };
+        if window == 0 {
+            return inst;
+        }
+        let total = integral + inst * window;
+        total / window
     }
 
     // get_funding_rate removed - use get_market_stats().funding_rate instead
@@ -1019,7 +1111,7 @@ impl MarketContract {
         max_outflow: i128,
     ) -> (i128, i128, i128, i128) {
         let trader = pos.trader.clone();
-        let cumulative = get_cumulative_funding_rate(env);
+        let cumulative = Self::cum_funding(env, &pos.asset);
         let funding = calculate_cumulative_funding(
             pos.size, pos.direction,
             pos.entry_cumulative_funding, cumulative,
@@ -1423,7 +1515,7 @@ impl MarketContract {
         let config = get_config(&env);
         let price = Self::get_oracle_price(&env, &pos.asset, false)?;
 
-        let cumulative = get_cumulative_funding_rate(&env);
+        let cumulative = Self::cum_funding(&env, &pos.asset);
         let funding = calculate_cumulative_funding(
             pos.size, pos.direction, pos.entry_cumulative_funding, cumulative,
         );
@@ -2363,7 +2455,7 @@ impl MarketContract {
         if should_liquidate(pos, price) { return true; }
         // Margin check with cumulative funding
         let pnl = calculate_pnl(pos, price).unwrap_or(0);
-        let cumulative = get_cumulative_funding_rate(env);
+        let cumulative = Self::cum_funding(env, &pos.asset);
         let funding = calculate_cumulative_funding(
             pos.size, pos.direction,
             pos.entry_cumulative_funding, cumulative,
@@ -2489,7 +2581,7 @@ impl MarketContract {
         keeper: Option<&Address>,
         skip_order: Option<u64>,
     ) -> Result<i128, NoetherError> {
-        let cumulative = get_cumulative_funding_rate(env);
+        let cumulative = Self::cum_funding(env, &position.asset);
         let funding = calculate_cumulative_funding(
             position.size, position.direction,
             position.entry_cumulative_funding, cumulative,
@@ -2588,6 +2680,11 @@ impl MarketContract {
         }
 
         let (mut lk, mut ls, mut sk, mut ss) = get_asset_exposure(env, asset);
+
+        // Time-weighted skew (L0-13, M-7): accrue the OLD skew (ls−ss) over
+        // the window since the last touch BEFORE this trade mutates it.
+        Self::accrue_skew_integral(env, asset, ls - ss);
+
         let k_delta = if entry_price > 0 { size * PRECISION / entry_price } else { 0 };
         let sat = |cur: i128, d: i128| if cur > d { cur - d } else { 0 };
         match direction {
@@ -2933,7 +3030,7 @@ impl MarketContract {
             leverage: order.leverage,
             liquidation_price,
             timestamp: env.ledger().timestamp(),
-            entry_cumulative_funding: get_cumulative_funding_rate(env),
+            entry_cumulative_funding: Self::cum_funding(env, &order.asset),
             margin_mode: 0, // Isolated
         };
 
@@ -4090,8 +4187,13 @@ mod tests {
 
     #[test]
     fn test_funding_accrues_and_settles_on_close() {
+        // L0-13: per-asset funding. XLM must be configured; the first
+        // apply_funding seeds last_ts (returns #55, the keeper not-due
+        // state), the second accrues off the time-weighted skew.
         let test = setup();
+        seed_ladder(&test);
         let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        vault_client.set_skew_cap(&Symbol::new(&test.env, "XLM"), &10_000); // one-sided by design
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
         let xlm = Symbol::new(&test.env, "XLM");
@@ -4102,25 +4204,160 @@ mod tests {
         );
         let fee = 100 * PRECISION - pos.collateral; // taker fee charged at open
 
-        // One hour passes; refresh the oracle so the close isn't stale-flagged
+        // First tick seeds the funding window (Ok, no accrual event) — the
+        // seed must PERSIST, so it cannot return Err.
+        test.market.apply_funding();
+        // A second tick within the hour is not-due (#55, keeper tri-state).
+        let not_due = test.market.try_apply_funding();
+        assert!(matches!(not_due, Err(Ok(NoetherError::FundingIntervalNotElapsed))));
+
+        // One hour passes; refresh the oracle so the close isn't stale-flagged.
         test.env.ledger().with_mut(|li| li.timestamp += 3_600);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION / 10));
-        test.market.apply_funding();
+        test.market.apply_funding(); // accrues off the net-long skew
 
         let vault_before = vault_client.get_total_usdc();
         let wallet_before = usdc.balance(&trader);
         let pnl = test.market.close_position(&trader, &pos.id);
         assert_eq!(pnl, 0); // flat price
 
-        // Trader got collateral back MINUS accrued funding
+        // Trader got collateral back MINUS accrued funding (longs pay).
         let received = usdc.balance(&trader) - wallet_before;
         assert!(received > 0);
         assert!(received < 100 * PRECISION - fee);
-        // ...and that funding landed in the vault's accounting
+        // ...and that funding landed in the vault's accounting.
         let funding_credited = vault_client.get_total_usdc() - vault_before;
         assert_eq!(funding_credited, (100 * PRECISION - fee) - received);
         assert!(funding_credited > 0);
+    }
+
+    // ── L0-13: per-asset funding + magnitude + M-7 kill ─────────────────
+
+    /// Configure an asset, seed its funding window, hold a one-sided long
+    /// for one hour, and apply. Returns (accrued cumulative index, funding
+    /// charged to the position on close).
+    fn accrue_one_hour(vel_bps: u32, clamp_bps: u32) -> (TestEnv, i128) {
+        let test = setup();
+        let xlm = Symbol::new(&test.env, "XLM");
+        let params = AssetRiskParams {
+            max_leverage: 10, im_bps: 1_000, mm_bps: 500, close_out_bps: 333,
+            max_position_size: 100_000 * PRECISION,
+            max_funding_velocity_bps: vel_bps, funding_clamp_bps: clamp_bps,
+            skew_scale: 200_000 * PRECISION,
+        };
+        test.market.set_asset_risk(&xlm, &params);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        vault.set_skew_cap(&xlm, &10_000);
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long); // $10k notional
+        test.market.apply_funding(); // seed
+        test.env.ledger().with_mut(|li| li.timestamp += 3_600);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION / 10));
+        test.market.apply_funding(); // accrue
+        let (cum, _rate, _ts) = {
+            // read via a fresh open snapshot: entry_cumulative_funding == cum
+            let probe = fund_trader(&test, 100 * PRECISION);
+            let p = test.market.open_position(&probe, &xlm, &(10 * PRECISION), &2, &Direction::Long);
+            (p.entry_cumulative_funding, 0i128, 0u64)
+        };
+        (test, cum)
+    }
+
+    #[test]
+    fn test_funding_magnitude_and_clamp_sip279() {
+        // vel 3_600 bps/day at full-ish skew ($10k net on $400k scale) for 1h.
+        // At clamp 50 (majors 0.5%/h) the rate saturates; cum == 50_000/h.
+        let (_test, cum) = accrue_one_hour(3_600, 50);
+        // A $10k-notional net long on a $400k skew_scale over one hour with
+        // the 0.5%/h clamp lands the cumulative index at the clamp ceiling.
+        assert!(cum > 0, "longs accrue positive funding");
+        assert!(cum <= 50_000, "rate clamped at 0.5%/h (50_000 fraction-units)");
+
+        // A tighter clamp binds lower.
+        let (_t2, cum_alts) = accrue_one_hour(3_600, 100);
+        assert!(cum_alts >= cum, "a looser (alts 1%/h) clamp allows a higher rate");
+    }
+
+    #[test]
+    fn test_funding_is_per_asset_not_global() {
+        // BTC net-long, ETH net-short: their funding indices move in
+        // OPPOSITE directions — a global rate could never do this.
+        let test = setup();
+        seed_ladder(&test);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let btc = Symbol::new(&test.env, "BTC");
+        let eth = Symbol::new(&test.env, "ETH");
+        vault.set_skew_cap(&btc, &10_000);
+        vault.set_skew_cap(&eth, &10_000);
+        let ta = fund_trader(&test, 10_000 * PRECISION);
+        let tb = fund_trader(&test, 10_000 * PRECISION);
+        test.market.open_position(&ta, &btc, &(1_000 * PRECISION), &10, &Direction::Long);
+        test.market.open_position(&tb, &eth, &(1_000 * PRECISION), &10, &Direction::Short);
+        test.market.apply_funding(); // seed
+        test.env.ledger().with_mut(|li| li.timestamp += 3_600);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&btc, &(60_000 * PRECISION));
+        oracle.set_price(&eth, &(3_000 * PRECISION));
+        test.market.apply_funding();
+
+        // Probe each index via a fresh open snapshot.
+        let pb = test.market.open_position(&ta, &btc, &(10 * PRECISION), &2, &Direction::Long);
+        let pe = test.market.open_position(&tb, &eth, &(10 * PRECISION), &2, &Direction::Long);
+        assert!(pb.entry_cumulative_funding > 0, "BTC net-long → longs pay (positive)");
+        assert!(pe.entry_cumulative_funding < 0, "ETH net-short → shorts pay (negative)");
+    }
+
+    #[test]
+    fn test_funding_dt_capped_kills_retroactive_window() {
+        // A keeper outage: 5 hours pass, one apply. The M-7 kill caps the
+        // accrual at ONE hour — the cumulative never prices 5h at once.
+        let test = setup();
+        let xlm = Symbol::new(&test.env, "XLM");
+        test.market.set_asset_risk(&xlm, &risk(10, 1_000));
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        vault.set_skew_cap(&xlm, &10_000);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long);
+        test.market.apply_funding(); // seed
+
+        test.env.ledger().with_mut(|li| li.timestamp += 5 * 3_600); // 5h outage
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION / 10));
+        test.market.apply_funding();
+        let five_h = test.market.open_position(&trader, &xlm, &(10 * PRECISION), &2, &Direction::Long)
+            .entry_cumulative_funding;
+
+        // Control: the same skew accrued over a single clean hour.
+        let (_t2, one_h) = accrue_one_hour(3_600, 50);
+        assert_eq!(five_h, one_h, "5h outage accrues exactly one hour (M-7 killed)");
+    }
+
+    #[test]
+    fn test_migrate_funding_preserves_pending() {
+        // A position opened under the legacy global index keeps its pending
+        // funding after migration seeds the per-asset index at that value.
+        let test = setup();
+        // Simulate a legacy global cumulative by NOT configuring the asset
+        // (epoch 0, funding via the old path is inert here) — then migrate.
+        let xlm = Symbol::new(&test.env, "XLM");
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        // entry snapshot is the (legacy) global index at open — 0 here.
+        assert_eq!(pos.entry_cumulative_funding, 0);
+
+        test.market.migrate_funding();
+        // After migration, FundingState(XLM) seeds at the legacy global (0),
+        // so the position's pending funding is still exactly 0 — no jump.
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let vb = vault.get_total_usdc();
+        let wb = soroban_sdk::token::Client::new(&test.env, &test.usdc_token).balance(&trader);
+        test.market.close_position(&trader, &pos.id);
+        let received = soroban_sdk::token::Client::new(&test.env, &test.usdc_token).balance(&trader) - wb;
+        // Flat price, zero funding delta → trader gets collateral back, vault unchanged.
+        assert_eq!(received, pos.collateral);
+        assert_eq!(vault.get_total_usdc(), vb);
     }
 
     /// L0-3 integration: a winner short-paid at close holds a claimable
@@ -4734,7 +4971,6 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let keeper = fund_trader(&test, 10 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
-        let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
         let pos = test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);

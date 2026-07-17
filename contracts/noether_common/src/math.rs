@@ -226,6 +226,25 @@ pub fn calculate_cumulative_funding(
     }
 }
 
+/// SIP-279 funding VELOCITY (L0-13): the change in the hourly funding rate
+/// over `elapsed_seconds`, driven by net skew. Returns a PRECISION-scaled
+/// BPS value (the caller converts to fraction-units via /BASIS_POINTS and
+/// clamps). `skew_scale` is conventionally 2× the per-market OI cap;
+/// `max_velocity_bps` is in bps/DAY (36%/day = 3_600). 0 skew_scale or
+/// 0 elapsed → 0 (no accrual).
+pub fn funding_velocity(
+    net_skew: i128,
+    skew_scale: i128,
+    max_velocity_bps: u32,
+    elapsed_seconds: u64,
+) -> i128 {
+    if skew_scale <= 0 || elapsed_seconds == 0 {
+        return 0;
+    }
+    let per_day = (max_velocity_bps as i128) * PRECISION * net_skew / skew_scale;
+    per_day * (elapsed_seconds as i128) / 86_400
+}
+
 /// Calculate GLP tokens to mint for a USDC deposit.
 ///
 /// # Formula
@@ -511,5 +530,33 @@ mod tests {
         );
         // 1500 * PRECISION * 600 / PRECISION = 900_000 = $0.09
         assert_eq!(funding, 900_000);
+    }
+
+    #[test]
+    fn test_funding_velocity_magnitude_36pct_per_day() {
+        // L0-13 magnitude pin: at FULL skew (net == skew_scale) and the
+        // audit-sheet 3_600 bps/day velocity over one hour, the step is
+        // 150 bps/h = 150 * PRECISION bps-scaled. (The caller then /BASIS_POINTS
+        // to fraction-units → 150_000, which the 50_000 clamp caps.)
+        let scale = 200_000 * PRECISION;
+        let step = funding_velocity(scale, scale, 3_600, 3_600);
+        // per_day = 3600 * 1e7 * 1 (full skew) = 3.6e10; ×3600/86400 = 1.5e9
+        assert_eq!(step, 150 * PRECISION); // 150 bps, PRECISION-scaled
+    }
+
+    #[test]
+    fn test_funding_velocity_zero_on_empty_market() {
+        assert_eq!(funding_velocity(500 * PRECISION, 0, 3_600, 3_600), 0); // no skew_scale
+        assert_eq!(funding_velocity(500 * PRECISION, PRECISION, 3_600, 0), 0); // no time
+    }
+
+    #[test]
+    fn test_funding_velocity_proportional_and_signed() {
+        let scale = 100_000 * PRECISION;
+        let half = funding_velocity(scale / 2, scale, 3_600, 3_600);
+        let full = funding_velocity(scale, scale, 3_600, 3_600);
+        assert_eq!(full, half * 2); // linear in skew
+        // Short-heavy (negative skew) → negative velocity (shorts pay).
+        assert_eq!(funding_velocity(-scale, scale, 3_600, 3_600), -full);
     }
 }

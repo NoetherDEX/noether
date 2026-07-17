@@ -97,6 +97,15 @@ pub enum DataKey {
     /// first set_asset_risk. Positions opened before it keep the legacy
     /// maintenance margin so an in-place upgrade liquidates nobody.
     RiskEpochTs,
+    /// Per-asset funding state (L0-13): (cumulative_index, current_rate,
+    /// last_ts), all fraction-units/h (1e7 = 100%/h) except last_ts.
+    /// Replaces the single global CumulativeFundingRate for per-market
+    /// funding. Absent = (0, 0, 0).
+    FundingState(Symbol),
+    /// Per-asset time-weighted skew integral (L0-13, M-7 kill):
+    /// (integral [notional×seconds], last_touch_ts). Accumulated in
+    /// adjust_oi, drained by apply_funding.
+    SkewIntegral(Symbol),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -197,18 +206,14 @@ pub fn set_total_short_size(env: &Env, size: i128) {
     extend_persistent_ttl(env, &DataKey::TotalShortSize);
 }
 
-pub fn get_last_funding_time(env: &Env) -> u64 {
-    env.storage().persistent().get(&DataKey::LastFundingTime).unwrap_or(0)
-}
+// L0-13: legacy global funding replaced by per-asset FundingState. The
+// LastFundingTime/CurrentFundingRate keys are seeded at initialize for
+// consistency but no longer read on the funding path; get_last_funding_time
+// and set_current_funding_rate were removed as dead.
 
 pub fn set_last_funding_time(env: &Env, time: u64) {
     env.storage().persistent().set(&DataKey::LastFundingTime, &time);
     extend_persistent_ttl(env, &DataKey::LastFundingTime);
-}
-
-pub fn set_current_funding_rate(env: &Env, rate: i128) {
-    env.storage().persistent().set(&DataKey::CurrentFundingRate, &rate);
-    extend_persistent_ttl(env, &DataKey::CurrentFundingRate);
 }
 
 pub fn get_treasury(env: &Env) -> Option<Address> {
@@ -360,6 +365,28 @@ pub fn get_risk_epoch_ts(env: &Env) -> u64 {
 pub fn set_risk_epoch_ts(env: &Env, ts: u64) {
     env.storage().persistent().set(&DataKey::RiskEpochTs, &ts);
     extend_persistent_ttl(env, &DataKey::RiskEpochTs);
+}
+
+/// Per-asset funding state (L0-13): (cumulative, current_rate, last_ts).
+pub fn get_funding_state(env: &Env, asset: &Symbol) -> (i128, i128, u64) {
+    env.storage().persistent().get(&DataKey::FundingState(asset.clone())).unwrap_or((0, 0, 0))
+}
+
+pub fn set_funding_state(env: &Env, asset: &Symbol, state: &(i128, i128, u64)) {
+    let key = DataKey::FundingState(asset.clone());
+    env.storage().persistent().set(&key, state);
+    extend_persistent_ttl(env, &key);
+}
+
+/// Per-asset skew integral (L0-13): (integral, last_touch_ts).
+pub fn get_skew_integral(env: &Env, asset: &Symbol) -> (i128, u64) {
+    env.storage().persistent().get(&DataKey::SkewIntegral(asset.clone())).unwrap_or((0, 0))
+}
+
+pub fn set_skew_integral(env: &Env, asset: &Symbol, v: &(i128, u64)) {
+    let key = DataKey::SkewIntegral(asset.clone());
+    env.storage().persistent().set(&key, v);
+    extend_persistent_ttl(env, &key);
 }
 
 pub fn delete_position(env: &Env, id: u64, trader: &Address) {

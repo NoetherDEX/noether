@@ -402,6 +402,307 @@
         {
           "function": {
             "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "function_name": "set_asset_risk",
+              "args": [
+                {
+                  "symbol": "BTC"
+                },
+                {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 133
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 400
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 200
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "function_name": "set_asset_risk",
+              "args": [
+                {
+                  "symbol": "ETH"
+                },
+                {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 133
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 400
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 200
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+              "function_name": "set_asset_risk",
+              "args": [
+                {
+                  "symbol": "XLM"
+                },
+                {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 333
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 500
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CA36FQITV33RO5SJFPTNLRQBD6ZNAEJG7F7J5KWCV4OP7SQHDMIZCT33",
+              "function_name": "set_skew_cap",
+              "args": [
+                {
+                  "symbol": "XLM"
+                },
+                {
+                  "u32": 10000
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
               "contract_address": "CBEPDNVYXQGWB5YUBXKJWYJA7OXTZW5LFLNO5JRRGE6Z6C5OSUZPCCEL",
               "function_name": "mint",
               "args": [
@@ -479,6 +780,8 @@
         }
       ]
     ],
+    [],
+    [],
     [],
     [],
     [],
@@ -646,6 +949,105 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
             "key": {
               "ledger_key_nonce": {
+                "nonce": 115220454072064130
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 115220454072064130
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 1194852393571756375
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 1194852393571756375
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 1301173170172112462
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 1301173170172112462
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "ledger_key_nonce": {
                 "nonce": 2032731177588607455
               }
             },
@@ -662,6 +1064,39 @@
                 "key": {
                   "ledger_key_nonce": {
                     "nonce": 2032731177588607455
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 3126073502131104533
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 3126073502131104533
                   }
                 },
                 "durability": "temporary",
@@ -1184,6 +1619,354 @@
             "key": {
               "vec": [
                 {
+                  "symbol": "AssetRisk"
+                },
+                {
+                  "symbol": "BTC"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "AssetRisk"
+                    },
+                    {
+                      "symbol": "BTC"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 133
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 400
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 200
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "AssetRisk"
+                },
+                {
+                  "symbol": "ETH"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "AssetRisk"
+                    },
+                    {
+                      "symbol": "ETH"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 133
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 400
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 200
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "AssetRisk"
+                },
+                {
+                  "symbol": "XLM"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "AssetRisk"
+                    },
+                    {
+                      "symbol": "XLM"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 333
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 500
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
                   "symbol": "CumulativeFundingRate"
                 }
               ]
@@ -1209,49 +1992,7 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 1000
-                  }
-                }
-              }
-            },
-            "ext": "v0"
-          },
-          518400
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-            "key": {
-              "vec": [
-                {
-                  "symbol": "CurrentFundingRate"
-                }
-              ]
-            },
-            "durability": "persistent"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-                "key": {
-                  "vec": [
-                    {
-                      "symbol": "CurrentFundingRate"
-                    }
-                  ]
-                },
-                "durability": "persistent",
-                "val": {
-                  "i128": {
-                    "hi": 0,
-                    "lo": 1000
+                    "lo": 0
                   }
                 }
               }
@@ -1432,6 +2173,189 @@
             "key": {
               "vec": [
                 {
+                  "symbol": "FundingState"
+                },
+                {
+                  "symbol": "BTC"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "FundingState"
+                    },
+                    {
+                      "symbol": "BTC"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 0
+                      }
+                    },
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 0
+                      }
+                    },
+                    {
+                      "u64": 1700003600
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "FundingState"
+                },
+                {
+                  "symbol": "ETH"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "FundingState"
+                    },
+                    {
+                      "symbol": "ETH"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 0
+                      }
+                    },
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 0
+                      }
+                    },
+                    {
+                      "u64": 1700003600
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "FundingState"
+                },
+                {
+                  "symbol": "XLM"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "FundingState"
+                    },
+                    {
+                      "symbol": "XLM"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 375
+                      }
+                    },
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 375
+                      }
+                    },
+                    {
+                      "u64": 1700003600
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
                   "symbol": "LastFundingTime"
                 }
               ]
@@ -1455,7 +2379,7 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u64": 1700003600
+                  "u64": 1700000000
                 }
               }
             },
@@ -1550,6 +2474,210 @@
                 "durability": "persistent",
                 "val": {
                   "u64": 1
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "RiskEpochTs"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "RiskEpochTs"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u64": 1700000000
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "SkewIntegral"
+                },
+                {
+                  "symbol": "BTC"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "SkewIntegral"
+                    },
+                    {
+                      "symbol": "BTC"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 0
+                      }
+                    },
+                    {
+                      "u64": 1700003600
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "SkewIntegral"
+                },
+                {
+                  "symbol": "ETH"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "SkewIntegral"
+                    },
+                    {
+                      "symbol": "ETH"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 0
+                      }
+                    },
+                    {
+                      "u64": 1700003600
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "SkewIntegral"
+                },
+                {
+                  "symbol": "XLM"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "SkewIntegral"
+                    },
+                    {
+                      "symbol": "XLM"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "vec": [
+                    {
+                      "i128": {
+                        "hi": 0,
+                        "lo": 0
+                      }
+                    },
+                    {
+                      "u64": 1700003600
+                    }
+                  ]
                 }
               }
             },
@@ -2143,7 +3271,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 115220454072064130
+                "nonce": 6517132746326325848
               }
             },
             "durability": "temporary"
@@ -2158,7 +3286,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 115220454072064130
+                    "nonce": 6517132746326325848
                   }
                 },
                 "durability": "temporary",
@@ -2176,7 +3304,7 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
             "key": {
               "ledger_key_nonce": {
-                "nonce": 1194852393571756375
+                "nonce": 7270604957039011794
               }
             },
             "durability": "temporary"
@@ -2191,7 +3319,7 @@
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
                 "key": {
                   "ledger_key_nonce": {
-                    "nonce": 1194852393571756375
+                    "nonce": 7270604957039011794
                   }
                 },
                 "durability": "temporary",
@@ -2348,6 +3476,51 @@
             "key": {
               "vec": [
                 {
+                  "symbol": "SkewCapBps"
+                },
+                {
+                  "symbol": "XLM"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CA36FQITV33RO5SJFPTNLRQBD6ZNAEJG7F7J5KWCV4OP7SQHDMIZCT33",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "SkewCapBps"
+                    },
+                    {
+                      "symbol": "XLM"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 10000
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CA36FQITV33RO5SJFPTNLRQBD6ZNAEJG7F7J5KWCV4OP7SQHDMIZCT33",
+            "key": {
+              "vec": [
+                {
                   "symbol": "TotalFees"
                 }
               ]
@@ -2457,7 +3630,7 @@
                 "val": {
                   "i128": {
                     "hi": 0,
-                    "lo": 100000003000000
+                    "lo": 100000002687500
                   }
                 }
               }
@@ -2828,7 +4001,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 9997000000
+                          "lo": 9997312500
                         }
                       }
                     },
@@ -2901,7 +4074,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 100000003000000
+                          "lo": 100000002687500
                         }
                       }
                     },
@@ -4728,6 +5901,561 @@
                 "symbol": "fn_call"
               },
               {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000006"
+              },
+              {
+                "symbol": "set_asset_risk"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "BTC"
+                },
+                {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 133
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 400
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 200
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "asset_risk_set"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "BTC"
+                },
+                {
+                  "u32": 10
+                },
+                {
+                  "u32": 400
+                },
+                {
+                  "u32": 200
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "set_asset_risk"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000006"
+              },
+              {
+                "symbol": "set_asset_risk"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "ETH"
+                },
+                {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 133
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 400
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 200
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "asset_risk_set"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "ETH"
+                },
+                {
+                  "u32": 10
+                },
+                {
+                  "u32": 400
+                },
+                {
+                  "u32": 200
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "set_asset_risk"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000006"
+              },
+              {
+                "symbol": "set_asset_risk"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "XLM"
+                },
+                {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "close_out_bps"
+                      },
+                      "val": {
+                        "u32": 333
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "funding_clamp_bps"
+                      },
+                      "val": {
+                        "u32": 50
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "im_bps"
+                      },
+                      "val": {
+                        "u32": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_funding_velocity_bps"
+                      },
+                      "val": {
+                        "u32": 3600
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_leverage"
+                      },
+                      "val": {
+                        "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "max_position_size"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000000000
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "mm_bps"
+                      },
+                      "val": {
+                        "u32": 500
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "skew_scale"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 2000000000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "asset_risk_set"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "XLM"
+                },
+                {
+                  "u32": 10
+                },
+                {
+                  "u32": 1000
+                },
+                {
+                  "u32": 500
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "set_asset_risk"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "37e2c113aef71776492be6d5c6011fb2d01126f97e9eaac2af1cffca071b1191"
+              },
+              {
+                "symbol": "set_skew_cap"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "XLM"
+                },
+                {
+                  "u32": 10000
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "37e2c113aef71776492be6d5c6011fb2d01126f97e9eaac2af1cffca071b1191",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "skew_cap_set"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "XLM"
+                },
+                {
+                  "u32": 10000
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "37e2c113aef71776492be6d5c6011fb2d01126f97e9eaac2af1cffca071b1191",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "set_skew_cap"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
                 "bytes": "48f1b6b8bc0d60f7140dd49b6120fbaf3cdbab2adaeea631313d9f0bae9532f1"
               },
               {
@@ -5536,7 +7264,7 @@
                   "val": {
                     "i128": {
                       "hi": 0,
-                      "lo": 810000
+                      "lo": 850000
                     }
                   }
                 },
@@ -5574,6 +7302,160 @@
                   "val": {
                     "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
                   }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000006"
+              },
+              {
+                "symbol": "apply_funding"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "apply_funding"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000006"
+              },
+              {
+                "symbol": "apply_funding"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "apply_funding"
+              }
+            ],
+            "data": {
+              "error": {
+                "contract": 55
+              }
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 55
+                }
+              }
+            ],
+            "data": {
+              "string": "escalating Ok(ScErrorType::Contract) frame-exit to Err"
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 55
+                }
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "string": "contract try_call failed"
+                },
+                {
+                  "symbol": "apply_funding"
+                },
+                {
+                  "vec": []
                 }
               ]
             }
@@ -5678,13 +7560,100 @@
             "data": {
               "vec": [
                 {
+                  "symbol": "BTC"
+                },
+                {
                   "i128": {
                     "hi": 0,
-                    "lo": 1000
+                    "lo": 0
                   }
                 },
                 {
                   "u64": 1
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 0
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "funding_applied"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "ETH"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 0
+                  }
+                },
+                {
+                  "u64": 1
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 0
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "funding_applied"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "XLM"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 375
+                  }
+                },
+                {
+                  "u64": 1
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 375
+                  }
                 }
               ]
             }
@@ -6026,7 +7995,7 @@
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 500000
+                    "lo": 187500
                   }
                 }
               ]
@@ -6060,7 +8029,7 @@
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 500000
+                "lo": 187500
               }
             }
           }
@@ -6110,7 +8079,7 @@
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 500000
+                "lo": 187500
               }
             }
           }
@@ -6135,7 +8104,7 @@
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 500000
+                    "lo": 187500
                   }
                 }
               ]
@@ -6195,7 +8164,7 @@
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 997000000
+                    "lo": 997312500
                   }
                 }
               ]
@@ -6229,7 +8198,7 @@
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 997000000
+                "lo": 997312500
               }
             }
           }
@@ -6490,7 +8459,7 @@
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 9997000000
+                "lo": 9997312500
               }
             }
           }
@@ -6540,7 +8509,7 @@
             "data": {
               "i128": {
                 "hi": 0,
-                "lo": 100000003000000
+                "lo": 100000002687500
               }
             }
           }

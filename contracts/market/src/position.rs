@@ -10,7 +10,7 @@ use noether_common::{BASIS_POINTS, Position, calculate_pnl, calculate_cumulative
 use crate::storage::{
     get_position,
     get_cross_margin_balance, get_cross_margin_position_ids,
-    get_cumulative_funding_rate,
+    get_funding_state,
     get_asset_risk, get_risk_epoch_ts,
 };
 
@@ -63,7 +63,6 @@ fn aggregate_cross_positions(
     get_price: &dyn Fn(&Symbol) -> i128,
 ) -> CrossAggregates {
     let position_ids = get_cross_margin_position_ids(env, trader);
-    let current_cumulative = get_cumulative_funding_rate(env);
 
     let mut agg = CrossAggregates {
         total_collateral: 0,
@@ -83,7 +82,8 @@ fn aggregate_cross_positions(
             if let Ok(pnl) = calculate_pnl(&pos, price) {
                 agg.unrealized_pnl = agg.unrealized_pnl.checked_add(pnl).unwrap_or(agg.unrealized_pnl);
             }
-            // Funding from cumulative model (accurate, no pending calculation needed)
+            // Funding from the position's OWN asset index (L0-13 per-market).
+            let current_cumulative = get_funding_state(env, &pos.asset).0;
             let pos_funding = calculate_cumulative_funding(
                 pos.size, pos.direction,
                 pos.entry_cumulative_funding, current_cumulative,
