@@ -20,6 +20,8 @@ export interface PlaceLimitOrderParams {
   triggerPrice: bigint;
   triggerCondition: TriggerCondition;
   slippageToleranceBps: number;
+  /** Bits 0-7 = TIF mode (0=GTC, 1=IOC, 2=PostOnly), bit 8 = reduce_only. Defaults to 0 (GTC). */
+  timeInForce?: number;
 }
 
 export function buildPlaceLimitOrderArgs(params: PlaceLimitOrderParams): xdr.ScVal[] {
@@ -32,6 +34,7 @@ export function buildPlaceLimitOrderArgs(params: PlaceLimitOrderParams): xdr.ScV
     toScVal(params.triggerPrice, 'i128'),
     toScVal(params.triggerCondition, 'trigger_above'),
     toScVal(params.slippageToleranceBps, 'u32'),
+    toScVal(params.timeInForce ?? 0, 'u32'),
   ];
 }
 

@@ -29,6 +29,9 @@ def serialise_request(req: dict[str, Any]) -> dict[str, Any]:
         "trigger_condition": "triggerCondition",
         "trailing_percent_bps": "trailingPercentBps",
         "slippage_tolerance_bps": "slippageToleranceBps",
+        # 0=GTC (default), 1=IOC, 2=PostOnly; reduce_only rides bit 8 server-side.
+        "time_in_force": "timeInForce",
+        "reduce_only": "reduceOnly",
     }
     return {rename.get(k, k): v for k, v in out.items()}
 

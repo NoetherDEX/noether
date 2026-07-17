@@ -30,6 +30,7 @@ const NOETHER_ERROR_NAMES: Record<number, string> = {
   40: 'InsufficientLiquidity',
   41: 'InvalidAmount',
   42: 'InsufficientBalance',
+  43: 'DepositCapExceeded',
   50: 'NotLiquidatable',
   51: 'LiquidationFailed',
   55: 'FundingIntervalNotElapsed',

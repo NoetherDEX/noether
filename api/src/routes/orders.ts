@@ -46,6 +46,9 @@ interface PlaceLimitOrderBody {
   triggerPrice: string;
   triggerCondition: 'Above' | 'Below';
   slippageToleranceBps: number;
+  /** 0=GTC (default), 1=IOC, 2=PostOnly. */
+  timeInForce?: number;
+  reduceOnly?: boolean;
 }
 
 interface PlaceStopLimitOrderBody {
@@ -58,6 +61,9 @@ interface PlaceStopLimitOrderBody {
   limitPrice: string;
   triggerCondition: 'Above' | 'Below';
   slippageToleranceBps: number;
+  /** 0=GTC (default), 1=IOC, 2=PostOnly. */
+  timeInForce?: number;
+  reduceOnly?: boolean;
 }
 
 interface PlaceTrailingStopBody {
@@ -67,11 +73,20 @@ interface PlaceTrailingStopBody {
   slippageToleranceBps: number;
 }
 
-interface SetStopOrTakeBody {
-  op: 'set_stop_loss' | 'set_take_profit';
+interface SetStopLossBody {
+  op: 'set_stop_loss';
   positionId: number | string;
   triggerPrice: string;
   slippageToleranceBps: number;
+}
+
+interface SetTakeProfitBody {
+  op: 'set_take_profit';
+  positionId: number | string;
+  triggerPrice: string;
+  slippageToleranceBps: number;
+  /** Optional take-limit price (7-decimal string); omit or "0" for a plain take-profit. */
+  limitPrice?: string;
 }
 
 interface CancelOrderBody {
@@ -85,7 +100,8 @@ type PrepareBody =
   | PlaceLimitOrderBody
   | PlaceStopLimitOrderBody
   | PlaceTrailingStopBody
-  | SetStopOrTakeBody
+  | SetStopLossBody
+  | SetTakeProfitBody
   | CancelOrderBody;
 
 const PREPARE_BODY_SCHEMA = {
@@ -126,6 +142,8 @@ const PREPARE_BODY_SCHEMA = {
         triggerPrice: { type: 'string', pattern: '^[0-9]+$' },
         triggerCondition: { type: 'string', enum: ['Above', 'Below'] },
         slippageToleranceBps: { type: 'integer', minimum: 0, maximum: 10000 },
+        timeInForce: { type: 'integer', enum: [0, 1, 2], description: '0=GTC (default), 1=IOC, 2=PostOnly' },
+        reduceOnly: { type: 'boolean' },
       },
     },
     {
@@ -144,6 +162,8 @@ const PREPARE_BODY_SCHEMA = {
         limitPrice: { type: 'string', pattern: '^[0-9]+$' },
         triggerCondition: { type: 'string', enum: ['Above', 'Below'] },
         slippageToleranceBps: { type: 'integer', minimum: 0, maximum: 10000 },
+        timeInForce: { type: 'integer', enum: [0, 1, 2], description: '0=GTC (default), 1=IOC, 2=PostOnly' },
+        reduceOnly: { type: 'boolean' },
       },
     },
     {
@@ -160,10 +180,25 @@ const PREPARE_BODY_SCHEMA = {
       type: 'object',
       required: ['op', 'positionId', 'triggerPrice', 'slippageToleranceBps'],
       properties: {
-        op: { enum: ['set_stop_loss', 'set_take_profit'] },
+        op: { const: 'set_stop_loss' },
         positionId: { type: ['integer', 'string'] },
         triggerPrice: { type: 'string', pattern: '^[0-9]+$' },
         slippageToleranceBps: { type: 'integer', minimum: 0, maximum: 10000 },
+      },
+    },
+    {
+      type: 'object',
+      required: ['op', 'positionId', 'triggerPrice', 'slippageToleranceBps'],
+      properties: {
+        op: { const: 'set_take_profit' },
+        positionId: { type: ['integer', 'string'] },
+        triggerPrice: { type: 'string', pattern: '^[0-9]+$' },
+        slippageToleranceBps: { type: 'integer', minimum: 0, maximum: 10000 },
+        limitPrice: {
+          type: 'string',
+          pattern: '^[0-9]+$',
+          description: 'Optional take-limit price (7-decimal); omit or "0" for a plain take-profit',
+        },
       },
     },
     {
@@ -381,6 +416,7 @@ async function dispatch(
         triggerPrice: BigInt(body.triggerPrice),
         triggerCondition: body.triggerCondition,
         slippageToleranceBps: body.slippageToleranceBps,
+        timeInForce: encodeTimeInForce(body.timeInForce, body.reduceOnly),
       });
     }
     case 'place_stop_limit_order': {
@@ -395,6 +431,7 @@ async function dispatch(
         limitPrice: BigInt(body.limitPrice),
         triggerCondition: body.triggerCondition,
         slippageToleranceBps: body.slippageToleranceBps,
+        timeInForce: encodeTimeInForce(body.timeInForce, body.reduceOnly),
       });
     }
     case 'place_trailing_stop': {
@@ -405,14 +442,21 @@ async function dispatch(
         slippageToleranceBps: body.slippageToleranceBps,
       });
     }
-    case 'set_stop_loss':
-    case 'set_take_profit': {
-      const fn = body.op === 'set_stop_loss' ? builders.setStopLoss : builders.setTakeProfit;
-      return fn(deps.txCtx, market, {
+    case 'set_stop_loss': {
+      return builders.setStopLoss(deps.txCtx, market, {
         trader,
         positionId: parseId(body.positionId),
         triggerPrice: BigInt(body.triggerPrice),
         slippageToleranceBps: body.slippageToleranceBps,
+      });
+    }
+    case 'set_take_profit': {
+      return builders.setTakeProfit(deps.txCtx, market, {
+        trader,
+        positionId: parseId(body.positionId),
+        triggerPrice: BigInt(body.triggerPrice),
+        slippageToleranceBps: body.slippageToleranceBps,
+        limitPrice: BigInt(body.limitPrice ?? '0'),
       });
     }
     case 'cancel_order': {
@@ -432,6 +476,11 @@ function parseId(v: number | string | bigint): number | bigint {
   if (typeof v === 'bigint') return v;
   if (typeof v === 'string') return BigInt(v);
   return v;
+}
+
+/** Contract packing: bits 0-7 = TIF mode (0=GTC, 1=IOC, 2=PostOnly), bit 8 = reduce_only. */
+function encodeTimeInForce(timeInForce: number | undefined, reduceOnly: boolean | undefined): number {
+  return (timeInForce ?? 0) | (reduceOnly ? 0x100 : 0);
 }
 
 function mapPrepareError(err: unknown, reply: FastifyReply): FastifyReply {

@@ -41,7 +41,11 @@ export {
   type PlaceTrailingStopParams,
 } from './trailingStop.js';
 export {
+  buildSetStopLossArgs,
+  buildSetStopLossOp,
   buildSetStopLossTx,
+  buildSetTakeProfitArgs,
+  buildSetTakeProfitOp,
   buildSetTakeProfitTx,
   type SetStopLossParams,
   type SetTakeProfitParams,

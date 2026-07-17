@@ -23,6 +23,9 @@ export interface PlaceLimitOrderRequest {
   triggerPrice: bigint | string;
   triggerCondition: TriggerCondition;
   slippageToleranceBps: number;
+  /** 0=GTC (default), 1=IOC, 2=PostOnly. */
+  timeInForce?: 0 | 1 | 2;
+  reduceOnly?: boolean;
 }
 
 export interface PlaceStopLimitOrderRequest {
@@ -35,6 +38,9 @@ export interface PlaceStopLimitOrderRequest {
   limitPrice: bigint | string;
   triggerCondition: TriggerCondition;
   slippageToleranceBps: number;
+  /** 0=GTC (default), 1=IOC, 2=PostOnly. */
+  timeInForce?: 0 | 1 | 2;
+  reduceOnly?: boolean;
 }
 
 export interface PlaceTrailingStopRequest {
@@ -44,12 +50,24 @@ export interface PlaceTrailingStopRequest {
   slippageToleranceBps: number;
 }
 
-export interface SetStopOrTakeProfitRequest {
-  op: 'set_stop_loss' | 'set_take_profit';
+export interface SetStopLossRequest {
+  op: 'set_stop_loss';
   positionId: number | bigint | string;
   triggerPrice: bigint | string;
   slippageToleranceBps: number;
 }
+
+export interface SetTakeProfitRequest {
+  op: 'set_take_profit';
+  positionId: number | bigint | string;
+  triggerPrice: bigint | string;
+  slippageToleranceBps: number;
+  /** Optional take-limit price; omit for a plain take-profit. */
+  limitPrice?: bigint | string;
+}
+
+/** @deprecated Use SetStopLossRequest / SetTakeProfitRequest. Kept as an alias for 0.1.x source compat. */
+export type SetStopOrTakeProfitRequest = SetStopLossRequest | SetTakeProfitRequest;
 
 export interface CancelOrderRequest {
   op: 'cancel_order';
@@ -62,7 +80,8 @@ export type PrepareRequest =
   | PlaceLimitOrderRequest
   | PlaceStopLimitOrderRequest
   | PlaceTrailingStopRequest
-  | SetStopOrTakeProfitRequest
+  | SetStopLossRequest
+  | SetTakeProfitRequest
   | CancelOrderRequest;
 
 export interface PreparedTransaction {
@@ -144,6 +163,8 @@ function serialiseRequest(req: PrepareRequest): Record<string, unknown> {
         triggerPrice: stringifyBig(req.triggerPrice),
         triggerCondition: req.triggerCondition,
         slippageToleranceBps: req.slippageToleranceBps,
+        ...(req.timeInForce !== undefined ? { timeInForce: req.timeInForce } : {}),
+        ...(req.reduceOnly !== undefined ? { reduceOnly: req.reduceOnly } : {}),
       };
     case 'place_stop_limit_order':
       return {
@@ -156,6 +177,8 @@ function serialiseRequest(req: PrepareRequest): Record<string, unknown> {
         limitPrice: stringifyBig(req.limitPrice),
         triggerCondition: req.triggerCondition,
         slippageToleranceBps: req.slippageToleranceBps,
+        ...(req.timeInForce !== undefined ? { timeInForce: req.timeInForce } : {}),
+        ...(req.reduceOnly !== undefined ? { reduceOnly: req.reduceOnly } : {}),
       };
     case 'place_trailing_stop':
       return {
@@ -165,12 +188,19 @@ function serialiseRequest(req: PrepareRequest): Record<string, unknown> {
         slippageToleranceBps: req.slippageToleranceBps,
       };
     case 'set_stop_loss':
+      return {
+        op: req.op,
+        positionId: stringifyBig(req.positionId),
+        triggerPrice: stringifyBig(req.triggerPrice),
+        slippageToleranceBps: req.slippageToleranceBps,
+      };
     case 'set_take_profit':
       return {
         op: req.op,
         positionId: stringifyBig(req.positionId),
         triggerPrice: stringifyBig(req.triggerPrice),
         slippageToleranceBps: req.slippageToleranceBps,
+        ...(req.limitPrice !== undefined ? { limitPrice: stringifyBig(req.limitPrice) } : {}),
       };
     case 'cancel_order':
       return { op: 'cancel_order', orderId: stringifyBig(req.orderId) };
