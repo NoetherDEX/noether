@@ -149,7 +149,9 @@ pub enum NoetherError {
     /// positive-uPnL positions are ADL candidates (L0-1)
     AdlNotEligible = 85,
     // 86 LiquidationNotConfirmed — reserved for L0-9 (smoothed mark)
-    // 87 AcceptablePriceExceeded — reserved for L0-10
+    /// A market open/close filled worse than the trader's acceptable_price
+    /// bound (L0-10). The tx reverts; resubmit with 0 to fill unbounded.
+    AcceptablePriceExceeded = 87,
     /// A risk-increasing op (open / limit / stop-limit placement) hit an
     /// asset with no per-market risk params configured — fail-closed
     /// (L0-12). Risk-reducing paths fall back to the legacy MM instead.

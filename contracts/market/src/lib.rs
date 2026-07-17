@@ -287,8 +287,9 @@ impl MarketContract {
         collateral: i128,
         leverage: u32,
         direction: Direction,
+        acceptable_price: i128,
     ) -> Result<Position, NoetherError> {
-        Self::do_open(env, trader, asset, collateral, leverage, direction, false)
+        Self::do_open(env, trader, asset, collateral, leverage, direction, false, acceptable_price)
     }
 
     /// Shared open path for isolated and cross margin (one compiled body —
@@ -303,6 +304,7 @@ impl MarketContract {
         leverage: u32,
         direction: Direction,
         cross: bool,
+        acceptable_price: i128,
     ) -> Result<Position, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -369,6 +371,22 @@ impl MarketContract {
         Self::reserve_with_vault(&env, &vault_address, &asset, &direction, size)?;
 
         let entry_price = Self::get_oracle_price(&env, &asset, true)?;
+
+        // L0-10: GMX-style acceptable-price bound (0 = unbounded). A worse-
+        // than-bound fill reverts — the trader's own parameter, not the
+        // contract, blocks it.
+        if acceptable_price < 0 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        if acceptable_price > 0 {
+            let worse = match direction {
+                Direction::Long => entry_price > acceptable_price,
+                Direction::Short => entry_price < acceptable_price,
+            };
+            if worse {
+                return Err(NoetherError::AcceptablePriceExceeded);
+            }
+        }
 
         // Taker fee + volume
         let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
@@ -438,6 +456,7 @@ impl MarketContract {
         env: Env,
         trader: Address,
         position_id: u64,
+        acceptable_price: i128,
     ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -455,6 +474,7 @@ impl MarketContract {
 
         // Get current price and run the shared close settlement
         let current_price = Self::get_oracle_price(&env, &position.asset, false)?;
+        Self::check_close_bound(position.direction, current_price, acceptable_price)?;
         let pnl = Self::settle_isolated_close(&env, &position, current_price, 0, None, None)?;
 
         extend_instance_ttl(&env);
@@ -1078,6 +1098,30 @@ impl MarketContract {
         get_funding_state(env, asset).0
     }
 
+    /// L0-10 acceptable-price bound for a CLOSE (inverse of the open bound):
+    /// closing a Long rejects below the bound, a Short above it. 0 =
+    /// unbounded. Preserves M-2 (the contract never blocks a close — only
+    /// the trader's own parameter does; resubmit with 0 always exits).
+    fn check_close_bound(
+        direction: Direction,
+        price: i128,
+        acceptable_price: i128,
+    ) -> Result<(), NoetherError> {
+        if acceptable_price < 0 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        if acceptable_price > 0 {
+            let worse = match direction {
+                Direction::Long => price < acceptable_price,
+                Direction::Short => price > acceptable_price,
+            };
+            if worse {
+                return Err(NoetherError::AcceptablePriceExceeded);
+            }
+        }
+        Ok(())
+    }
+
     /// Accrue the skew integral for the window since the last touch, using
     /// the skew that held over it (L0-13). Called by adjust_oi before every
     /// exposure mutation.
@@ -1265,8 +1309,9 @@ impl MarketContract {
         collateral: i128,
         leverage: u32,
         direction: Direction,
+        acceptable_price: i128,
     ) -> Result<Position, NoetherError> {
-        Self::do_open(env, trader, asset, collateral, leverage, direction, true)
+        Self::do_open(env, trader, asset, collateral, leverage, direction, true, acceptable_price)
     }
 
     /// Close a cross-margin position. PnL returns to cross-margin pool, not trader wallet.
@@ -1274,6 +1319,7 @@ impl MarketContract {
         env: Env,
         trader: Address,
         position_id: u64,
+        acceptable_price: i128,
     ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
@@ -1291,6 +1337,7 @@ impl MarketContract {
 
         // Get current price and settle through the shared close core (L0-5).
         let current_price = Self::get_oracle_price(&env, &pos.asset, false)?;
+        Self::check_close_bound(pos.direction, current_price, acceptable_price)?;
         let pnl = Self::settle_cross_close(&env, &pos, current_price);
 
         // Record volume (trader-initiated closes only — ADL doesn't count)
@@ -3494,7 +3541,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Taker fee at tier 0 = 50 deci-bps = 0.050% of $500 = $0.25
@@ -3510,6 +3557,77 @@ mod tests {
     // Core Trading Tests
     // ═══════════════════════════════════════════════════════════════════
 
+    // ── L0-10: acceptable-price bound on market open/close ──────────────
+
+    #[test]
+    fn test_open_long_beyond_bound_reverts() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM"); // $0.10 entry
+        // Long bound BELOW the mark → entry $0.10 > bound $0.09 = worse → #87.
+        let res = test.market.try_open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &(PRECISION * 9 / 100),
+        );
+        assert!(matches!(res, Err(Ok(NoetherError::AcceptablePriceExceeded))));
+        // A bound AT/above the mark fills.
+        let ok = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &(PRECISION * 11 / 100),
+        );
+        assert_eq!(ok.entry_price, PRECISION / 10);
+    }
+
+    #[test]
+    fn test_open_short_beyond_bound_reverts() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        // Short bound ABOVE the mark → entry $0.10 < bound $0.11 = worse → #87.
+        let res = test.market.try_open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Short, &(PRECISION * 11 / 100),
+        );
+        assert!(matches!(res, Err(Ok(NoetherError::AcceptablePriceExceeded))));
+    }
+
+    #[test]
+    fn test_close_long_beyond_bound_reverts() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        // Closing a Long rejects BELOW the bound: mark $0.10 < bound $0.11 → #87.
+        let res = test.market.try_close_position(&trader, &pos.id, &(PRECISION * 11 / 100));
+        assert!(matches!(res, Err(Ok(NoetherError::AcceptablePriceExceeded))));
+        // Resubmitting unbounded (0) always exits (M-2 preserved).
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
+        assert_eq!(pnl, 0);
+    }
+
+    #[test]
+    fn test_open_zero_bound_unbounded_and_negative_rejected() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        // 0 = no bound.
+        let ok = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        assert_eq!(ok.leverage, 5);
+        // Negative bound → InvalidParameter.
+        let res = test.market.try_open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &(-1),
+        );
+        assert!(matches!(res, Err(Ok(NoetherError::InvalidParameter))));
+    }
+
+    #[test]
+    fn test_cross_open_bound_enforced() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let res = test.market.try_open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &(PRECISION * 9 / 100),
+        );
+        assert!(matches!(res, Err(Ok(NoetherError::AcceptablePriceExceeded))));
+    }
+
     // ── L0-6: partial close + add/remove margin ─────────────────────────
 
     #[test]
@@ -3518,7 +3636,7 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
         let xlm = Symbol::new(&test.env, "XLM");
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
 
         let w0 = usdc.balance(&trader);
         // Close 40% of the $500 notional at a flat price.
@@ -3543,7 +3661,7 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
         // $100 collateral, min 10 USDC: closing 95% leaves $5 residual < floor.
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
         let close_size = pos.size * 95 / 100;
         let res = test.market.try_close_position_partial(&trader, &pos.id, &close_size);
         assert!(matches!(res, Err(Ok(NoetherError::PositionTooSmall))));
@@ -3554,7 +3672,7 @@ mod tests {
         let test = setup();
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
         test.market.close_position_partial(&trader, &pos.id, &pos.size);
         assert!(test.market.get_position(&pos.id).is_none()); // fully closed
     }
@@ -3565,7 +3683,7 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
         let xlm = Symbol::new(&test.env, "XLM");
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
 
         let m0 = usdc.balance(&test.market_id);
         let t0 = usdc.balance(&trader);
@@ -3583,7 +3701,7 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
         let xlm = Symbol::new(&test.env, "XLM");
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
 
         let m0 = usdc.balance(&test.market_id);
         test.market.add_collateral(&trader, &pos.id, &(50 * PRECISION));
@@ -3599,7 +3717,7 @@ mod tests {
         let test = setup();
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         test.market.pause();
         // Risk-reducing: works even while paused (exit-only-pause).
         test.market.add_collateral(&trader, &pos.id, &(10 * PRECISION));
@@ -3613,7 +3731,7 @@ mod tests {
         let xlm = Symbol::new(&test.env, "XLM");
         // 2x on $100 = $200 notional; IM floor at 10x = $20. Removing $85
         // leaves $15 < the $20 IM floor.
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long, &0);
         let res = test.market.try_remove_collateral(&trader, &pos.id, &(85 * PRECISION));
         assert!(matches!(res, Err(Ok(NoetherError::InsufficientMargin))));
         // A safe removal (leaves $50 > $20 IM and clears MM) works.
@@ -3628,7 +3746,7 @@ mod tests {
         let test = setup();
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long, &0);
         // Advance past the 10×-staleness window so the deviation band
         // self-disables (a big move is otherwise rejected as #81 first);
         // then a fresh crashed price exercises the MM safety gate directly.
@@ -3649,7 +3767,7 @@ mod tests {
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
 
         // Open a $500 long, then a reduce-only SHORT sized to only $200.
-        let long = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let long = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
         let ro = test.market.place_limit_order(
             &trader, &xlm, &Direction::Short, &(40 * PRECISION), &5,
             &(PRECISION / 20), &false, &100, &0x100, // reduce-only GTC
@@ -3672,7 +3790,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         assert_eq!(position.id, 1);
@@ -3691,7 +3809,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Short,
+            &Direction::Short, &0,
         );
 
         assert_eq!(position.id, 1);
@@ -3710,7 +3828,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(5 * PRECISION), // $5 - below minimum
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
     }
 
@@ -3725,7 +3843,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &20, // max is 10
-            &Direction::Long,
+            &Direction::Long, &0,
         );
     }
 
@@ -3740,7 +3858,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Price goes up 10% to $0.11
@@ -3748,7 +3866,7 @@ mod tests {
         oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 11 / 100));
 
         // Close position - should profit
-        let pnl = test.market.close_position(&trader, &position.id);
+        let pnl = test.market.close_position(&trader, &position.id, &0);
         assert!(pnl > 0);
     }
 
@@ -3763,7 +3881,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Price goes down 5% to $0.095
@@ -3771,7 +3889,7 @@ mod tests {
         oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 95 / 1000));
 
         // Close position - should lose
-        let pnl = test.market.close_position(&trader, &position.id);
+        let pnl = test.market.close_position(&trader, &position.id, &0);
         assert!(pnl < 0);
     }
 
@@ -3793,7 +3911,7 @@ mod tests {
             &Symbol::new(&test.env, "BTC"),
             &(200 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         assert_eq!(pos1.margin_mode, 1); // Cross
 
@@ -3803,7 +3921,7 @@ mod tests {
             &Symbol::new(&test.env, "ETH"),
             &(200 * PRECISION),
             &3,
-            &Direction::Short,
+            &Direction::Short, &0,
         );
         assert_eq!(pos2.margin_mode, 1);
         assert_ne!(pos1.id, pos2.id);
@@ -3821,14 +3939,14 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Price up 10% — profit
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&Symbol::new(&test.env, "XLM"), &(PRECISION * 11 / 100));
 
-        let pnl = test.market.close_position_cross(&trader, &pos.id);
+        let pnl = test.market.close_position_cross(&trader, &pos.id, &0);
         assert!(pnl > 0); // Profitable close returns to pool
     }
 
@@ -3846,7 +3964,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(90 * PRECISION),
             &10,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Drop XLM price 9% — erodes equity
@@ -3859,7 +3977,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(15 * PRECISION),
             &10,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
     }
 
@@ -3877,7 +3995,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(90 * PRECISION),
             &10,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Drop price ~10.5% — makes account liquidatable but keeps equity > 0 for keeper reward
@@ -3903,18 +4021,18 @@ mod tests {
             &Symbol::new(&test.env, "BTC"),
             &(200 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         let pos2 = test.market.open_position_cross(
             &trader,
             &Symbol::new(&test.env, "ETH"),
             &(150 * PRECISION),
             &3,
-            &Direction::Short,
+            &Direction::Short, &0,
         );
 
         // Close only the first position (partial account close)
-        let pnl = test.market.close_position_cross(&trader, &pos1.id);
+        let pnl = test.market.close_position_cross(&trader, &pos1.id, &0);
         // PnL can be positive or negative depending on price movement
         let _ = pnl;
 
@@ -4027,7 +4145,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Set take-profit with limit_price (Take Limit):
@@ -4134,7 +4252,7 @@ mod tests {
             &Symbol::new(&test.env, "BTC"),
             &(200 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // All three attach paths must reject cross-margin positions (#80)
@@ -4162,7 +4280,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Attach SL below entry and TP above entry
@@ -4175,7 +4293,7 @@ mod tests {
         assert_eq!(test.market.get_all_order_ids().len(), 2);
 
         // Manual close must cancel both attached orders — no zombies
-        test.market.close_position(&trader, &pos.id);
+        test.market.close_position(&trader, &pos.id, &0);
 
         assert_eq!(test.market.get_all_order_ids().len(), 0);
         let sl_after = test.market.get_order(&sl.id).unwrap();
@@ -4196,7 +4314,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &10,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         let sl = test.market.set_stop_loss(
             &trader, &pos.id, &(PRECISION * 5 / 100), &500,
@@ -4223,7 +4341,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         let ts = test.market.place_trailing_stop(&trader, &pos.id, &500, &500);
@@ -4237,7 +4355,7 @@ mod tests {
         let ts2 = test.market.place_trailing_stop(&trader, &pos.id, &300, &500);
 
         // Closing the position cancels the attached trailing stop
-        test.market.close_position(&trader, &pos.id);
+        test.market.close_position(&trader, &pos.id, &0);
         assert_eq!(test.market.get_all_order_ids().len(), 0);
         assert_eq!(
             test.market.get_order(&ts2.id).unwrap().status,
@@ -4259,7 +4377,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         test.market.pause();
@@ -4269,11 +4387,11 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         assert!(matches!(blocked_open, Err(Ok(NoetherError::Paused))));
 
-        let blocked_close = test.market.try_close_position(&trader, &pos.id);
+        let blocked_close = test.market.try_close_position(&trader, &pos.id, &0);
         assert!(matches!(blocked_close, Err(Ok(NoetherError::Paused))));
 
         let blocked_deposit =
@@ -4281,7 +4399,7 @@ mod tests {
         assert!(matches!(blocked_deposit, Err(Ok(NoetherError::Paused))));
 
         test.market.unpause();
-        let pnl = test.market.close_position(&trader, &pos.id);
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
         let _ = pnl; // closes fine after unpause
     }
 
@@ -4296,7 +4414,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &10,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         test.market.pause();
@@ -4318,7 +4436,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Upgrade the market's code to a different (vault) WASM — proves the
@@ -4349,7 +4467,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // +20% jump — far beyond the 1% max_oracle_deviation_bps band
@@ -4361,12 +4479,12 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         assert!(matches!(blocked, Err(Ok(NoetherError::PriceDeviationTooHigh))));
 
         // Risk-reducing paths are never blocked by the band
-        let pnl = test.market.close_position(&trader, &pos.id);
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
         assert!(pnl > 0);
     }
 
@@ -4380,7 +4498,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Let the feed age past max_price_staleness (60s) with no update
@@ -4391,12 +4509,12 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         assert!(matches!(blocked, Err(Ok(NoetherError::PriceStale))));
 
         // Stale feed must not strand an exiting trader
-        let pnl = test.market.close_position(&trader, &pos.id);
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
         assert!(pnl <= 0); // flat price, small funding — just must not revert
     }
 
@@ -4417,7 +4535,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(500 * PRECISION),
             &5, // size $2,500 > $1,000 cap
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         assert!(matches!(blocked, Err(Ok(NoetherError::OpenInterestCapExceeded))));
 
@@ -4427,7 +4545,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5, // size $500
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         assert!(pos.id > 0);
     }
@@ -4447,7 +4565,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(10 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // 100x pump — theoretical PnL ~$4,950 against a ~$200 pool
@@ -4457,7 +4575,7 @@ mod tests {
         // The close MUST NOT revert (old settle_pnl hard-reverted here,
         // freezing the winner forever)
         let wallet_before = usdc.balance(&trader);
-        test.market.close_position(&trader, &pos.id);
+        test.market.close_position(&trader, &pos.id, &0);
         let received = usdc.balance(&trader) - wallet_before;
 
         assert!(received > 0); // paid everything the pool could cover
@@ -4475,7 +4593,7 @@ mod tests {
         assert_eq!(vault_client.get_reserved_payout(), 0);
 
         let pos = test.market.open_position(
-            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long,
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
         );
         // Open reserved its full max payout (= size)
         assert_eq!(vault_client.get_reserved_payout(), 500 * PRECISION);
@@ -4490,7 +4608,7 @@ mod tests {
         assert!(p1 < p0);
 
         // Close releases the reservation and zeroes the asset's uPnL
-        test.market.close_position(&trader, &pos.id);
+        test.market.close_position(&trader, &pos.id, &0);
         assert_eq!(vault_client.get_reserved_payout(), 0);
         assert_eq!(vault_client.get_asset_unrealized_pnl(&xlm), 0);
     }
@@ -4508,11 +4626,11 @@ mod tests {
 
         // 10x long, then -30%: raw loss $300 on ~$100 collateral
         let pos = test.market.open_position(
-            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long,
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
         );
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 7 / 100));
-        let pnl = test.market.close_position(&trader, &pos.id);
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
         assert!(pnl < -(100 * PRECISION)); // raw PnL far beyond collateral
 
         // The trader can lose at most their collateral...
@@ -4533,7 +4651,7 @@ mod tests {
 
         // Existing long $500
         let pos = test.market.open_position(
-            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long,
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
         );
 
         // Reduce-only short sized to cover it ($500)
@@ -4578,7 +4696,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
 
         // Taker fee on $500 at 0.05% = $0.25 → 20% = $0.05 to treasury
@@ -4609,7 +4727,7 @@ mod tests {
 
         // Long-only market: longs pay funding
         let pos = test.market.open_position(
-            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long,
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
         );
         let fee = 100 * PRECISION - pos.collateral; // taker fee charged at open
 
@@ -4628,7 +4746,7 @@ mod tests {
 
         let vault_before = vault_client.get_total_usdc();
         let wallet_before = usdc.balance(&trader);
-        let pnl = test.market.close_position(&trader, &pos.id);
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
         assert_eq!(pnl, 0); // flat price
 
         // Trader got collateral back MINUS accrued funding (longs pay).
@@ -4659,7 +4777,7 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         vault.set_skew_cap(&xlm, &10_000);
         let trader = fund_trader(&test, 1_000 * PRECISION);
-        test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long); // $10k notional
+        test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0); // $10k notional
         test.market.apply_funding(); // seed
         test.env.ledger().with_mut(|li| li.timestamp += 3_600);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
@@ -4668,7 +4786,7 @@ mod tests {
         let (cum, _rate, _ts) = {
             // read via a fresh open snapshot: entry_cumulative_funding == cum
             let probe = fund_trader(&test, 100 * PRECISION);
-            let p = test.market.open_position(&probe, &xlm, &(10 * PRECISION), &2, &Direction::Long);
+            let p = test.market.open_position(&probe, &xlm, &(10 * PRECISION), &2, &Direction::Long, &0);
             (p.entry_cumulative_funding, 0i128, 0u64)
         };
         (test, cum)
@@ -4702,8 +4820,8 @@ mod tests {
         vault.set_skew_cap(&eth, &10_000);
         let ta = fund_trader(&test, 10_000 * PRECISION);
         let tb = fund_trader(&test, 10_000 * PRECISION);
-        test.market.open_position(&ta, &btc, &(1_000 * PRECISION), &10, &Direction::Long);
-        test.market.open_position(&tb, &eth, &(1_000 * PRECISION), &10, &Direction::Short);
+        test.market.open_position(&ta, &btc, &(1_000 * PRECISION), &10, &Direction::Long, &0);
+        test.market.open_position(&tb, &eth, &(1_000 * PRECISION), &10, &Direction::Short, &0);
         test.market.apply_funding(); // seed
         test.env.ledger().with_mut(|li| li.timestamp += 3_600);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
@@ -4712,8 +4830,8 @@ mod tests {
         test.market.apply_funding();
 
         // Probe each index via a fresh open snapshot.
-        let pb = test.market.open_position(&ta, &btc, &(10 * PRECISION), &2, &Direction::Long);
-        let pe = test.market.open_position(&tb, &eth, &(10 * PRECISION), &2, &Direction::Long);
+        let pb = test.market.open_position(&ta, &btc, &(10 * PRECISION), &2, &Direction::Long, &0);
+        let pe = test.market.open_position(&tb, &eth, &(10 * PRECISION), &2, &Direction::Long, &0);
         assert!(pb.entry_cumulative_funding > 0, "BTC net-long → longs pay (positive)");
         assert!(pe.entry_cumulative_funding < 0, "ETH net-short → shorts pay (negative)");
     }
@@ -4728,14 +4846,14 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         vault.set_skew_cap(&xlm, &10_000);
         let trader = fund_trader(&test, 10_000 * PRECISION);
-        test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long);
+        test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0);
         test.market.apply_funding(); // seed
 
         test.env.ledger().with_mut(|li| li.timestamp += 5 * 3_600); // 5h outage
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION / 10));
         test.market.apply_funding();
-        let five_h = test.market.open_position(&trader, &xlm, &(10 * PRECISION), &2, &Direction::Long)
+        let five_h = test.market.open_position(&trader, &xlm, &(10 * PRECISION), &2, &Direction::Long, &0)
             .entry_cumulative_funding;
 
         // Control: the same skew accrued over a single clean hour.
@@ -4752,7 +4870,7 @@ mod tests {
         // (epoch 0, funding via the old path is inert here) — then migrate.
         let xlm = Symbol::new(&test.env, "XLM");
         let trader = fund_trader(&test, 1_000 * PRECISION);
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
         // entry snapshot is the (legacy) global index at open — 0 here.
         assert_eq!(pos.entry_cumulative_funding, 0);
 
@@ -4762,7 +4880,7 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let vb = vault.get_total_usdc();
         let wb = soroban_sdk::token::Client::new(&test.env, &test.usdc_token).balance(&trader);
-        test.market.close_position(&trader, &pos.id);
+        test.market.close_position(&trader, &pos.id, &0);
         let received = soroban_sdk::token::Client::new(&test.env, &test.usdc_token).balance(&trader) - wb;
         // Flat price, zero funding delta → trader gets collateral back, vault unchanged.
         assert_eq!(received, pos.collateral);
@@ -4793,7 +4911,7 @@ mod tests {
             &Symbol::new(&test.env, "XLM"),
             &(100 * PRECISION),
             &5,
-            &Direction::Long,
+            &Direction::Long, &0,
         );
         let balance_after_open = usdc.balance(&winner);
 
@@ -4801,7 +4919,7 @@ mod tests {
         // ~997 coverable (the full-notional reservation covers a 100% move;
         // beyond that is exactly the shortfall regime).
         oracle.set_price(&Symbol::new(&test.env, "XLM"), &(4 * PRECISION / 10));
-        test.market.close_position(&winner, &pos.id);
+        test.market.close_position(&winner, &pos.id, &0);
 
         // The gap is booked per-trader through the market's settle path.
         let owed = vault.get_shortfall_owed(&winner);
@@ -4840,7 +4958,7 @@ mod tests {
         let xlm = Symbol::new(&test.env, "XLM");
 
         let pos = test.market.open_position(
-            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long,
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
         );
 
         // Just past the liquidation threshold (10x → ~9% adverse move)
@@ -4875,7 +4993,7 @@ mod tests {
         let trader = fund_trader(test, 1_000 * PRECISION);
         let btc = Symbol::new(&test.env, "BTC");
         let pos = test.market.open_position(
-            &trader, &btc, &(200 * PRECISION), &10, &Direction::Long,
+            &trader, &btc, &(200 * PRECISION), &10, &Direction::Long, &0,
         );
         (trader, pos)
     }
@@ -4966,7 +5084,7 @@ mod tests {
 
         // $500 notional — under the $1,000 partial threshold.
         let pos = test.market.open_position(
-            &trader, &btc, &(50 * PRECISION), &10, &Direction::Long,
+            &trader, &btc, &(50 * PRECISION), &10, &Direction::Long, &0,
         );
         set_btc_price(&test, 54_500 * PRECISION);
 
@@ -5012,7 +5130,7 @@ mod tests {
         // Exactly $1,000 notional — NOT strictly above the threshold, so
         // this stays a one-step full liquidation (back-compat guard).
         let pos = test.market.open_position(
-            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long,
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
         );
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
@@ -5100,7 +5218,7 @@ mod tests {
         test.market.set_asset_risk(&btc, &risk(10, 400));
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
-        let res = test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long);
+        let res = test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long, &0);
         assert!(matches!(res, Err(Ok(NoetherError::AssetRiskNotConfigured))));
     }
 
@@ -5111,12 +5229,12 @@ mod tests {
         let test = setup();
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
         let btc = Symbol::new(&test.env, "BTC");
         test.market.set_asset_risk(&btc, &risk(10, 400)); // stamps epoch
 
         // Close still works (grandfathered, legacy MM fallback).
-        let pnl = test.market.close_position(&trader, &pos.id);
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
         assert!(test.market.get_position(&pos.id).is_none());
         let _ = pnl;
     }
@@ -5128,10 +5246,10 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM"); // capped at 10x
         // 11x on a 10x pair is rejected.
-        let res = test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &11, &Direction::Long);
+        let res = test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &11, &Direction::Long, &0);
         assert!(matches!(res, Err(Ok(NoetherError::InvalidLeverage))));
         // 10x is fine.
-        let ok = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let ok = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         assert_eq!(ok.leverage, 10);
     }
 
@@ -5142,12 +5260,12 @@ mod tests {
         let legacy = setup();
         let t1 = fund_trader(&legacy, 1_000 * PRECISION);
         let xlm = Symbol::new(&legacy.env, "XLM");
-        let legacy_pos = legacy.market.open_position(&t1, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let legacy_pos = legacy.market.open_position(&t1, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
 
         let laddered = setup();
         seed_ladder(&laddered);
         let t2 = fund_trader(&laddered, 1_000 * PRECISION);
-        let ladder_pos = laddered.market.open_position(&t2, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let ladder_pos = laddered.market.open_position(&t2, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
 
         assert!(ladder_pos.liquidation_price > legacy_pos.liquidation_price,
             "MM 5% liquidates a long sooner (higher price) than MM 1%");
@@ -5160,7 +5278,7 @@ mod tests {
         let test = setup();
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
         let entry = pos.entry_price;
 
         // Now stamp the ladder with XLM at MM 5%.
@@ -5190,8 +5308,8 @@ mod tests {
             let keeper = fund_trader(&test, 10 * PRECISION);
             let btc = Symbol::new(&test.env, "BTC");
             let xlm = Symbol::new(&test.env, "XLM");
-            test.market.open_position_cross(&trader, &btc, &(100 * PRECISION), &5, &Direction::Long);
-            test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+            test.market.open_position_cross(&trader, &btc, &(100 * PRECISION), &5, &Direction::Long, &0);
+            test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
             // Drop both ~17% → each leg loses ~85% of collateral, equity ~$30.
             let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
             oracle.set_price(&btc, &(60_000 * PRECISION * 83 / 100));
@@ -5239,12 +5357,12 @@ mod tests {
         let btc = Symbol::new(&test.env, "BTC");
         // 20x rejected at the 10x launch cap.
         assert!(matches!(
-            test.market.try_open_position(&trader, &btc, &(100 * PRECISION), &20, &Direction::Long),
+            test.market.try_open_position(&trader, &btc, &(100 * PRECISION), &20, &Direction::Long, &0),
             Err(Ok(NoetherError::InvalidLeverage))
         ));
         // One admin call raises the cap to 25x — no redeploy.
         test.market.set_asset_risk(&btc, &risk(25, 400));
-        let pos = test.market.open_position(&trader, &btc, &(100 * PRECISION), &20, &Direction::Long);
+        let pos = test.market.open_position(&trader, &btc, &(100 * PRECISION), &20, &Direction::Long, &0);
         assert_eq!(pos.leverage, 20);
     }
 
@@ -5257,7 +5375,7 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         // remaining lands between penalty (1% of size) and MM (5% of size).
         oracle.set_price(&xlm, &(PRECISION * 949 / 10_000));
@@ -5299,7 +5417,7 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
 
@@ -5325,7 +5443,7 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         // A gap far through bankruptcy: remaining <= 0.
         oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
@@ -5356,7 +5474,7 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
 
@@ -5382,7 +5500,7 @@ mod tests {
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        let pos = test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 949 / 10_000));
 
@@ -5423,7 +5541,7 @@ mod tests {
         // Pre-fund the buffer so part of the debt is covered.
         vault.fund_buffer(&(20 * PRECISION));
 
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
 
@@ -5446,12 +5564,12 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
 
         // The trader closes their own bankrupt position — same booking.
-        test.market.close_position(&trader, &pos.id);
+        test.market.close_position(&trader, &pos.id, &0);
 
         let pnl = pos.size * (PRECISION * 850 / 10_000 - pos.entry_price) / pos.entry_price;
         let bad_debt = -(pos.collateral + pnl);
@@ -5473,9 +5591,9 @@ mod tests {
         let btc = Symbol::new(&test.env, "BTC");
 
         // Bystander's ISOLATED collateral is custody money at the market.
-        let bpos = test.market.open_position(&bystander, &btc, &(100 * PRECISION), &2, &Direction::Long);
+        let bpos = test.market.open_position(&bystander, &btc, &(100 * PRECISION), &2, &Direction::Long, &0);
         // Victim's cross position goes deep bankrupt.
-        let vpos = test.market.open_position_cross(&victim, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let vpos = test.market.open_position_cross(&victim, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
 
@@ -5505,7 +5623,7 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
 
@@ -5531,7 +5649,7 @@ mod tests {
 
         vault.fund_buffer(&(60 * PRECISION)); // more than the coming debt
 
-        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
 
@@ -5559,11 +5677,11 @@ mod tests {
 
         let t1 = fund_trader(&test, 100 * PRECISION);
         let t2 = fund_trader(&test, 100 * PRECISION);
-        let p1 = test.market.open_position(&t1, &xlm, &(10 * PRECISION), &5, &Direction::Long);
+        let p1 = test.market.open_position(&t1, &xlm, &(10 * PRECISION), &5, &Direction::Long, &0);
         let p2 = if cross_second {
-            test.market.open_position_cross(&t2, &xlm, &(10 * PRECISION), &5, &Direction::Long)
+            test.market.open_position_cross(&t2, &xlm, &(10 * PRECISION), &5, &Direction::Long, &0)
         } else {
-            test.market.open_position(&t2, &xlm, &(10 * PRECISION), &5, &Direction::Long)
+            test.market.open_position(&t2, &xlm, &(10 * PRECISION), &5, &Direction::Long, &0)
         };
 
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
@@ -5645,7 +5763,7 @@ mod tests {
         let loser = fund_trader(&test, 100 * PRECISION);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION / 10));
-        let short = test.market.open_position(&loser, &xlm, &(10 * PRECISION), &2, &Direction::Short);
+        let short = test.market.open_position(&loser, &xlm, &(10 * PRECISION), &2, &Direction::Short, &0);
         oracle.set_price(&xlm, &(3 * PRECISION / 10));
         assert!(test.market.check_adl_trigger(&xlm));
 
@@ -5662,14 +5780,14 @@ mod tests {
         vault.set_asset_cap(&xlm, &10_000);
         vault.set_skew_cap(&xlm, &10_000);
         let trader = fund_trader(&test, 100 * PRECISION);
-        let pos = test.market.open_position(&trader, &xlm, &(10 * PRECISION), &2, &Direction::Long);
+        let pos = test.market.open_position(&trader, &xlm, &(10 * PRECISION), &2, &Direction::Long, &0);
 
         // 3× pump: the winner's ~40 USDC claim beats the ~30 pool — the
         // short-paid close itself must flip the flag, no keeper involved.
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(3 * PRECISION / 10));
         assert!(!test.market.is_adl_active(&xlm));
-        test.market.close_position(&trader, &pos.id);
+        test.market.close_position(&trader, &pos.id, &0);
         assert!(test.market.is_adl_active(&xlm));
         assert!(vault.get_shortfall() > 0, "sanity: the flip came from a real shortfall");
     }
@@ -5695,7 +5813,7 @@ mod tests {
         assert!(test.market.check_adl_trigger(&xlm));
 
         let newcomer = fund_trader(&test, 100 * PRECISION);
-        let res = test.market.try_open_position(&newcomer, &xlm, &(10 * PRECISION), &2, &Direction::Long);
+        let res = test.market.try_open_position(&newcomer, &xlm, &(10 * PRECISION), &2, &Direction::Long, &0);
         assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
     }
 
@@ -5737,14 +5855,14 @@ mod tests {
 
         let t1 = fund_trader(&test, 1_000 * PRECISION);
         // First long: net 0 → 100 (== cap, not over) is fine.
-        test.market.open_position(&t1, &xlm, &(20 * PRECISION), &5, &Direction::Long);
+        test.market.open_position(&t1, &xlm, &(20 * PRECISION), &5, &Direction::Long, &0);
         // Second long pushes net past the cap AND worsens it → #89.
         let t2 = fund_trader(&test, 1_000 * PRECISION);
-        let res = test.market.try_open_position(&t2, &xlm, &(20 * PRECISION), &5, &Direction::Long);
+        let res = test.market.try_open_position(&t2, &xlm, &(20 * PRECISION), &5, &Direction::Long, &0);
         assert!(matches!(res, Err(Ok(NoetherError::SkewCapExceeded))));
 
         // A short (skew-reducing) is accepted even though the book is at cap.
-        let ok = test.market.open_position(&t2, &xlm, &(20 * PRECISION), &5, &Direction::Short);
+        let ok = test.market.open_position(&t2, &xlm, &(20 * PRECISION), &5, &Direction::Short, &0);
         assert_eq!(ok.direction, Direction::Short);
     }
 
@@ -5757,10 +5875,10 @@ mod tests {
 
         let t1 = fund_trader(&test, 1_000 * PRECISION);
         // 150 side-OI fits under 200.
-        test.market.open_position(&t1, &xlm, &(30 * PRECISION), &5, &Direction::Long);
+        test.market.open_position(&t1, &xlm, &(30 * PRECISION), &5, &Direction::Long, &0);
         // Another 150 long → 300 side-OI over the absolute 200 → #82.
         let t2 = fund_trader(&test, 1_000 * PRECISION);
-        let res = test.market.try_open_position(&t2, &xlm, &(30 * PRECISION), &5, &Direction::Long);
+        let res = test.market.try_open_position(&t2, &xlm, &(30 * PRECISION), &5, &Direction::Long, &0);
         assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
     }
 
@@ -5773,8 +5891,8 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
         let eth = Symbol::new(&test.env, "ETH");
-        let p1 = test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
-        let p2 = test.market.open_position_cross(&trader, &eth, &(100 * PRECISION), &10, &Direction::Long);
+        let p1 = test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
+        let p2 = test.market.open_position_cross(&trader, &eth, &(100 * PRECISION), &10, &Direction::Long, &0);
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
         oracle.set_price(&xlm, &(PRECISION * xlm_price_bps_of_entry / 10_000));
         oracle.set_price(&eth, &eth_price);
@@ -5941,7 +6059,7 @@ mod tests {
         for (collateral, dir) in specs.iter() {
             let trader = fund_trader(&test, 1_000 * PRECISION);
             let pos = test.market.open_position(
-                &trader, &btc, &(*collateral * PRECISION), &10, dir,
+                &trader, &btc, &(*collateral * PRECISION), &10, dir, &0,
             );
             ids.push_back(pos.id);
         }
@@ -5978,7 +6096,7 @@ mod tests {
 
         // $30,000 notional: 20% tranches take 15 rounds to cross $1,000.
         let pos = test.market.open_position(
-            &trader, &btc, &(3_000 * PRECISION), &10, &Direction::Long,
+            &trader, &btc, &(3_000 * PRECISION), &10, &Direction::Long, &0,
         );
 
         let mut rounds = 0;
@@ -6078,7 +6196,7 @@ mod tests {
         // ...and trading works again.
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let pos = test.market.open_position(
-            &trader, &Symbol::new(&test.env, "BTC"), &(50 * PRECISION), &5, &Direction::Long,
+            &trader, &Symbol::new(&test.env, "BTC"), &(50 * PRECISION), &5, &Direction::Long, &0,
         );
         assert!(pos.id > 0);
     }
@@ -6120,7 +6238,7 @@ mod tests {
 
         // Large enough for the partial path ($2,000 notional)...
         let pos = test.market.open_position(
-            &trader, &btc, &(200 * PRECISION), &10, &Direction::Long,
+            &trader, &btc, &(200 * PRECISION), &10, &Direction::Long, &0,
         );
         // ...but crashed so hard that equity is gone: `bankrupt` short-circuits
         // the tranche and the position is closed out entirely in one step.
