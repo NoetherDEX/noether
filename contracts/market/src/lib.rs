@@ -44,7 +44,7 @@ use noether_common::{
     VolumeRecord, BASIS_POINTS, PRECISION,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
     calculate_trading_fee, calculate_funding_rate, calculate_cumulative_funding,
-    calculate_keeper_reward, should_liquidate,
+    should_liquidate,
 };
 
 mod storage;
@@ -229,6 +229,8 @@ impl MarketContract {
             || config.liquidation_fee_bps >= BASIS_POINTS
             || config.partial_liq_tranche_bps >= BASIS_POINTS
             || config.insurance_buffer_share_bps > BASIS_POINTS
+            || config.liquidation_penalty_bps >= BASIS_POINTS
+            || config.penalty_keeper_share_bps > BASIS_POINTS
         {
             return Err(NoetherError::InvalidParameter);
         }
@@ -550,38 +552,43 @@ impl MarketContract {
                 realized_debit = position.collateral;
             }
 
-            // Keeper reward on the tranche's share of remaining equity,
-            // mirroring the full path's 10%-of-collateral safety cap
-            // (applied to the tranche's collateral share).
-            let mut reward =
-                calculate_keeper_reward(remaining * tranche / bps, config.liquidation_fee_bps);
-            let reward_cap = position.collateral * tranche / bps / 10;
-            if reward > reward_cap {
-                reward = reward_cap;
+            // L0-4: bounded penalty on the notional actually closed —
+            // min(closed × penalty_bps, the tranche's share of remaining
+            // equity) — split keeper/buffer. Replaces the 5%-of-equity
+            // reward and the 10%-of-realized_debit buffer cut.
+            let mut tranche_penalty =
+                closed_size * (config.liquidation_penalty_bps as i128) / bps;
+            let tranche_equity = remaining * tranche / bps;
+            if tranche_penalty > tranche_equity {
+                tranche_penalty = tranche_equity;
             }
-            if reward > position.collateral - realized_debit {
-                reward = position.collateral - realized_debit;
+            // Collateral cap unchanged in spirit: total debits never exceed
+            // held collateral (degenerate tranche falls through to full liq).
+            if tranche_penalty > position.collateral - realized_debit {
+                tranche_penalty = position.collateral - realized_debit;
             }
-            if reward < 0 {
-                reward = 0;
+            if tranche_penalty < 0 {
+                tranche_penalty = 0;
             }
+            let reward = tranche_penalty * (config.penalty_keeper_share_bps as i128) / bps;
+            let tranche_buffer = tranche_penalty - reward;
 
             let new_size = position.size - closed_size;
-            let new_collateral = position.collateral - realized_debit - reward;
+            let new_collateral = position.collateral - realized_debit - tranche_penalty;
 
             // Degenerate tranche (nothing left to back the remainder):
             // fall through to the full liquidation below instead.
             if new_size > 0 && new_collateral > 0 {
-                // Money flow: the realized loss goes to the vault, split
-                // between LP value and the insurance buffer.
-                if realized_debit > 0 {
+                // Money flow (L0-4): the realized loss is an LP receipt; the
+                // penalty's buffer leg rides the same transfer; keeper leg
+                // pays out directly.
+                let to_vault = realized_debit + tranche_buffer;
+                if to_vault > 0 {
                     token_client.transfer(
-                        &env.current_contract_address(), &vault_address, &realized_debit,
+                        &env.current_contract_address(), &vault_address, &to_vault,
                     );
-                    let buffer_cut =
-                        realized_debit * (config.insurance_buffer_share_bps as i128) / bps;
-                    Self::credit_vault_receipt(&env, &vault_address, realized_debit - buffer_cut);
-                    Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
+                    Self::credit_vault_receipt(&env, &vault_address, realized_debit);
+                    Self::fund_vault_buffer(&env, &vault_address, tranche_buffer);
                 }
                 if reward > 0 {
                     token_client.transfer(&env.current_contract_address(), &keeper, &reward);
@@ -618,43 +625,62 @@ impl MarketContract {
             }
         }
 
-        // ── Full liquidation ──
+        // ── Full liquidation (L0-4: bounded penalty, residual refunds) ──
 
-        // Calculate keeper reward (only from remaining equity, if positive)
-        let keeper_reward = if remaining > 0 {
-            calculate_keeper_reward(remaining, config.liquidation_fee_bps)
+        let bps_i = BASIS_POINTS as i128;
+        let actual_keeper_reward: i128;
+
+        if remaining > 0 {
+            // Non-bankrupt: penalty = min(1% of closed notional, remaining);
+            // keeper/buffer split it; the trader gets remaining − penalty back.
+            let mut penalty = position.size * (config.liquidation_penalty_bps as i128) / bps_i;
+            if penalty > remaining {
+                penalty = remaining;
+            }
+            let keeper_cut = penalty * (config.penalty_keeper_share_bps as i128) / bps_i;
+            let buffer_cut = penalty - keeper_cut;
+            let refund = remaining - penalty;
+
+            // to_vault = collateral − keeper_cut − refund. Provably positive
+            // at trigger (remaining < MM ≤ 10% of collateral at 10x/1%, and
+            // MM = IM/2 under the L0-12 ladder keeps the bound); saturate
+            // defensively anyway.
+            let mut to_vault = position.collateral - keeper_cut - refund;
+            if to_vault < 0 {
+                to_vault = 0;
+            }
+
+            if to_vault > 0 {
+                token_client.transfer(&env.current_contract_address(), &vault_address, &to_vault);
+                Self::credit_vault_receipt(&env, &vault_address, to_vault - buffer_cut);
+                Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
+            }
+            if keeper_cut > 0 {
+                token_client.transfer(&env.current_contract_address(), &keeper, &keeper_cut);
+            }
+            if refund > 0 {
+                token_client.transfer(&env.current_contract_address(), &position.trader, &refund);
+            }
+
+            env.events().publish(
+                (Symbol::new(&env, "liq_refund"),),
+                (position.trader.clone(), position_id, refund, penalty),
+            );
+            actual_keeper_reward = keeper_cut;
         } else {
-            0
-        };
-
-        // Ensure keeper_reward doesn't exceed position collateral
-        let actual_keeper_reward = if keeper_reward > position.collateral {
-            position.collateral / 10 // Cap at 10% of collateral as safety
-        } else {
-            keeper_reward
-        };
-
-        // Calculate what goes to Vault (everything except keeper reward)
-        let vault_receives = if position.collateral > actual_keeper_reward {
-            position.collateral - actual_keeper_reward
-        } else {
-            0
-        };
-
-        // Settle with vault — the liquidation proceeds are split between LP
-        // value (receipt-credited) and the insurance buffer (T3-D4), while
-        // the full USDC amount transfers in one move.
-        if vault_receives > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &vault_receives);
-            let buffer_cut =
-                vault_receives * (config.insurance_buffer_share_bps as i128) / (BASIS_POINTS as i128);
-            Self::credit_vault_receipt(&env, &vault_address, vault_receives - buffer_cut);
-            Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
-        }
-
-        // Pay keeper reward
-        if actual_keeper_reward > 0 {
-            token_client.transfer(&env.current_contract_address(), &keeper, &actual_keeper_reward);
+            // Bankrupt: unchanged — full collateral to the vault (buffer
+            // share via config, 0 at the L0-4 migration), keeper 0 (the
+            // buffer-funded bankruptcy bounty is L1-23; bad-debt booking
+            // is L0-2).
+            let vault_receives = position.collateral;
+            if vault_receives > 0 {
+                token_client.transfer(&env.current_contract_address(), &vault_address, &vault_receives);
+                let buffer_cut =
+                    vault_receives * (config.insurance_buffer_share_bps as i128) / bps_i;
+                Self::credit_vault_receipt(&env, &vault_address, vault_receives - buffer_cut);
+                Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
+            }
+            actual_keeper_reward = 0;
         }
 
         Self::adjust_oi(&env, &position.asset, &position.direction, position.size, position.entry_price, current_price, false);
@@ -1009,7 +1035,6 @@ impl MarketContract {
         let vault_address = get_vault(&env);
 
         // Calculate total remaining equity
-        let balance = get_cross_margin_balance(&env, &trader);
         let equity = position::calculate_cross_equity(&env, &trader, &get_price);
 
         // Close all cross positions - settle PnL with vault
@@ -1019,6 +1044,7 @@ impl MarketContract {
         let market_addr = env.current_contract_address();
         let mut total_loss_to_vault: i128 = 0;
         let mut total_pnl: i128 = 0;
+        let mut total_closed_size: i128 = 0;
         let cumulative = get_cumulative_funding_rate(&env);
 
         for i in 0..position_ids.len() {
@@ -1051,6 +1077,7 @@ impl MarketContract {
                 }
 
                 Self::adjust_oi(&env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
+                total_closed_size += pos.size;
 
                 // Cancel any attached orders (defensive), then delete position
                 Self::cancel_position_orders(&env, pid, None);
@@ -1076,50 +1103,59 @@ impl MarketContract {
             Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
         }
 
-        // Calculate keeper reward from remaining equity (if any)
-        // After losses, remaining market balance is what we can distribute
+        // ── L0-4: bounded penalty; the residual STAYS on the trader's
+        // cross balance (withdrawable) instead of transferring to the vault.
+        let bps_i = BASIS_POINTS as i128;
         let remaining_balance = token_client.balance(&market_addr);
-        let keeper_reward = if equity > 0 && remaining_balance > 0 {
-            let reward = equity * (config.liquidation_fee_bps as i128) / (BASIS_POINTS as i128);
-            let max_reward = balance / 10; // Cap at 10% of original deposit
-            let capped = if reward > max_reward { max_reward } else { reward };
-            // Can't pay more than what's actually available
-            if capped > remaining_balance { remaining_balance } else { capped }
-        } else {
-            0
-        };
+        let mut keeper_reward: i128 = 0;
+        let mut residual: i128 = 0;
+        let mut penalty: i128 = 0;
 
-        // Pay keeper
-        if keeper_reward > 0 {
-            token_client.transfer(&market_addr, &keeper, &keeper_reward);
-        }
-
-        // Send remaining trader equity to vault (not other traders' deposits)
-        // Trader's total deposit = pool balance + sum of position collaterals
-        // We already know `balance` (pool balance before liquidation)
-        // After settlements, at most `balance` worth of trader funds remain in contract
-        if equity > keeper_reward {
-            let to_vault = equity - keeper_reward;
-            // Cap at what the trader actually deposited (balance = pool balance)
-            let max_to_vault = if balance > keeper_reward { balance - keeper_reward } else { 0 };
-            let actual_to_vault = if to_vault > max_to_vault { max_to_vault } else { to_vault };
-            let market_balance = token_client.balance(&market_addr);
-            let final_transfer = if actual_to_vault > market_balance { market_balance } else { actual_to_vault };
-            if final_transfer > 0 {
-                token_client.transfer(&market_addr, &vault_address, &final_transfer);
-                Self::credit_vault_receipt(&env, &vault_address, final_transfer);
+        if equity > 0 {
+            penalty = total_closed_size * (config.liquidation_penalty_bps as i128) / bps_i;
+            if penalty > equity {
+                penalty = equity;
             }
+            let mut keeper_cut = penalty * (config.penalty_keeper_share_bps as i128) / bps_i;
+            // Can't pay more than what's physically available
+            if keeper_cut > remaining_balance {
+                keeper_cut = remaining_balance;
+            }
+            let mut buffer_cut = penalty - keeper_cut;
+            let after_keeper = remaining_balance - keeper_cut;
+            if buffer_cut > after_keeper {
+                buffer_cut = after_keeper;
+            }
+
+            if keeper_cut > 0 {
+                token_client.transfer(&market_addr, &keeper, &keeper_cut);
+            }
+            if buffer_cut > 0 {
+                token_client.transfer(&market_addr, &vault_address, &buffer_cut);
+                Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
+            }
+            keeper_reward = keeper_cut;
+            residual = equity - penalty;
         }
 
-        // Clear cross-margin state
-        set_cross_margin_balance(&env, &trader, 0);
+        // Residual equity credits the trader's cross pool: withdrawable once
+        // the position list is empty (the withdraw gate binds only while
+        // positions exist). Bankrupt accounts force-zero as before.
+        set_cross_margin_balance(&env, &trader, if residual > 0 { residual } else { 0 });
+        env.events().publish(
+            (Symbol::new(&env, "liq_refund"),),
+            (trader.clone(), 0u64, if residual > 0 { residual } else { 0 }, penalty),
+        );
+
         // Clear position list
         let empty_ids: Vec<u64> = Vec::new(&env);
         env.storage().persistent().set(
             &storage::DataKey::CrossMarginPositions(trader.clone()),
             &empty_ids,
         );
-        remove_cross_margin_trader(&env, &trader);
+        if residual <= 0 {
+            remove_cross_margin_trader(&env, &trader);
+        }
 
         extend_instance_ttl(&env);
 
@@ -2570,6 +2606,18 @@ mod tests {
     }
 
     fn setup_with_vault_deposit(vault_deposit: i128) -> TestEnv {
+        setup_full(vault_deposit, MarketConfig::default())
+    }
+
+    /// Custom-config variant (L0-4+): lets risk tests emulate the L0-12
+    /// ladder regime (e.g. MM > penalty, which is what makes liquidation
+    /// refunds non-zero — at the flat 1% MM, penalty ≡ MM and refunds are
+    /// structurally 0).
+    fn setup_with_config(config: MarketConfig) -> TestEnv {
+        setup_full(10_000_000 * PRECISION, config)
+    }
+
+    fn setup_full(vault_deposit: i128, config: MarketConfig) -> TestEnv {
         let env = Env::default();
         env.mock_all_auths();
         env.budget().reset_unlimited(); // Allow complex cross-contract tests
@@ -2625,8 +2673,7 @@ mod tests {
         usdc_admin.mint(&admin, &(vault_deposit + 10 * PRECISION));
         vault_client.deposit(&admin, &vault_deposit);
 
-        // Initialize market with config
-        let config = MarketConfig::default();
+        // Initialize market with the caller-provided config
         market.initialize(&admin, &oracle_id, &vault_id, &usdc_token, &config);
 
         TestEnv { env, admin, market_id, market, usdc_token, vault_id, oracle_id }
@@ -3752,7 +3799,16 @@ mod tests {
         let keeper_before = usdc.balance(&keeper);
         let reward = test.market.liquidate(&keeper, &pos.id);
         assert!(reward > 0);
-        // Reward is 5% of remaining equity, hard-capped at 10% of collateral
+        // L0-4: reward = penalty × penalty_keeper_share_bps / 10⁴ where
+        // penalty = min(1% of notional, remaining equity) — and it stays
+        // comfortably under the old 10%-of-collateral bound.
+        let pnl = pos.size * (PRECISION * 905 / 10_000 - pos.entry_price) / pos.entry_price;
+        let remaining = pos.collateral + pnl;
+        let mut penalty = pos.size * 100 / 10_000;
+        if penalty > remaining {
+            penalty = remaining;
+        }
+        assert_eq!(reward, penalty * 5_000 / 10_000);
         assert!(reward <= pos.collateral / 10);
         assert_eq!(usdc.balance(&keeper) - keeper_before, reward);
         assert!(test.market.get_position(&pos.id).is_none());
@@ -3780,24 +3836,27 @@ mod tests {
 
     #[test]
     fn test_partial_liq_shrinks_position_and_funds_buffer() {
-        let test = setup();
+        // L0-12-ladder regime (MM 5%): with the L0-4 penalty capped at the
+        // tranche's equity share, a tranche is health-ratio-INVARIANT at the
+        // flat 1% MM (the zero-price analog) — it strictly IMPROVES health
+        // only when MM > penalty, so the restores-health premise runs there.
+        let test = setup_with_config(mm5_config());
         let (_trader, pos) = open_large_btc_long(&test);
         let keeper = fund_trader(&test, 10 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
         let vault = vault::Client::new(&test.env, &test.vault_id);
 
-        // Liquidatable (below the $54,600 liq price) but NOT bankrupt, and
-        // close enough to the edge that ONE 20% tranche restores health:
-        // equity ≈ $18.50 vs a $20 maintenance requirement that drops to
-        // $16 once the tranche closes.
-        set_btc_price(&test, 54_585 * PRECISION);
+        // Liquidatable (below the $57,000 liq price at MM 5%) but NOT
+        // bankrupt, and close enough to the edge that ONE 20% tranche
+        // restores health.
+        set_btc_price(&test, 56_900 * PRECISION);
 
         let keeper_before = usdc.balance(&keeper);
         let buffer_before = vault.get_buffer_balance();
         let reward = test.market.liquidate(&keeper, &pos.id);
 
-        // Position SURVIVES, 20% smaller, with the realized loss + reward
-        // taken out of collateral.
+        // Position SURVIVES, 20% smaller, with the realized loss + the
+        // tranche penalty taken out of collateral (L0-4).
         let updated = test.market.get_position(&pos.id).expect("position must survive");
         assert_eq!(updated.size, pos.size * 8 / 10);
         assert!(updated.collateral < pos.collateral);
@@ -3805,12 +3864,14 @@ mod tests {
         assert_eq!(usdc.balance(&keeper) - keeper_before, reward);
         assert!(reward > 0);
 
-        // 10% of the tranche's realized loss landed in the insurance buffer
-        // (realized debit = old collateral − new collateral − keeper reward).
+        // L0-4: keeper leg + buffer leg == tranche_penalty (the debit beyond
+        // the realized loss); the two legs match up to 1 stroop (50/50 split).
         let buffer_gain = vault.get_buffer_balance() - buffer_before;
         assert!(buffer_gain > 0);
-        let realized_debit = pos.collateral - updated.collateral - reward;
-        assert_eq!(buffer_gain, realized_debit / 10);
+        let tranche_penalty = reward + buffer_gain;
+        let realized_debit = pos.collateral - updated.collateral - tranche_penalty;
+        assert!(realized_debit > 0);
+        assert!(buffer_gain >= reward && buffer_gain - reward <= 1);
 
         // The partial actually SAVED the position: after the grace period it
         // is no longer liquidatable at this price.
@@ -3864,12 +3925,10 @@ mod tests {
         // Straight to full liquidation: gone in one step.
         assert!(test.market.get_position(&pos.id).is_none());
 
-        // 10% of the vault-bound proceeds accrued to the insurance buffer.
-        let vault_receives = pos.collateral - reward;
-        assert_eq!(
-            vault.get_buffer_balance() - buffer_before,
-            vault_receives / 10,
-        );
+        // L0-4: buffer leg == penalty − keeper leg (~equal at the 50/50 split).
+        let buffer_gain = vault.get_buffer_balance() - buffer_before;
+        assert!(reward > 0);
+        assert!(buffer_gain >= reward && buffer_gain - reward <= 1);
     }
 
     #[test]
@@ -3911,11 +3970,183 @@ mod tests {
         let reward = test.market.liquidate(&keeper, &pos.id);
         assert!(test.market.get_position(&pos.id).is_none());
 
-        let vault_receives = pos.collateral - reward;
-        assert_eq!(
-            vault.get_buffer_balance() - buffer_before,
-            vault_receives / 10,
-        );
+        // L0-4: the buffer's inflow is the penalty's non-keeper leg. At the
+        // flat 1% MM, penalty == remaining (capped), split ~50/50 — the
+        // buffer leg equals the keeper leg up to 1 stroop of rounding.
+        let buffer_gain = vault.get_buffer_balance() - buffer_before;
+        assert!(reward > 0);
+        assert!(buffer_gain >= reward && buffer_gain - reward <= 1);
+    }
+
+    // ── L0-4: bounded penalty + residual refund ─────────────────────────
+
+    /// The L0-12-ladder regime (MM 5% > penalty 1%) — the configuration
+    /// where liquidation refunds are non-zero by construction.
+    fn mm5_config() -> MarketConfig {
+        MarketConfig { maintenance_margin_bps: 500, ..MarketConfig::default() }
+    }
+
+    #[test]
+    fn test_full_liq_refunds_residual_after_penalty() {
+        let test = setup_with_config(mm5_config());
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        // remaining lands between penalty (1% of size) and MM (5% of size).
+        oracle.set_price(&xlm, &(PRECISION * 949 / 10_000));
+
+        let t0 = usdc.balance(&trader);
+        let k0 = usdc.balance(&keeper);
+        let v0 = usdc.balance(&test.vault_id);
+        let m0 = usdc.balance(&test.market_id);
+        let b0 = vault.get_buffer_balance();
+
+        let reward = test.market.liquidate(&keeper, &pos.id);
+
+        // Exact expectations from the position's own numbers (funding = 0).
+        let pnl = pos.size * (PRECISION * 949 / 10_000 - pos.entry_price) / pos.entry_price;
+        let remaining = pos.collateral + pnl;
+        let penalty = pos.size * 100 / 10_000;
+        assert!(remaining > penalty, "test must sit in the refund regime");
+        let expected_refund = remaining - penalty;
+        let expected_keeper = penalty * 5_000 / 10_000;
+
+        assert_eq!(usdc.balance(&trader) - t0, expected_refund);
+        assert_eq!(usdc.balance(&keeper) - k0, expected_keeper);
+        assert_eq!(reward, expected_keeper);
+        assert_eq!(vault.get_buffer_balance() - b0, penalty - expected_keeper);
+        // USDC conservation: the market paid out exactly the collateral.
+        let outflow = (usdc.balance(&trader) - t0)
+            + (usdc.balance(&keeper) - k0)
+            + (usdc.balance(&test.vault_id) - v0);
+        assert_eq!(outflow, pos.collateral);
+        assert_eq!(m0 - usdc.balance(&test.market_id), pos.collateral);
+    }
+
+    #[test]
+    fn test_full_liq_penalty_split_keeper_buffer() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
+
+        let t0 = usdc.balance(&trader);
+        let b0 = vault.get_buffer_balance();
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        let buffer_gain = vault.get_buffer_balance() - b0;
+
+        // 50/50 split of the penalty (keeper floors on odd strops).
+        let penalty = reward + buffer_gain;
+        assert_eq!(reward, penalty * 5_000 / 10_000);
+        assert_eq!(buffer_gain, penalty - reward);
+        // At flat 1% MM the penalty consumes all remaining equity: no refund.
+        assert_eq!(usdc.balance(&trader), t0);
+    }
+
+    #[test]
+    fn test_full_liq_bankrupt_path_unchanged() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        // A gap far through bankruptcy: remaining <= 0.
+        oracle.set_price(&xlm, &(PRECISION * 850 / 10_000));
+
+        let t0 = usdc.balance(&trader);
+        let k0 = usdc.balance(&keeper);
+        let v0 = usdc.balance(&test.vault_id);
+        let b0 = vault.get_buffer_balance();
+
+        let reward = test.market.liquidate(&keeper, &pos.id);
+
+        // Keeper gets nothing (L1-23 adds the buffer-funded bounty later);
+        // the trader gets nothing; the FULL collateral lands at the vault,
+        // buffer share per config (10% default in tests).
+        assert_eq!(reward, 0);
+        assert_eq!(usdc.balance(&keeper), k0);
+        assert_eq!(usdc.balance(&trader), t0);
+        assert_eq!(usdc.balance(&test.vault_id) - v0, pos.collateral);
+        assert_eq!(vault.get_buffer_balance() - b0, pos.collateral / 10);
+    }
+
+    #[test]
+    fn test_penalty_capped_at_remaining_equity() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
+
+        let b0 = vault.get_buffer_balance();
+        let k0 = usdc.balance(&keeper);
+        let reward = test.market.liquidate(&keeper, &pos.id);
+
+        // penalty = min(1% notional, remaining) = remaining here — keeper
+        // leg + buffer leg reconstruct it exactly.
+        let pnl = pos.size * (PRECISION * 905 / 10_000 - pos.entry_price) / pos.entry_price;
+        let remaining = pos.collateral + pnl;
+        assert!(remaining > 0 && remaining < pos.size * 100 / 10_000);
+        let buffer_gain = vault.get_buffer_balance() - b0;
+        assert_eq!(reward + buffer_gain, remaining);
+        assert_eq!(usdc.balance(&keeper) - k0, reward);
+    }
+
+    #[test]
+    fn test_cross_liq_residual_credits_cross_pool() {
+        let test = setup_with_config(mm5_config());
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let pos = test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 949 / 10_000));
+
+        let m0 = usdc.balance(&test.market_id);
+        let reward = test.market.liquidate_cross_account(&keeper, &trader);
+
+        let pnl = pos.size * (PRECISION * 949 / 10_000 - pos.entry_price) / pos.entry_price;
+        let equity = pos.collateral + pnl;
+        let penalty = pos.size * 100 / 10_000;
+        let residual = equity - penalty;
+        assert!(residual > 0, "test must sit in the residual regime");
+
+        // The residual stays on the trader's cross balance — NOT the vault.
+        assert_eq!(test.market.get_cross_margin_balance(&trader), residual);
+        assert_eq!(reward, penalty * 5_000 / 10_000);
+
+        // And it is withdrawable now that the position list is empty.
+        let w0 = usdc.balance(&trader);
+        test.market.withdraw_cross_margin(&trader, &residual);
+        assert_eq!(usdc.balance(&trader) - w0, residual);
+        assert_eq!(test.market.get_cross_margin_balance(&trader), 0);
+
+        // Conservation: market outflow == loss transfer + penalty + residual
+        // == the position's collateral.
+        assert_eq!(m0 - usdc.balance(&test.market_id), pos.collateral);
     }
 
     #[test]

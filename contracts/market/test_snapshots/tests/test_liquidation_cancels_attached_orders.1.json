@@ -244,6 +244,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "liquidation_penalty_bps"
+                      },
+                      "val": {
+                        "u32": 100
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "maintenance_margin_bps"
                       },
                       "val": {
@@ -321,6 +329,14 @@
                       },
                       "val": {
                         "u32": 2000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "penalty_keeper_share_bps"
+                      },
+                      "val": {
+                        "u32": 5000
                       }
                     },
                     {
@@ -2231,6 +2247,14 @@
                             },
                             {
                               "key": {
+                                "symbol": "liquidation_penalty_bps"
+                              },
+                              "val": {
+                                "u32": 100
+                              }
+                            },
+                            {
+                              "key": {
                                 "symbol": "maintenance_margin_bps"
                               },
                               "val": {
@@ -2308,6 +2332,14 @@
                               },
                               "val": {
                                 "u32": 2000
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "penalty_keeper_share_bps"
+                              },
+                              "val": {
+                                "u32": 5000
                               }
                             },
                             {
@@ -4915,6 +4947,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "liquidation_penalty_bps"
+                      },
+                      "val": {
+                        "u32": 100
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "maintenance_margin_bps"
                       },
                       "val": {
@@ -4992,6 +5032,14 @@
                       },
                       "val": {
                         "u32": 2000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "penalty_keeper_share_bps"
+                      },
+                      "val": {
+                        "u32": 5000
                       }
                     },
                     {

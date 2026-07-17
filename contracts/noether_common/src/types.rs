@@ -195,6 +195,13 @@ pub struct MarketConfig {
     /// Share of liquidation proceeds routed to the vault's insurance
     /// buffer instead of LP value (bps).
     pub insurance_buffer_share_bps: u32,
+    /// Liquidation penalty as bps of the notional CLOSED in the call
+    /// (L0-4). Charged only on non-bankrupt liquidations; the residual
+    /// equity above the penalty refunds to the trader.
+    pub liquidation_penalty_bps: u32,
+    /// Keeper's share of the liquidation penalty (bps); the remainder
+    /// funds the insurance buffer (L0-4).
+    pub penalty_keeper_share_bps: u32,
 }
 
 impl Default for MarketConfig {
@@ -215,6 +222,8 @@ impl Default for MarketConfig {
             partial_liq_tranche_bps: 2_000,           // close 20% per round
             partial_liq_cooldown_secs: 30,            // 30s grace before the next round
             insurance_buffer_share_bps: 1_000,        // 10% of proceeds -> insurance buffer
+            liquidation_penalty_bps: 100,             // 1% of closed notional (L0-4)
+            penalty_keeper_share_bps: 5_000,          // 50% of penalty -> keeper, rest -> buffer
         }
     }
 }
