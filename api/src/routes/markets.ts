@@ -38,21 +38,33 @@ export async function registerMarketsRoutes(
         description:
           'Per-asset open interest (long / short / net, from the open-positions projection) and ' +
           '24h traded volume (position_opened + realized position_closed / liquidated notional). ' +
-          'All amounts are i128 decimal strings with 7-decimal USDC precision.',
+          'All amounts are i128 decimal strings with 7-decimal USDC precision. The solvency object ' +
+          'carries market-scoped lifetime bad debt (L0-2): how much the insurance buffer absorbed ' +
+          'vs how much fell through to LP NAV.',
         tags: ['markets'],
         response: {
           200: {
             type: 'object',
             properties: {
               stats: { type: 'array', items: ASSET_STATS_SCHEMA },
+              solvency: {
+                type: 'object',
+                properties: {
+                  cumulativeBadDebtCovered: { type: 'string' },
+                  cumulativeBadDebtLpAbsorbed: { type: 'string' },
+                  badDebtEvents: { type: 'integer' },
+                },
+                required: ['cumulativeBadDebtCovered', 'cumulativeBadDebtLpAbsorbed', 'badDebtEvents'],
+              },
             },
-            required: ['stats'],
+            required: ['stats', 'solvency'],
           },
         },
       },
     },
     async (_req, reply) => {
-      return reply.send({ stats: await stats.marketStats() });
+      const [assetStats, solvency] = await Promise.all([stats.marketStats(), stats.solvencyStats()]);
+      return reply.send({ stats: assetStats, solvency });
     },
   );
 

@@ -112,6 +112,50 @@ export interface InitializedEvent extends EventEnvelope {
   oracleAdapter: StellarAddress;
 }
 
+/** L0-4: non-bankrupt liquidation refunded the residual above the penalty.
+ * positionId 0 = cross account-level (the whole-account close-out). */
+export interface LiqRefundEvent extends EventEnvelope {
+  topic: 'liq_refund';
+  trader: StellarAddress;
+  positionId: number;
+  refund: bigint;
+  penalty: bigint;
+}
+
+/** L0-2: a bankrupt settle booked uncollectable loss — buffer covered what
+ * it could, the remainder fell to LP NAV. asset 'CROSS' = account-level. */
+export interface BadDebtRecordedEvent extends EventEnvelope {
+  topic: 'bad_debt_recorded';
+  trader: StellarAddress;
+  asset: string;
+  amount: bigint;
+  bufferCovered: bigint;
+  lpAbsorbed: bigint;
+}
+
+/** L0-1: a winner was force-realized at mark while ADL was active. */
+export interface AdlExecutedEvent extends EventEnvelope {
+  topic: 'adl_executed';
+  positionId: number;
+  trader: StellarAddress;
+  asset: string;
+  direction: number;
+  size: bigint;
+  price: bigint;
+  pnl: bigint;
+  score: bigint;
+}
+
+/** L0-1: the per-asset ADL flag flipped (reason 0 = coverage ratio,
+ * 1 = shortfall auto-flip; payable/coverage are 0 on the shortfall path). */
+export interface AdlFlagEvent extends EventEnvelope {
+  topic: 'adl_triggered' | 'adl_cleared';
+  asset: string;
+  reason: number;
+  payableUpnl: bigint;
+  coverage: bigint;
+}
+
 export type DecodedMarketEvent =
   | PositionOpenedEvent
   | PositionClosedEvent
@@ -122,7 +166,11 @@ export type DecodedMarketEvent =
   | OrderCancelledEvent
   | OrderExecutedEvent
   | FundingAppliedEvent
-  | InitializedEvent;
+  | InitializedEvent
+  | LiqRefundEvent
+  | BadDebtRecordedEvent
+  | AdlExecutedEvent
+  | AdlFlagEvent;
 
 /** Position state fetched lazily from the contract for enrichment. */
 export interface ContractPosition {

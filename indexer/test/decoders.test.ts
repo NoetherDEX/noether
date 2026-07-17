@@ -98,6 +98,82 @@ describe('decodeMarketEvent', () => {
     expect(decoded.closePrice).toBe(3_100_0000000n);
   });
 
+  it('decodes liq_refund for isolated and cross (position_id 0) rows', () => {
+    // L0-4 emits: (trader, position_id, refund, penalty)
+    const iso = vec(
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal(12n, { type: 'u64' }),
+      nativeToScVal(38_8050000n, { type: 'i128' }),
+      nativeToScVal(9_9500000n, { type: 'i128' }),
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('liq_refund', iso));
+    expect(decoded?.topic).toBe('liq_refund');
+    if (decoded?.topic !== 'liq_refund') throw new Error('wrong topic');
+    expect(decoded.positionId).toBe(12);
+    expect(decoded.refund).toBe(38_8050000n);
+    expect(decoded.penalty).toBe(9_9500000n);
+
+    const cross = vec(
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal(0n, { type: 'u64' }), // account-level
+      nativeToScVal(5_0000000n, { type: 'i128' }),
+      nativeToScVal(1_0000000n, { type: 'i128' }),
+    );
+    const decodedCross = decodeMarketEvent(makeRawEvent('liq_refund', cross));
+    if (decodedCross?.topic !== 'liq_refund') throw new Error('wrong topic');
+    expect(decodedCross.positionId).toBe(0);
+  });
+
+  it('decodes bad_debt_recorded incl. the CROSS sentinel asset', () => {
+    // L0-2 emits: (trader, asset, amount, buffer_covered, lp_absorbed)
+    const value = vec(
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal('CROSS', { type: 'symbol' }),
+      nativeToScVal(49_7500000n, { type: 'i128' }),
+      nativeToScVal(20_0000000n, { type: 'i128' }),
+      nativeToScVal(29_7500000n, { type: 'i128' }),
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('bad_debt_recorded', value));
+    expect(decoded?.topic).toBe('bad_debt_recorded');
+    if (decoded?.topic !== 'bad_debt_recorded') throw new Error('wrong topic');
+    expect(decoded.asset).toBe('CROSS');
+    expect(decoded.amount).toBe(49_7500000n);
+    expect(decoded.bufferCovered + decoded.lpAbsorbed).toBe(decoded.amount);
+  });
+
+  it('decodes adl_executed 8-tuple and the adl flag events', () => {
+    // L0-1 emits: (position_id, trader, asset, direction, size, price, pnl, score)
+    const value = vec(
+      nativeToScVal(5n, { type: 'u64' }),
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal('XLM', { type: 'symbol' }),
+      nativeToScVal(0n, { type: 'u32' }),
+      nativeToScVal(49_7500000n, { type: 'i128' }),
+      nativeToScVal(3000000n, { type: 'i128' }),
+      nativeToScVal(99_5000000n, { type: 'i128' }),
+      nativeToScVal(100_000n, { type: 'i128' }),
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('adl_executed', value));
+    expect(decoded?.topic).toBe('adl_executed');
+    if (decoded?.topic !== 'adl_executed') throw new Error('wrong topic');
+    expect(decoded.positionId).toBe(5);
+    expect(decoded.price).toBe(3000000n);
+    expect(decoded.pnl).toBe(99_5000000n);
+    expect(decoded.score).toBe(100_000n);
+
+    // adl_triggered / adl_cleared: (asset, reason, payable_upnl, coverage)
+    const flag = vec(
+      nativeToScVal('XLM', { type: 'symbol' }),
+      nativeToScVal(1n, { type: 'u32' }), // shortfall auto-flip
+      nativeToScVal(0n, { type: 'i128' }),
+      nativeToScVal(0n, { type: 'i128' }),
+    );
+    const trig = decodeMarketEvent(makeRawEvent('adl_triggered', flag));
+    expect(trig?.topic).toBe('adl_triggered');
+    if (trig?.topic !== 'adl_triggered') throw new Error('wrong topic');
+    expect(trig.reason).toBe(1);
+  });
+
   it('decodes order_cancelled with reason symbol', () => {
     const value = vec(
       nativeToScVal(99n, { type: 'u64' }),
