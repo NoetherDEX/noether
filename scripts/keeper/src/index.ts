@@ -827,7 +827,9 @@ class KeeperBot {
         const sim = await this.stellar.simulateLiquidate(position.id);
         if (!sim.ok) {
           const code = extractContractErrorCode(sim.error);
-          if (code === 50 || code === 20) continue; // healthy / already gone
+          // 50 healthy / 20 already gone / 83 within the partial-liq grace
+          // window (L0-5) — all expected, no alert.
+          if (code === 50 || code === 20 || code === 83) continue;
           this.logThrottled(
             `liq-sim-${position.id}`,
             `⚠️  Liquidation preflight for position ${position.id} rejected: ${sim.error}`,
@@ -925,13 +927,14 @@ class KeeperBot {
           console.log(`\n⏳ Cross liquidation for ${trader.slice(0, 8)}... indeterminate — re-checking next cycle`);
         } else {
           const code = extractContractErrorCode(result.error ?? '');
-          if (code !== 78) {
+          // #78 healthy (prefilter was conservative) or #83 inside the
+          // account-scoped staged-liq grace window (L0-5) — both expected.
+          if (code !== 78 && code !== 83) {
             this.logThrottled(
               `cross-liq-${trader}`,
               `⚠️  Cross liquidation attempt for ${trader.slice(0, 8)}... failed: ${result.error}`,
             );
           }
-          // #78 CrossMarginNotLiquidatable → healthy (prefilter was conservative) — silent
         }
       } catch (error) {
         this.logThrottled(

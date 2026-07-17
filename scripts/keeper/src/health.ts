@@ -152,3 +152,18 @@ export function isCrossLiquidationCandidate(
 
   return equity < totalMaintenance * buffer;
 }
+
+/**
+ * ADL ranking score (L0-1) — the ADVISORY order in which the keeper walks
+ * winners when ADL is active for an asset. Mirrors the contract's inlined
+ * formula (and contracts/risk::adl_rank): PnL% of collateral, in bps,
+ * multiplied by leverage. Losers (pnl <= 0) never rank.
+ *
+ * The on-chain adl_close gate (flag active + net winner) is the consensus;
+ * this only decides submission order, so exact parity with the contract's
+ * integer truncation is the only requirement.
+ */
+export function adlRank(pnl: bigint, collateral: bigint, leverage: bigint): bigint {
+  if (pnl <= 0n || collateral <= 0n) return 0n;
+  return ((pnl * BASIS_POINTS) / collateral) * leverage;
+}
