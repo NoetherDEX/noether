@@ -565,6 +565,18 @@ pub fn update_order_status(env: &Env, order_id: u64, status: OrderStatus) {
     }
 }
 
+/// Record the position an entry order created on its (persisted) row (L0-20).
+/// The row survives execution with its final status, so vault_factory can
+/// trustlessly reconcile a leader's executed limit order to its position via
+/// market.get_order. No-op if the order row is gone.
+pub fn set_order_position_id(env: &Env, order_id: u64, position_id: u64) {
+    if let Some(mut order) = get_order(env, order_id) {
+        order.position_id = position_id;
+        env.storage().persistent().set(&DataKey::Order(order_id), &order);
+        extend_persistent_ttl(env, &DataKey::Order(order_id));
+    }
+}
+
 pub fn remove_order_from_lists(env: &Env, order_id: u64, trader: &Address) {
     // Remove from trader's list
     let trader_key = DataKey::TraderOrders(trader.clone());

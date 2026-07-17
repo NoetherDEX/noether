@@ -1289,6 +1289,21 @@ impl MarketContract {
         get_position(&env, position_id)
     }
 
+    /// Mark-to-market equity of one position (L0-20), for vault_factory NAV:
+    /// max(0, collateral + uPnL − pending funding) at the lenient close price.
+    /// Fail-closed — a missing position (#20) or an oracle failure propagates
+    /// so the factory reverts (ValuationUnavailable) rather than mispricing.
+    pub fn get_position_equity(env: Env, position_id: u64) -> Result<i128, NoetherError> {
+        let p = get_position(&env, position_id).ok_or(NoetherError::PositionNotFound)?;
+        let price = Self::get_oracle_price(&env, &p.asset, false)?;
+        let pnl = calculate_pnl(&p, price)?;
+        let funding = calculate_cumulative_funding(
+            p.size, p.direction, p.entry_cumulative_funding, Self::cum_funding(&env, &p.asset),
+        );
+        let equity = p.collateral + pnl - funding;
+        Ok(if equity < 0 { 0 } else { equity })
+    }
+
     // get_positions removed for WASM size - frontend queries by position ID
     // get_position_pnl removed - frontend calculates from position + price
 
@@ -3469,6 +3484,13 @@ impl MarketContract {
 
         Self::finalize_open(env, &position, trading_fee);
 
+        // L0-20: stamp the created position onto the executed order row so a
+        // vault_factory leader's executed limit/stop-limit order can be
+        // trustlessly reconciled to its resulting position (reconcile_order
+        // reads market.get_order). The caller then sets status=Executed, which
+        // preserves this field. Covers StopLimit phase-1 (routes through here).
+        set_order_position_id(env, order.id, position_id);
+
         // Pay keeper fee
         if keeper_fee > 0 {
             let usdc_token = get_usdc_token(env);
@@ -5545,6 +5567,53 @@ mod tests {
         assert_eq!(reward, 0);
         assert_eq!(usdc.balance(&trader) - bal_after_place, 100 * PRECISION);
         assert_eq!(test.market.get_order(&order.id).unwrap().status, OrderStatus::CancelledSlippage);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // L0-20 · market support for vault_factory fund isolation + NAV
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_executed_entry_order_records_position_id() {
+        // The executed order row carries the created position id, so
+        // vault_factory can reconcile a leader's limit order to its position.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let order = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 10), &false, &500, &0, // triggers at the $0.10 mark
+        );
+        test.market.execute_order(&keeper, &order.id);
+
+        let row = test.market.get_order(&order.id).unwrap();
+        assert_eq!(row.status, OrderStatus::Executed);
+        assert!(row.position_id != 0, "executed entry order records its position id");
+        assert!(test.market.get_position(&row.position_id).is_some());
+    }
+
+    #[test]
+    fn test_get_position_equity_equals_collateral_plus_pnl_minus_funding() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        // +10% → uPnL = size(500) × 10% = 50; no funding applied.
+        oracle.set_price(&xlm, &(PRECISION * 11 / 100));
+
+        let fee = 500 * PRECISION * 50 / 100_000;
+        let expected = (100 * PRECISION - fee) + 50 * PRECISION; // collateral + uPnL − 0 funding
+        assert_eq!(test.market.get_position_equity(&pos.id), expected);
+
+        // Fail-closed on a missing position (factory reverts, never misprices).
+        assert!(matches!(
+            test.market.try_get_position_equity(&999u64),
+            Err(Ok(NoetherError::PositionNotFound))
+        ));
     }
 
     // ═══════════════════════════════════════════════════════════════════
