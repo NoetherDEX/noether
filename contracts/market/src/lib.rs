@@ -462,7 +462,251 @@ impl MarketContract {
         Ok(pnl)
     }
 
-    // add_collateral removed for WASM size - close and reopen with more collateral
+    /// Close part of an isolated position (L0-6). close_size is NOTIONAL USD
+    /// (same unit as Position.size). Settles only the closed portion's
+    /// pnl + funding, refunds its pro-rata collateral (minus the closed
+    /// portion's loss), releases its OI reservation, and shrinks the
+    /// position in place — the collateral/size ratio is preserved so the
+    /// stored liquidation_price stays valid and entry_cumulative_funding is
+    /// untouched (only the closed portion's funding settled). Returns pnl on
+    /// the closed portion. A full-size close delegates to close_position.
+    pub fn close_position_partial(
+        env: Env,
+        trader: Address,
+        position_id: u64,
+        close_size: i128,
+    ) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        trader.require_auth();
+
+        let position = get_position(&env, position_id).ok_or(NoetherError::PositionNotFound)?;
+        if position.trader != trader {
+            return Err(NoetherError::NotPositionOwner);
+        }
+        if position.margin_mode != 0 {
+            return Err(NoetherError::InvalidParameter); // cross partial close is out of scope
+        }
+        if close_size <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        if close_size > position.size {
+            return Err(NoetherError::InvalidParameter);
+        }
+
+        let current_price = Self::get_oracle_price(&env, &position.asset, false)?;
+
+        // Full close → delegate (identical outcome, no residual).
+        if close_size == position.size {
+            let pnl = Self::settle_isolated_close(&env, &position, current_price, 0, None, None)?;
+            extend_instance_ttl(&env);
+            return Ok(pnl);
+        }
+
+        // Dust floor: the residual must still meet min_collateral.
+        let config = get_config(&env);
+        let collateral_closed = position.collateral * close_size / position.size;
+        if position.collateral - collateral_closed < config.min_collateral {
+            return Err(NoetherError::PositionTooSmall);
+        }
+
+        let pnl = Self::settle_partial_close(&env, &position, current_price, close_size, collateral_closed, 0, None);
+        extend_instance_ttl(&env);
+        Ok(pnl)
+    }
+
+    /// Settlement core for a partial isolated close (L0-6). Mirrors
+    /// settle_isolated_close but on the CLOSED portion only, and shrinks
+    /// (rather than deletes) the position. Returns pnl on the closed size.
+    fn settle_partial_close(
+        env: &Env,
+        position: &Position,
+        current_price: i128,
+        close_size: i128,
+        collateral_closed: i128,
+        keeper_fee: i128,
+        keeper: Option<&Address>,
+    ) -> i128 {
+        let cumulative = Self::cum_funding(env, &position.asset);
+        // Funding + pnl on the CLOSED portion (a temp view at close_size).
+        let mut closed_view = position.clone();
+        closed_view.size = close_size;
+        closed_view.collateral = collateral_closed;
+        let funding = calculate_cumulative_funding(
+            close_size, position.direction,
+            position.entry_cumulative_funding, cumulative,
+        );
+        let pnl = calculate_pnl(&closed_view, current_price).unwrap_or(0);
+
+        let vault_address = get_vault(env);
+        let paid = Self::settle_with_vault(env, &vault_address, &position.trader, pnl);
+        Self::flag_adl_on_shortfall(env, &position.asset, pnl, paid);
+
+        let remaining = collateral_closed + pnl - funding;
+        if remaining < 0 {
+            Self::record_bad_debt(env, &vault_address, &position.trader, &position.asset, -remaining);
+        }
+
+        let usdc_token = get_usdc_token(env);
+        let token_client = token::Client::new(env, &usdc_token);
+        // Outflows capped by the CLOSED portion's collateral.
+        let mut available = collateral_closed;
+        let mut to_vault: i128 = 0;
+        if pnl < 0 {
+            let loss = if -pnl > available { available } else { -pnl };
+            to_vault += loss;
+            available -= loss;
+        }
+        if funding > 0 {
+            let f = if funding > available { available } else { funding };
+            to_vault += f;
+            available -= f;
+        }
+        let fee_paid = if keeper_fee > available { available } else { keeper_fee };
+        available -= fee_paid;
+
+        if to_vault > 0 {
+            token_client.transfer(&env.current_contract_address(), &vault_address, &to_vault);
+            Self::credit_vault_receipt(env, &vault_address, to_vault);
+        }
+        if fee_paid > 0 {
+            if let Some(k) = keeper {
+                token_client.transfer(&env.current_contract_address(), k, &fee_paid);
+            }
+        }
+        let earned_funding = if funding < 0 { -funding } else { 0 };
+        let to_trader = available + paid + earned_funding;
+        if to_trader > 0 {
+            token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
+        }
+
+        // Release the closed portion's OI + reservation, sync uPnL.
+        Self::adjust_oi(env, &position.asset, &position.direction, close_size, position.entry_price, current_price, false);
+        record_volume_only(env, &position.trader, close_size);
+
+        // Shrink in place — ratio preserved (liq price stays valid), entry
+        // funding snapshot unchanged (only the closed portion settled).
+        let mut updated = position.clone();
+        updated.size = position.size - close_size;
+        updated.collateral = position.collateral - collateral_closed;
+        save_position(env, &updated);
+
+        env.events().publish(
+            (Symbol::new(env, "position_reduced"),),
+            (
+                position.id, position.trader.clone(), position.asset.clone(),
+                close_size, updated.size, current_price, pnl,
+            ),
+        );
+        pnl
+    }
+
+    /// Add collateral to an isolated position (L0-6), moving its liquidation
+    /// price further away. Risk-REDUCING — deliberately NOT pause-gated
+    /// (exit-only-pause philosophy, L0-15). Cross uses deposit_cross_margin.
+    pub fn add_collateral(
+        env: Env,
+        trader: Address,
+        position_id: u64,
+        amount: i128,
+    ) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        trader.require_auth();
+        let mut position = get_position(&env, position_id).ok_or(NoetherError::PositionNotFound)?;
+        if position.trader != trader {
+            return Err(NoetherError::NotPositionOwner);
+        }
+        if position.margin_mode != 0 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        if amount <= 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        token_client.transfer(&trader, &env.current_contract_address(), &amount);
+
+        position.collateral += amount;
+        let config = get_config(&env);
+        let mm_bps = position::mm_bps_for(&env, &position, config.maintenance_margin_bps);
+        let liq = Self::liquidation_price_from_ratio(
+            position.entry_price, position.collateral, position.size, position.direction, mm_bps,
+        );
+        position.liquidation_price = if liq < 0 { 0 } else { liq };
+        save_position(&env, &position);
+
+        env.events().publish(
+            (Symbol::new(&env, "collateral_added"),),
+            (position_id, trader, amount, position.liquidation_price),
+        );
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Remove collateral from an isolated position (L0-6). Risk-INCREASING —
+    /// pause-gated, IM-floor gated, and gated on a STRICT (fresh) oracle
+    /// read so a stale/deviant print can't authorize margin extraction.
+    pub fn remove_collateral(
+        env: Env,
+        trader: Address,
+        position_id: u64,
+        amount: i128,
+    ) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        require_not_paused(&env)?;
+        trader.require_auth();
+        let mut position = get_position(&env, position_id).ok_or(NoetherError::PositionNotFound)?;
+        if position.trader != trader {
+            return Err(NoetherError::NotPositionOwner);
+        }
+        if position.margin_mode != 0 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        if amount <= 0 || amount >= position.collateral {
+            return Err(NoetherError::InvalidAmount);
+        }
+
+        let config = get_config(&env);
+        let new_collateral = position.collateral - amount;
+
+        // IM floor: the residual must still back the position at the max
+        // openable leverage (loosest ratio; L0-12's per-asset im refines it).
+        if new_collateral < position.size / (config.max_leverage as i128) {
+            return Err(NoetherError::InsufficientMargin);
+        }
+
+        // Safety gate at a STRICT price: equity after removal must clear MM.
+        let price = Self::get_oracle_price(&env, &position.asset, true)?;
+        let cumulative = Self::cum_funding(&env, &position.asset);
+        let funding = calculate_cumulative_funding(
+            position.size, position.direction, position.entry_cumulative_funding, cumulative,
+        );
+        let pnl = calculate_pnl(&position, price)?;
+        let mm_bps = position::mm_bps_for(&env, &position, config.maintenance_margin_bps);
+        let mm = position.size * (mm_bps as i128) / (BASIS_POINTS as i128);
+        if new_collateral + pnl - funding <= mm {
+            return Err(NoetherError::InsufficientMargin);
+        }
+
+        position.collateral = new_collateral;
+        let liq = Self::liquidation_price_from_ratio(
+            position.entry_price, new_collateral, position.size, position.direction, mm_bps,
+        );
+        position.liquidation_price = if liq < 0 { 0 } else { liq };
+        save_position(&env, &position);
+
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        token_client.transfer(&env.current_contract_address(), &trader, &amount);
+
+        env.events().publish(
+            (Symbol::new(&env, "collateral_removed"),),
+            (position_id, trader, amount, position.liquidation_price),
+        );
+        extend_instance_ttl(&env);
+        Ok(())
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // Liquidation Functions
@@ -2922,11 +3166,11 @@ impl MarketContract {
     ) -> Result<i128, NoetherError> {
         let config = get_config(env);
 
-        // Reduce Only (bit 8 of time_in_force): actually REDUCES — closes
-        // the trader's largest opposing isolated position in this asset
-        // that fits inside the order size, instead of opening an opposite
-        // position (M-6). The order's locked collateral is refunded either
-        // way; with no suitable opposing position the order cancels.
+        // Reduce Only (bit 8 of time_in_force): REDUCES the trader's largest
+        // opposing isolated position in this asset (M-6). L0-6: it now
+        // PARTIALLY reduces an oversized target instead of skipping it —
+        // reduce_size = min(intended, target.size). The order's locked
+        // collateral is refunded either way; no opposing position → cancel.
         if order.time_in_force & 0x100 != 0 {
             let intended_size = calculate_position_size(order.collateral, order.leverage);
             let mut target: Option<Position> = None;
@@ -2935,7 +3179,6 @@ impl MarketContract {
                     if pos.asset == order.asset
                         && pos.direction != order.direction
                         && pos.margin_mode == 0
-                        && pos.size <= intended_size
                         && target.as_ref().is_none_or(|t| pos.size > t.size)
                     {
                         target = Some(pos);
@@ -2951,9 +3194,23 @@ impl MarketContract {
 
             return match target {
                 Some(pos) => {
-                    Self::settle_isolated_close(
-                        env, &pos, current_price, keeper_fee, Some(keeper), Some(order.id),
-                    )?;
+                    let reduce_size = if intended_size < pos.size { intended_size } else { pos.size };
+                    let config = get_config(env);
+                    let collateral_closed = pos.collateral * reduce_size / pos.size;
+                    // Full reduce, or a residual that would breach the dust
+                    // floor → close the whole position (never trap the keeper).
+                    if reduce_size >= pos.size
+                        || pos.collateral - collateral_closed < config.min_collateral
+                    {
+                        Self::settle_isolated_close(
+                            env, &pos, current_price, keeper_fee, Some(keeper), Some(order.id),
+                        )?;
+                    } else {
+                        Self::settle_partial_close(
+                            env, &pos, current_price, reduce_size, collateral_closed,
+                            keeper_fee, Some(keeper),
+                        );
+                    }
                     Ok(keeper_fee)
                 }
                 None => {
@@ -3252,6 +3509,158 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
     // Core Trading Tests
     // ═══════════════════════════════════════════════════════════════════
+
+    // ── L0-6: partial close + add/remove margin ─────────────────────────
+
+    #[test]
+    fn test_partial_close_reduces_position() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+
+        let w0 = usdc.balance(&trader);
+        // Close 40% of the $500 notional at a flat price.
+        let close_size = pos.size * 40 / 100;
+        let pnl = test.market.close_position_partial(&trader, &pos.id, &close_size);
+        assert_eq!(pnl, 0); // flat
+
+        // Position survives, 40% smaller, collateral shrunk pro-rata, ratio
+        // preserved so the stored liq price is unchanged.
+        let updated = test.market.get_position(&pos.id).expect("survives");
+        assert_eq!(updated.size, pos.size - close_size);
+        assert_eq!(updated.collateral, pos.collateral - pos.collateral * 40 / 100);
+        assert_eq!(updated.liquidation_price, pos.liquidation_price);
+        assert_eq!(updated.entry_cumulative_funding, pos.entry_cumulative_funding);
+        // The closed portion's collateral came back (flat price, no fee).
+        assert_eq!(usdc.balance(&trader) - w0, pos.collateral * 40 / 100);
+    }
+
+    #[test]
+    fn test_partial_close_rejects_dust_residual() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        // $100 collateral, min 10 USDC: closing 95% leaves $5 residual < floor.
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let close_size = pos.size * 95 / 100;
+        let res = test.market.try_close_position_partial(&trader, &pos.id, &close_size);
+        assert!(matches!(res, Err(Ok(NoetherError::PositionTooSmall))));
+    }
+
+    #[test]
+    fn test_partial_close_full_size_delegates() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        test.market.close_position_partial(&trader, &pos.id, &pos.size);
+        assert!(test.market.get_position(&pos.id).is_none()); // fully closed
+    }
+
+    #[test]
+    fn test_partial_close_conserves_usdc() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+
+        let m0 = usdc.balance(&test.market_id);
+        let t0 = usdc.balance(&trader);
+        let close_size = pos.size / 2;
+        test.market.close_position_partial(&trader, &pos.id, &close_size);
+        // Flat price: exactly the closed portion's collateral leaves the market to the trader.
+        let expected = pos.collateral / 2;
+        assert_eq!(usdc.balance(&trader) - t0, expected);
+        assert_eq!(m0 - usdc.balance(&test.market_id), expected);
+    }
+
+    #[test]
+    fn test_add_collateral_moves_liq_price_away() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+
+        let m0 = usdc.balance(&test.market_id);
+        test.market.add_collateral(&trader, &pos.id, &(50 * PRECISION));
+        let updated = test.market.get_position(&pos.id).unwrap();
+        assert_eq!(updated.collateral, pos.collateral + 50 * PRECISION);
+        // A long's liq price moves DOWN (further from entry) with more margin.
+        assert!(updated.liquidation_price < pos.liquidation_price);
+        assert_eq!(usdc.balance(&test.market_id) - m0, 50 * PRECISION);
+    }
+
+    #[test]
+    fn test_add_collateral_not_pause_gated() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        test.market.pause();
+        // Risk-reducing: works even while paused (exit-only-pause).
+        test.market.add_collateral(&trader, &pos.id, &(10 * PRECISION));
+        test.market.unpause();
+    }
+
+    #[test]
+    fn test_remove_collateral_rejected_below_im() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        // 2x on $100 = $200 notional; IM floor at 10x = $20. Removing $85
+        // leaves $15 < the $20 IM floor.
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long);
+        let res = test.market.try_remove_collateral(&trader, &pos.id, &(85 * PRECISION));
+        assert!(matches!(res, Err(Ok(NoetherError::InsufficientMargin))));
+        // A safe removal (leaves $50 > $20 IM and clears MM) works.
+        let m0 = soroban_sdk::token::Client::new(&test.env, &test.usdc_token).balance(&test.market_id);
+        test.market.remove_collateral(&trader, &pos.id, &(50 * PRECISION));
+        let after = soroban_sdk::token::Client::new(&test.env, &test.usdc_token).balance(&test.market_id);
+        assert_eq!(m0 - after, 50 * PRECISION);
+    }
+
+    #[test]
+    fn test_remove_collateral_rejected_when_equity_near_mm() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long);
+        // Advance past the 10×-staleness window so the deviation band
+        // self-disables (a big move is otherwise rejected as #81 first);
+        // then a fresh crashed price exercises the MM safety gate directly.
+        test.env.ledger().with_mut(|li| li.timestamp += 601);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 60 / 1000)); // $0.06 from $0.10 (~40% down)
+        // Equity ≈ 100 − 80 = 20; removing $50 leaves −30 equity vs $2 MM.
+        let res = test.market.try_remove_collateral(&trader, &pos.id, &(50 * PRECISION));
+        assert!(matches!(res, Err(Ok(NoetherError::InsufficientMargin))));
+    }
+
+    #[test]
+    fn test_reduce_only_partially_reduces_oversized_position() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        // Open a $500 long, then a reduce-only SHORT sized to only $200.
+        let long = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let ro = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Short, &(40 * PRECISION), &5,
+            &(PRECISION / 20), &false, &100, &0x100, // reduce-only GTC
+        );
+        oracle.set_price(&xlm, &(PRECISION / 20));
+        test.market.execute_order(&keeper, &ro.id);
+
+        // The long survives, reduced by the $200 (not full-closed, not skipped).
+        let updated = test.market.get_position(&long.id).expect("long partially survives");
+        assert_eq!(updated.size, long.size - 200 * PRECISION);
+    }
 
     #[test]
     fn test_open_position_long() {

@@ -224,6 +224,33 @@ impl NoetherRouterContract {
         Ok(pnl)
     }
 
+    /// Verify + store a fresh price, then partially close the position
+    /// against it (L0-6) — web partial closes get the same fresh-fill path
+    /// as full closes. Returns pnl on the closed portion.
+    pub fn close_partial_with_price(
+        env: Env,
+        trader: Address,
+        position_id: u64,
+        close_size: i128,
+        asset: Symbol,
+        price: i128,
+        timestamp: u64,
+        round_id: u64,
+        pubkeys: Vec<BytesN<32>>,
+        sigs: Vec<BytesN<64>>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        trader.require_auth();
+
+        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (trader, position_id, close_size).into_val(&env);
+        let pnl: i128 =
+            env.invoke_contract(&market, &Symbol::new(&env, "close_position_partial"), args);
+        Ok(pnl)
+    }
+
     /// Verify + store a fresh price, then liquidate the position against
     /// it — liquidations no longer depend on the heartbeat staying inside
     /// the market's 60s staleness window (O-3/K-3). Returns the keeper
@@ -805,6 +832,12 @@ mod tests {
                 4_321
             }
 
+            pub fn close_position_partial(
+                _env: Env, _trader: Address, _position_id: u64, _close_size: i128,
+            ) -> i128 {
+                2_100
+            }
+
             pub fn liquidate(_env: Env, _keeper: Address, _position_id: u64) -> i128 {
                 55
             }
@@ -917,6 +950,26 @@ mod tests {
             noeracle.recorded_tag(),
             BytesN::from_array(&f.env, &[b'E', b'T', b'H', b'U', b'S', b'D', 0, 0])
         );
+    }
+
+    #[test]
+    fn close_partial_with_price_stores_then_reduces() {
+        let f = setup();
+        let price = 350_000_000_000i128;
+        let pnl = f.client.close_partial_with_price(
+            &Address::generate(&f.env),
+            &99u64,
+            &(500_0000000i128), // close_size
+            &Symbol::new(&f.env, "ETH"),
+            &price,
+            &1_700_000_000u64,
+            &7u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
+        assert_eq!(pnl, 2_100); // mock partial-close return
+        let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
+        assert_eq!(noeracle.recorded_price(), price);
     }
 
     #[test]

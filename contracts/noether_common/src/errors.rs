@@ -45,6 +45,9 @@ pub enum NoetherError {
     NotPositionOwner = 24,
     /// Position has insufficient margin for operation
     InsufficientMargin = 25,
+    /// A partial close / reduce-only would leave a residual position below
+    /// the minimum collateral floor (L0-6). Close the whole position instead.
+    PositionTooSmall = 27,
 
     // ═══════════════════════════════════════════════════════════════
     // Oracle Errors (30-39)
