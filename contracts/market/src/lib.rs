@@ -2669,7 +2669,15 @@ impl MarketContract {
             Direction::Long => ls + size,
             Direction::Short => ss + size,
         };
-        let args: Vec<soroban_sdk::Val> = (asset.clone(), size, side_after).into_val(env);
+        // Net skew = long − short OI (L0-14). before/after let the vault
+        // pass skew-reducing opens even past a tightened cap.
+        let net_before = ls - ss;
+        let net_after = match direction {
+            Direction::Long => net_before + size,
+            Direction::Short => net_before - size,
+        };
+        let args: Vec<soroban_sdk::Val> =
+            (asset.clone(), size, side_after, net_before, net_after).into_val(env);
         let _: () = env.invoke_contract(vault, &Symbol::new(env, "reserve_for_position"), args);
         Ok(())
     }
@@ -3923,6 +3931,7 @@ mod tests {
         // Tiny pool: the win far exceeds what the vault can pay
         let test = setup_with_vault_deposit(200 * PRECISION);
         let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        vault_client.set_skew_cap(&Symbol::new(&test.env, "XLM"), &10_000); // one-sided by design
         let trader = fund_trader(&test, 100 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
 
@@ -4130,6 +4139,7 @@ mod tests {
         // Lift the 25% per-asset cap out of the way — this test targets the
         // shortfall path, not the OI caps (covered elsewhere).
         vault.set_asset_cap(&Symbol::new(&test.env, "XLM"), &10_000);
+        vault.set_skew_cap(&Symbol::new(&test.env, "XLM"), &10_000);
 
         // Long 500 notional of XLM at $0.10 (reservation 500 <= 70% of AUM).
         let pos = test.market.open_position(
@@ -4900,6 +4910,7 @@ mod tests {
         let test = setup_with_vault_deposit(200 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
         vault::Client::new(&test.env, &test.vault_id).set_asset_cap(&xlm, &10_000);
+        vault::Client::new(&test.env, &test.vault_id).set_skew_cap(&xlm, &10_000);
 
         let t1 = fund_trader(&test, 100 * PRECISION);
         let t2 = fund_trader(&test, 100 * PRECISION);
@@ -5004,6 +5015,7 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
         vault.set_asset_cap(&xlm, &10_000);
+        vault.set_skew_cap(&xlm, &10_000);
         let trader = fund_trader(&test, 100 * PRECISION);
         let pos = test.market.open_position(&trader, &xlm, &(10 * PRECISION), &2, &Direction::Long);
 
@@ -5066,6 +5078,45 @@ mod tests {
             }
         }
         assert_eq!(adl_executed, 1);
+    }
+
+    // ── L0-14: absolute OI cap + net-skew cap (market → vault) ──────────
+
+    #[test]
+    fn test_skew_cap_blocks_one_sided_open_via_do_open() {
+        let test = setup_with_vault_deposit(1_000 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+        vault.set_asset_cap(&xlm, &10_000); // lift OI cap
+        vault.set_skew_cap(&xlm, &1_000); // 10% of ~1000 AUM = ~100
+
+        let t1 = fund_trader(&test, 1_000 * PRECISION);
+        // First long: net 0 → 100 (== cap, not over) is fine.
+        test.market.open_position(&t1, &xlm, &(20 * PRECISION), &5, &Direction::Long);
+        // Second long pushes net past the cap AND worsens it → #89.
+        let t2 = fund_trader(&test, 1_000 * PRECISION);
+        let res = test.market.try_open_position(&t2, &xlm, &(20 * PRECISION), &5, &Direction::Long);
+        assert!(matches!(res, Err(Ok(NoetherError::SkewCapExceeded))));
+
+        // A short (skew-reducing) is accepted even though the book is at cap.
+        let ok = test.market.open_position(&t2, &xlm, &(20 * PRECISION), &5, &Direction::Short);
+        assert_eq!(ok.direction, Direction::Short);
+    }
+
+    #[test]
+    fn test_absolute_oi_cap_via_do_open() {
+        let test = setup_with_vault_deposit(1_000 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+        vault.set_asset_cap_abs(&xlm, &(200 * PRECISION)); // absolute 200 USD side cap
+
+        let t1 = fund_trader(&test, 1_000 * PRECISION);
+        // 150 side-OI fits under 200.
+        test.market.open_position(&t1, &xlm, &(30 * PRECISION), &5, &Direction::Long);
+        // Another 150 long → 300 side-OI over the absolute 200 → #82.
+        let t2 = fund_trader(&test, 1_000 * PRECISION);
+        let res = test.market.try_open_position(&t2, &xlm, &(30 * PRECISION), &5, &Direction::Long);
+        assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
     }
 
     // ── L0-5: staged cross-margin liquidation ───────────────────────────

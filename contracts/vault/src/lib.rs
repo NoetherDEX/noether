@@ -469,11 +469,15 @@ impl VaultContract {
     /// exceed reserve_cap_bps of AUM, or when the asset's per-side OI
     /// (passed by the market, which tracks it) would exceed that
     /// asset's cap — both #82 OpenInterestCapExceeded.
+    /// ⚠️ ABI: signature grew net_skew args in L0-14 — market and vault
+    /// MUST promote together.
     pub fn reserve_for_position(
         env: Env,
         asset: Symbol,
         amount: i128,
         asset_side_oi_after: i128,
+        net_skew_before: i128,
+        net_skew_after: i128,
     ) -> Result<(), NoetherError> {
         require_initialized(&env)?;
 
@@ -486,15 +490,30 @@ impl VaultContract {
 
         let aum = Self::calculate_aum_internal(&env);
         let reserved = get_reserved_payout(&env);
+        let bps = BASIS_POINTS as i128;
 
-        let reserve_cap = aum * (get_reserve_cap_bps(&env) as i128) / (BASIS_POINTS as i128);
+        let reserve_cap = aum * (get_reserve_cap_bps(&env) as i128) / bps;
         if reserved + amount > reserve_cap {
             return Err(NoetherError::OpenInterestCapExceeded);
         }
 
-        let asset_cap = aum * (get_asset_cap_bps(&env, &asset) as i128) / (BASIS_POINTS as i128);
-        if asset_side_oi_after > asset_cap {
+        // Per-asset-side OI cap: min(bps×AUM, absolute) (L0-14). The absolute
+        // leg is the anti-TVL-scaling backstop; 0 = bps-only.
+        let cap_bps_leg = aum * (storage::get_asset_cap_bps(&env, &asset) as i128) / bps;
+        let cap_abs = storage::get_asset_cap_abs(&env, &asset);
+        let effective_cap = if cap_abs > 0 && cap_abs < cap_bps_leg { cap_abs } else { cap_bps_leg };
+        if asset_side_oi_after > effective_cap {
             return Err(NoetherError::OpenInterestCapExceeded);
+        }
+
+        // Net-skew cap (L0-14): reject opens that push |net skew| past the
+        // cap AND make it worse. Skew-REDUCING opens always pass, even when
+        // a cap was tightened below the live skew.
+        let skew_cap = aum * (storage::get_skew_cap_bps(&env, &asset) as i128) / bps;
+        let abs_after = if net_skew_after < 0 { -net_skew_after } else { net_skew_after };
+        let abs_before = if net_skew_before < 0 { -net_skew_before } else { net_skew_before };
+        if abs_after > skew_cap && abs_after > abs_before {
+            return Err(NoetherError::SkewCapExceeded);
         }
 
         // The pool must also physically hold what it already promised
@@ -927,6 +946,42 @@ impl VaultContract {
         Ok(())
     }
 
+    /// Set an asset's ABSOLUTE per-side OI cap in USD notional (L0-14).
+    /// 0 = no absolute bound (bps-only). Admin only.
+    pub fn set_asset_cap_abs(env: Env, asset: Symbol, max_notional: i128) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if max_notional < 0 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        storage::set_asset_cap_abs(&env, &asset, max_notional);
+        env.events().publish((Symbol::new(&env, "asset_cap_abs_set"),), (asset, max_notional));
+        Ok(())
+    }
+
+    /// Set an asset's net-skew cap (bps of AUM) (L0-14). Admin only.
+    pub fn set_skew_cap(env: Env, asset: Symbol, bps: u32) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if bps == 0 || bps > BASIS_POINTS {
+            return Err(NoetherError::InvalidParameter);
+        }
+        storage::set_skew_cap_bps(&env, &asset, bps);
+        env.events().publish((Symbol::new(&env, "skew_cap_set"),), (asset, bps));
+        Ok(())
+    }
+
+    /// Per-asset caps (L0-14): (cap_bps, cap_abs, skew_cap_bps,
+    /// effective_cap_now). effective_cap_now = min(AUM×cap_bps, cap_abs)
+    /// so one read feeds the api stats, specs, and headroom surfaces.
+    pub fn get_asset_caps(env: Env, asset: Symbol) -> (u32, i128, u32, i128) {
+        let cap_bps = storage::get_asset_cap_bps(&env, &asset);
+        let cap_abs = storage::get_asset_cap_abs(&env, &asset);
+        let skew_bps = storage::get_skew_cap_bps(&env, &asset);
+        let aum = Self::calculate_aum_internal(&env);
+        let bps_leg = aum * (cap_bps as i128) / (BASIS_POINTS as i128);
+        let effective = if cap_abs > 0 && cap_abs < bps_leg { cap_abs } else { bps_leg };
+        (cap_bps, cap_abs, skew_bps, effective)
+    }
+
     /// Total committed max payouts for open positions.
     pub fn get_reserved_payout(env: Env) -> i128 {
         storage::get_reserved_payout(&env)
@@ -1162,13 +1217,15 @@ mod tests {
 
         // Per-asset side cap: default 25% of AUM (~1000) = ~250
         t.vault
-            .reserve_for_position(&btc(&t.env), &(200 * PRECISION), &(200 * PRECISION));
+            .reserve_for_position(&btc(&t.env), &(200 * PRECISION), &(200 * PRECISION), &0, &0);
         assert_eq!(t.vault.get_reserved_payout(), 200 * PRECISION);
 
         let over_asset = t.vault.try_reserve_for_position(
             &btc(&t.env),
             &(100 * PRECISION),
             &(300 * PRECISION),
+            &0,
+            &0,
         );
         assert!(matches!(over_asset, Err(Ok(NoetherError::OpenInterestCapExceeded))));
 
@@ -1176,12 +1233,14 @@ mod tests {
         // then push reserved past 70% of AUM
         t.vault.set_asset_cap(&btc(&t.env), &10_000);
         t.vault
-            .reserve_for_position(&btc(&t.env), &(450 * PRECISION), &(650 * PRECISION));
+            .reserve_for_position(&btc(&t.env), &(450 * PRECISION), &(650 * PRECISION), &0, &0);
         assert_eq!(t.vault.get_reserved_payout(), 650 * PRECISION);
         let over_total = t.vault.try_reserve_for_position(
             &btc(&t.env),
             &(100 * PRECISION),
             &(750 * PRECISION),
+            &0,
+            &0,
         );
         assert!(matches!(over_total, Err(Ok(NoetherError::OpenInterestCapExceeded))));
     }
@@ -1190,7 +1249,7 @@ mod tests {
     fn sync_exposure_updates_upnl_and_releases_reservation() {
         let t = setup(1_000 * PRECISION);
         t.vault
-            .reserve_for_position(&btc(&t.env), &(150 * PRECISION), &(150 * PRECISION));
+            .reserve_for_position(&btc(&t.env), &(150 * PRECISION), &(150 * PRECISION), &0, &0);
 
         t.vault.sync_exposure(&btc(&t.env), &(50 * PRECISION), &0);
         assert_eq!(t.vault.get_asset_unrealized_pnl(&btc(&t.env)), 50 * PRECISION);
@@ -1239,12 +1298,79 @@ mod tests {
         assert_eq!(t.vault.get_total_usdc(), 140 * PRECISION);
     }
 
+    // ── L0-14: absolute OI cap + net-skew cap ───────────────────────────
+
+    #[test]
+    fn absolute_cap_binds_below_the_bps_leg() {
+        let t = setup(1_000 * PRECISION);
+        // bps leg = 25% of ~1000 AUM = ~250. Set an absolute cap of 100 USD.
+        t.vault.set_asset_cap_abs(&btc(&t.env), &(100 * PRECISION));
+        // 90 (skew-neutral) fits under the 100 absolute cap.
+        t.vault.reserve_for_position(&btc(&t.env), &(90 * PRECISION), &(90 * PRECISION), &0, &0);
+        // 120 side-OI exceeds the absolute 100 even though it's under the bps 250.
+        let over = t.vault.try_reserve_for_position(&btc(&t.env), &(30 * PRECISION), &(120 * PRECISION), &0, &0);
+        assert!(matches!(over, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+
+        // View reflects the effective (absolute-bound) cap.
+        let (cap_bps, cap_abs, _skew, effective) = t.vault.get_asset_caps(&btc(&t.env));
+        assert_eq!(cap_bps, 2_500);
+        assert_eq!(cap_abs, 100 * PRECISION);
+        assert_eq!(effective, 100 * PRECISION);
+    }
+
+    #[test]
+    fn skew_cap_rejects_worsening_open_but_allows_reducing() {
+        let t = setup(1_000 * PRECISION);
+        t.vault.set_asset_cap(&btc(&t.env), &10_000); // lift OI cap out of the way
+        t.vault.set_skew_cap(&btc(&t.env), &1_000); // 10% of ~1000 AUM = ~100
+
+        // A worsening open past the skew cap (net 0 → 150) is rejected #89.
+        let worse = t.vault.try_reserve_for_position(
+            &btc(&t.env), &(150 * PRECISION), &(150 * PRECISION), &0, &(150 * PRECISION),
+        );
+        assert!(matches!(worse, Err(Ok(NoetherError::SkewCapExceeded))));
+
+        // A skew-REDUCING open (net 200 → 120, both over the cap) is ALLOWED —
+        // the trade that helps must never be blocked.
+        let better = t.vault.reserve_for_position(
+            &btc(&t.env), &(80 * PRECISION), &(80 * PRECISION), &(200 * PRECISION), &(120 * PRECISION),
+        );
+        let _ = better;
+        assert_eq!(t.vault.get_reserved_payout(), 80 * PRECISION);
+    }
+
+    #[test]
+    fn skew_cap_default_absent_config_is_bps_only() {
+        let t = setup(1_000 * PRECISION);
+        // No absolute cap, default skew cap: a skew-neutral reserve just works.
+        t.vault.reserve_for_position(&btc(&t.env), &(100 * PRECISION), &(100 * PRECISION), &0, &0);
+        let (_, cap_abs, skew_bps, _) = t.vault.get_asset_caps(&btc(&t.env));
+        assert_eq!(cap_abs, 0); // no absolute bound by default
+        assert_eq!(skew_bps, 1_500); // default 15%
+    }
+
+    #[test]
+    fn cap_setters_are_admin_only_and_validated() {
+        let t = setup(1_000 * PRECISION);
+        // Negative absolute cap rejected.
+        assert!(matches!(
+            t.vault.try_set_asset_cap_abs(&btc(&t.env), &(-1)),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        // Zero / over-range skew bps rejected.
+        assert!(matches!(t.vault.try_set_skew_cap(&btc(&t.env), &0), Err(Ok(NoetherError::InvalidParameter))));
+        assert!(matches!(t.vault.try_set_skew_cap(&btc(&t.env), &10_001), Err(Ok(NoetherError::InvalidParameter))));
+        // Non-admin rejected.
+        t.env.set_auths(&[]);
+        assert!(t.vault.try_set_asset_cap_abs(&btc(&t.env), &(100 * PRECISION)).is_err());
+    }
+
     #[test]
     fn withdraw_cannot_undercut_reserved_payouts() {
         let t = setup(1_000 * PRECISION);
         t.vault.set_asset_cap(&btc(&t.env), &10_000);
         t.vault
-            .reserve_for_position(&btc(&t.env), &(600 * PRECISION), &(600 * PRECISION));
+            .reserve_for_position(&btc(&t.env), &(600 * PRECISION), &(600 * PRECISION), &0, &0);
 
         let noe = t.vault.get_noe_balance(&t.lp);
         approve_noe(&t, noe);
@@ -1572,7 +1698,7 @@ mod tests {
         let anyone = Address::generate(&t.env);
         assert!(t.vault.try_settle_pnl(&anyone, &(10 * PRECISION)).is_err());
         assert!(t.vault
-            .try_reserve_for_position(&btc(&t.env), &PRECISION, &PRECISION)
+            .try_reserve_for_position(&btc(&t.env), &PRECISION, &PRECISION, &0, &0)
             .is_err());
         assert!(t.vault.try_sync_exposure(&btc(&t.env), &0, &0).is_err());
         assert!(t.vault.try_receive_loss(&PRECISION).is_err());

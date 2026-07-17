@@ -151,4 +151,7 @@ pub enum NoetherError {
     /// asset with no per-market risk params configured — fail-closed
     /// (L0-12). Risk-reducing paths fall back to the legacy MM instead.
     AssetRiskNotConfigured = 88,
+    /// An open would push the asset's net long-short skew past its cap and
+    /// make it MORE imbalanced (L0-14). Skew-reducing opens always pass.
+    SkewCapExceeded = 89,
 }

@@ -77,10 +77,17 @@ pub enum DataKey {
     AssetCapBps(Symbol),
     /// Unrealized trader PnL per asset (7 decimals)
     AssetUnrealizedPnl(Symbol),
+    /// Absolute per-asset-side OI cap, 7-decimal USD notional (L0-14).
+    /// 0/absent = no absolute bound (bps-only, today's behavior). The
+    /// anti-TVL-scaling backstop: effective cap = min(bps×AUM, this).
+    AssetCapAbs(Symbol),
+    /// Per-asset net-skew cap as bps of AUM (L0-14; default 1500 = 15%).
+    SkewCapBps(Symbol),
 }
 
 pub const RESERVE_CAP_BPS_DEFAULT: u32 = 7_000;
 pub const ASSET_CAP_BPS_DEFAULT: u32 = 2_500;
+pub const SKEW_CAP_BPS_DEFAULT: u32 = 1_500;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Instance Storage (Contract State)
@@ -308,6 +315,26 @@ pub fn get_asset_cap_bps(env: &Env, asset: &Symbol) -> u32 {
 
 pub fn set_asset_cap_bps(env: &Env, asset: &Symbol, bps: u32) {
     let key = DataKey::AssetCapBps(asset.clone());
+    env.storage().persistent().set(&key, &bps);
+    extend_ttl(env, &key);
+}
+
+pub fn get_asset_cap_abs(env: &Env, asset: &Symbol) -> i128 {
+    env.storage().persistent().get(&DataKey::AssetCapAbs(asset.clone())).unwrap_or(0)
+}
+
+pub fn set_asset_cap_abs(env: &Env, asset: &Symbol, max_notional: i128) {
+    let key = DataKey::AssetCapAbs(asset.clone());
+    env.storage().persistent().set(&key, &max_notional);
+    extend_ttl(env, &key);
+}
+
+pub fn get_skew_cap_bps(env: &Env, asset: &Symbol) -> u32 {
+    env.storage().persistent().get(&DataKey::SkewCapBps(asset.clone())).unwrap_or(SKEW_CAP_BPS_DEFAULT)
+}
+
+pub fn set_skew_cap_bps(env: &Env, asset: &Symbol, bps: u32) {
+    let key = DataKey::SkewCapBps(asset.clone());
     env.storage().persistent().set(&key, &bps);
     extend_ttl(env, &key);
 }
