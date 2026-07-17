@@ -10,9 +10,9 @@
 |----|-------|--------|------|----------|-------|--------|
 | L1-1 | Protective orders on cross-margin positions (lift #80 via cross-aware settlement) | M | mixed | batch-1-redeploy | — | todo |
 | L1-2 | Atomic bracket placement (router open_with_price_and_tpsl — G-1) | M | mixed | batch-1-redeploy | L0-21, L1-1, L0-10 | todo |
-| L1-3 | Auto-net at open (minimum-viable position netting) | M | mixed | batch-1-redeploy | L0-6, L1-1 | todo |
+| L1-3 | Auto-net at open (minimum-viable position netting) | M | mixed | batch-1-redeploy | L0-6, L1-1 | in-progress — contracts+tests done 2026-07-18 (Wave 3, commit 264b240, #91; v1 no-partial-leg); web netting UX + indexer multi-event fixture pending sweep |
 | L1-4 | Cross-collateral operations via API/SDK | S | offchain | offchain-now | L0-21 | todo |
-| L1-5 | Account initial-margin band (withdraw/open gate above MM) | S | contracts | batch-1-redeploy | — | todo |
+| L1-5 | Account initial-margin band (withdraw/open gate above MM) | S | contracts | batch-1-redeploy | — | done — 2026-07-18 (Wave 3, commit b494da4); withdraw+cross-open MM→IM, #77 reused |
 | L1-6 | Canonical margin formula + GET /v1/account/margin | M | offchain | offchain-now | — | todo |
 | L1-7 | Margin-call state + banner (pre-liquidation warning) | M | offchain | offchain-now | L1-6 | todo |
 | L1-8 | Event enrichment at the contract layer (trader-keyed order events, per-leg cross liquidation) | M | mixed | batch-1-redeploy | L0-5 | todo |
