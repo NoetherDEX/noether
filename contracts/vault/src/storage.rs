@@ -39,9 +39,25 @@ pub enum DataKey {
     Paused,
     /// Sum of committed max payouts for open positions (7 decimals)
     ReservedPayout,
-    /// Cumulative winner profit the pool could not pay at close (7 decimals);
-    /// owed against the insurance buffer
+    /// OUTSTANDING (unrepaid) winner profit the pool could not pay at close
+    /// (7 decimals). Semantics since L0-3: decremented by claim_shortfall —
+    /// use CumShortfall for the lifetime-booked figure.
     Shortfall,
+    /// Per-trader outstanding short-paid winnings (7 decimals) — claimable
+    /// via claim_shortfall (L0-3). Invariant: Shortfall == Σ ShortfallOwed.
+    ShortfallOwed(Address),
+    /// USDC earmarked for shortfall repayment (7 decimals). A separate bucket:
+    /// NOT part of BufferBalance and NOT part of AUM; fed by the
+    /// ShortfallInflowBps split of buffer inflows; spent ONLY by
+    /// claim_shortfall (L0-3).
+    ShortfallReserve,
+    /// Lifetime shortfall booked (7 decimals) — history-independent metric.
+    CumShortfall,
+    /// Lifetime shortfall repaid (7 decimals).
+    CumShortfallRepaid,
+    /// Share of buffer inflows routed to the shortfall reserve while any
+    /// shortfall is outstanding, in bps (default 5000 = 50%).
+    ShortfallInflowBps,
     /// Protocol-owned first-loss insurance buffer (7 decimals). Pays trader
     /// wins BEFORE LP value; fed by seed + liquidation penalties + fee share
     /// + net losses. NOT part of LP AUM / NOE price (P5-6).
@@ -186,6 +202,51 @@ pub fn get_buffer_balance(env: &Env) -> i128 {
 pub fn set_buffer_balance(env: &Env, amount: i128) {
     env.storage().persistent().set(&DataKey::BufferBalance, &amount);
     extend_ttl(env, &DataKey::BufferBalance);
+}
+
+pub fn get_shortfall_owed(env: &Env, who: &Address) -> i128 {
+    env.storage().persistent().get(&DataKey::ShortfallOwed(who.clone())).unwrap_or(0)
+}
+
+pub fn set_shortfall_owed(env: &Env, who: &Address, amount: i128) {
+    let key = DataKey::ShortfallOwed(who.clone());
+    env.storage().persistent().set(&key, &amount);
+    extend_ttl(env, &key);
+}
+
+pub fn get_shortfall_reserve(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::ShortfallReserve).unwrap_or(0)
+}
+
+pub fn set_shortfall_reserve(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::ShortfallReserve, &amount);
+    extend_ttl(env, &DataKey::ShortfallReserve);
+}
+
+pub fn get_cum_shortfall(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::CumShortfall).unwrap_or(0)
+}
+
+pub fn set_cum_shortfall(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::CumShortfall, &amount);
+    extend_ttl(env, &DataKey::CumShortfall);
+}
+
+pub fn get_cum_shortfall_repaid(env: &Env) -> i128 {
+    env.storage().persistent().get(&DataKey::CumShortfallRepaid).unwrap_or(0)
+}
+
+pub fn set_cum_shortfall_repaid(env: &Env, amount: i128) {
+    env.storage().persistent().set(&DataKey::CumShortfallRepaid, &amount);
+    extend_ttl(env, &DataKey::CumShortfallRepaid);
+}
+
+pub fn get_shortfall_inflow_bps(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::ShortfallInflowBps).unwrap_or(5_000)
+}
+
+pub fn set_shortfall_inflow_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&DataKey::ShortfallInflowBps, &bps);
 }
 
 pub fn get_deposited(env: &Env, who: &Address) -> i128 {

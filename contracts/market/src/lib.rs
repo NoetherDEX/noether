@@ -922,7 +922,7 @@ impl MarketContract {
 
         // Settle with vault (paid = profit actually covered by the pool)
         let vault_address = get_vault(&env);
-        let paid = Self::settle_with_vault(&env, &vault_address, pnl);
+        let paid = Self::settle_with_vault(&env, &vault_address, &trader, pnl);
 
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
@@ -1039,7 +1039,7 @@ impl MarketContract {
                 );
 
                 // Settle accounting with vault
-                let _ = Self::settle_with_vault(&env, &vault_address, pnl);
+                let _ = Self::settle_with_vault(&env, &vault_address, &trader, pnl);
 
                 if pnl < 0 {
                     total_loss_to_vault += -pnl;
@@ -2150,7 +2150,7 @@ impl MarketContract {
         let pnl = calculate_pnl(position, current_price)?;
 
         let vault_address = get_vault(env);
-        let paid = Self::settle_with_vault(env, &vault_address, pnl);
+        let paid = Self::settle_with_vault(env, &vault_address, &position.trader, pnl);
 
         let usdc_token = get_usdc_token(env);
         let token_client = token::Client::new(env, &usdc_token);
@@ -2319,11 +2319,14 @@ impl MarketContract {
     }
 
     /// Settle PnL with the vault. Returns the profit actually paid out
-    /// (capped at what the pool holds; the vault records any shortfall).
-    /// Losses return 0 — the vault is credited via receive_funds_credit
-    /// only when USDC actually moves.
-    fn settle_with_vault(env: &Env, vault: &Address, pnl: i128) -> i128 {
-        let args: Vec<soroban_sdk::Val> = (pnl,).into_val(env);
+    /// (capped at what the pool holds; the vault books any shortfall as a
+    /// per-trader claimable liability — L0-3). Losses return 0 — the vault
+    /// is credited via receive_funds_credit only when USDC actually moves.
+    ///
+    /// ⚠️ ABI: vault settle_pnl is (trader, pnl) since L0-3 — market and
+    /// vault MUST promote together in the same blue-green cutover.
+    fn settle_with_vault(env: &Env, vault: &Address, trader: &Address, pnl: i128) -> i128 {
+        let args: Vec<soroban_sdk::Val> = (trader.clone(), pnl).into_val(env);
         env.invoke_contract(vault, &Symbol::new(env, "settle_pnl"), args)
     }
 
@@ -3667,6 +3670,67 @@ mod tests {
         let funding_credited = vault_client.get_total_usdc() - vault_before;
         assert_eq!(funding_credited, (100 * PRECISION - fee) - received);
         assert!(funding_credited > 0);
+    }
+
+    /// L0-3 integration: a winner short-paid at close holds a claimable
+    /// per-trader liability booked through the market's OWN settle path
+    /// (trader threading), a buffer inflow amortizes it, and claim_shortfall
+    /// makes them whole — with USDC conservation across the sequence.
+    #[test]
+    fn winner_short_paid_then_made_whole() {
+        // Small pool: ~997 USDC after the 0.3% deposit fee.
+        let test = setup_with_vault_deposit(1_000 * PRECISION);
+        let winner = fund_trader(&test, 1_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        // Lift the 25% per-asset cap out of the way — this test targets the
+        // shortfall path, not the OI caps (covered elsewhere).
+        vault.set_asset_cap(&Symbol::new(&test.env, "XLM"), &10_000);
+
+        // Long 500 notional of XLM at $0.10 (reservation 500 <= 70% of AUM).
+        let pos = test.market.open_position(
+            &winner,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+        );
+        let balance_after_open = usdc.balance(&winner);
+
+        // A 4x pump: pnl = 500 * 0.30/0.10 = 1500 — far beyond the pool's
+        // ~997 coverable (the full-notional reservation covers a 100% move;
+        // beyond that is exactly the shortfall regime).
+        oracle.set_price(&Symbol::new(&test.env, "XLM"), &(4 * PRECISION / 10));
+        test.market.close_position(&winner, &pos.id);
+
+        // The gap is booked per-trader through the market's settle path.
+        let owed = vault.get_shortfall_owed(&winner);
+        assert!(owed > 0, "expected a short-pay against the small pool");
+        assert_eq!(vault.get_shortfall(), owed);
+        assert_eq!(vault.get_cum_shortfall(), owed);
+        let paid_at_close = usdc.balance(&winner) - balance_after_open;
+        assert!(paid_at_close > 0);
+
+        // A later inflow (liquidation proceeds / fee share in production —
+        // simulated here with the market-authed fund_buffer + real backing)
+        // routes ShortfallInflowBps into the earmarked reserve.
+        let inflow = 1_200 * PRECISION;
+        StellarAssetClient::new(&test.env, &test.usdc_token).mint(&test.vault_id, &inflow);
+        vault.fund_buffer(&inflow);
+        assert_eq!(vault.get_shortfall_reserve(), owed.min(inflow / 2));
+
+        // Claim makes the winner whole; conservation holds exactly.
+        let before_claim = usdc.balance(&winner);
+        let claimed = vault.claim_shortfall(&winner);
+        assert_eq!(claimed, owed);
+        assert_eq!(usdc.balance(&winner), before_claim + owed);
+        assert_eq!(vault.get_shortfall_owed(&winner), 0);
+        assert_eq!(vault.get_shortfall(), 0);
+        assert_eq!(vault.get_cum_shortfall_repaid(), owed);
+        // Lifetime booked is history-independent.
+        assert_eq!(vault.get_cum_shortfall(), owed);
     }
 
     #[test]

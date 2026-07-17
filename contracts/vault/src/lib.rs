@@ -262,9 +262,9 @@ impl VaultContract {
             return Err(NoetherError::InsufficientLiquidity);
         }
 
-        // LP exits cannot pull liquidity out from under open positions:
-        // what remains must still cover every committed payout (M-4)
-        if vault_balance - net_usdc < get_reserved_payout(&env) {
+        // LP exits cannot pull liquidity out from under open positions
+        // (M-4) — nor strip USDC earmarked for shortfall repayment (L0-3).
+        if vault_balance - net_usdc < get_reserved_payout(&env) + storage::get_shortfall_reserve(&env) {
             return Err(NoetherError::InsufficientLiquidity);
         }
 
@@ -315,10 +315,14 @@ impl VaultContract {
     /// - No transfers needed, just emit event
     /// Returns the profit actually paid out. A winner's close can never
     /// hard-revert here: the payout is capped at what the pool holds and
-    /// any unpaid remainder is recorded as shortfall (owed against the
-    /// future insurance buffer). Losses are credited ONLY when the USDC
-    /// actually arrives, via receive_loss.
-    pub fn settle_pnl(env: Env, pnl: i128) -> Result<i128, NoetherError> {
+    /// any unpaid remainder is booked as a CLAIMABLE per-trader shortfall
+    /// (L0-3: repaid from future buffer inflows via claim_shortfall).
+    /// Losses are credited ONLY when the USDC actually arrives, via
+    /// receive_loss.
+    ///
+    /// ⚠️ ABI: (env, trader, pnl) since L0-3 — market and vault MUST promote
+    /// together (an old market calling the new vault traps on arg decode).
+    pub fn settle_pnl(env: Env, trader: Address, pnl: i128) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
 
         // Only market contract can call this
@@ -342,8 +346,11 @@ impl VaultContract {
             if paid > coverable {
                 paid = coverable;
             }
-            if paid > vault_balance {
-                paid = vault_balance;
+            // The ShortfallReserve is earmarked USDC (outside buffer + LP
+            // accounting) — winner payouts may never physically spend it.
+            let spendable_balance = vault_balance - storage::get_shortfall_reserve(&env);
+            if paid > spendable_balance {
+                paid = spendable_balance;
             }
             if paid < 0 {
                 paid = 0;
@@ -363,10 +370,12 @@ impl VaultContract {
             }
             if paid < pnl {
                 let short = pnl - paid;
+                storage::set_shortfall_owed(&env, &trader, storage::get_shortfall_owed(&env, &trader) + short);
                 set_shortfall(&env, get_shortfall(&env) + short);
+                storage::set_cum_shortfall(&env, storage::get_cum_shortfall(&env) + short);
                 env.events().publish(
                     (Symbol::new(&env, "payout_shortfall"),),
-                    (pnl, paid, short),
+                    (trader.clone(), pnl, paid, short),
                 );
             }
         }
@@ -676,8 +685,9 @@ impl VaultContract {
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&from, &env.current_contract_address(), &amount);
-        set_buffer_balance(&env, get_buffer_balance(&env) + amount);
-        env.events().publish((Symbol::new(&env, "buffer_seeded"),), (amount,));
+        let to_reserve = Self::route_shortfall_share(&env, amount);
+        set_buffer_balance(&env, get_buffer_balance(&env) + (amount - to_reserve));
+        env.events().publish((Symbol::new(&env, "buffer_seeded"),), (amount, to_reserve));
         Ok(())
     }
 
@@ -691,9 +701,119 @@ impl VaultContract {
         if amount <= 0 {
             return Err(NoetherError::InvalidAmount);
         }
-        set_buffer_balance(&env, get_buffer_balance(&env) + amount);
-        env.events().publish((Symbol::new(&env, "buffer_funded"),), (amount,));
+        let to_reserve = Self::route_shortfall_share(&env, amount);
+        set_buffer_balance(&env, get_buffer_balance(&env) + (amount - to_reserve));
+        env.events().publish((Symbol::new(&env, "buffer_funded"),), (amount, to_reserve));
         Ok(())
+    }
+
+    /// The amortizer (L0-3): while any shortfall is outstanding, route
+    /// ShortfallInflowBps of a buffer inflow into the repayment reserve,
+    /// capped at what is still owed and not yet reserved. Returns to_reserve.
+    fn route_shortfall_share(env: &Env, amount: i128) -> i128 {
+        let outstanding = get_shortfall(env);
+        let reserve = storage::get_shortfall_reserve(env);
+        let unreserved = outstanding - reserve;
+        if unreserved <= 0 {
+            return 0;
+        }
+        let bps = storage::get_shortfall_inflow_bps(env) as i128;
+        let mut to_reserve = amount * bps / (BASIS_POINTS as i128);
+        if to_reserve > unreserved {
+            to_reserve = unreserved;
+        }
+        if to_reserve <= 0 {
+            return 0;
+        }
+        storage::set_shortfall_reserve(env, reserve + to_reserve);
+        to_reserve
+    }
+
+    /// Claim short-paid winnings (L0-3). Pays min(owed, reserve + buffer,
+    /// spendable balance), drawing the earmarked ShortfallReserve first and
+    /// the insurance buffer for the remainder. Deliberately NOT pause-gated —
+    /// winners must be able to claim during incidents (exit-only-pause
+    /// philosophy, L0-15). Returns the amount paid; Ok(0) when nothing is
+    /// owed or nothing is payable yet (call again after the next inflow).
+    pub fn claim_shortfall(env: Env, trader: Address) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        trader.require_auth();
+
+        let owed = storage::get_shortfall_owed(&env, &trader);
+        if owed <= 0 {
+            return Ok(0);
+        }
+
+        let reserve = storage::get_shortfall_reserve(&env);
+        let buffer = get_buffer_balance(&env);
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        let vault_balance = token_client.balance(&env.current_contract_address());
+
+        let mut pay = owed;
+        if pay > reserve + buffer {
+            pay = reserve + buffer;
+        }
+        if pay > vault_balance {
+            pay = vault_balance;
+        }
+        if pay <= 0 {
+            return Ok(0);
+        }
+
+        token_client.transfer(&env.current_contract_address(), &trader, &pay);
+
+        // Reserve first, buffer for the remainder.
+        let from_reserve = if pay > reserve { reserve } else { pay };
+        if from_reserve > 0 {
+            storage::set_shortfall_reserve(&env, reserve - from_reserve);
+        }
+        let from_buffer = pay - from_reserve;
+        if from_buffer > 0 {
+            set_buffer_balance(&env, buffer - from_buffer);
+        }
+
+        storage::set_shortfall_owed(&env, &trader, owed - pay);
+        set_shortfall(&env, get_shortfall(&env) - pay);
+        storage::set_cum_shortfall_repaid(&env, storage::get_cum_shortfall_repaid(&env) + pay);
+
+        env.events().publish(
+            (Symbol::new(&env, "shortfall_repaid"),),
+            (trader.clone(), pay, owed - pay),
+        );
+
+        extend_instance_ttl(&env);
+        Ok(pay)
+    }
+
+    /// Set the buffer-inflow share routed to shortfall repayment (bps). Admin.
+    pub fn set_shortfall_inflow_bps(env: Env, bps: u32) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if bps > BASIS_POINTS {
+            return Err(NoetherError::InvalidParameter);
+        }
+        storage::set_shortfall_inflow_bps(&env, bps);
+        Ok(())
+    }
+
+    /// A trader's outstanding claimable shortfall.
+    pub fn get_shortfall_owed(env: Env, trader: Address) -> i128 {
+        storage::get_shortfall_owed(&env, &trader)
+    }
+
+    /// USDC currently earmarked for shortfall repayment.
+    pub fn get_shortfall_reserve(env: Env) -> i128 {
+        storage::get_shortfall_reserve(&env)
+    }
+
+    /// Lifetime shortfall booked.
+    pub fn get_cum_shortfall(env: Env) -> i128 {
+        storage::get_cum_shortfall(&env)
+    }
+
+    /// Lifetime shortfall repaid.
+    pub fn get_cum_shortfall_repaid(env: Env) -> i128 {
+        storage::get_cum_shortfall_repaid(&env)
     }
 
     /// Current insurance buffer balance.
@@ -1005,21 +1125,26 @@ mod tests {
     fn settle_pnl_caps_payout_and_records_shortfall() {
         let t = setup(100 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+        let winner = Address::generate(&t.env);
 
-        let paid = t.vault.settle_pnl(&(150 * PRECISION));
+        let paid = t.vault.settle_pnl(&winner, &(150 * PRECISION));
         // Winner is paid what the pool holds — never a revert
         assert!(paid > 0 && paid <= 100 * PRECISION);
         assert_eq!(t.vault.get_shortfall(), 150 * PRECISION - paid);
         assert_eq!(usdc.balance(&t.market), paid);
         assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION - paid);
+        // L0-3: the gap is booked per-trader and in the lifetime counter
+        assert_eq!(t.vault.get_shortfall_owed(&winner), 150 * PRECISION - paid);
+        assert_eq!(t.vault.get_cum_shortfall(), 150 * PRECISION - paid);
     }
 
     #[test]
     fn losses_credit_only_on_receipt() {
         let t = setup(100 * PRECISION);
+        let loser = Address::generate(&t.env);
 
         // settle_pnl with a loss no longer credits anything
-        let paid = t.vault.settle_pnl(&(-40 * PRECISION));
+        let paid = t.vault.settle_pnl(&loser, &(-40 * PRECISION));
         assert_eq!(paid, 0);
         assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
 
@@ -1058,17 +1183,202 @@ mod tests {
         assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
 
         // A 30 USDC win is paid entirely from the buffer; LP untouched.
-        let paid = t.vault.settle_pnl(&(30 * PRECISION));
+        let winner = Address::generate(&t.env);
+        let paid = t.vault.settle_pnl(&winner, &(30 * PRECISION));
         assert_eq!(paid, 30 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 20 * PRECISION);
         assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
         assert_eq!(usdc.balance(&t.market), 30 * PRECISION);
 
         // A 40 USDC win exhausts the remaining 20 buffer, then 20 from LP.
-        let paid2 = t.vault.settle_pnl(&(40 * PRECISION));
+        let paid2 = t.vault.settle_pnl(&winner, &(40 * PRECISION));
         assert_eq!(paid2, 40 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 0);
         assert_eq!(t.vault.get_total_usdc(), 80 * PRECISION);
+    }
+
+    // ── L0-3: shortfall repayment path ─────────────────────────────────────
+
+    #[test]
+    fn settle_pnl_books_per_trader_owed() {
+        let t = setup(50 * PRECISION);
+        let w1 = Address::generate(&t.env);
+        let w2 = Address::generate(&t.env);
+
+        // w1 wins 80 against a 50 pool: paid 50, owed 30.
+        let paid1 = t.vault.settle_pnl(&w1, &(80 * PRECISION));
+        assert_eq!(paid1, 50 * PRECISION);
+        assert_eq!(t.vault.get_shortfall_owed(&w1), 30 * PRECISION);
+
+        // w2 wins 20 against an empty pool: paid 0, owed 20.
+        let paid2 = t.vault.settle_pnl(&w2, &(20 * PRECISION));
+        assert_eq!(paid2, 0);
+        assert_eq!(t.vault.get_shortfall_owed(&w2), 20 * PRECISION);
+
+        // Outstanding total == Σ owed; lifetime counter matches.
+        assert_eq!(t.vault.get_shortfall(), 50 * PRECISION);
+        assert_eq!(t.vault.get_cum_shortfall(), 50 * PRECISION);
+        assert_eq!(t.vault.get_cum_shortfall_repaid(), 0);
+    }
+
+    #[test]
+    fn fund_buffer_routes_inflow_share_to_reserve_capped_at_outstanding() {
+        let t = setup(10 * PRECISION);
+        let w = Address::generate(&t.env);
+        // Book a 20 shortfall (wins 30 against a 10 pool).
+        t.vault.settle_pnl(&w, &(30 * PRECISION));
+        assert_eq!(t.vault.get_shortfall(), 20 * PRECISION);
+
+        // 50% of a 30 inflow = 15 → reserve; 15 → buffer.
+        t.vault.fund_buffer(&(30 * PRECISION));
+        assert_eq!(t.vault.get_shortfall_reserve(), 15 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 15 * PRECISION);
+
+        // Next inflow: unreserved owed is only 5 — the split caps there.
+        t.vault.fund_buffer(&(30 * PRECISION));
+        assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 40 * PRECISION);
+
+        // Fully reserved: everything flows to the buffer now.
+        t.vault.fund_buffer(&(10 * PRECISION));
+        assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 50 * PRECISION);
+    }
+
+    #[test]
+    fn seed_buffer_split_matches_fund_buffer() {
+        let t = setup(10 * PRECISION);
+        let w = Address::generate(&t.env);
+        t.vault.settle_pnl(&w, &(30 * PRECISION)); // owed 20
+
+        t.vault.seed_buffer(&t.lp, &(30 * PRECISION));
+        assert_eq!(t.vault.get_shortfall_reserve(), 15 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 15 * PRECISION);
+    }
+
+    #[test]
+    fn claim_shortfall_pays_reserve_then_buffer() {
+        let t = setup(10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+        let w = Address::generate(&t.env);
+        t.vault.settle_pnl(&w, &(30 * PRECISION)); // paid 10, owed 20
+
+        // Inflow 20: reserve 10, buffer 10.
+        t.vault.fund_buffer(&(20 * PRECISION));
+        // The inflow is accounting-only here; back it with real USDC so the
+        // claim transfer can settle (market transfers land separately).
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
+
+        let paid = t.vault.claim_shortfall(&w);
+        // owed 20, reserve 10 + buffer 10 → paid in full, reserve first.
+        assert_eq!(paid, 20 * PRECISION);
+        assert_eq!(usdc.balance(&w), 20 * PRECISION);
+        assert_eq!(t.vault.get_shortfall_reserve(), 0);
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert_eq!(t.vault.get_shortfall_owed(&w), 0);
+        assert_eq!(t.vault.get_shortfall(), 0);
+        assert_eq!(t.vault.get_cum_shortfall_repaid(), 20 * PRECISION);
+    }
+
+    #[test]
+    fn claim_shortfall_zero_owed_returns_zero() {
+        let t = setup(100 * PRECISION);
+        let nobody = Address::generate(&t.env);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+        assert_eq!(t.vault.claim_shortfall(&nobody), 0);
+        assert_eq!(usdc.balance(&nobody), 0);
+    }
+
+    #[test]
+    fn claim_partial_then_full_after_next_inflow() {
+        let t = setup(10 * PRECISION);
+        let w = Address::generate(&t.env);
+        t.vault.settle_pnl(&w, &(30 * PRECISION)); // owed 20
+
+        // First inflow 10 → reserve 5, buffer 5: partial claim of 10.
+        t.vault.fund_buffer(&(10 * PRECISION));
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(10 * PRECISION));
+        let first = t.vault.claim_shortfall(&w);
+        assert_eq!(first, 10 * PRECISION);
+        assert_eq!(t.vault.get_shortfall_owed(&w), 10 * PRECISION);
+        assert_eq!(t.vault.get_shortfall(), 10 * PRECISION);
+
+        // Next inflow amortizes the rest.
+        t.vault.fund_buffer(&(20 * PRECISION));
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
+        let second = t.vault.claim_shortfall(&w);
+        assert_eq!(second, 10 * PRECISION);
+        assert_eq!(t.vault.get_shortfall_owed(&w), 0);
+        assert_eq!(t.vault.get_shortfall(), 0);
+        assert_eq!(t.vault.get_cum_shortfall_repaid(), 20 * PRECISION);
+        // Lifetime booked never decreases.
+        assert_eq!(t.vault.get_cum_shortfall(), 20 * PRECISION);
+    }
+
+    #[test]
+    fn lp_withdraw_floor_includes_shortfall_reserve() {
+        let t = setup(100 * PRECISION);
+        let w = Address::generate(&t.env);
+        // Drain the pool via a 100 win, then book 20 more owed.
+        t.vault.settle_pnl(&w, &(120 * PRECISION));
+        assert_eq!(t.vault.get_shortfall(), 20 * PRECISION);
+
+        // Refill: LP deposits 100; an inflow of 40 reserves 20 for the claim.
+        // Deliberately accounting-only (no backing mint) so the earmark must
+        // bind against the SAME USDC the LP wants to withdraw.
+        t.vault.deposit(&t.lp, &(100 * PRECISION));
+        t.vault.fund_buffer(&(40 * PRECISION));
+        assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
+
+        // Withdrawing EVERYTHING would strip the earmarked 20 — blocked.
+        let noe = t.vault.get_noe_balance(&t.lp);
+        approve_noe(&t, noe);
+        let blocked = t.vault.try_withdraw(&t.lp, &noe);
+        assert!(matches!(blocked, Err(Ok(NoetherError::InsufficientLiquidity))));
+
+        // A partial withdrawal that leaves the reserve covered is fine.
+        let small = t.vault.withdraw(&t.lp, &(noe / 4));
+        assert!(small > 0);
+    }
+
+    #[test]
+    fn claim_works_while_paused() {
+        let t = setup(10 * PRECISION);
+        let w = Address::generate(&t.env);
+        t.vault.settle_pnl(&w, &(30 * PRECISION)); // owed 20
+        t.vault.fund_buffer(&(20 * PRECISION));
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
+
+        t.vault.pause();
+        // Winners must be able to claim during incidents (exit-only-pause).
+        let paid = t.vault.claim_shortfall(&w);
+        assert_eq!(paid, 20 * PRECISION);
+        t.vault.unpause();
+    }
+
+    #[test]
+    fn outstanding_equals_sum_of_owed_map() {
+        let t = setup(30 * PRECISION);
+        let w1 = Address::generate(&t.env);
+        let w2 = Address::generate(&t.env);
+
+        t.vault.settle_pnl(&w1, &(50 * PRECISION)); // paid 30, owed 20
+        t.vault.settle_pnl(&w2, &(15 * PRECISION)); // paid 0, owed 15
+        assert_eq!(
+            t.vault.get_shortfall(),
+            t.vault.get_shortfall_owed(&w1) + t.vault.get_shortfall_owed(&w2)
+        );
+
+        // Repay some of w1 and re-check the invariant at every step.
+        t.vault.fund_buffer(&(20 * PRECISION));
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
+        t.vault.claim_shortfall(&w1);
+        assert_eq!(
+            t.vault.get_shortfall(),
+            t.vault.get_shortfall_owed(&w1) + t.vault.get_shortfall_owed(&w2)
+        );
+        // Claim payout never exceeded min(owed, reserve+buffer): w2 still owed.
+        assert!(t.vault.get_shortfall_owed(&w2) > 0);
     }
 
     #[test]
@@ -1111,7 +1421,8 @@ mod tests {
     fn market_only_endpoints_reject_without_auth() {
         let t = setup(100 * PRECISION);
         t.env.set_auths(&[]);
-        assert!(t.vault.try_settle_pnl(&(10 * PRECISION)).is_err());
+        let anyone = Address::generate(&t.env);
+        assert!(t.vault.try_settle_pnl(&anyone, &(10 * PRECISION)).is_err());
         assert!(t.vault
             .try_reserve_for_position(&btc(&t.env), &PRECISION, &PRECISION)
             .is_err());
