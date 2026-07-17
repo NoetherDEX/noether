@@ -52,6 +52,13 @@ const NOETHER_ERROR_NAMES: Record<number, string> = {
   80: 'CrossMarginOrderNotSupported',
   81: 'PriceDeviationTooHigh',
   82: 'OpenInterestCapExceeded',
+  83: 'LiquidationCooldown',
+  84: 'AdlNotActive',
+  85: 'AdlNotEligible',
+  87: 'AcceptablePriceExceeded',
+  88: 'AssetRiskNotConfigured',
+  89: 'SkewCapExceeded',
+  91: 'NetsToZero',
 };
 
 export function contractErrorFromCode(code: number): ContractErrorInfo {

@@ -63,6 +63,14 @@ const NOETHER_ERROR_MESSAGES: Record<number, string> = {
   80: 'Stop-loss/take-profit orders are not supported on cross-margin positions',
   81: 'Price moved too fast — please retry in a moment',
   82: 'Open interest cap reached for this market — try a smaller size',
+  // Solvency / risk / execution (83-91)
+  83: 'This position was just partially liquidated — try again in a moment',
+  84: 'Auto-deleveraging is not active for this market right now',
+  85: 'Only winning positions can be auto-deleveraged',
+  87: 'Filled worse than your acceptable price — resubmit or widen the limit',
+  88: 'This market has no risk parameters configured yet',
+  89: 'This order would push the market past its long/short skew cap — try a smaller size or the other side',
+  91: 'This order only reduces your opposite position — use Close or reduce-only instead',
 };
 
 /** FactoryError — contracts/vault_factory/src/types.rs. */

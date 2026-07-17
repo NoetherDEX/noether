@@ -53,6 +53,11 @@ mod trading;
 
 use storage::*;
 
+/// L1-3 auto-net legs cap: at most this many opposite-direction positions are
+/// reduced in a single open. Each full-close costs vault cross-calls, so this
+/// bounds the open's CPU; more opposing rows → #91 (close some manually first).
+const MAX_NET_LEGS: u32 = 4;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared Helpers (reduces WASM size by deduplicating fee/volume logic)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -296,6 +301,94 @@ impl MarketContract {
     /// WASM budget). Flow: validate → [cross: auto-deposit + free-margin
     /// check] → reserve payout in vault → strict oracle read → fee →
     /// [cross: deduct pool | isolated: pull wallet collateral] → persist.
+    /// L1-3 auto-net at open. Before opening `size` in `direction` on `asset`,
+    /// fully close the trader's opposite-direction positions in the SAME asset
+    /// and margin mode — settling each at the strict entry price, keeper_fee 0,
+    /// standard position_closed 8-tuple — and return the scaled remainder
+    /// (collateral, size) to open. Ordering: closes release their OI here,
+    /// before the caller reserves the remainder, so a hedged pair's freed
+    /// capacity can't false-trip the OI cap. Rejections leave nothing mutated
+    /// (Soroban rolls back on Err), and the reject checks run BEFORE any close:
+    /// - no opposite legs → returns the inputs unchanged, WITHOUT reading a
+    ///   price, so a plain open is byte-for-byte the prior behavior (identical
+    ///   error precedence: the caller's own reserve/gate/price reads are untouched),
+    /// - gross opposite G >= size → #91 NetsToZero: reaches or crosses zero, a
+    ///   reduction or one-tx flip — use the close paths (flip is a v1 non-goal),
+    /// - more than MAX_NET_LEGS opposing rows → #91 (CPU bound),
+    /// - a remainder below min_collateral → #91: the order essentially nets out;
+    ///   don't mint a dust position under the collateral floor.
+    /// A proceed always has G < size, so EVERY opposite leg is fully consumed —
+    /// no partial leg is ever needed at open (a partial would only arise when
+    /// capping the reduction at size, which is exactly the rejected G >= size case).
+    /// The strict price is read only when legs exist and after the reject checks,
+    /// so a hedged net settles at the same #30/#81-guarded price the open uses.
+    fn net_against_opposites(
+        env: &Env,
+        trader: &Address,
+        asset: &Symbol,
+        direction: &Direction,
+        collateral: i128,
+        size: i128,
+        cross: bool,
+        min_collateral: i128,
+    ) -> Result<(i128, i128), NoetherError> {
+        let mode: u32 = if cross { 1 } else { 0 };
+        let ids = if cross {
+            get_cross_margin_position_ids(env, trader)
+        } else {
+            get_trader_position_ids(env, trader)
+        };
+
+        // Opposite legs (same asset + mode, opposite direction) and gross G.
+        // TraderPositions holds BOTH modes, so the mode filter is load-bearing.
+        let mut legs: Vec<u64> = Vec::new(env);
+        let mut gross: i128 = 0;
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(p) = get_position(env, id) {
+                if p.asset == *asset && p.margin_mode == mode && p.direction != *direction {
+                    legs.push_back(id);
+                    gross = gross.checked_add(p.size).unwrap_or(gross);
+                }
+            }
+        }
+
+        // Nothing to net — transparent passthrough with NO price read, so the
+        // caller's flow (and its error precedence) is exactly as before L1-3.
+        if legs.is_empty() {
+            return Ok((collateral, size));
+        }
+        if legs.len() > MAX_NET_LEGS {
+            return Err(NoetherError::NetsToZero);
+        }
+        // Reaches/crosses zero → reduction or flip, not an open.
+        if gross >= size {
+            return Err(NoetherError::NetsToZero);
+        }
+
+        // Remainder (computed BEFORE mutating so a dust reject costs no closes).
+        let r_size = size - gross;
+        let r_collateral = collateral.checked_mul(r_size).unwrap_or(0) / size;
+        if r_collateral < min_collateral {
+            return Err(NoetherError::NetsToZero);
+        }
+
+        // G < size: fully consume every opposite leg at the strict entry price.
+        let entry_price = Self::get_oracle_price(env, asset, true)?;
+        for i in 0..legs.len() {
+            let id = legs.get(i).unwrap();
+            if let Some(p) = get_position(env, id) {
+                if cross {
+                    Self::settle_cross_close(env, &p, entry_price);
+                } else {
+                    Self::settle_isolated_close(env, &p, entry_price, 0, None, None)?;
+                }
+            }
+        }
+
+        Ok((r_collateral, r_size))
+    }
+
     fn do_open(
         env: Env,
         trader: Address,
@@ -335,6 +428,16 @@ impl MarketContract {
             return Err(NoetherError::PositionTooLarge);
         }
 
+        // L1-3: auto-net opposite-direction legs in this asset+mode FIRST, then
+        // continue with the scaled remainder. No opposites → inputs unchanged
+        // and no price read, so a plain open behaves exactly as before. Closing
+        // here (before reserve) releases the hedged legs' OI ahead of the
+        // remainder's reservation.
+        let (collateral, size) = Self::net_against_opposites(
+            &env, &trader, &asset, &direction,
+            collateral, size, cross, config.min_collateral,
+        )?;
+
         if cross {
             // Auto-deposit: if pool balance is insufficient, pull from wallet
             let pool_balance = get_cross_margin_balance(&env, &trader);
@@ -370,7 +473,9 @@ impl MarketContract {
             }
         }
 
-        // Reserve the max payout in the vault (real reservation + OI caps)
+        // Reserve the (post-netting) max payout in the vault (real reservation
+        // + OI caps). Netting already released any closed legs' OI, so a
+        // hedged-pair net reserves only the remainder against freed capacity.
         let vault_address = get_vault(&env);
         Self::reserve_with_vault(&env, &vault_address, &asset, &direction, size)?;
 
@@ -378,7 +483,7 @@ impl MarketContract {
 
         // L0-10: GMX-style acceptable-price bound (0 = unbounded). A worse-
         // than-bound fill reverts — the trader's own parameter, not the
-        // contract, blocks it.
+        // contract, blocks it. Applies to the remainder's fill.
         if acceptable_price < 0 {
             return Err(NoetherError::InvalidParameter);
         }
@@ -392,7 +497,8 @@ impl MarketContract {
             }
         }
 
-        // Taker fee + volume
+        // Taker fee + volume — on the remainder only (closes charge no trading
+        // fee, so this matches a manual close-then-open on the net new size).
         let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
         let net_collateral = collateral - fee;
         if net_collateral <= 0 {
@@ -4852,9 +4958,15 @@ mod tests {
         oracle.set_price(&eth, &(3_000 * PRECISION));
         test.market.apply_funding();
 
-        // Probe each index via a fresh open snapshot.
-        let pb = test.market.open_position(&ta, &btc, &(10 * PRECISION), &2, &Direction::Long, &0);
-        let pe = test.market.open_position(&tb, &eth, &(10 * PRECISION), &2, &Direction::Long, &0);
+        // Probe each index via a FRESH-trader open snapshot. entry_cumulative
+        // _funding is the asset's index at open (direction-independent), so a
+        // new trader with no book reads it cleanly — and, post-L1-3, avoids
+        // auto-netting against tb's ETH short (a same-trader opposite open now
+        // nets, #91, rather than coexisting).
+        let pc = fund_trader(&test, 100 * PRECISION);
+        let pd = fund_trader(&test, 100 * PRECISION);
+        let pb = test.market.open_position(&pc, &btc, &(10 * PRECISION), &2, &Direction::Long, &0);
+        let pe = test.market.open_position(&pd, &eth, &(10 * PRECISION), &2, &Direction::Long, &0);
         assert!(pb.entry_cumulative_funding > 0, "BTC net-long → longs pay (positive)");
         assert!(pe.entry_cumulative_funding < 0, "ETH net-short → shorts pay (negative)");
     }
@@ -5433,6 +5545,168 @@ mod tests {
         assert_eq!(reward, 0);
         assert_eq!(usdc.balance(&trader) - bal_after_place, 100 * PRECISION);
         assert_eq!(test.market.get_order(&order.id).unwrap().status, OrderStatus::CancelledSlippage);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // L1-3 · Auto-net at open
+    // (v1: proceed always has gross-opposite G < S, so every opposite leg is
+    //  FULL-closed — no partial leg exists; a reduction/flip/dust nets to #91.)
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_net_open_reduces_and_opens_remainder() {
+        // Acceptance scenario: 100@5x LONG (size 500) then 150@5x SHORT (size
+        // 750) → the long is closed and exactly one SHORT of size 250 remains.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let long = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let short = test.market.open_position(
+            &trader, &xlm, &(150 * PRECISION), &5, &Direction::Short, &0,
+        );
+
+        assert!(test.market.get_position(&long.id).is_none(), "long must be netted out");
+        let ids = test.market.get_all_position_ids();
+        assert_eq!(ids.len(), 1, "exactly one remainder position");
+        assert_eq!(ids.get(0).unwrap(), short.id);
+        assert_eq!(short.direction, Direction::Short);
+        assert_eq!(short.size, 250 * PRECISION, "remainder = S - G = 750 - 500");
+        assert_eq!(short.leverage, 5, "leverage unchanged");
+    }
+
+    #[test]
+    fn test_net_open_rejects_full_net_91() {
+        // S <= G (exact net) → #91, and NOTHING mutates: the long survives and
+        // no collateral leaves the wallet.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let long = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let bal_before = usdc.balance(&trader);
+
+        // 100@5x SHORT: S = 500 == G = 500 → NetsToZero.
+        assert!(matches!(
+            test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Short, &0),
+            Err(Ok(NoetherError::NetsToZero))
+        ));
+        // Untouched: long still open, single position, wallet balance flat.
+        assert!(test.market.get_position(&long.id).is_some());
+        assert_eq!(test.market.get_all_position_ids().len(), 1);
+        assert_eq!(usdc.balance(&trader), bal_before);
+    }
+
+    #[test]
+    fn test_net_open_dust_remainder_rejected() {
+        // 101@5x SHORT vs a 500 long: S = 505, remainder R = 5, collateral_new
+        // = 101*5/505 = $1 < min_collateral $10 → #91 (don't mint dust).
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let long = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+        assert!(matches!(
+            test.market.try_open_position(&trader, &xlm, &(101 * PRECISION), &5, &Direction::Short, &0),
+            Err(Ok(NoetherError::NetsToZero))
+        ));
+        assert!(test.market.get_position(&long.id).is_some(), "dust reject mutates nothing");
+    }
+
+    #[test]
+    fn test_net_open_rejects_above_max_legs() {
+        // Five opposing legs > MAX_NET_LEGS (4) → #91 before any close.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+        vault.set_skew_cap(&xlm, &10_000); // 100% — let a one-sided book build
+
+        for _ in 0..5 {
+            test.market.open_position(&trader, &xlm, &(20 * PRECISION), &5, &Direction::Long, &0);
+        }
+        assert!(matches!(
+            test.market.try_open_position(&trader, &xlm, &(200 * PRECISION), &5, &Direction::Short, &0),
+            Err(Ok(NoetherError::NetsToZero))
+        ));
+        assert_eq!(test.market.get_all_position_ids().len(), 5, "all legs survive the reject");
+    }
+
+    #[test]
+    fn test_net_open_cross_nets_to_single_remainder() {
+        // Cross: opposite leg settles to the POOL (not wallet) and the account
+        // holds ONE remainder afterward — used-margin shrinks vs a stacked hedge.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let long = test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let pool_after_long = test.market.get_cross_margin_balance(&trader);
+        let short = test.market.open_position_cross(
+            &trader, &xlm, &(150 * PRECISION), &5, &Direction::Short, &0,
+        );
+
+        assert!(test.market.get_position(&long.id).is_none());
+        let cross_ids = test.market.get_cross_margin_positions(&trader);
+        assert_eq!(cross_ids.len(), 1, "one remainder, not a stacked hedge");
+        assert_eq!(cross_ids.get(0).unwrap(), short.id);
+        assert_eq!(short.size, 250 * PRECISION);
+        // The closed long returned its equity to the pool (settles at entry →
+        // ~its collateral back), so post-net pool exceeds the mid-point.
+        assert!(
+            test.market.get_cross_margin_balance(&trader) > pool_after_long,
+            "closed long's equity flowed back to the cross pool",
+        );
+    }
+
+    #[test]
+    fn test_net_open_fee_charged_on_remainder_only() {
+        // The remainder's collateral is net of the taker fee on R (250), NOT on
+        // the submitted S (750) — fee parity with a manual close-then-open.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        let short = test.market.open_position(
+            &trader, &xlm, &(150 * PRECISION), &5, &Direction::Short, &0,
+        );
+
+        // collateral_new = 150 * 250/750 = 50; fee = 250 * 50 deci-bps.
+        let fee_on_remainder = 250 * PRECISION * 50 / 100_000;
+        assert_eq!(short.collateral, 50 * PRECISION - fee_on_remainder);
+    }
+
+    #[test]
+    fn test_net_open_reserved_payout_is_remainder_only() {
+        // Release-before-reserve: the closed long frees its reservation before
+        // the remainder reserves, so global reserved payout DROPS (500 → 250).
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+
+        test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        let reserved_after_long = vault.get_reserved_payout();
+
+        test.market.open_position(&trader, &xlm, &(150 * PRECISION), &5, &Direction::Short, &0);
+        let reserved_after_net = vault.get_reserved_payout();
+
+        assert!(reserved_after_long > 0);
+        assert!(
+            reserved_after_net < reserved_after_long,
+            "net-open released the 500 long and reserved only the 250 remainder",
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════

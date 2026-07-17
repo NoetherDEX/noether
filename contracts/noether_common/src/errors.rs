@@ -159,4 +159,10 @@ pub enum NoetherError {
     /// An open would push the asset's net long-short skew past its cap and
     /// make it MORE imbalanced (L0-14). Skew-reducing opens always pass.
     SkewCapExceeded = 89,
+    // 90 Frozen — reserved for L0-15 (emergency exit-only freeze)
+    /// An open auto-nets to zero or beyond against the trader's opposite
+    /// same-asset positions — gross opposite >= requested size, too many
+    /// opposing legs, or a sub-min remainder (L1-3). Reductions and flips
+    /// go through the close/reduce-only paths, never a one-tx flip.
+    NetsToZero = 91,
 }
