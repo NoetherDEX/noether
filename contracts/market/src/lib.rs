@@ -1098,6 +1098,19 @@ impl MarketContract {
         get_funding_state(env, asset).0
     }
 
+    /// Whether the slippage band-and-cancel applies to an order (L0-11).
+    /// Only explicit price-or-better variants can cancel on a breach; pure
+    /// protective closes (SL, trailing, TP-market) are fill-guaranteed —
+    /// their slippage_tolerance_bps is advisory.
+    fn enforce_slippage_band(order: &Order) -> bool {
+        match order.order_type {
+            OrderType::LimitEntry => true,
+            OrderType::StopLimit => order.stop_limit_phase == 1,
+            OrderType::TakeProfit => order.limit_price > 0, // take-limit only
+            OrderType::StopLoss | OrderType::TrailingStop => false,
+        }
+    }
+
     /// L0-10 acceptable-price bound for a CLOSE (inverse of the open bound):
     /// closing a Long rejects below the bound, a Short above it. 0 =
     /// unbounded. Preserves M-2 (the contract never blocks a close — only
@@ -2404,7 +2417,13 @@ impl MarketContract {
             0
         };
 
-        if actual_slippage_bps > order.slippage_tolerance_bps as i128 {
+        // L0-11: band-and-cancel applies ONLY to explicit price-or-better
+        // variants. Pure protective closes (SL, trailing, TP-market) are
+        // fill-guaranteed at the oracle price — cancelling them abandons the
+        // position in exactly the gap the stop exists for. slippage_tolerance
+        // _bps is ADVISORY for those types (kept mandatory at placement for
+        // builder/SDK stability). The lenient read never blocks these fills.
+        if Self::enforce_slippage_band(&order) && actual_slippage_bps > order.slippage_tolerance_bps as i128 {
             // Slippage exceeded - cancel the order and commit the cancellation
             // IMPORTANT: We return Ok(0) instead of Err() so the transaction commits
             // and the order is properly removed from the pending list. Returning Err()
@@ -5347,6 +5366,65 @@ mod tests {
         let reward = test.market.execute_order(&keeper, &order.id);
         assert_eq!(reward, 0);
         assert_eq!(usdc.balance(&trader) - bal_after_place, 100 * PRECISION); // full refund
+    }
+
+    #[test]
+    fn test_stop_loss_fills_past_slippage_tolerance() {
+        // L0-11: a stop-loss is a protective close — it MUST fill even when
+        // the market gaps far past its trigger. slippage_tolerance is advisory
+        // for SL, so a gap well over tolerance fills instead of cancelling and
+        // stranding the position in exactly the move the stop exists to escape.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        // 5x long at $0.10; SL trigger $0.095 with a tight 100 bps tolerance.
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1000), &100);
+
+        // Gap the price to $0.09 — 526 bps past the trigger, far over tolerance,
+        // still solvent for a 5x long (−10% ≈ −0.5x collateral).
+        oracle.set_price(&xlm, &(PRECISION * 9 / 100));
+        let reward = test.market.execute_order(&keeper, &sl.id);
+
+        // Filled, NOT cancelled: keeper paid, position gone, order Executed.
+        // (A cancel would leave the position open and mark CancelledSlippage.)
+        assert!(reward > 0, "stop-loss must fill (nonzero keeper reward)");
+        assert!(test.market.get_position(&pos.id).is_none(), "position must be closed");
+        assert_eq!(test.market.get_order(&sl.id).unwrap().status, OrderStatus::Executed);
+    }
+
+    #[test]
+    fn test_limit_entry_still_cancels_on_slippage() {
+        // L0-11 counterpart: an explicit price-or-better order (LimitEntry) is
+        // still band-enforced. A fill worse than tolerance cancels + refunds —
+        // the trader asked for a price, not a guaranteed fill.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        // Buy-the-dip limit at $0.095, 100 bps tolerance (trigger_above=false).
+        let order = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION * 95 / 1000), &false, &100, &0,
+        );
+        let bal_after_place = usdc.balance(&trader);
+
+        // Price gaps to $0.09 — triggers, but 526 bps past the limit.
+        oracle.set_price(&xlm, &(PRECISION * 9 / 100));
+        let reward = test.market.execute_order(&keeper, &order.id);
+
+        // Band-enforced: cancelled + fully refunded, no position opened.
+        assert_eq!(reward, 0);
+        assert_eq!(usdc.balance(&trader) - bal_after_place, 100 * PRECISION);
+        assert_eq!(test.market.get_order(&order.id).unwrap().status, OrderStatus::CancelledSlippage);
     }
 
     #[test]
