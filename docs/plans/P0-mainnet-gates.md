@@ -48,7 +48,7 @@
 | L0-17 | Circle USDC collateral cutover (operator/config) | S | mixed | operator-track | L0-16 | todo |
 | L0-18 | External audit, published (operator/process — the mainnet critical path) | L | operator | operator-track | L0-1..L0-6, L0-8..L0-15, L0-20, L1-1..L1-3, L1-5, L1-8, L1-18, L1-20..L1-24, L1-26, L1-28..L1-30, L2-1, L2-4, L2-6, L2-11 | todo |
 | L0-19 | Second keeper + router execution path (liveness) | M | mixed | offchain-now | — | todo |
-| L0-20 | vault_factory fund isolation (V-1) + NAV valuation (V-4) — or hard launch gate | M | mixed | batch-1-redeploy | — | todo |
+| L0-20 | vault_factory fund isolation (V-1) + NAV valuation (V-4) — or hard launch gate | M | mixed | batch-1-redeploy | — | in-progress — Path A contracts+tests done 2026-07-18 (Wave 4, commits 5f74a96 market, 9e1fb73 factory, 49aaaa9 web err-map; 49 factory tests, errors 16-20, upgrade() added); off-chain (indexer/api/keeper/ops) pending sweep |
 | L0-21 | tx-builders arity fix + SDK republish (ships NOW, no redeploy needed) | S | offchain | offchain-now | — | done (2026-07-17, code + CI guard; npm/PyPI 0.1.2 publish = operator step, tracked in L1-14) |
 
 ## Redeploy Batch 1 manifest
