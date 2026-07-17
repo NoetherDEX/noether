@@ -3,7 +3,7 @@
 //! Storage keys and helpers for the Market contract.
 
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
-use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord};
+use noether_common::{NoetherError, Position, MarketConfig, AssetRiskParams, Order, OrderStatus, FeeTier, VolumeRecord};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
@@ -89,6 +89,14 @@ pub enum DataKey {
     /// ADL solvency flag per asset (L0-1): while set, new opens are
     /// rejected and adl_close may force-realize winners at mark.
     AdlActive(Symbol),
+    /// Per-market risk params (L0-12): leverage cap, IM/MM/close-out,
+    /// max size, funding velocity/clamp, skew scale. Unset = ladder
+    /// inactive for the asset (risk-increasing ops fail #88).
+    AssetRisk(Symbol),
+    /// Ledger timestamp the ladder went live (L0-12), stamped once by the
+    /// first set_asset_risk. Positions opened before it keep the legacy
+    /// maintenance margin so an in-place upgrade liquidates nobody.
+    RiskEpochTs,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -333,6 +341,25 @@ pub fn set_adl_active(env: &Env, asset: &Symbol, active: bool) {
     let key = DataKey::AdlActive(asset.clone());
     env.storage().persistent().set(&key, &active);
     extend_persistent_ttl(env, &key);
+}
+
+pub fn get_asset_risk(env: &Env, asset: &Symbol) -> Option<AssetRiskParams> {
+    env.storage().persistent().get(&DataKey::AssetRisk(asset.clone()))
+}
+
+pub fn set_asset_risk(env: &Env, asset: &Symbol, params: &AssetRiskParams) {
+    let key = DataKey::AssetRisk(asset.clone());
+    env.storage().persistent().set(&key, params);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn get_risk_epoch_ts(env: &Env) -> u64 {
+    env.storage().persistent().get(&DataKey::RiskEpochTs).unwrap_or(0)
+}
+
+pub fn set_risk_epoch_ts(env: &Env, ts: u64) {
+    env.storage().persistent().set(&DataKey::RiskEpochTs, &ts);
+    extend_persistent_ttl(env, &DataKey::RiskEpochTs);
 }
 
 pub fn delete_position(env: &Env, id: u64, trader: &Address) {

@@ -220,6 +220,50 @@ pub struct MarketConfig {
     pub adl_compensation_bps: u32,
 }
 
+/// Per-market risk parameters (L0-12). Stored per asset in market storage
+/// (DataKey::AssetRisk) and read on the hot path — no cross-contract call.
+/// Invariant mm_bps == im_bps/2 (P5-2), enforced by is_valid() at the
+/// admin setter. The `close_out_bps` and funding/skew fields are consumed
+/// by L0-5 / L0-13 / L0-14 respectively but MUST be in the day-one layout:
+/// Soroban decodes structs by exact field set, so adding a field later
+/// re-bricks every stored entry.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AssetRiskParams {
+    /// Explicit leverage cap; may sit BELOW 10000/im_bps (launch policy).
+    pub max_leverage: u32,
+    /// Initial margin, bps of notional (400 = 4% = 25x implied).
+    pub im_bps: u32,
+    /// Maintenance margin, bps; invariant mm == im/2.
+    pub mm_bps: u32,
+    /// Full-close band, bps of notional (< mm_bps) — consumed by L0-5.
+    pub close_out_bps: u32,
+    /// Max position size, 7-decimal USD notional.
+    pub max_position_size: i128,
+    /// Funding velocity ceiling, bps/DAY — consumed by L0-13.
+    pub max_funding_velocity_bps: u32,
+    /// Funding rate ceiling, bps/HOUR — consumed by L0-13.
+    pub funding_clamp_bps: u32,
+    /// SIP-279 skew scale, 7-decimal USD notional (≈ 2× the OI cap) — L0-13.
+    pub skew_scale: i128,
+}
+
+impl AssetRiskParams {
+    /// The structural invariant the admin setter enforces (L0-12).
+    pub fn is_valid(&self) -> bool {
+        self.im_bps > 0
+            && self.mm_bps > 0
+            && self.mm_bps == self.im_bps / 2
+            && self.im_bps >= 400 // <= 25x
+            && self.max_leverage >= 1
+            && (self.max_leverage as i128) <= (BASIS_POINTS as i128) / (self.im_bps as i128)
+            && self.close_out_bps < self.mm_bps
+            && self.max_position_size > 0
+            && self.funding_clamp_bps <= 1_000
+            && self.skew_scale >= 0
+    }
+}
+
 impl Default for MarketConfig {
     fn default() -> Self {
         Self {
@@ -411,5 +455,57 @@ impl Default for KeeperFeeConfig {
             base_fee: 5_000_000,    // 0.50 USDC
             variable_fee_bps: 5,    // 0.05%
         }
+    }
+}
+
+#[cfg(test)]
+mod asset_risk_tests {
+    use super::*;
+
+    fn base() -> AssetRiskParams {
+        AssetRiskParams {
+            max_leverage: 10,
+            im_bps: 400,
+            mm_bps: 200,
+            close_out_bps: 133,
+            max_position_size: 100_000 * PRECISION,
+            max_funding_velocity_bps: 3_600,
+            funding_clamp_bps: 50,
+            skew_scale: 200_000 * PRECISION,
+        }
+    }
+
+    #[test]
+    fn valid_major_config() {
+        assert!(base().is_valid());
+    }
+
+    #[test]
+    fn mm_must_equal_im_over_two() {
+        let mut p = base();
+        p.mm_bps = 300; // != 400/2
+        assert!(!p.is_valid());
+    }
+
+    #[test]
+    fn im_capped_at_25x() {
+        let mut p = base();
+        p.im_bps = 200; // 50x — below the 400 floor
+        p.mm_bps = 100;
+        assert!(!p.is_valid());
+    }
+
+    #[test]
+    fn max_leverage_cannot_exceed_implied() {
+        let mut p = base();
+        p.max_leverage = 30; // > 10000/400 = 25
+        assert!(!p.is_valid());
+    }
+
+    #[test]
+    fn close_out_below_mm() {
+        let mut p = base();
+        p.close_out_bps = 200; // == mm, must be strictly below
+        assert!(!p.is_valid());
     }
 }

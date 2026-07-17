@@ -145,4 +145,10 @@ pub enum NoetherError {
     /// adl_close target is not a net winner at the current mark — only
     /// positive-uPnL positions are ADL candidates (L0-1)
     AdlNotEligible = 85,
+    // 86 LiquidationNotConfirmed — reserved for L0-9 (smoothed mark)
+    // 87 AcceptablePriceExceeded — reserved for L0-10
+    /// A risk-increasing op (open / limit / stop-limit placement) hit an
+    /// asset with no per-market risk params configured — fail-closed
+    /// (L0-12). Risk-reducing paths fall back to the legacy MM instead.
+    AssetRiskNotConfigured = 88,
 }

@@ -39,7 +39,7 @@
 
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec, IntoVal};
 use noether_common::{
-    NoetherError, Position, Direction, MarketConfig,
+    NoetherError, Position, Direction, MarketConfig, AssetRiskParams,
     Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
     VolumeRecord, BASIS_POINTS, PRECISION,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
@@ -320,12 +320,16 @@ impl MarketContract {
         if collateral < config.min_collateral {
             return Err(NoetherError::InsufficientCollateral);
         }
-        if leverage < 1 || leverage > config.max_leverage {
+        // Per-market ladder (L0-12): fail-closed on an unconfigured asset
+        // once the ladder is live; legacy global limits before that.
+        let (max_leverage, max_position_size, mm_bps) =
+            Self::effective_open_limits(&env, &asset, &config)?;
+        if leverage < 1 || leverage > max_leverage {
             return Err(NoetherError::InvalidLeverage);
         }
 
         let size = calculate_position_size(collateral, leverage);
-        if size > config.max_position_size {
+        if size > max_position_size {
             return Err(NoetherError::PositionTooLarge);
         }
 
@@ -389,7 +393,7 @@ impl MarketContract {
                 entry_price,
                 leverage,
                 direction,
-                config.maintenance_margin_bps,
+                mm_bps,
             )
         };
 
@@ -615,9 +619,10 @@ impl MarketContract {
                 let mut updated = position.clone();
                 updated.size = new_size;
                 updated.collateral = new_collateral;
+                let mm_bps = position::mm_bps_for(&env, &position, config.maintenance_margin_bps);
                 updated.liquidation_price = Self::liquidation_price_from_ratio(
                     updated.entry_price, new_collateral, new_size,
-                    updated.direction, config.maintenance_margin_bps,
+                    updated.direction, mm_bps,
                 );
                 save_position(&env, &updated);
                 set_partial_liq_ts(&env, position_id, now);
@@ -1365,6 +1370,42 @@ impl MarketContract {
         get_adl_active(&env, &asset)
     }
 
+    /// Set per-market risk params (L0-12). Admin-only. The asset must be a
+    /// listed pair and params must satisfy the MM=IM/2 ladder invariant.
+    /// The first successful call stamps RiskEpochTs, activating the ladder:
+    /// from then on risk-increasing ops on UNconfigured assets fail #88,
+    /// while positions opened before the stamp keep the legacy MM.
+    pub fn set_asset_risk(
+        env: Env,
+        asset: Symbol,
+        params: AssetRiskParams,
+    ) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        require_admin(&env)?;
+        // Must be a listed pair (reuses the oracle-tag registry).
+        noether_common::assets::symbol_to_tag(&env, &asset)
+            .map_err(|_| NoetherError::InvalidParameter)?;
+        if !params.is_valid() {
+            return Err(NoetherError::InvalidParameter);
+        }
+        set_asset_risk(&env, &asset, &params);
+        if get_risk_epoch_ts(&env) == 0 {
+            set_risk_epoch_ts(&env, env.ledger().timestamp());
+        }
+        env.events().publish(
+            (Symbol::new(&env, "asset_risk_set"),),
+            (asset, params.max_leverage, params.im_bps, params.mm_bps),
+        );
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Per-market risk params for an asset (L0-12) — the single source of
+    /// truth the keeper (simulate) and gateway (contractReader) read.
+    pub fn get_asset_risk(env: Env, asset: Symbol) -> Option<AssetRiskParams> {
+        get_asset_risk(&env, &asset)
+    }
+
     /// Force-realize a winning position at the oracle mark while ADL is
     /// active for its asset (L0-1). Permissionless — the on-chain gates
     /// (flag active + net winner) are the consensus; the keeper's ranking
@@ -1492,7 +1533,10 @@ impl MarketContract {
         if collateral < config.min_collateral {
             return Err(NoetherError::InsufficientCollateral);
         }
-        if leverage < 1 || leverage > config.max_leverage {
+        // Per-market ladder (L0-12): a resting entry is a risk-increasing op.
+        let (max_leverage, max_position_size, _mm_bps) =
+            Self::effective_open_limits(&env, &asset, &config)?;
+        if leverage < 1 || leverage > max_leverage {
             return Err(NoetherError::InvalidLeverage);
         }
         if trigger_price <= 0 {
@@ -1510,7 +1554,7 @@ impl MarketContract {
 
         // Calculate position size to check against limits
         let size = calculate_position_size(collateral, leverage);
-        if size > config.max_position_size {
+        if size > max_position_size {
             return Err(NoetherError::PositionTooLarge);
         }
 
@@ -2138,7 +2182,10 @@ impl MarketContract {
         if collateral < config.min_collateral {
             return Err(NoetherError::InsufficientCollateral);
         }
-        if leverage < 1 || leverage > config.max_leverage {
+        // Per-market ladder (L0-12): a resting stop-limit is risk-increasing.
+        let (max_leverage, max_position_size, _mm_bps) =
+            Self::effective_open_limits(&env, &asset, &config)?;
+        if leverage < 1 || leverage > max_leverage {
             return Err(NoetherError::InvalidLeverage);
         }
         if trigger_price <= 0 || limit_price <= 0 {
@@ -2155,7 +2202,7 @@ impl MarketContract {
         }
 
         let size = calculate_position_size(collateral, leverage);
-        if size > config.max_position_size {
+        if size > max_position_size {
             return Err(NoetherError::PositionTooLarge);
         }
 
@@ -2323,7 +2370,10 @@ impl MarketContract {
         );
         let margin = pos.collateral + pnl - funding;
         let config = get_config(env);
-        margin < pos.size * (config.maintenance_margin_bps as i128) / (BASIS_POINTS as i128)
+        // Per-asset MM once the ladder is live (L0-12); legacy for
+        // grandfathered / pre-ladder positions.
+        let mm_bps = position::mm_bps_for(env, pos, config.maintenance_margin_bps);
+        margin < pos.size * (mm_bps as i128) / (BASIS_POINTS as i128)
     }
 
     /// Fetch price from the oracle adapter.
@@ -2669,6 +2719,29 @@ impl MarketContract {
         }
     }
 
+    /// Effective open-time limits for an asset (L0-12): the per-market
+    /// ladder once RiskEpochTs is stamped (fail-closed #88 on an
+    /// unconfigured asset — a risk-increasing op), else the legacy global
+    /// MarketConfig (pre-ladder deployments and tests). Returns
+    /// (max_leverage, max_position_size, mm_bps).
+    fn effective_open_limits(
+        env: &Env,
+        asset: &Symbol,
+        config: &MarketConfig,
+    ) -> Result<(u32, i128, u32), NoetherError> {
+        if get_risk_epoch_ts(env) == 0 {
+            return Ok((
+                config.max_leverage,
+                config.max_position_size,
+                config.maintenance_margin_bps,
+            ));
+        }
+        let p = get_asset_risk(env, asset).ok_or(NoetherError::AssetRiskNotConfigured)?;
+        let implied_cap = (BASIS_POINTS / p.im_bps).max(1);
+        let cap = if p.max_leverage < implied_cap { p.max_leverage } else { implied_cap };
+        Ok((cap, p.max_position_size, p.mm_bps))
+    }
+
     /// Book a bankrupt-liquidation loss (L0-2): the vault's insurance buffer
     /// covers what it can (accounting draw — the USDC was never collected),
     /// the rest lands on LP NAV, and BOTH are made visible on-chain via
@@ -2789,8 +2862,30 @@ impl MarketContract {
             };
         }
 
-        // Calculate position size
+        // Per-market ladder (L0-12): a raised leverage cap can retire a
+        // resting order's validity — re-check at execution and cancel +
+        // refund rather than open a now-illegal position. Also supplies
+        // the per-asset MM for the liq price. Legacy limits pre-ladder.
+        let (max_leverage, max_position_size, mm_bps) =
+            match Self::effective_open_limits(env, &order.asset, &config) {
+                Ok(limits) => limits,
+                Err(_) => (config.max_leverage, config.max_position_size, config.maintenance_margin_bps),
+            };
         let size = calculate_position_size(order.collateral, order.leverage);
+        if order.leverage > max_leverage || size > max_position_size {
+            // LimitEntry/StopLimit orders lock full collateral — refund it.
+            if order.collateral > 0 {
+                let usdc_token = get_usdc_token(env);
+                let token_client = token::Client::new(env, &usdc_token);
+                token_client.transfer(&env.current_contract_address(), &order.trader, &order.collateral);
+            }
+            update_order_status(env, order.id, OrderStatus::Cancelled);
+            env.events().publish(
+                (Symbol::new(env, "order_cancelled"),),
+                (order.id, Symbol::new(env, "risk_config")),
+            );
+            return Ok(0);
+        }
 
         // Check Vault has enough liquidity
         let vault_address = get_vault(env);
@@ -2801,7 +2896,7 @@ impl MarketContract {
             current_price,
             order.leverage,
             order.direction,
-            config.maintenance_margin_bps,
+            mm_bps,
         );
 
         // Calculate maker fee and record volume (limit orders = maker)
@@ -4284,6 +4379,217 @@ mod tests {
     /// where liquidation refunds are non-zero by construction.
     fn mm5_config() -> MarketConfig {
         MarketConfig { maintenance_margin_bps: 500, ..MarketConfig::default() }
+    }
+
+    // ── L0-12: per-market margin/leverage ladder ────────────────────────
+
+    /// A valid ladder params tuple (satisfies MM=IM/2, im>=400, etc.).
+    fn risk(max_lev: u32, im: u32) -> AssetRiskParams {
+        AssetRiskParams {
+            max_leverage: max_lev,
+            im_bps: im,
+            mm_bps: im / 2,
+            close_out_bps: (im / 2) * 2 / 3,
+            max_position_size: 100_000 * PRECISION,
+            max_funding_velocity_bps: 3_600,
+            funding_clamp_bps: 50,
+            skew_scale: 200_000 * PRECISION,
+        }
+    }
+
+    /// Seed the three test assets with the launch ladder (stamps the epoch)
+    /// so the fail-closed/per-asset paths activate. XLM keeps 10x/5% MM so
+    /// existing price fixtures still liquidate near the same levels.
+    fn seed_ladder(test: &TestEnv) {
+        let btc = Symbol::new(&test.env, "BTC");
+        let eth = Symbol::new(&test.env, "ETH");
+        let xlm = Symbol::new(&test.env, "XLM");
+        test.market.set_asset_risk(&btc, &risk(10, 400)); // 25x-capable, launched at 10x
+        test.market.set_asset_risk(&eth, &risk(10, 400));
+        test.market.set_asset_risk(&xlm, &risk(10, 1_000)); // 10x, MM 5%
+    }
+
+    #[test]
+    fn test_asset_risk_setter_enforces_invariants() {
+        let test = setup();
+        let btc = Symbol::new(&test.env, "BTC");
+        // mm != im/2 rejected.
+        let bad_mm = AssetRiskParams { mm_bps: 300, ..risk(10, 400) };
+        assert!(matches!(test.market.try_set_asset_risk(&btc, &bad_mm), Err(Ok(NoetherError::InvalidParameter))));
+        // im < 400 (>25x) rejected.
+        let bad_im = risk(30, 200);
+        assert!(matches!(test.market.try_set_asset_risk(&btc, &bad_im), Err(Ok(NoetherError::InvalidParameter))));
+        // close_out >= mm rejected.
+        let bad_co = AssetRiskParams { close_out_bps: 250, ..risk(10, 400) };
+        assert!(matches!(test.market.try_set_asset_risk(&btc, &bad_co), Err(Ok(NoetherError::InvalidParameter))));
+        // Valid config accepted; readable back.
+        test.market.set_asset_risk(&btc, &risk(10, 400));
+        let stored = test.market.get_asset_risk(&btc).unwrap();
+        assert_eq!(stored.im_bps, 400);
+        assert_eq!(stored.mm_bps, 200);
+    }
+
+    #[test]
+    fn test_set_asset_risk_rejects_unknown_symbol() {
+        let test = setup();
+        let bogus = Symbol::new(&test.env, "NOTAPAIR");
+        assert!(matches!(test.market.try_set_asset_risk(&bogus, &risk(10, 400)), Err(Ok(NoetherError::InvalidParameter))));
+    }
+
+    #[test]
+    fn test_open_fails_closed_on_unconfigured_asset() {
+        let test = setup();
+        // Stamp the epoch by configuring BTC only; XLM stays unconfigured.
+        let btc = Symbol::new(&test.env, "BTC");
+        test.market.set_asset_risk(&btc, &risk(10, 400));
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let res = test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &2, &Direction::Long);
+        assert!(matches!(res, Err(Ok(NoetherError::AssetRiskNotConfigured))));
+    }
+
+    #[test]
+    fn test_close_and_liquidate_still_work_on_unconfigured_asset() {
+        // Open a legacy XLM position BEFORE the ladder, then stamp the epoch
+        // on BTC. The risk-reducing paths must never brick on XLM.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let btc = Symbol::new(&test.env, "BTC");
+        test.market.set_asset_risk(&btc, &risk(10, 400)); // stamps epoch
+
+        // Close still works (grandfathered, legacy MM fallback).
+        let pnl = test.market.close_position(&trader, &pos.id);
+        assert!(test.market.get_position(&pos.id).is_none());
+        let _ = pnl;
+    }
+
+    #[test]
+    fn test_open_leverage_capped_per_asset() {
+        let test = setup();
+        seed_ladder(&test);
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM"); // capped at 10x
+        // 11x on a 10x pair is rejected.
+        let res = test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &11, &Direction::Long);
+        assert!(matches!(res, Err(Ok(NoetherError::InvalidLeverage))));
+        // 10x is fine.
+        let ok = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        assert_eq!(ok.leverage, 10);
+    }
+
+    #[test]
+    fn test_liq_price_uses_asset_mm() {
+        // XLM configured at MM 5% (1000/2) yields a HIGHER long liq price
+        // than the legacy MM 1% — the ladder MM flows into the stored price.
+        let legacy = setup();
+        let t1 = fund_trader(&legacy, 1_000 * PRECISION);
+        let xlm = Symbol::new(&legacy.env, "XLM");
+        let legacy_pos = legacy.market.open_position(&t1, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+
+        let laddered = setup();
+        seed_ladder(&laddered);
+        let t2 = fund_trader(&laddered, 1_000 * PRECISION);
+        let ladder_pos = laddered.market.open_position(&t2, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+
+        assert!(ladder_pos.liquidation_price > legacy_pos.liquidation_price,
+            "MM 5% liquidates a long sooner (higher price) than MM 1%");
+    }
+
+    #[test]
+    fn test_grandfathered_position_keeps_legacy_mm_after_epoch() {
+        // A position opened pre-ladder (legacy MM 1%) must NOT become
+        // liquidatable when its asset's MM later rises to 5%.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+        let entry = pos.entry_price;
+
+        // Now stamp the ladder with XLM at MM 5%.
+        seed_ladder(&test);
+
+        // A ~2% adverse move: liquidatable at MM 5% (equity ~$10 vs $25 MM on
+        // a $500 position) but NOT at the grandfathered MM 1% ($5 MM).
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(entry * 98 / 100));
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let res = test.market.try_liquidate(&keeper, &pos.id);
+        assert!(matches!(res, Err(Ok(NoetherError::NotLiquidatable))),
+            "grandfathered position must keep its legacy MM");
+    }
+
+    #[test]
+    fn test_cross_mm_aggregates_mixed_assets_per_asset_mm() {
+        // Mixed cross legs BTC (MM 2%) + XLM (MM 5%) — aggregate account MM is
+        // the per-asset SUM ($35 on $1000 notional), not the flat legacy 1%
+        // ($10). At equity ~$30 the laddered account IS liquidatable while an
+        // identical legacy account is NOT — proving per-asset aggregation.
+        // Returns true if the mixed cross account is liquidatable.
+        let liquidatable = |ladder: bool| -> bool {
+            let test = setup();
+            if ladder { seed_ladder(&test); }
+            let trader = fund_trader(&test, 1_000 * PRECISION);
+            let keeper = fund_trader(&test, 10 * PRECISION);
+            let btc = Symbol::new(&test.env, "BTC");
+            let xlm = Symbol::new(&test.env, "XLM");
+            test.market.open_position_cross(&trader, &btc, &(100 * PRECISION), &5, &Direction::Long);
+            test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long);
+            // Drop both ~17% → each leg loses ~85% of collateral, equity ~$30.
+            let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+            oracle.set_price(&btc, &(60_000 * PRECISION * 83 / 100));
+            oracle.set_price(&xlm, &(PRECISION / 10 * 83 / 100));
+            test.market.try_liquidate_cross_account(&keeper, &trader).is_ok()
+        };
+        // Ladder MM $35 > equity $30 → liquidatable; legacy MM $10 < $30 → not.
+        assert!(liquidatable(true), "per-asset ladder MM must liquidate at ~$30 equity");
+        assert!(!liquidatable(false), "flat legacy MM must NOT liquidate at ~$30 equity");
+    }
+
+    #[test]
+    fn test_execute_order_cancels_refunds_when_leverage_now_invalid() {
+        // Place a 10x XLM limit order, then tighten XLM to a 5x cap; on
+        // execution the order must cancel + refund, not open an 10x position.
+        let test = setup();
+        seed_ladder(&test);
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let order = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &10,
+            &(PRECISION / 20), &false, &100, &0,
+        );
+        let bal_after_place = usdc.balance(&trader);
+
+        // Tighten XLM: max_leverage 5 (im 2000, mm 1000).
+        test.market.set_asset_risk(&xlm, &risk(5, 2_000));
+
+        // Trigger + keeper-execute: order cancels & refunds, no position.
+        oracle.set_price(&xlm, &(PRECISION / 20));
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let reward = test.market.execute_order(&keeper, &order.id);
+        assert_eq!(reward, 0);
+        assert_eq!(usdc.balance(&trader) - bal_after_place, 100 * PRECISION); // full refund
+    }
+
+    #[test]
+    fn test_25x_enable_is_one_setter_call() {
+        let test = setup();
+        seed_ladder(&test); // BTC launched at 10x
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let btc = Symbol::new(&test.env, "BTC");
+        // 20x rejected at the 10x launch cap.
+        assert!(matches!(
+            test.market.try_open_position(&trader, &btc, &(100 * PRECISION), &20, &Direction::Long),
+            Err(Ok(NoetherError::InvalidLeverage))
+        ));
+        // One admin call raises the cap to 25x — no redeploy.
+        test.market.set_asset_risk(&btc, &risk(25, 400));
+        let pos = test.market.open_position(&trader, &btc, &(100 * PRECISION), &20, &Direction::Long);
+        assert_eq!(pos.leverage, 20);
     }
 
     #[test]
