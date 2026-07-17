@@ -83,6 +83,9 @@ pub enum DataKey {
     /// Ledger timestamp of the last partial liquidation of a position
     /// (T3-D4 grace period). Removed with the position.
     PartialLiqTs(u64),
+    /// Ledger timestamp of the last STAGED cross-account liquidation round
+    /// (L0-5 grace period) — account-scoped, cleared on full close.
+    CrossPartialLiqTs(Address),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -303,6 +306,20 @@ pub fn set_partial_liq_ts(env: &Env, position_id: u64, ts: u64) {
     let key = DataKey::PartialLiqTs(position_id);
     env.storage().persistent().set(&key, &ts);
     extend_persistent_ttl(env, &key);
+}
+
+pub fn get_cross_partial_liq_ts(env: &Env, trader: &Address) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::CrossPartialLiqTs(trader.clone()))
+}
+
+pub fn set_cross_partial_liq_ts(env: &Env, trader: &Address, ts: u64) {
+    let key = DataKey::CrossPartialLiqTs(trader.clone());
+    env.storage().persistent().set(&key, &ts);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn remove_cross_partial_liq_ts(env: &Env, trader: &Address) {
+    env.storage().persistent().remove(&DataKey::CrossPartialLiqTs(trader.clone()));
 }
 
 pub fn delete_position(env: &Env, id: u64, trader: &Address) {

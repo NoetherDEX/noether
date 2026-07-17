@@ -228,6 +228,22 @@
                     },
                     {
                       "key": {
+                        "symbol": "cross_close_out_bps"
+                      },
+                      "val": {
+                        "u32": 6667
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "cross_liq_restore_target_bps"
+                      },
+                      "val": {
+                        "u32": 15000
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "insurance_buffer_share_bps"
                       },
                       "val": {
@@ -2124,6 +2140,22 @@
                               },
                               "val": {
                                 "u32": 5
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "cross_close_out_bps"
+                              },
+                              "val": {
+                                "u32": 6667
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "cross_liq_restore_target_bps"
+                              },
+                              "val": {
+                                "u32": 15000
                               }
                             },
                             {
@@ -4676,6 +4708,22 @@
                       },
                       "val": {
                         "u32": 5
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "cross_close_out_bps"
+                      },
+                      "val": {
+                        "u32": 6667
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "cross_liq_restore_target_bps"
+                      },
+                      "val": {
+                        "u32": 15000
                       }
                     },
                     {

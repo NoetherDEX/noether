@@ -202,6 +202,12 @@ pub struct MarketConfig {
     /// Keeper's share of the liquidation penalty (bps); the remainder
     /// funds the insurance buffer (L0-4).
     pub penalty_keeper_share_bps: u32,
+    /// Staged cross liquidation stops once equity ≥ this share of the
+    /// aggregate maintenance margin (bps of MM; 15_000 = 1.5× MM) (L0-5).
+    pub cross_liq_restore_target_bps: u32,
+    /// Below this share of aggregate MM (bps; 6_667 = 2/3 MM) a cross
+    /// account is closed out in full instead of staged (L0-5).
+    pub cross_close_out_bps: u32,
 }
 
 impl Default for MarketConfig {
@@ -224,6 +230,8 @@ impl Default for MarketConfig {
             insurance_buffer_share_bps: 1_000,        // 10% of proceeds -> insurance buffer
             liquidation_penalty_bps: 100,             // 1% of closed notional (L0-4)
             penalty_keeper_share_bps: 5_000,          // 50% of penalty -> keeper, rest -> buffer
+            cross_liq_restore_target_bps: 15_000,     // staged cross stops at 1.5x MM (L0-5)
+            cross_close_out_bps: 6_667,               // full close-out below 2/3 MM (L0-5)
         }
     }
 }

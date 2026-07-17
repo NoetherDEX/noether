@@ -231,6 +231,8 @@ impl MarketContract {
             || config.insurance_buffer_share_bps > BASIS_POINTS
             || config.liquidation_penalty_bps >= BASIS_POINTS
             || config.penalty_keeper_share_bps > BASIS_POINTS
+            || config.cross_liq_restore_target_bps <= BASIS_POINTS
+            || config.cross_close_out_bps >= BASIS_POINTS
         {
             return Err(NoetherError::InvalidParameter);
         }
@@ -935,59 +937,24 @@ impl MarketContract {
             return Err(NoetherError::InvalidParameter); // Not a cross-margin position
         }
 
-        // Calculate funding from cumulative rate
-        let cumulative = get_cumulative_funding_rate(&env);
-        let funding = calculate_cumulative_funding(
-            pos.size, pos.direction,
-            pos.entry_cumulative_funding, cumulative,
-        );
-
-        // Get current price and calculate PnL
+        // Get current price and settle through the shared leg helper (L0-5)
         let current_price = Self::get_oracle_price(&env, &pos.asset, false)?;
-        let pnl = calculate_pnl(&pos, current_price)?;
+        let (pnl, pool_delta) = Self::close_cross_leg(&env, &pos, current_price);
 
-        // Settle with vault (paid = profit actually covered by the pool)
-        let vault_address = get_vault(&env);
-        let paid = Self::settle_with_vault(&env, &vault_address, &trader, pnl);
-
-        let usdc_token = get_usdc_token(&env);
-        let token_client = token::Client::new(&env, &usdc_token);
-
-        // Loss + funding move to the vault in one transfer, credited on
-        // receipt. Cross collateral is pool-backed, so the full loss
-        // transfers here; account-level bad-debt capping happens in
-        // liquidate_cross_account.
-        let mut to_vault: i128 = 0;
-        if pnl < 0 {
-            to_vault += -pnl;
-        }
-        if funding > 0 {
-            to_vault += funding;
-        }
-        if to_vault > 0 {
-            token_client.transfer(&env.current_contract_address(), &vault_address, &to_vault);
-            Self::credit_vault_receipt(&env, &vault_address, to_vault);
-        }
-
-        // Return remaining equity to cross-margin pool (NOT trader wallet)
-        let effective_pnl = if pnl > 0 { paid } else { pnl };
-        let to_pool = pos.collateral.checked_add(effective_pnl).unwrap_or(0)
-            .checked_sub(funding).unwrap_or(0);
-        if to_pool > 0 {
+        // Return remaining equity to the cross pool (NOT trader wallet).
+        // A deficit leg (pool_delta < 0) debits the pool down to zero —
+        // cross legs share one pool by definition.
+        if pool_delta != 0 {
             let current_balance = get_cross_margin_balance(&env, &trader);
-            let new_balance = current_balance.checked_add(to_pool).unwrap_or(current_balance);
+            let mut new_balance = current_balance.checked_add(pool_delta).unwrap_or(current_balance);
+            if new_balance < 0 {
+                new_balance = 0;
+            }
             set_cross_margin_balance(&env, &trader, new_balance);
         }
 
         // Record volume
         record_volume_only(&env, &trader, pos.size);
-
-        Self::adjust_oi(&env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
-
-        // Clean up (defensive: legacy cross positions may carry attached orders)
-        Self::cancel_position_orders(&env, position_id, None);
-        remove_cross_margin_position(&env, &trader, position_id);
-        delete_position(&env, position_id, &trader);
 
         extend_instance_ttl(&env);
 
@@ -997,6 +964,61 @@ impl MarketContract {
         );
 
         Ok(pnl)
+    }
+
+    /// Shared cross-leg settlement (L0-5), used by close_position_cross and
+    /// the staged cross liquidation: settles PnL with the vault, moves
+    /// loss + funding (defensively capped at the market's token balance),
+    /// unwinds OI / attached orders / indexes and deletes the position.
+    /// Returns (realized pnl, signed pool delta = collateral + effective_pnl
+    /// − funding) — the CALLER applies the delta to CrossMarginBalance,
+    /// which lets the liquidation loop run a signed running pool so deficit
+    /// legs consume later legs' remainders (order-independent residual).
+    fn close_cross_leg(env: &Env, pos: &Position, current_price: i128) -> (i128, i128) {
+        let trader = pos.trader.clone();
+        let cumulative = get_cumulative_funding_rate(env);
+        let funding = calculate_cumulative_funding(
+            pos.size, pos.direction,
+            pos.entry_cumulative_funding, cumulative,
+        );
+        let pnl = calculate_pnl(pos, current_price).unwrap_or(0);
+
+        let vault_address = get_vault(env);
+        let paid = Self::settle_with_vault(env, &vault_address, &trader, pnl);
+
+        let usdc_token = get_usdc_token(env);
+        let token_client = token::Client::new(env, &usdc_token);
+        let market_addr = env.current_contract_address();
+
+        // Loss + funding move to the vault, credited on receipt; capped at
+        // the market's real balance (excess = bad debt, booked by L0-2).
+        let mut to_vault: i128 = 0;
+        if pnl < 0 {
+            to_vault += -pnl;
+        }
+        if funding > 0 {
+            to_vault += funding;
+        }
+        if to_vault > 0 {
+            let bal = token_client.balance(&market_addr);
+            let transfer = if to_vault > bal { bal } else { to_vault };
+            if transfer > 0 {
+                token_client.transfer(&market_addr, &vault_address, &transfer);
+                Self::credit_vault_receipt(env, &vault_address, transfer);
+            }
+        }
+
+        let effective_pnl = if pnl > 0 { paid } else { pnl };
+        let pool_delta = pos.collateral
+            .checked_add(effective_pnl).unwrap_or(0)
+            .checked_sub(funding).unwrap_or(0);
+
+        Self::adjust_oi(env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
+        Self::cancel_position_orders(env, pos.id, None);
+        remove_cross_margin_position(env, &trader, pos.id);
+        delete_position(env, pos.id, &trader);
+
+        (pnl, pool_delta)
     }
 
     // is_cross_liquidatable removed for WASM size - keeper simulates liquidate_cross_account
@@ -1033,138 +1055,174 @@ impl MarketContract {
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
         let vault_address = get_vault(&env);
-
-        // Calculate total remaining equity
-        let equity = position::calculate_cross_equity(&env, &trader, &get_price);
-
-        // Close all cross positions - settle PnL with vault
-        // Note: Market contract holds the cross-margin deposit as USDC.
-        // Total available = deposit amount (balance + collateral in positions).
-        // Losses can exceed this with leverage, so cap transfers at available balance.
         let market_addr = env.current_contract_address();
-        let mut total_loss_to_vault: i128 = 0;
-        let mut total_pnl: i128 = 0;
-        let mut total_closed_size: i128 = 0;
-        let cumulative = get_cumulative_funding_rate(&env);
+        let bps_i = BASIS_POINTS as i128;
+        let now = env.ledger().timestamp();
 
+        // ── L0-5: three-branch staged liquidation ──
+        let equity = position::calculate_cross_equity(&env, &trader, &get_price);
+        let mm_agg = position::calculate_cross_maintenance_margin(
+            &env, &trader, config.maintenance_margin_bps,
+        );
+        let bankrupt = equity <= 0;
+        let close_out =
+            !bankrupt && equity < mm_agg * (config.cross_close_out_bps as i128) / bps_i;
+        let staged = !bankrupt && !close_out;
+
+        // Grace period between staged rounds (account-scoped #83);
+        // bankruptcy and close-out override it — waiting only grows bad debt.
+        if staged {
+            if let Some(last) = get_cross_partial_liq_ts(&env, &trader) {
+                if now.saturating_sub(last) < config.partial_liq_cooldown_secs {
+                    return Err(NoetherError::LiquidationCooldown);
+                }
+            }
+        }
+
+        // Candidates (pid, upnl, size) at lenient prices, skipping
+        // unreadable-price legs exactly as before.
+        let mut cands: Vec<(u64, i128, i128)> = Vec::new(&env);
         for i in 0..position_ids.len() {
             let pid = position_ids.get(i).unwrap();
             if let Some(pos) = get_position(&env, pid) {
-                // Use actual oracle price for settlement; skip position if oracle fails
-                let current_price = match Self::get_oracle_price(&env, &pos.asset, false) {
-                    Ok(p) if p > 0 => p,
-                    _ => continue, // Skip this position if oracle unavailable
-                };
-                let pnl = calculate_pnl(&pos, current_price).unwrap_or(0);
-                total_pnl += pnl;
-
-                // Calculate funding from cumulative rate
-                let funding = calculate_cumulative_funding(
-                    pos.size, pos.direction,
-                    pos.entry_cumulative_funding, cumulative,
-                );
-
-                // Settle accounting with vault
-                let _ = Self::settle_with_vault(&env, &vault_address, &trader, pnl);
-
-                if pnl < 0 {
-                    total_loss_to_vault += -pnl;
+                match Self::get_oracle_price(&env, &pos.asset, false) {
+                    Ok(p) if p > 0 => {
+                        let pnl = calculate_pnl(&pos, p).unwrap_or(0);
+                        cands.push_back((pid, pnl, pos.size));
+                    }
+                    _ => continue,
                 }
-
-                // Include funding owed to vault
-                if funding > 0 {
-                    total_loss_to_vault += funding;
-                }
-
-                Self::adjust_oi(&env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
-                total_closed_size += pos.size;
-
-                // Cancel any attached orders (defensive), then delete position
-                Self::cancel_position_orders(&env, pid, None);
-                delete_position(&env, pid, &trader);
             }
         }
 
-        // Transfer losses to vault - capped at market contract's actual USDC balance
-        // (leveraged losses can exceed deposited collateral = bad debt absorbed by vault)
-        let market_usdc_balance = token_client.balance(&market_addr);
-        if total_loss_to_vault > 0 && market_usdc_balance > 0 {
-            let actual_transfer = if total_loss_to_vault > market_usdc_balance {
-                market_usdc_balance
-            } else {
-                total_loss_to_vault
+        // Ascending uPnL (worst loser first — best health-per-close, the
+        // Lighter takeover order); tie-break: larger size first.
+        let n = cands.len();
+        let mut i = 1u32;
+        while i < n {
+            let key = cands.get(i).unwrap();
+            let mut j = i;
+            while j > 0 {
+                let prev = cands.get(j - 1).unwrap();
+                if prev.1 < key.1 || (prev.1 == key.1 && prev.2 >= key.2) {
+                    break;
+                }
+                cands.set(j, prev);
+                j -= 1;
+            }
+            cands.set(j, key);
+            i += 1;
+        }
+
+        // Signed running pool: leg remainders credit it, deficit legs debit
+        // it (possibly below zero mid-loop), penalties come out of the
+        // positive part. Written back clamped at the end.
+        let start_balance = get_cross_margin_balance(&env, &trader);
+        let mut running_pool: i128 = start_balance;
+        let mut total_pnl: i128 = 0;
+        let mut total_keeper: i128 = 0;
+        let mut total_penalty: i128 = 0;
+
+        let mut idx = 0u32;
+        while idx < cands.len() {
+            let (pid, _upnl, _sz) = cands.get(idx).unwrap();
+            idx += 1;
+            let pos = match get_position(&env, pid) {
+                Some(p) => p,
+                None => continue,
             };
-            token_client.transfer(&market_addr, &vault_address, &actual_transfer);
-            // Cross-liquidation proceeds feed the insurance buffer too (T3-D4)
-            let buffer_cut = actual_transfer
-                * (config.insurance_buffer_share_bps as i128)
-                / (BASIS_POINTS as i128);
-            Self::credit_vault_receipt(&env, &vault_address, actual_transfer - buffer_cut);
-            Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
+            let current_price = match Self::get_oracle_price(&env, &pos.asset, false) {
+                Ok(p) if p > 0 => p,
+                _ => continue,
+            };
+
+            let (pnl, pool_delta) = Self::close_cross_leg(&env, &pos, current_price);
+            total_pnl += pnl;
+            running_pool = running_pool.checked_add(pool_delta).unwrap_or(running_pool);
+
+            // Per-leg penalty (L0-4 split), skipped when bankrupt; capped at
+            // the positive part of the running pool.
+            let mut keeper_cut_leg: i128 = 0;
+            if !bankrupt {
+                let mut penalty = pos.size * (config.liquidation_penalty_bps as i128) / bps_i;
+                let available = if running_pool > 0 { running_pool } else { 0 };
+                if penalty > available {
+                    penalty = available;
+                }
+                if penalty > 0 {
+                    keeper_cut_leg = penalty * (config.penalty_keeper_share_bps as i128) / bps_i;
+                    let buffer_cut = penalty - keeper_cut_leg;
+                    running_pool -= penalty;
+                    // Transfers are bounded by the market's real balance.
+                    let bal = token_client.balance(&market_addr);
+                    let k = if keeper_cut_leg > bal { bal } else { keeper_cut_leg };
+                    if k > 0 {
+                        token_client.transfer(&market_addr, &keeper, &k);
+                    }
+                    let bal2 = token_client.balance(&market_addr);
+                    let b = if buffer_cut > bal2 { bal2 } else { buffer_cut };
+                    if b > 0 {
+                        token_client.transfer(&market_addr, &vault_address, &b);
+                        Self::fund_vault_buffer(&env, &vault_address, b);
+                    }
+                    keeper_cut_leg = k;
+                    total_keeper += k;
+                    total_penalty += penalty;
+                }
+            }
+
+            env.events().publish(
+                (Symbol::new(&env, "position_liquidated"),),
+                (pid, trader.clone(), pos.asset.clone(), pos.direction,
+                 pos.size, keeper_cut_leg, current_price),
+            );
+
+            // Staged rounds stop once the survivors are healthy again:
+            // true equity = running pool + survivors' (collateral + upnl −
+            // funding), computed against the UNWRITTEN running pool.
+            if staged {
+                let stored = get_cross_margin_balance(&env, &trader);
+                let eq_stored = position::calculate_cross_equity(&env, &trader, &get_price);
+                let eq_true = eq_stored - stored + running_pool;
+                let mm_left = position::calculate_cross_maintenance_margin(
+                    &env, &trader, config.maintenance_margin_bps,
+                );
+                if mm_left == 0
+                    || eq_true >= mm_left * (config.cross_liq_restore_target_bps as i128) / bps_i
+                {
+                    break;
+                }
+            }
         }
 
-        // ── L0-4: bounded penalty; the residual STAYS on the trader's
-        // cross balance (withdrawable) instead of transferring to the vault.
-        let bps_i = BASIS_POINTS as i128;
-        let remaining_balance = token_client.balance(&market_addr);
-        let mut keeper_reward: i128 = 0;
-        let mut residual: i128 = 0;
-        let mut penalty: i128 = 0;
+        // Write the pool back (clamped); bankrupt accounts force-zero.
+        let final_balance = if bankrupt || running_pool < 0 { 0 } else { running_pool };
+        set_cross_margin_balance(&env, &trader, final_balance);
 
-        if equity > 0 {
-            penalty = total_closed_size * (config.liquidation_penalty_bps as i128) / bps_i;
-            if penalty > equity {
-                penalty = equity;
+        let survivors = get_cross_margin_position_ids(&env, &trader);
+        if survivors.is_empty() {
+            // Fully closed: the residual stays claimable on the pool (L0-4).
+            env.events().publish(
+                (Symbol::new(&env, "liq_refund"),),
+                (trader.clone(), 0u64, final_balance, total_penalty),
+            );
+            remove_cross_partial_liq_ts(&env, &trader);
+            if final_balance == 0 {
+                remove_cross_margin_trader(&env, &trader);
             }
-            let mut keeper_cut = penalty * (config.penalty_keeper_share_bps as i128) / bps_i;
-            // Can't pay more than what's physically available
-            if keeper_cut > remaining_balance {
-                keeper_cut = remaining_balance;
-            }
-            let mut buffer_cut = penalty - keeper_cut;
-            let after_keeper = remaining_balance - keeper_cut;
-            if buffer_cut > after_keeper {
-                buffer_cut = after_keeper;
-            }
-
-            if keeper_cut > 0 {
-                token_client.transfer(&market_addr, &keeper, &keeper_cut);
-            }
-            if buffer_cut > 0 {
-                token_client.transfer(&market_addr, &vault_address, &buffer_cut);
-                Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
-            }
-            keeper_reward = keeper_cut;
-            residual = equity - penalty;
-        }
-
-        // Residual equity credits the trader's cross pool: withdrawable once
-        // the position list is empty (the withdraw gate binds only while
-        // positions exist). Bankrupt accounts force-zero as before.
-        set_cross_margin_balance(&env, &trader, if residual > 0 { residual } else { 0 });
-        env.events().publish(
-            (Symbol::new(&env, "liq_refund"),),
-            (trader.clone(), 0u64, if residual > 0 { residual } else { 0 }, penalty),
-        );
-
-        // Clear position list
-        let empty_ids: Vec<u64> = Vec::new(&env);
-        env.storage().persistent().set(
-            &storage::DataKey::CrossMarginPositions(trader.clone()),
-            &empty_ids,
-        );
-        if residual <= 0 {
-            remove_cross_margin_trader(&env, &trader);
+        } else {
+            // Survivors keep trading under the grace period.
+            set_cross_partial_liq_ts(&env, &trader, now);
         }
 
         extend_instance_ttl(&env);
 
         env.events().publish(
             (Symbol::new(&env, "cross_liq"),),
-            (trader, total_pnl, keeper_reward),
+            (trader, total_pnl, total_keeper),
         );
 
-        Ok(keeper_reward)
+        Ok(total_keeper)
     }
 
     /// Get cross-margin balance for a trader (pool balance only).
@@ -4147,6 +4205,157 @@ mod tests {
         // Conservation: market outflow == loss transfer + penalty + residual
         // == the position's collateral.
         assert_eq!(m0 - usdc.balance(&test.market_id), pos.collateral);
+    }
+
+    // ── L0-5: staged cross-margin liquidation ───────────────────────────
+
+    /// Two-leg cross account under the mm5 (ladder) regime: XLM deep loser,
+    /// ETH flat/mild. Returns (test, trader, xlm_pos, eth_pos).
+    fn cross_two_legs(xlm_price_bps_of_entry: i128, eth_price: i128) -> (TestEnv, Address, Position, Position) {
+        let test = setup_with_config(mm5_config());
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let eth = Symbol::new(&test.env, "ETH");
+        let p1 = test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long);
+        let p2 = test.market.open_position_cross(&trader, &eth, &(100 * PRECISION), &10, &Direction::Long);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * xlm_price_bps_of_entry / 10_000));
+        oracle.set_price(&eth, &eth_price);
+        (test, trader, p1, p2)
+    }
+
+    #[test]
+    fn test_cross_staged_closes_worst_leg_and_stops_at_restore_target() {
+        // XLM leg loses ~its whole collateral share; ETH untouched. Equity
+        // (~98.5) sits between 2/3·MM (66.3) and MM (99.5): STAGED.
+        let (test, trader, p1, p2) = cross_two_legs(899, 3_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+
+        test.market.liquidate_cross_account(&keeper, &trader);
+
+        // Worst leg (XLM) closed; ETH survives; account healthy again.
+        assert!(test.market.get_position(&p1.id).is_none());
+        assert!(test.market.get_position(&p2.id).is_some());
+        let res = test.market.try_liquidate_cross_account(&keeper, &trader);
+        assert_eq!(res, Err(Ok(NoetherError::CrossMarginNotLiquidatable)));
+    }
+
+    #[test]
+    fn test_cross_staged_orders_legs_by_ascending_upnl() {
+        // Both legs lose; XLM far worse. Ascending-uPnL selection must take
+        // XLM first and stop with ETH alive.
+        let (test, trader, p1, p2) = cross_two_legs(902, 2_990 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+
+        test.market.liquidate_cross_account(&keeper, &trader);
+        assert!(test.market.get_position(&p1.id).is_none(), "worst leg must close first");
+        assert!(test.market.get_position(&p2.id).is_some(), "mild leg must survive");
+    }
+
+    #[test]
+    fn test_cross_staged_cooldown_returns_83_then_allows_after_30s() {
+        let (test, trader, _p1, p2) = cross_two_legs(899, 3_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let eth = Symbol::new(&test.env, "ETH");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        // Round 1 restores health (survivor: ETH) and stamps the grace ts.
+        test.market.liquidate_cross_account(&keeper, &trader);
+        assert!(test.market.get_position(&p2.id).is_some());
+
+        // ETH slides: liquidatable again but still in the STAGED band —
+        // inside the 30s window the account is shielded (#83).
+        oracle.set_price(&eth, &(2_840 * PRECISION));
+        let blocked = test.market.try_liquidate_cross_account(&keeper, &trader);
+        assert_eq!(blocked, Err(Ok(NoetherError::LiquidationCooldown)));
+
+        // After the grace period the round runs and the residual stays on
+        // the pool (full close of the last leg).
+        test.env.ledger().set_timestamp(test.env.ledger().timestamp() + 31);
+        test.market.liquidate_cross_account(&keeper, &trader);
+        assert!(test.market.get_position(&p2.id).is_none());
+        assert!(test.market.get_cross_margin_balance(&trader) > 0);
+    }
+
+    #[test]
+    fn test_cross_close_out_below_two_thirds_mm_closes_whole_book() {
+        // Equity ~46.4 < 2/3·MM (66.3): full-book close-out in one call,
+        // penalties applied, residual stays on the pool.
+        let (test, trader, p1, p2) = cross_two_legs(880, 2_900 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+
+        let reward = test.market.liquidate_cross_account(&keeper, &trader);
+        assert!(test.market.get_position(&p1.id).is_none());
+        assert!(test.market.get_position(&p2.id).is_none());
+        assert!(reward > 0, "close-out charges penalties");
+        let residual = test.market.get_cross_margin_balance(&trader);
+        assert!(residual > 0, "residual equity must stay on the pool");
+
+        // And it is withdrawable immediately.
+        let w0 = usdc.balance(&trader);
+        test.market.withdraw_cross_margin(&trader, &residual);
+        assert_eq!(usdc.balance(&trader) - w0, residual);
+    }
+
+    #[test]
+    fn test_cross_bankrupt_overrides_cooldown_and_caps_bad_debt() {
+        let (test, trader, _p1, p2) = cross_two_legs(899, 3_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let eth = Symbol::new(&test.env, "ETH");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+
+        // Round 1 stamps the grace ts with ETH surviving.
+        test.market.liquidate_cross_account(&keeper, &trader);
+        assert!(test.market.get_position(&p2.id).is_some());
+
+        // ETH crashes to bankruptcy INSIDE the grace window — the override
+        // must let the liquidation through (waiting only grows bad debt).
+        oracle.set_price(&eth, &(2_400 * PRECISION));
+        let market_before = usdc.balance(&test.market_id);
+        let reward = test.market.liquidate_cross_account(&keeper, &trader);
+
+        assert_eq!(reward, 0, "bankrupt round pays no penalty/keeper cut");
+        assert!(test.market.get_position(&p2.id).is_none());
+        assert_eq!(test.market.get_cross_margin_balance(&trader), 0);
+        // Loss transfers were capped at what the market physically held.
+        let market_after = usdc.balance(&test.market_id);
+        assert!(market_before - market_after <= market_before);
+    }
+
+    #[test]
+    fn test_cross_staged_emits_per_leg_position_liquidated_plus_cross_liq() {
+        use soroban_sdk::testutils::Events;
+        use soroban_sdk::TryFromVal;
+        let (test, trader, _p1, _p2) = cross_two_legs(899, 3_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+
+        test.market.liquidate_cross_account(&keeper, &trader);
+
+        // One per-leg position_liquidated (7-tuple, existing shape) plus the
+        // cross_liq summary; no liq_refund while a survivor remains.
+        let events = test.env.events().all();
+        let mut liquidated = 0u32;
+        let mut summaries = 0u32;
+        let mut refunds = 0u32;
+        for e in events.iter() {
+            let topics = e.1;
+            if let Some(first) = topics.first() {
+                if let Ok(s) = Symbol::try_from_val(&test.env, &first) {
+                    if s == Symbol::new(&test.env, "position_liquidated") {
+                        liquidated += 1;
+                    } else if s == Symbol::new(&test.env, "cross_liq") {
+                        summaries += 1;
+                    } else if s == Symbol::new(&test.env, "liq_refund") {
+                        refunds += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(liquidated, 1, "exactly the worst leg emits per-leg detail");
+        assert_eq!(summaries, 1, "one aggregate cross_liq summary");
+        assert_eq!(refunds, 0, "no refund event while a leg survives");
     }
 
     #[test]
