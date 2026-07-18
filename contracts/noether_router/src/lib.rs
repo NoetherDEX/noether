@@ -67,6 +67,10 @@ pub enum DataKey {
     StorkAssets,
     /// Last verified Stork price per tag (temporary storage)
     StorkPrice(BytesN<8>),
+    /// L1-24: admin-set sanity band (lo, hi) overriding the compiled BANDS
+    /// table for one asset — a new pair needs no router redeploy, only a
+    /// set_price_band + the shim upgrade() for its tag.
+    PriceBand(Symbol),
 }
 
 /// Stork second-source configuration (T3-D1). The feature is inert until an
@@ -542,6 +546,23 @@ impl NoetherRouterContract {
         Ok(())
     }
 
+    /// L1-24: set/override the price sanity band for one asset (admin, 0<lo<hi).
+    /// A stored band lets a new pair relay without a router redeploy.
+    pub fn set_price_band(env: Env, asset: Symbol, lo: i128, hi: i128) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        if lo <= 0 || hi <= lo {
+            return Err(NoetherError::InvalidParameter);
+        }
+        env.storage().persistent().set(&DataKey::PriceBand(asset.clone()), &(lo, hi));
+        env.events().publish((Symbol::new(&env, "price_band_set"), asset), (lo, hi));
+        Ok(())
+    }
+
+    /// L1-24 view: the stored band override (None = compiled BANDS fallback).
+    pub fn get_price_band(env: Env, asset: Symbol) -> Option<(i128, i128)> {
+        env.storage().persistent().get(&DataKey::PriceBand(asset))
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Views
     // ───────────────────────────────────────────────────────────────────────
@@ -710,6 +731,15 @@ impl NoetherRouterContract {
 // Coarse per-asset sanity bands, 7-decimal fixed point. Deliberately
 // wide — they only reject obvious garbage, never legitimate volatility.
 fn price_bounds(env: &Env, asset: &Symbol) -> Result<(i128, i128), NoetherError> {
+    // L1-24: an admin-stored band wins over the compiled table (new pairs +
+    // per-asset retuning without a router redeploy).
+    if let Some(band) = env
+        .storage()
+        .persistent()
+        .get::<_, (i128, i128)>(&DataKey::PriceBand(asset.clone()))
+    {
+        return Ok(band);
+    }
     const P: i128 = 10_000_000;
     // Coarse sanity bands in 7-dec USD: wide enough to never bind in a real
     // market, tight enough to reject a wildly wrong attestation. Must cover
@@ -878,6 +908,28 @@ mod tests {
         let client = NoetherRouterContractClient::new(&env, &router_id);
         client.initialize(&admin, &market_id, &noeracle_id, &pubkeys(&env));
         Fixture { env, admin, market_id, noeracle_id, client }
+    }
+
+    #[test]
+    fn set_price_band_override_and_validation() {
+        let f = setup();
+        let btc = Symbol::new(&f.env, "BTC");
+        assert_eq!(f.client.get_price_band(&btc), None); // compiled table by default
+
+        f.client.set_price_band(&btc, &(100 * 10_000_000), &(200 * 10_000_000));
+        assert_eq!(
+            f.client.get_price_band(&btc),
+            Some((100 * 10_000_000, 200 * 10_000_000))
+        );
+        // Inverted / non-positive bounds rejected.
+        assert!(matches!(
+            f.client.try_set_price_band(&btc, &(200 * 10_000_000), &(100 * 10_000_000)),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        assert!(matches!(
+            f.client.try_set_price_band(&btc, &0, &(100 * 10_000_000)),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
     }
 
     #[test]

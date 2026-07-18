@@ -42,6 +42,10 @@ pub enum DataKey {
     /// Two-tier pause (L0-15): (mode, since) where mode 0=live, 1=halt-open,
     /// 2=full-freeze; since = ledger seconds the current mode began.
     PauseState,
+    /// L1-24: per-asset trading halt (persistent bool, unwrap_or false). When
+    /// true, risk-INCREASING ops on the asset revert #92; closing/liquidating
+    /// still works — one broken feed no longer forces a whole-venue pause.
+    AssetHalted(Symbol),
     /// L1-30: proceeds (USDC to trader) from a full isolated close, keyed by
     /// position_id, in TEMPORARY storage. Lets a vault_factory owner reconcile
     /// a keeper-executed protective close to the exact amount that landed at
@@ -625,6 +629,17 @@ pub fn update_order_status(env: &Env, order_id: u64, status: OrderStatus) {
             remove_order_from_lists(env, order_id, &order.trader);
         }
     }
+}
+
+// ── L1-24 per-asset halt ──
+pub fn get_asset_halted(env: &Env, asset: &Symbol) -> bool {
+    env.storage().persistent().get(&DataKey::AssetHalted(asset.clone())).unwrap_or(false)
+}
+
+pub fn set_asset_halted(env: &Env, asset: &Symbol, halted: bool) {
+    let key = DataKey::AssetHalted(asset.clone());
+    env.storage().persistent().set(&key, &halted);
+    extend_persistent_ttl(env, &key);
 }
 
 /// L1-30: record a full isolated close's trader-proceeds in TEMPORARY storage

@@ -60,6 +60,8 @@ const NOETHER_ERROR_NAMES: Record<number, string> = {
   89: 'SkewCapExceeded',
   90: 'Frozen',
   91: 'NetsToZero',
+  92: 'AssetHalted',
+  93: 'WithdrawCooldownActive',
 };
 
 export function contractErrorFromCode(code: number): ContractErrorInfo {

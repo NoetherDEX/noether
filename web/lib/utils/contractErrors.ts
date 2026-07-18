@@ -72,6 +72,8 @@ const NOETHER_ERROR_MESSAGES: Record<number, string> = {
   89: 'This order would push the market past its long/short skew cap — try a smaller size or the other side',
   90: 'The market is fully frozen right now — only order cancellation is available; it auto-resumes within 72h',
   91: 'This order only reduces your opposite position — use Close or reduce-only instead',
+  92: 'Trading in this market is temporarily halted — closing positions still works',
+  93: 'Withdrawals unlock a short cooldown after your latest deposit — try again shortly',
 };
 
 /** FactoryError — contracts/vault_factory/src/types.rs. */

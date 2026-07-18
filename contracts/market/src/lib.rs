@@ -207,6 +207,31 @@ impl MarketContract {
         (storage::effective_pause_mode_view(&env), since)
     }
 
+    /// L1-24: halt/resume trading in ONE market (admin). While halted, risk-
+    /// increasing ops on the asset revert #92; closing/liquidating/cancelling
+    /// still works — one broken feed no longer forces a whole-venue pause.
+    pub fn set_asset_halt(env: Env, asset: Symbol, halted: bool) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        // Unknown symbol → the existing InvalidPrice error from symbol_to_tag.
+        noether_common::assets::symbol_to_tag(&env, &asset)?;
+        set_asset_halted(&env, &asset, halted);
+        env.events().publish((Symbol::new(&env, "asset_halt_set"), asset), (halted,));
+        Ok(())
+    }
+
+    /// L1-24 view: whether one market is halted.
+    pub fn is_asset_halted(env: Env, asset: Symbol) -> bool {
+        get_asset_halted(&env, &asset)
+    }
+
+    /// L1-24 gate: reject risk-increasing ops on a halted asset (#92).
+    fn require_asset_open(env: &Env, asset: &Symbol) -> Result<(), NoetherError> {
+        if get_asset_halted(env, asset) {
+            return Err(NoetherError::AssetHalted);
+        }
+        Ok(())
+    }
+
     /// Route a share of trading fees to a treasury address (insurance /
     /// operations funding). bps is the protocol share in basis points,
     /// capped at 50%.
@@ -420,6 +445,7 @@ impl MarketContract {
     ) -> Result<Position, NoetherError> {
         require_initialized(&env)?;
         require_can_increase_risk(&env)?;
+        Self::require_asset_open(&env, &asset)?; // L1-24
 
         trader.require_auth();
 
@@ -2099,6 +2125,7 @@ impl MarketContract {
             require_can_reduce_risk(&env)?;
         } else {
             require_can_increase_risk(&env)?;
+            Self::require_asset_open(&env, &asset)?; // L1-24
         }
 
         trader.require_auth();
@@ -2578,6 +2605,7 @@ impl MarketContract {
         // execution de-risks (allowed until full-freeze, #90).
         if strict_price {
             require_can_increase_risk(&env)?;
+            Self::require_asset_open(&env, &order.asset)?; // L1-24
         } else {
             require_can_reduce_risk(&env)?;
         }
@@ -2774,6 +2802,7 @@ impl MarketContract {
             require_can_reduce_risk(&env)?;
         } else {
             require_can_increase_risk(&env)?;
+            Self::require_asset_open(&env, &asset)?; // L1-24
         }
         trader.require_auth();
 
@@ -5378,6 +5407,55 @@ mod tests {
 
         // Unclamped → PnL = size 500 × 50% = 250.
         assert_eq!(test.market.close_position(&trader, &pos.id, &0), 250 * PRECISION);
+    }
+
+    #[test]
+    fn test_asset_halt_blocks_open_allows_close() {
+        // L1-24: halting one market blocks new exposure there (#92) but never
+        // the exit; other markets are unaffected.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let btc = Symbol::new(&test.env, "BTC");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+
+        test.market.set_asset_halt(&xlm, &true);
+
+        // New XLM exposure blocked …
+        assert!(matches!(
+            test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0),
+            Err(Ok(NoetherError::AssetHalted))
+        ));
+        // … but closing the existing XLM position still works …
+        test.market.close_position(&trader, &pos.id, &0);
+        assert!(test.market.get_position(&pos.id).is_none());
+        // … and an unhalted market opens fine.
+        let bpos = test.market.open_position(&trader, &btc, &(100 * PRECISION), &5, &Direction::Long, &0);
+        assert!(test.market.get_position(&bpos.id).is_some());
+    }
+
+    #[test]
+    fn test_asset_halt_blocks_entry_order_placement() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        test.market.set_asset_halt(&xlm, &true);
+        assert!(matches!(
+            test.market.try_place_limit_order(
+                &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+                &(PRECISION / 20), &false, &100, &0,
+            ),
+            Err(Ok(NoetherError::AssetHalted))
+        ));
+    }
+
+    #[test]
+    fn test_asset_halt_unknown_symbol_rejected() {
+        let test = setup();
+        assert!(matches!(
+            test.market.try_set_asset_halt(&Symbol::new(&test.env, "FAKE"), &true),
+            Err(Ok(NoetherError::InvalidPrice))
+        ));
     }
 
     #[test]
