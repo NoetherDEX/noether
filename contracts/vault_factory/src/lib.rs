@@ -423,6 +423,7 @@ impl VaultFactoryContract {
         trigger_price: i128,
         trigger_above: bool,
         slippage_tolerance_bps: u32,
+        time_in_force: u32,
     ) -> Result<u64, FactoryError> {
         let mut info = require_leader_call(&env, &leader, vault_id)?;
         if collateral <= 0 {
@@ -449,7 +450,7 @@ impl VaultFactoryContract {
             trigger_price,
             trigger_above,
             slippage_tolerance_bps,
-            0u32, // time_in_force = GTC (default for vault-leader orders)
+            time_in_force, // L1-30: TIF pass-through (was hardcoded GTC)
         )
             .into_val(&env);
         // Only declare the deeper SAC transfer with from=factory.
@@ -559,6 +560,143 @@ impl VaultFactoryContract {
         env.events().publish(
             (Symbol::new(&env, "order_reconciled"), vault_id),
             (order_id, position_id, credited),
+        );
+        Ok(())
+    }
+
+    /// L1-30: attach a stop-loss to a vault position. Protective orders lock
+    /// nothing market-side (no delta); a keeper-executed fire closes the
+    /// position and is reconciled via reconcile_position.
+    pub fn leader_set_stop_loss(
+        env: Env, leader: Address, vault_id: u32, position_id: u64,
+        trigger_price: i128, slippage_tolerance_bps: u32,
+    ) -> Result<u64, FactoryError> {
+        require_leader_call(&env, &leader, vault_id)?;
+        if storage::get_position_vault(&env, position_id) != Some(vault_id) {
+            return Err(FactoryError::NotVaultPosition);
+        }
+        let market = storage::get_market(&env);
+        let factory = env.current_contract_address();
+        let args: Vec<soroban_sdk::Val> =
+            (factory, position_id, trigger_price, slippage_tolerance_bps).into_val(&env);
+        let order: Order = env.invoke_contract(&market, &Symbol::new(&env, "set_stop_loss"), args);
+        env.events().publish((Symbol::new(&env, "leader_sl"), vault_id), (leader, order.id, position_id));
+        Ok(order.id)
+    }
+
+    /// L1-30: attach a take-profit to a vault position (limit_price 0 = market).
+    pub fn leader_set_take_profit(
+        env: Env, leader: Address, vault_id: u32, position_id: u64,
+        trigger_price: i128, slippage_tolerance_bps: u32, limit_price: i128,
+    ) -> Result<u64, FactoryError> {
+        require_leader_call(&env, &leader, vault_id)?;
+        if storage::get_position_vault(&env, position_id) != Some(vault_id) {
+            return Err(FactoryError::NotVaultPosition);
+        }
+        let market = storage::get_market(&env);
+        let factory = env.current_contract_address();
+        let args: Vec<soroban_sdk::Val> =
+            (factory, position_id, trigger_price, slippage_tolerance_bps, limit_price).into_val(&env);
+        let order: Order = env.invoke_contract(&market, &Symbol::new(&env, "set_take_profit"), args);
+        env.events().publish((Symbol::new(&env, "leader_tp"), vault_id), (leader, order.id, position_id));
+        Ok(order.id)
+    }
+
+    /// L1-30: attach a trailing stop to a vault position.
+    pub fn leader_place_trailing_stop(
+        env: Env, leader: Address, vault_id: u32, position_id: u64,
+        trailing_percent_bps: u32, slippage_tolerance_bps: u32,
+    ) -> Result<u64, FactoryError> {
+        require_leader_call(&env, &leader, vault_id)?;
+        if storage::get_position_vault(&env, position_id) != Some(vault_id) {
+            return Err(FactoryError::NotVaultPosition);
+        }
+        let market = storage::get_market(&env);
+        let factory = env.current_contract_address();
+        let args: Vec<soroban_sdk::Val> =
+            (factory, position_id, trailing_percent_bps, slippage_tolerance_bps).into_val(&env);
+        let order: Order = env.invoke_contract(&market, &Symbol::new(&env, "place_trailing_stop"), args);
+        env.events().publish((Symbol::new(&env, "leader_trail"), vault_id), (leader, order.id, position_id));
+        Ok(order.id)
+    }
+
+    /// L1-30: place a stop-limit ENTRY on vault funds. Prefunds like a limit
+    /// order → measured-delta + OrderVault, reconciled via reconcile_order.
+    /// NOTE: TIF is GTC here (Soroban's 10-param cap leaves no room for a TIF
+    /// arg; the TIF pass-through lives on leader_place_limit_order).
+    pub fn leader_place_stop_limit(
+        env: Env, leader: Address, vault_id: u32, asset: Symbol, collateral: i128,
+        leverage: u32, direction: u32, trigger_price: i128, limit_price: i128,
+        trigger_above: bool, slippage_tolerance_bps: u32,
+    ) -> Result<u64, FactoryError> {
+        let mut info = require_leader_call(&env, &leader, vault_id)?;
+        if collateral <= 0 {
+            return Err(FactoryError::AmountMustBePositive);
+        }
+        if collateral > info.total_usdc {
+            return Err(FactoryError::InsufficientBalance);
+        }
+        let market = storage::get_market(&env);
+        let usdc = storage::get_usdc(&env);
+        let factory = env.current_contract_address();
+        let direction_enum = match direction {
+            0 => Direction::Long,
+            1 => Direction::Short,
+            _ => return Err(FactoryError::InvalidParameter),
+        };
+        let args: Vec<soroban_sdk::Val> = (
+            factory.clone(), asset, direction_enum, collateral, leverage,
+            trigger_price, limit_price, trigger_above, slippage_tolerance_bps, 0u32, // GTC
+        ).into_val(&env);
+        env.authorize_as_current_contract(svec![
+            &env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: usdc.clone(),
+                    fn_name: Symbol::new(&env, "transfer"),
+                    args: (factory.clone(), market.clone(), collateral).into_val(&env),
+                },
+                sub_invocations: svec![&env],
+            }),
+        ]);
+        let bal_before = usdc_balance(&env);
+        let order: Order = env.invoke_contract(&market, &Symbol::new(&env, "place_stop_limit_order"), args);
+        let order_id = order.id;
+        credit_measured_delta(&env, &mut info, bal_before)?;
+        storage::push_vault_order(&env, vault_id, order_id)?;
+        storage::set_order_vault(&env, order_id, vault_id);
+        storage::save_vault(&env, &info);
+        env.events().publish((Symbol::new(&env, "leader_stop_limit"), vault_id), (leader, order_id));
+        Ok(order_id)
+    }
+
+    /// L1-30: reconcile a vault position the KEEPER closed out-of-band (a
+    /// protective SL/TP/trailing fire, or a liquidation) — proceeds landed at
+    /// the factory with no factory call. Permissionless + idempotent (the
+    /// PositionVault map is dropped, so a second call → #16). Credits the EXACT
+    /// recorded proceeds (market.get_closed_proceeds), never a global-surplus
+    /// guess. While the stale position lingers, full_nav fail-closes (#18), so
+    /// the keeper reconciles promptly to unfreeze the vault.
+    pub fn reconcile_position(env: Env, vault_id: u32, position_id: u64) -> Result<(), FactoryError> {
+        storage::require_initialized(&env)?;
+        if storage::get_position_vault(&env, position_id) != Some(vault_id) {
+            return Err(FactoryError::NotVaultPosition);
+        }
+        let market = storage::get_market(&env);
+        // Only a CLOSED position reconciles; still-open → nothing to do.
+        if read_position(&env, &market, position_id).is_some() {
+            return Err(FactoryError::InvalidParameter);
+        }
+        let proceeds = read_closed_proceeds(&env, &market, position_id);
+        let mut info = storage::load_vault(&env, vault_id)?;
+        info.total_usdc = info.total_usdc.checked_add(proceeds).ok_or(FactoryError::Overflow)?;
+        storage::save_vault(&env, &info);
+        storage::remove_vault_position(&env, vault_id, position_id);
+        storage::remove_position_vault(&env, position_id);
+        storage::extend_instance_ttl(&env);
+        env.events().publish(
+            (Symbol::new(&env, "position_reconciled"), vault_id),
+            (position_id, proceeds),
         );
         Ok(())
     }
@@ -772,6 +910,20 @@ fn read_position_equity(env: &Env, market: &Address, position_id: u64) -> Result
 fn read_order(env: &Env, market: &Address, order_id: u64) -> Option<Order> {
     let args: Vec<soroban_sdk::Val> = (order_id,).into_val(env);
     env.invoke_contract::<Option<Order>>(market, &Symbol::new(env, "get_order"), args)
+}
+
+/// Read a market position row (`Option<Position>`) — None once closed (L1-30).
+fn read_position(env: &Env, market: &Address, position_id: u64) -> Option<Position> {
+    let args: Vec<soroban_sdk::Val> = (position_id,).into_val(env);
+    env.invoke_contract::<Option<Position>>(market, &Symbol::new(env, "get_position"), args)
+}
+
+/// Read the recorded proceeds of a full close/liquidation (L1-30) — the exact
+/// USDC that landed at the factory, so a keeper-executed protective close
+/// reconciles without a fragile global-balance-surplus attribution.
+fn read_closed_proceeds(env: &Env, market: &Address, position_id: u64) -> i128 {
+    let args: Vec<soroban_sdk::Val> = (position_id,).into_val(env);
+    env.invoke_contract::<i128>(market, &Symbol::new(env, "get_closed_proceeds"), args)
 }
 
 /// L0-20 full NAV (V-4): liquid total_usdc + Σ open-position equity + Σ
@@ -1136,6 +1288,7 @@ mod tests {
             Pos(u64),
             Eq(u64),
             Ord(u64),
+            Proceeds(u64),
         }
 
         #[contract]
@@ -1246,7 +1399,65 @@ mod tests {
             }
 
             pub fn get_position_equity(env: Env, position_id: u64) -> i128 {
-                env.storage().persistent().get(&FakeKey::Eq(position_id)).unwrap_or(0)
+                // Mirror the real market: trap (#20) when the position is gone,
+                // so the factory's read_position_equity fail-closes (#18).
+                env.storage().persistent().get(&FakeKey::Eq(position_id)).expect("position not found")
+            }
+
+            pub fn get_closed_proceeds(env: Env, position_id: u64) -> i128 {
+                env.storage().persistent().get(&FakeKey::Proceeds(position_id)).unwrap_or(0)
+            }
+
+            fn stub_order(env: &Env, trader: Address, ot: OrderType, position_id: u64, collateral: i128) -> Order {
+                let mut id: u64 = env.storage().instance().get(&FakeKey::NextOid).unwrap_or(0);
+                id += 1;
+                env.storage().instance().set(&FakeKey::NextOid, &id);
+                let order = Order {
+                    id, trader, asset: Symbol::new(env, "BTC"), order_type: ot,
+                    direction: Direction::Long, collateral, leverage: 5, trigger_price: 0,
+                    trigger_condition: TriggerCondition::Below, slippage_tolerance_bps: 0,
+                    position_id, has_position: position_id != 0, created_at: env.ledger().timestamp(),
+                    status: OrderStatus::Pending, limit_price: 0, trailing_percent_bps: 0,
+                    time_in_force: 0, stop_limit_phase: 0,
+                };
+                env.storage().persistent().set(&FakeKey::Ord(id), &order);
+                order
+            }
+
+            pub fn set_stop_loss(env: Env, trader: Address, position_id: u64, _t: i128, _s: u32) -> Order {
+                Self::stub_order(&env, trader, OrderType::StopLoss, position_id, 0)
+            }
+            pub fn set_take_profit(env: Env, trader: Address, position_id: u64, _t: i128, _s: u32, _l: i128) -> Order {
+                Self::stub_order(&env, trader, OrderType::TakeProfit, position_id, 0)
+            }
+            pub fn place_trailing_stop(env: Env, trader: Address, position_id: u64, _tp: u32, _s: u32) -> Order {
+                Self::stub_order(&env, trader, OrderType::TrailingStop, position_id, 0)
+            }
+            #[allow(clippy::too_many_arguments)]
+            pub fn place_stop_limit_order(
+                env: Env, trader: Address, _asset: Symbol, _dir: Direction, collateral: i128,
+                _lev: u32, _tp: i128, _lp: i128, _ta: bool, _s: u32, _tif: u32,
+            ) -> Order {
+                let usdc = Self::usdc(&env);
+                token::Client::new(&env, &usdc).transfer(&trader, &env.current_contract_address(), &collateral);
+                Self::stub_order(&env, trader, OrderType::StopLimit, 0, collateral)
+            }
+
+            /// Test helper: simulate a keeper executing a protective close —
+            /// pay proceeds to the position's trader (factory), record them,
+            /// delete the position.
+            pub fn exec_close(env: Env, position_id: u64, proceeds: i128) {
+                let pos: Position = env.storage().persistent().get(&FakeKey::Pos(position_id)).unwrap();
+                let usdc = Self::usdc(&env);
+                let market_addr = env.current_contract_address();
+                let bal = token::Client::new(&env, &usdc).balance(&market_addr);
+                let pay = if proceeds > bal { bal } else { proceeds };
+                if pay > 0 {
+                    token::Client::new(&env, &usdc).transfer(&market_addr, &pos.trader, &pay);
+                }
+                env.storage().persistent().set(&FakeKey::Proceeds(position_id), &proceeds);
+                env.storage().persistent().remove(&FakeKey::Pos(position_id));
+                env.storage().persistent().remove(&FakeKey::Eq(position_id));
             }
 
             // ── test-only: simulate market PnL + keeper order execution ──
@@ -1518,7 +1729,7 @@ mod tests {
         factory.deposit(&b, &vb, &1_000_0000000);
         let oid = factory.leader_place_limit_order(
             &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
-            &50_000_0000000, &false, &100u32,
+            &50_000_0000000, &false, &100u32, &0u32,
         );
 
         assert!(matches!(
@@ -1595,7 +1806,7 @@ mod tests {
         factory.deposit(&a, &va, &1_000_0000000);
         let oid = factory.leader_place_limit_order(
             &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
-            &50_000_0000000, &false, &100u32,
+            &50_000_0000000, &false, &100u32, &0u32,
         );
         let pid = market.exec_order(&oid); // keeper executes out-of-band
 
@@ -1620,7 +1831,7 @@ mod tests {
         factory.deposit(&a, &va, &1_000_0000000);
         let oid = factory.leader_place_limit_order(
             &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
-            &50_000_0000000, &false, &100u32,
+            &50_000_0000000, &false, &100u32, &0u32,
         );
         assert_eq!(factory.get_vault(&va).total_usdc, 800_0000000, "200 locked in the order");
 
@@ -1691,6 +1902,118 @@ mod tests {
         assert!(matches!(
             factory.try_create_vault(&a, &String::from_str(&env, "C")),
             Err(Ok(FactoryError::CreationRestricted))
+        ));
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // L1-30 · leader protective-order proxies + TIF pass-through
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_leader_sets_stop_loss_on_vault_position() {
+        let (env, factory_id, _m, usdc_id, _admin) = ff();
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        let a = Address::generate(&env);
+        mint(&env, &usdc_id, &a, 2_000_0000000);
+        let va = factory.create_vault(&a, &String::from_str(&env, "A"));
+        factory.deposit(&a, &va, &1_000_0000000);
+        let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
+
+        let sl_id = factory.leader_set_stop_loss(&a, &va, &pid, &45_000_0000000, &500u32);
+        assert!(sl_id > 0, "stop-loss attached to the vault position");
+    }
+
+    #[test]
+    fn test_leader_proxy_rejects_foreign_position() {
+        let (env, factory_id, _m, usdc_id, _admin) = ff();
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        mint(&env, &usdc_id, &a, 2_000_0000000);
+        mint(&env, &usdc_id, &b, 2_000_0000000);
+        let va = factory.create_vault(&a, &String::from_str(&env, "A"));
+        let vb = factory.create_vault(&b, &String::from_str(&env, "B"));
+        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&b, &vb, &1_000_0000000);
+        let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
+
+        // Leader B cannot attach a protective order to A's position.
+        assert!(matches!(
+            factory.try_leader_set_stop_loss(&b, &vb, &pid, &45_000_0000000, &500u32),
+            Err(Ok(FactoryError::NotVaultPosition))
+        ));
+    }
+
+    #[test]
+    fn test_leader_stop_limit_delta_accounting() {
+        let (env, factory_id, _m, usdc_id, _admin) = ff();
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        let a = Address::generate(&env);
+        mint(&env, &usdc_id, &a, 2_000_0000000);
+        let va = factory.create_vault(&a, &String::from_str(&env, "A"));
+        factory.deposit(&a, &va, &1_000_0000000);
+
+        let oid = factory.leader_place_stop_limit(
+            &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
+            &48_000_0000000, &47_000_0000000, &false, &100u32,
+        );
+        // Prefunded like a limit order: liquid down 200, order owned by the vault.
+        assert_eq!(factory.get_vault(&va).total_usdc, 800_0000000);
+        assert_eq!(factory.get_order_vault(&oid), Some(va));
+    }
+
+    #[test]
+    fn test_tif_passthrough_not_hardcoded() {
+        let (env, factory_id, market_id, usdc_id, _admin) = ff();
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        let market = fake_market::FakeMarketClient::new(&env, &market_id);
+        let a = Address::generate(&env);
+        mint(&env, &usdc_id, &a, 2_000_0000000);
+        let va = factory.create_vault(&a, &String::from_str(&env, "A"));
+        factory.deposit(&a, &va, &1_000_0000000);
+
+        // TIF 1 (IOC) must reach the market, not the old hardcoded GTC.
+        let oid = factory.leader_place_limit_order(
+            &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
+            &48_000_0000000, &false, &100u32, &1u32,
+        );
+        assert_eq!(market.get_order(&oid).unwrap().time_in_force, 1);
+    }
+
+    #[test]
+    fn test_protective_close_reconciles_via_position() {
+        // The invariant path: leader sets an SL, the keeper fires it (position
+        // closes, proceeds land at the factory with no factory call), the vault
+        // freezes (#18) until reconcile_position credits the EXACT proceeds.
+        let (env, factory_id, market_id, usdc_id, _admin) = ff();
+        let factory = VaultFactoryContractClient::new(&env, &factory_id);
+        let market = fake_market::FakeMarketClient::new(&env, &market_id);
+        let a = Address::generate(&env);
+        mint(&env, &usdc_id, &a, 2_000_0000000);
+        let va = factory.create_vault(&a, &String::from_str(&env, "A"));
+        factory.deposit(&a, &va, &1_000_0000000);
+        let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
+        factory.leader_set_stop_loss(&a, &va, &pid, &45_000_0000000, &500u32);
+
+        // Keeper executes the SL: position closes, 200 proceeds → factory.
+        market.exec_close(&pid, &200_0000000);
+        // Stale position freezes NAV (fail-closed #18).
+        assert!(matches!(
+            factory.try_get_full_nav(&va),
+            Err(Ok(FactoryError::ValuationUnavailable))
+        ));
+
+        // Reconcile credits the exact proceeds and prunes the position.
+        factory.reconcile_position(&va, &pid);
+        assert_eq!(factory.get_vault(&va).total_usdc, 1_000_0000000);
+        assert_eq!(factory.get_position_vault(&pid), None);
+        // Invariant A restored: Σ vault totals == factory balance.
+        let bal = soroban_sdk::token::Client::new(&env, &usdc_id).balance(&factory_id);
+        assert_eq!(factory.get_vault(&va).total_usdc, bal);
+        // Idempotent.
+        assert!(matches!(
+            factory.try_reconcile_position(&va, &pid),
+            Err(Ok(FactoryError::NotVaultPosition))
         ));
     }
 

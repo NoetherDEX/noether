@@ -1071,6 +1071,9 @@ impl MarketContract {
                 (Symbol::new(&env, "liq_refund"),),
                 (position.trader.clone(), position_id, refund, penalty),
             );
+            // L1-30: record residual proceeds so a liquidated vault position
+            // reconciles to the exact refund that reached the factory.
+            record_close_proceeds(&env, position_id, refund);
             actual_keeper_reward = keeper_cut;
         } else {
             // Bankrupt: full collateral to the vault (buffer share via
@@ -1088,6 +1091,8 @@ impl MarketContract {
                 Self::credit_vault_receipt(&env, &vault_address, vault_receives - buffer_cut);
                 Self::fund_vault_buffer(&env, &vault_address, buffer_cut);
             }
+            // L1-30: a bankrupt liquidation returns nothing to the trader.
+            record_close_proceeds(&env, position_id, 0);
             actual_keeper_reward = 0;
         }
 
@@ -1321,6 +1326,13 @@ impl MarketContract {
         );
         let equity = p.collateral + pnl - funding;
         Ok(if equity < 0 { 0 } else { equity })
+    }
+
+    /// L1-30: proceeds a full isolated close/liquidation paid the trader, keyed
+    /// by position_id (temporary storage; 0 if unknown/expired). A vault_factory
+    /// owner reads this to reconcile a keeper-executed protective close.
+    pub fn get_closed_proceeds(env: Env, position_id: u64) -> i128 {
+        get_close_proceeds(&env, position_id)
     }
 
     // get_positions removed for WASM size - frontend queries by position ID
@@ -3115,6 +3127,9 @@ impl MarketContract {
         if to_trader > 0 {
             token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
         }
+        // L1-30: record proceeds so a vault_factory owner can reconcile a
+        // keeper-executed protective close (SL/TP/trailing) to the exact amount.
+        record_close_proceeds(env, position.id, to_trader);
 
         Self::adjust_oi(env, &position.asset, &position.direction, position.size, position.entry_price, current_price, false);
         record_volume_only(env, &position.trader, position.size);
@@ -5756,6 +5771,20 @@ mod tests {
             test.market.try_get_position_equity(&999u64),
             Err(Ok(NoetherError::PositionNotFound))
         ));
+    }
+
+    #[test]
+    fn test_close_records_proceeds_for_reconcile() {
+        // L1-30: a full close records the trader-proceeds so a factory owner
+        // can reconcile a keeper-executed protective close.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        test.market.close_position(&trader, &pos.id, &0); // at entry, no pnl/funding
+
+        let open_fee = 500 * PRECISION * 50 / 100_000;
+        assert_eq!(test.market.get_closed_proceeds(&pos.id), 100 * PRECISION - open_fee);
     }
 
     // ═══════════════════════════════════════════════════════════════════
