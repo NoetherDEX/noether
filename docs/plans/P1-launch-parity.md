@@ -28,14 +28,14 @@
 | L1-18 | Referral economics activation — IN Redeploy Batch 1 (founder decision 2026-07-17) | M | mixed | batch-1-redeploy | L2-18 | todo |
 | L1-19 | Protocol-vault indexing → real LP APY + NOE history | M | offchain | offchain-now | — | todo |
 | L1-20 | Mainnet fee sheet + all-in cost story + GET /v1/fees | S | mixed | offchain-now | — | todo |
-| L1-21 | Keeper-fee disclosure now + maker≤taker restructure in Batch 1 | M | mixed | batch-1-redeploy | L2-18 | todo |
+| L1-21 | Keeper-fee disclosure now + maker≤taker restructure in Batch 1 | M | mixed | batch-1-redeploy | L2-18 | in-progress — contracts done 2026-07-18 (Wave 5, commit 39b8ebd; KeeperFeeConfig→config bps-only, maker+keeper≤taker). web/api/docs disclosure pending sweep |
 | L1-22 | Insurance-fund seeding + fee stream + published coverage ratio | M | mixed | batch-1-redeploy | L1-18, L1-21, L2-18 | todo |
-| L1-23 | Bankruptcy keeper bounty | S | contracts | batch-1-redeploy | L0-2, L0-4, L1-22 | todo |
-| L1-24 | Listing pipeline runbook-as-code + per-asset halt | M | mixed | batch-1-redeploy | L0-12, L0-14 | todo |
+| L1-23 | Bankruptcy keeper bounty | S | contracts | batch-1-redeploy | L0-2, L0-4, L1-22 | in-progress — contracts done 2026-07-18 (Wave 5, commit bfa5542; vault pay_bounty + liq topup, coordinated MarketConfig shape) |
+| L1-24 | Listing pipeline runbook-as-code + per-asset halt | M | mixed | batch-1-redeploy | L0-12, L0-14 | in-progress — contracts done 2026-07-18 (Wave 5, commit e935bff; market per-asset halt #92 + router PriceBand). list_pair.ts + indexer/api/web pending sweep |
 | L1-25 | Public status page + monitoring (closes P3-1) | S | mixed | operator-track | — | todo |
-| L1-26 | Exit guarantees published + stale-close disclosure/clamp | M | mixed | batch-1-redeploy | L0-7, L0-15 | todo |
+| L1-26 | Exit guarantees published + stale-close disclosure/clamp | M | mixed | batch-1-redeploy | L0-7, L0-15 | in-progress — clamp done 2026-07-18 (Wave 5, commit 32f3fdf; lenient_clamp_bps=300 settlement clamp). docs exit-guarantees + UI disclosure + e2e pending sweep |
 | L1-27 | Execution-latency instrumentation + optimistic pending UX + finality narrative | M | offchain | offchain-now | — | todo |
-| L1-28 | LP withdrawal cooldown (JIT/NAV-sniping protection) | S | contracts | batch-1-redeploy | L0-15 | todo |
+| L1-28 | LP withdrawal cooldown (JIT/NAV-sniping protection) | S | contracts | batch-1-redeploy | L0-15 | in-progress — contracts done 2026-07-18 (Wave 5, commit dc76f0e; #93 cooldown default 1800). web countdown pending sweep |
 | L1-29 | Utilization borrow fee (dual-slope, second cumulative index) — verification-round addition | M | contracts | batch-1-redeploy | L0-13 | todo |
 | L1-30 | Leader protective-order proxies on factory vaults — verification-round addition | S | contracts | batch-1-redeploy | L0-20 | in-progress — contracts+tests done 2026-07-18 (Wave 4, commit 84c098e; 5 factory + 1 market test). SL/TP/trailing + stop-limit proxies, TIF passthrough, reconcile_position via market ClosedProceeds temp record. web SL/TP controls + tx-builders/SDK arity pending sweep |
 
