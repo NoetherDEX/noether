@@ -37,7 +37,7 @@
 | L1-27 | Execution-latency instrumentation + optimistic pending UX + finality narrative | M | offchain | offchain-now | — | todo |
 | L1-28 | LP withdrawal cooldown (JIT/NAV-sniping protection) | S | contracts | batch-1-redeploy | L0-15 | todo |
 | L1-29 | Utilization borrow fee (dual-slope, second cumulative index) — verification-round addition | M | contracts | batch-1-redeploy | L0-13 | todo |
-| L1-30 | Leader protective-order proxies on factory vaults — verification-round addition | S | contracts | batch-1-redeploy | L0-20 | todo |
+| L1-30 | Leader protective-order proxies on factory vaults — verification-round addition | S | contracts | batch-1-redeploy | L0-20 | in-progress — contracts+tests done 2026-07-18 (Wave 4, commit 84c098e; 5 factory + 1 market test). SL/TP/trailing + stop-limit proxies, TIF passthrough, reconcile_position via market ClosedProceeds temp record. web SL/TP controls + tx-builders/SDK arity pending sweep |
 
 ## Batch-1 riders
 
