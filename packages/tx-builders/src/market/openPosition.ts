@@ -17,6 +17,8 @@ export interface OpenPositionParams {
   collateral: bigint;
   leverage: number;
   direction: Direction;
+  /** L0-10 GMX-style acceptable-price bound (7-dec i128); 0/omitted = unbounded. */
+  acceptablePrice?: bigint;
 }
 
 export function buildOpenPositionArgs(params: OpenPositionParams): xdr.ScVal[] {
@@ -26,6 +28,7 @@ export function buildOpenPositionArgs(params: OpenPositionParams): xdr.ScVal[] {
     toScVal(params.collateral, 'i128'),
     toScVal(params.leverage, 'u32'),
     toScVal(params.direction, 'direction'),
+    toScVal(params.acceptablePrice ?? 0n, 'i128'),
   ];
 }
 
