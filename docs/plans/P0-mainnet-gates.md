@@ -1,5 +1,7 @@
 # P0 — Mainnet Gates (Build Plan)
 
+> **EXECUTION STATUS (2026-07-19):** Phase 0 + Waves 1-5 contract items are DONE and on `origin/staging` (HEAD `98ddc8b`, CI green) **except L1-18** (referral — the one remaining Wave-5 contract item). 346 workspace contract tests; WASM all < 131 KB. The off-chain integration sweep is STARTED but mostly pending the Batch-1 deploy (the tx-builders `acceptable_price` half was reverted to reapply WITH that deploy). Still ahead: L1-18, the off-chain sweep, Noeracle L0-8/9 consumption + L0-9 smoothed-mark wiring, then the Batch-1 FRESH deploy + operator steps. Per-item status lives in the tracking table + the Wave checkpoint blockquotes below.
+
 > Source analysis: docs/LIGHTER-GAP-2026-07.md (2026-07-17) · Companion files: docs/plans/P0-mainnet-gates.md, P1-launch-parity.md, P2-differentiators.md · Cross-refs cite TASKS.md / docs/AUDIT-2026-06.md / KNOWN_ISSUES.md — those ledgers are not modified.
 
 ## How to track
