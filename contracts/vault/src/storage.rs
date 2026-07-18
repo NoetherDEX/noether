@@ -83,6 +83,12 @@ pub enum DataKey {
     AssetCapAbs(Symbol),
     /// Per-asset net-skew cap as bps of AUM (L0-14; default 1500 = 15%).
     SkewCapBps(Symbol),
+    /// L0-15 timelocked recovery: the ONE pre-declared break-glass
+    /// destination (set once via init_recovery; changing it needs upgrade()).
+    RecoveryAddress,
+    /// L0-15 open recovery proposal (amount, execute_after) in (7-dec, secs).
+    /// Absent = none pending.
+    RecoveryProposal,
 }
 
 pub const RESERVE_CAP_BPS_DEFAULT: u32 = 7_000;
@@ -107,6 +113,27 @@ pub fn get_paused(env: &Env) -> bool {
 
 pub fn set_paused(env: &Env, value: bool) {
     env.storage().instance().set(&DataKey::Paused, &value);
+}
+
+// ── L0-15 timelocked recovery ──
+pub fn get_recovery_address(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::RecoveryAddress)
+}
+
+pub fn set_recovery_address(env: &Env, addr: &Address) {
+    env.storage().instance().set(&DataKey::RecoveryAddress, addr);
+}
+
+pub fn get_recovery_proposal(env: &Env) -> Option<(i128, u64)> {
+    env.storage().instance().get(&DataKey::RecoveryProposal)
+}
+
+pub fn set_recovery_proposal(env: &Env, amount: i128, execute_after: u64) {
+    env.storage().instance().set(&DataKey::RecoveryProposal, &(amount, execute_after));
+}
+
+pub fn clear_recovery_proposal(env: &Env) {
+    env.storage().instance().remove(&DataKey::RecoveryProposal);
 }
 
 pub fn get_admin(env: &Env) -> Address {

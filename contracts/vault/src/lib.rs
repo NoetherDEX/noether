@@ -50,6 +50,10 @@ use noether_common::{
     calculate_glp_for_deposit, calculate_usdc_for_withdrawal, calculate_glp_price,
 };
 
+/// L0-15: an admin recovery proposal is executable only after this delay —
+/// the depositor's protection window against a break-glass drain (48h).
+pub const RECOVERY_TIMELOCK_SECS: u64 = 172_800;
+
 mod storage;
 mod noe;
 
@@ -223,7 +227,9 @@ impl VaultContract {
     /// User must approve the vault to spend their NOE tokens before calling.
     pub fn withdraw(env: Env, withdrawer: Address, noe_amount: i128) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        // L0-15 exit-only: withdrawals are NEVER pause-gated — LPs must always
+        // be able to exit. The ReservedPayout solvency floor below is the only
+        // gate, so committed trader payouts stay protected.
 
         if noe_amount <= 0 {
             return Err(NoetherError::InvalidAmount);
@@ -1012,10 +1018,13 @@ impl VaultContract {
         Ok(())
     }
 
-    /// Unpause the vault.
+    /// Unpause the vault. Auto-cancels any open recovery proposal (L0-15) —
+    /// leaving the emergency once the emergency is over must retract the
+    /// break-glass.
     pub fn unpause(env: Env) -> Result<(), NoetherError> {
         require_admin(&env)?;
         set_paused(&env, false);
+        storage::clear_recovery_proposal(&env);
 
         env.events().publish(
             (Symbol::new(&env, "unpaused"),),
@@ -1061,36 +1070,91 @@ impl VaultContract {
         get_paused(&env)
     }
 
-    /// Emergency withdraw for admin.
-    /// Only callable when paused. Use for emergency recovery only.
-    pub fn emergency_withdraw(env: Env, amount: i128, recipient: Address) -> Result<(), NoetherError> {
-        require_admin(&env)?;
+    // emergency_withdraw DELETED (L0-15) — an admin could move ANY amount to
+    // ANY address instantly while paused (SEC-3 custody risk). Replaced by the
+    // timelocked recovery below: fixed pre-declared destination + 48h delay +
+    // events. Recovery deliberately MAY move reserved funds (break-glass for a
+    // live exploit); the delay + fixed destination + events are the protection,
+    // stated on the /vault RiskDisclosure.
 
-        // Must be paused for emergency operations
+    /// One-shot init of the pre-declared recovery destination (called by the
+    /// deploy script post-initialize). Changing it later requires upgrade().
+    pub fn init_recovery(env: Env, addr: Address) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if storage::get_recovery_address(&env).is_some() {
+            return Err(NoetherError::AlreadyInitialized);
+        }
+        storage::set_recovery_address(&env, &addr);
+        env.events().publish((Symbol::new(&env, "recovery_init"),), (addr,));
+        Ok(())
+    }
+
+    /// Propose a timelocked recovery (admin, paused-only). Executable only
+    /// after RECOVERY_TIMELOCK_SECS.
+    pub fn propose_recovery(env: Env, amount: i128) -> Result<(), NoetherError> {
+        require_admin(&env)?;
         if !get_paused(&env) {
             return Err(NoetherError::InvalidParameter);
         }
-
         if amount <= 0 {
             return Err(NoetherError::InvalidAmount);
         }
+        if storage::get_recovery_address(&env).is_none() {
+            return Err(NoetherError::NotInitialized);
+        }
+        let execute_after = env.ledger().timestamp().saturating_add(RECOVERY_TIMELOCK_SECS);
+        storage::set_recovery_proposal(&env, amount, execute_after);
+        env.events().publish(
+            (Symbol::new(&env, "recovery_proposed"),),
+            (amount, execute_after),
+        );
+        Ok(())
+    }
 
+    /// Execute a matured recovery proposal (admin, paused-only). Pays
+    /// min(amount, balance) to the pre-declared RecoveryAddress and clears it.
+    pub fn execute_recovery(env: Env) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if !get_paused(&env) {
+            return Err(NoetherError::InvalidParameter);
+        }
+        let (amount, execute_after) =
+            storage::get_recovery_proposal(&env).ok_or(NoetherError::InvalidParameter)?;
+        if env.ledger().timestamp() < execute_after {
+            return Err(NoetherError::InvalidParameter); // timelock not elapsed
+        }
+        let recipient = storage::get_recovery_address(&env).ok_or(NoetherError::NotInitialized)?;
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
-        let vault_balance = token_client.balance(&env.current_contract_address());
-
-        if amount > vault_balance {
-            return Err(NoetherError::InsufficientLiquidity);
+        let balance = token_client.balance(&env.current_contract_address());
+        let pay = if amount > balance { balance } else { amount };
+        if pay > 0 {
+            token_client.transfer(&env.current_contract_address(), &recipient, &pay);
         }
-
-        token_client.transfer(&env.current_contract_address(), &recipient, &amount);
-
+        storage::clear_recovery_proposal(&env);
         env.events().publish(
-            (Symbol::new(&env, "emergency_withdraw"),),
-            (amount, recipient),
+            (Symbol::new(&env, "recovery_executed"),),
+            (pay, recipient),
         );
-
         Ok(())
+    }
+
+    /// Cancel an open recovery proposal (admin).
+    pub fn cancel_recovery(env: Env) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        storage::clear_recovery_proposal(&env);
+        env.events().publish((Symbol::new(&env, "recovery_cancelled"),), ());
+        Ok(())
+    }
+
+    /// View: the pre-declared recovery destination (None until init_recovery).
+    pub fn get_recovery_address(env: Env) -> Option<Address> {
+        storage::get_recovery_address(&env)
+    }
+
+    /// View: the open recovery proposal (amount, execute_after), if any.
+    pub fn get_recovery_proposal(env: Env) -> Option<(i128, u64)> {
+        storage::get_recovery_proposal(&env)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1703,5 +1767,114 @@ mod tests {
         assert!(t.vault.try_sync_exposure(&btc(&t.env), &0, &0).is_err());
         assert!(t.vault.try_receive_loss(&PRECISION).is_err());
         let _ = (&t.admin, &t.vault_id);
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // L0-15 · exit-only pause + timelocked recovery
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_paused_vault_blocks_deposit_allows_withdraw() {
+        let t = setup(1_000 * PRECISION);
+        let noe_bal = t.vault.get_noe_balance(&t.lp);
+        t.vault.pause();
+
+        // Deposits blocked …
+        assert!(matches!(
+            t.vault.try_deposit(&t.lp, &(100 * PRECISION)),
+            Err(Ok(NoetherError::Paused))
+        ));
+        // … but LPs can ALWAYS exit (exit-only).
+        approve_noe(&t, noe_bal);
+        assert!(t.vault.withdraw(&t.lp, &noe_bal) > 0);
+    }
+
+    #[test]
+    fn test_paused_withdraw_still_respects_reserved_floor() {
+        let t = setup(1_000 * PRECISION);
+        let noe_bal = t.vault.get_noe_balance(&t.lp);
+        // Reserve payout capacity, then pause.
+        t.vault.reserve_for_position(&btc(&t.env), &(200 * PRECISION), &(200 * PRECISION), &0, &0);
+        t.vault.pause();
+
+        // A full exit would strip liquidity out from under the reservation —
+        // blocked by the solvency floor (#40), NOT by pause.
+        approve_noe(&t, noe_bal);
+        assert!(matches!(
+            t.vault.try_withdraw(&t.lp, &noe_bal),
+            Err(Ok(NoetherError::InsufficientLiquidity))
+        ));
+        // A small exit within free liquidity still works while paused.
+        let small = noe_bal / 20;
+        approve_noe(&t, small);
+        assert!(t.vault.withdraw(&t.lp, &small) > 0);
+    }
+
+    #[test]
+    fn test_recovery_requires_48h_timelock() {
+        let t = setup(1_000 * PRECISION);
+        let dest = Address::generate(&t.env);
+        t.vault.init_recovery(&dest);
+        t.vault.pause();
+        t.vault.propose_recovery(&(100 * PRECISION));
+
+        // Before the timelock: rejected.
+        assert!(matches!(
+            t.vault.try_execute_recovery(),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        // At +172_799s: still rejected (boundary).
+        t.env.ledger().with_mut(|li| li.timestamp += 172_799);
+        assert!(matches!(
+            t.vault.try_execute_recovery(),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        // At +172_800s: executes.
+        t.env.ledger().with_mut(|li| li.timestamp += 1);
+        t.vault.execute_recovery();
+        assert!(t.vault.get_recovery_proposal().is_none(), "proposal cleared");
+    }
+
+    #[test]
+    fn test_recovery_only_pays_declared_address() {
+        let t = setup(1_000 * PRECISION);
+        let dest = Address::generate(&t.env);
+        t.vault.init_recovery(&dest);
+        t.vault.pause();
+        t.vault.propose_recovery(&(100 * PRECISION));
+        t.env.ledger().with_mut(|li| li.timestamp += 172_800);
+
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+        let before = usdc.balance(&dest);
+        t.vault.execute_recovery();
+        // The pre-declared destination — and only it — receives the funds.
+        assert_eq!(usdc.balance(&dest) - before, 100 * PRECISION);
+    }
+
+    #[test]
+    fn test_unpause_cancels_recovery_proposal() {
+        let t = setup(1_000 * PRECISION);
+        let dest = Address::generate(&t.env);
+        t.vault.init_recovery(&dest);
+        t.vault.pause();
+        t.vault.propose_recovery(&(100 * PRECISION));
+        assert!(t.vault.get_recovery_proposal().is_some());
+
+        // Leaving the emergency retracts the break-glass.
+        t.vault.unpause();
+        assert!(t.vault.get_recovery_proposal().is_none());
+    }
+
+    #[test]
+    fn test_init_recovery_is_one_shot() {
+        let t = setup(0);
+        let dest = Address::generate(&t.env);
+        t.vault.init_recovery(&dest);
+        let dest2 = Address::generate(&t.env);
+        assert!(matches!(
+            t.vault.try_init_recovery(&dest2),
+            Err(Ok(NoetherError::AlreadyInitialized))
+        ));
+        assert_eq!(t.vault.get_recovery_address(), Some(dest));
     }
 }
