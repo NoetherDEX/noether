@@ -453,24 +453,9 @@ pub struct Order {
     pub stop_limit_phase: u32,
 }
 
-/// Keeper fee configuration for order execution
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct KeeperFeeConfig {
-    /// Base fee in USDC (7 decimals) - e.g., 5_000_000 = 0.50 USDC
-    pub base_fee: i128,
-    /// Variable fee in basis points of position size - e.g., 5 = 0.05%
-    pub variable_fee_bps: u32,
-}
-
-impl Default for KeeperFeeConfig {
-    fn default() -> Self {
-        Self {
-            base_fee: 5_000_000,    // 0.50 USDC
-            variable_fee_bps: 5,    // 0.05%
-        }
-    }
-}
+// KeeperFeeConfig DELETED (L1-21): the keeper fee is now config-driven
+// (MarketConfig.keeper_fee_base + keeper_fee_deci_bps, FEE_PRECISION divisor),
+// so the resting/maker path is never strictly dominated by the market taker.
 
 #[cfg(test)]
 mod asset_risk_tests {

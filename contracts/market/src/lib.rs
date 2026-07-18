@@ -40,7 +40,7 @@
 use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec, IntoVal};
 use noether_common::{
     NoetherError, Position, Direction, MarketConfig, AssetRiskParams,
-    Order, OrderType, OrderStatus, TriggerCondition, KeeperFeeConfig,
+    Order, OrderType, OrderStatus, TriggerCondition, FEE_PRECISION,
     VolumeRecord, BASIS_POINTS, PRECISION,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
     calculate_trading_fee, calculate_cumulative_funding, funding_velocity,
@@ -3435,7 +3435,7 @@ impl MarketContract {
     /// Calculate keeper fee for order execution.
     /// Fee = base_fee (0.50 USDC) + variable_fee (0.05% of position size)
     fn calculate_keeper_order_fee(env: &Env, order: &Order) -> i128 {
-        let fee_config = KeeperFeeConfig::default();
+        let config = get_config(env);
 
         let position_size = match order.order_type {
             OrderType::LimitEntry | OrderType::StopLimit => {
@@ -3450,8 +3450,11 @@ impl MarketContract {
             }
         };
 
-        let variable_fee = (position_size * fee_config.variable_fee_bps as i128) / 10_000;
-        fee_config.base_fee + variable_fee
+        // L1-21: config-driven, deci-bps (FEE_PRECISION divisor) + optional flat
+        // base. Defaults (base 0, 10 deci-bps = 0.010%) keep maker+keeper ≤ taker
+        // at every tier, so the resting path is never strictly dominated.
+        config.keeper_fee_base
+            + position_size * (config.keeper_fee_deci_bps as i128) / FEE_PRECISION
     }
 
     /// Execute a limit entry order - opens a new position.
@@ -5375,6 +5378,31 @@ mod tests {
 
         // Unclamped → PnL = size 500 × 50% = 250.
         assert_eq!(test.market.close_position(&trader, &pos.id, &0), 250 * PRECISION);
+    }
+
+    #[test]
+    fn test_keeper_fee_bps_only_and_maker_leq_taker() {
+        let test = setup();
+        // Validation guarantees the invariant: deci_bps > 15 is rejected.
+        let bad = MarketConfig { keeper_fee_deci_bps: 16, ..MarketConfig::default() };
+        assert!(matches!(
+            test.market.try_migrate_config(&bad),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        // maker + keeper (10 deci-bps) ≤ taker at every default tier.
+        for (maker, taker) in [(20u32, 50u32), (15, 40), (10, 30), (5, 20)] {
+            assert!(maker + 10 <= taker);
+        }
+
+        // Bps-only keeper fee on a $100 notional entry = 0.010% = 0.01 USDC.
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let order = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(10 * PRECISION), &10,
+            &(PRECISION / 10), &false, &500, &0,
+        );
+        assert_eq!(test.market.execute_order(&keeper, &order.id), 100_000);
     }
 
     #[test]
