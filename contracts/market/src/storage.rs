@@ -36,8 +36,12 @@ pub enum DataKey {
     CumulativeFundingRate,
     /// Whether initialized
     Initialized,
-    /// Whether paused
+    /// Whether paused (LEGACY bool — left unread after the L0-15 upgrade;
+    /// superseded by PauseState. Kept so old stored value doesn't break decode)
     Paused,
+    /// Two-tier pause (L0-15): (mode, since) where mode 0=live, 1=halt-open,
+    /// 2=full-freeze; since = ledger seconds the current mode began.
+    PauseState,
     /// Position by ID
     Position(u64),
     /// Position IDs for a trader
@@ -120,12 +124,69 @@ pub fn set_initialized(env: &Env, value: bool) {
     env.storage().instance().set(&DataKey::Initialized, &value);
 }
 
-pub fn get_paused(env: &Env) -> bool {
-    env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
-}
-
+/// LEGACY (L0-15): the pre-two-tier bool, still written by initialize for a
+/// clean default; superseded by PauseState. Never read on any gate path
+/// (get_paused removed — nothing reads it).
 pub fn set_paused(env: &Env, value: bool) {
     env.storage().instance().set(&DataKey::Paused, &value);
+}
+
+/// Full-freeze (mode 2) auto-degrades to halt-open (mode 1) after this many
+/// seconds — a bounded blast radius so a stuck full-freeze can't strand
+/// closes/liquidations forever (L0-15). Mode 1 never auto-expires.
+pub const FULL_FREEZE_MAX_SECS: u64 = 259_200; // 72h
+
+/// Raw stored (mode, since). Unset = (0, 0) = live.
+pub fn get_pause_state(env: &Env) -> (u32, u64) {
+    env.storage().instance().get(&DataKey::PauseState).unwrap_or((0u32, 0u64))
+}
+
+pub fn set_pause_state(env: &Env, mode: u32, since: u64) {
+    env.storage().instance().set(&DataKey::PauseState, &(mode, since));
+}
+
+/// Effective pause mode for a WRITE path: reads the stored mode and, if a
+/// full-freeze has outlived FULL_FREEZE_MAX_SECS, persists the degrade to
+/// mode 1 + emits pause_degraded before returning 1. Safe to write because
+/// every caller is a write entrypoint (a rejecting gate simply rolls the
+/// degrade back — it re-fires on the next op). Read-only callers use
+/// effective_pause_mode_view instead.
+pub fn effective_mode(env: &Env) -> u32 {
+    let (mode, since) = get_pause_state(env);
+    if mode == 2 && env.ledger().timestamp() >= since.saturating_add(FULL_FREEZE_MAX_SECS) {
+        set_pause_state(env, 1, since);
+        env.events().publish((Symbol::new(env, "pause_degraded"),), (2u32, 1u32));
+        return 1;
+    }
+    mode
+}
+
+/// Read-only effective mode (no persist, no event) — for views. Same 72h
+/// degrade logic, computed logically.
+pub fn effective_pause_mode_view(env: &Env) -> u32 {
+    let (mode, since) = get_pause_state(env);
+    if mode == 2 && env.ledger().timestamp() >= since.saturating_add(FULL_FREEZE_MAX_SECS) {
+        return 1;
+    }
+    mode
+}
+
+/// Gate for risk-INCREASING ops (opens, non-reduce-only order placement,
+/// margin removal): allowed ONLY when fully live. #4 Paused in mode 1/2.
+pub fn require_can_increase_risk(env: &Env) -> Result<(), NoetherError> {
+    if effective_mode(env) != 0 {
+        return Err(NoetherError::Paused);
+    }
+    Ok(())
+}
+
+/// Gate for risk-REDUCING ops (closes, liquidations, cross deposit/withdraw,
+/// stops, funding): allowed in live + halt-open; #90 Frozen only in mode 2.
+pub fn require_can_reduce_risk(env: &Env) -> Result<(), NoetherError> {
+    if effective_mode(env) > 1 {
+        return Err(NoetherError::Frozen);
+    }
+    Ok(())
 }
 
 pub fn get_admin(env: &Env) -> Address {
@@ -456,12 +517,8 @@ pub fn require_initialized(env: &Env) -> Result<(), NoetherError> {
     Ok(())
 }
 
-pub fn require_not_paused(env: &Env) -> Result<(), NoetherError> {
-    if get_paused(env) {
-        return Err(NoetherError::Paused);
-    }
-    Ok(())
-}
+// require_not_paused REMOVED (L0-15) — replaced by require_can_increase_risk
+// / require_can_reduce_risk per the two-tier pause matrix.
 
 pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
     require_initialized(env)?;

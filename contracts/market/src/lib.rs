@@ -175,21 +175,36 @@ impl MarketContract {
     // Admin Functions
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Halt trading (opens, closes, cross deposits/withdrawals, orders).
-    /// Liquidations are exempt so risk can still be unwound mid-incident.
-    pub fn pause(env: Env) -> Result<(), NoetherError> {
+    /// Two-tier pause (L0-15). mode 1 = halt-open: opens and non-reduce-only
+    /// order placement are blocked (#4), but closes, liquidations, stops and
+    /// cross deposit/withdraw still work — traders can always de-risk and exit.
+    /// mode 2 = full-freeze: even those are blocked symmetrically (#90); only
+    /// cancel_order works, and it auto-degrades to mode 1 after 72h. mode must
+    /// be 1 or 2 (use unpause for 0).
+    pub fn pause(env: Env, mode: u32) -> Result<(), NoetherError> {
         require_admin(&env)?;
-        set_paused(&env, true);
-        env.events().publish((Symbol::new(&env, "paused"),), ());
+        if mode != 1 && mode != 2 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        let since = env.ledger().timestamp();
+        set_pause_state(&env, mode, since);
+        env.events().publish((Symbol::new(&env, "paused"),), (mode, since));
         Ok(())
     }
 
-    /// Resume trading after a pause.
+    /// Resume fully (mode 0).
     pub fn unpause(env: Env) -> Result<(), NoetherError> {
         require_admin(&env)?;
-        set_paused(&env, false);
+        set_pause_state(&env, 0, env.ledger().timestamp());
         env.events().publish((Symbol::new(&env, "unpaused"),), ());
         Ok(())
+    }
+
+    /// Current pause state as (mode, since). mode reflects the 72h auto-degrade
+    /// logically (read-only, no persist).
+    pub fn get_pause_state(env: Env) -> (u32, u64) {
+        let (_, since) = storage::get_pause_state(&env);
+        (storage::effective_pause_mode_view(&env), since)
     }
 
     /// Route a share of trading fees to a treasury address (insurance /
@@ -400,7 +415,7 @@ impl MarketContract {
         acceptable_price: i128,
     ) -> Result<Position, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_increase_risk(&env)?;
 
         trader.require_auth();
 
@@ -569,7 +584,7 @@ impl MarketContract {
         acceptable_price: i128,
     ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_reduce_risk(&env)?;
 
         trader.require_auth();
 
@@ -607,7 +622,7 @@ impl MarketContract {
         close_size: i128,
     ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_reduce_risk(&env)?;
         trader.require_auth();
 
         let position = get_position(&env, position_id).ok_or(NoetherError::PositionNotFound)?;
@@ -784,7 +799,7 @@ impl MarketContract {
         amount: i128,
     ) -> Result<(), NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_increase_risk(&env)?;
         trader.require_auth();
         let mut position = get_position(&env, position_id).ok_or(NoetherError::PositionNotFound)?;
         if position.trader != trader {
@@ -864,8 +879,9 @@ impl MarketContract {
         position_id: u64,
     ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
-        // Note: Liquidations should work even when paused for safety
-
+        // L0-15: liquidations de-risk, so they run in live + halt-open; only a
+        // full-freeze (mode 2) halts them (#90), and that auto-degrades in 72h.
+        require_can_reduce_risk(&env)?;
         keeper.require_auth();
 
         // Get position
@@ -1116,6 +1132,9 @@ impl MarketContract {
     /// the keeper's applied|not-due tri-state.
     pub fn apply_funding(env: Env) -> Result<(), NoetherError> {
         require_initialized(&env)?;
+        // L0-15: the funding index freezes during a full-freeze (#90); it keeps
+        // accruing in live + halt-open.
+        require_can_reduce_risk(&env)?;
         let now = env.ledger().timestamp();
         // Progress = a pair was seeded OR accrued this call. Seeding must
         // count: returning Err would roll back the seed, so a pure-seed
@@ -1352,7 +1371,7 @@ impl MarketContract {
         amount: i128,
     ) -> Result<(), NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_reduce_risk(&env)?;
         trader.require_auth();
 
         if amount <= 0 {
@@ -1384,7 +1403,7 @@ impl MarketContract {
         amount: i128,
     ) -> Result<(), NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_reduce_risk(&env)?;
         trader.require_auth();
 
         if amount <= 0 {
@@ -1460,7 +1479,7 @@ impl MarketContract {
         acceptable_price: i128,
     ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_reduce_risk(&env)?;
         trader.require_auth();
 
         let pos = get_position(&env, position_id)
@@ -1601,7 +1620,9 @@ impl MarketContract {
         trader: Address,
     ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
-        // Liquidations allowed even when paused (safety)
+        // L0-15: de-risking op — runs in live + halt-open, halted only in
+        // full-freeze (#90, 72h auto-degrade).
+        require_can_reduce_risk(&env)?;
         keeper.require_auth();
 
         let config = get_config(&env);
@@ -2044,7 +2065,13 @@ impl MarketContract {
         time_in_force: u32,
     ) -> Result<Order, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        // L0-15: reduce-only placement de-risks (allowed in halt-open);
+        // a fresh entry increases exposure (blocked in any pause).
+        if time_in_force & 0x100 != 0 {
+            require_can_reduce_risk(&env)?;
+        } else {
+            require_can_increase_risk(&env)?;
+        }
 
         trader.require_auth();
 
@@ -2198,7 +2225,7 @@ impl MarketContract {
         slippage_tolerance_bps: u32,
     ) -> Result<Order, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_reduce_risk(&env)?;
 
         trader.require_auth();
 
@@ -2307,7 +2334,7 @@ impl MarketContract {
         limit_price: i128,
     ) -> Result<Order, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_reduce_risk(&env)?;
 
         trader.require_auth();
 
@@ -2516,6 +2543,17 @@ impl MarketContract {
                 order.order_type,
                 OrderType::LimitEntry | OrderType::StopLimit
             );
+
+        // L0-15 pause gate, mirroring the strict/lenient split: an entry
+        // execution increases risk (blocked in any pause — the keeper treats
+        // #4 as a quiet skip, order stays Pending); a close/reduce-only
+        // execution de-risks (allowed until full-freeze, #90).
+        if strict_price {
+            require_can_increase_risk(&env)?;
+        } else {
+            require_can_reduce_risk(&env)?;
+        }
+
         let current_price = Self::get_oracle_price(&env, &order.asset, strict_price)?;
 
         let ref_price = Self::order_ref_price(&env, &order);
@@ -2702,7 +2740,13 @@ impl MarketContract {
         time_in_force: u32,
     ) -> Result<Order, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        // L0-15: reduce-only placement de-risks (allowed in halt-open);
+        // a fresh entry increases exposure (blocked in any pause).
+        if time_in_force & 0x100 != 0 {
+            require_can_reduce_risk(&env)?;
+        } else {
+            require_can_increase_risk(&env)?;
+        }
         trader.require_auth();
 
         let config = get_config(&env);
@@ -2781,7 +2825,7 @@ impl MarketContract {
         slippage_tolerance_bps: u32,
     ) -> Result<Order, NoetherError> {
         require_initialized(&env)?;
-        require_not_paused(&env)?;
+        require_can_reduce_risk(&env)?;
         trader.require_auth();
 
         if trailing_percent_bps == 0 || trailing_percent_bps > 5000 {
@@ -3869,7 +3913,7 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let xlm = Symbol::new(&test.env, "XLM");
         let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
-        test.market.pause();
+        test.market.pause(&1u32);
         // Risk-reducing: works even while paused (exit-only-pause).
         test.market.add_collateral(&trader, &pos.id, &(10 * PRECISION));
         test.market.unpause();
@@ -4519,39 +4563,137 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     #[test]
-    fn test_pause_blocks_trading_and_unpause_restores() {
+    fn test_mode1_blocks_open_allows_close_liquidate_defend() {
+        // Halt-open (mode 1): opens are blocked (#4) but EVERY de-risking path
+        // stays open — cross deposit (defend), attach a stop, close, liquidate.
         let test = setup();
         let trader = fund_trader(&test, 1_000 * PRECISION);
+        let victim = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
 
-        let pos = test.market.open_position(
-            &trader,
-            &Symbol::new(&test.env, "XLM"),
-            &(100 * PRECISION),
-            &5,
-            &Direction::Long, &0,
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        let vpos = test.market.open_position(&victim, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
+
+        test.market.pause(&1u32);
+
+        // Opens (risk-increasing) → #4.
+        assert!(matches!(
+            test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0),
+            Err(Ok(NoetherError::Paused))
+        ));
+        // Defend + de-risk all WORK.
+        test.market.deposit_cross_margin(&trader, &(50 * PRECISION));
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 9 / 100), &500);
+        assert!(test.market.get_order(&sl.id).is_some());
+        test.market.close_position(&trader, &pos.id, &0);
+        assert!(test.market.get_position(&pos.id).is_none());
+        // Liquidation still fires in halt-open.
+        oracle.set_price(&xlm, &(PRECISION * 85 / 1000));
+        test.market.liquidate(&keeper, &vpos.id);
+        assert!(test.market.get_position(&vpos.id).is_none());
+
+        // Unpause restores opens (reopen at the current mark to avoid the
+        // separate #81 deviation band on a bounce-back).
+        test.market.unpause();
+        let p2 = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        assert!(test.market.get_position(&p2.id).is_some());
+    }
+
+    #[test]
+    fn test_mode2_full_freeze_symmetry() {
+        // Full-freeze (mode 2): close AND liquidate BOTH #90 — symmetric, so a
+        // frozen trader is never liquidated while unable to close.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
+
+        test.market.pause(&2u32);
+        oracle.set_price(&xlm, &(PRECISION * 85 / 1000)); // would be liquidatable
+
+        assert!(matches!(
+            test.market.try_close_position(&trader, &pos.id, &0),
+            Err(Ok(NoetherError::Frozen))
+        ));
+        assert!(matches!(
+            test.market.try_liquidate(&keeper, &pos.id),
+            Err(Ok(NoetherError::Frozen))
+        ));
+    }
+
+    #[test]
+    fn test_mode2_allows_cancel_only() {
+        // In full-freeze, cancel_order (refund-only, reads no oracle) is the
+        // one op that still works.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let order = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 20), &false, &100, &0,
         );
 
-        test.market.pause();
+        test.market.pause(&2u32);
 
-        let blocked_open = test.market.try_open_position(
-            &trader,
-            &Symbol::new(&test.env, "XLM"),
-            &(100 * PRECISION),
-            &5,
-            &Direction::Long, &0,
-        );
-        assert!(matches!(blocked_open, Err(Ok(NoetherError::Paused))));
+        // Open blocked (#4), close blocked (#90) …
+        assert!(matches!(
+            test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0),
+            Err(Ok(NoetherError::Paused))
+        ));
+        // … but cancel refunds and clears the order.
+        test.market.cancel_order(&trader, &order.id);
+        assert_eq!(test.market.get_order(&order.id).unwrap().status, OrderStatus::Cancelled);
+    }
 
-        let blocked_close = test.market.try_close_position(&trader, &pos.id, &0);
-        assert!(matches!(blocked_close, Err(Ok(NoetherError::Paused))));
+    #[test]
+    fn test_full_freeze_auto_degrades_after_72h() {
+        // A stuck full-freeze can't strand liquidations forever: at +72h it
+        // auto-degrades to halt-open and a liquidation succeeds.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
 
-        let blocked_deposit =
-            test.market.try_deposit_cross_margin(&trader, &(100 * PRECISION));
-        assert!(matches!(blocked_deposit, Err(Ok(NoetherError::Paused))));
+        test.market.pause(&2u32);
+        oracle.set_price(&xlm, &(PRECISION * 85 / 1000));
+        // Inside the freeze: liquidation blocked.
+        assert!(matches!(
+            test.market.try_liquidate(&keeper, &pos.id),
+            Err(Ok(NoetherError::Frozen))
+        ));
+
+        // Advance past 72h → auto-degrade → liquidation succeeds.
+        test.env.ledger().with_mut(|li| li.timestamp += 259_200 + 1);
+        test.market.liquidate(&keeper, &pos.id);
+        assert!(test.market.get_position(&pos.id).is_none());
+        assert_eq!(test.market.get_pause_state().0, 1u32, "persisted degrade to halt-open");
+    }
+
+    #[test]
+    fn test_pause_events_carry_mode_and_since() {
+        let test = setup();
+        let since = test.env.ledger().timestamp();
+        test.market.pause(&2u32);
+        assert_eq!(test.market.get_pause_state(), (2u32, since));
+
+        // Only modes 1 and 2 are valid.
+        assert!(matches!(
+            test.market.try_pause(&0u32),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        assert!(matches!(
+            test.market.try_pause(&3u32),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
 
         test.market.unpause();
-        let pnl = test.market.close_position(&trader, &pos.id, &0);
-        let _ = pnl; // closes fine after unpause
+        assert_eq!(test.market.get_pause_state(), (0u32, test.env.ledger().timestamp()));
     }
 
     #[test]
@@ -4568,7 +4710,7 @@ mod tests {
             &Direction::Long, &0,
         );
 
-        test.market.pause();
+        test.market.pause(&1u32);
 
         // Crash the price; the liquidation path must ignore the pause
         let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
@@ -6412,7 +6554,7 @@ mod tests {
         let xlm = Symbol::new(&test.env, "XLM");
         assert!(test.market.check_adl_trigger(&xlm));
 
-        test.market.pause();
+        test.market.pause(&1u32);
         let anyone = fund_trader(&test, PRECISION);
         let realized = test.market.adl_close(&anyone, &p1.id);
         assert!(realized > 0);

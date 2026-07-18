@@ -159,7 +159,11 @@ pub enum NoetherError {
     /// An open would push the asset's net long-short skew past its cap and
     /// make it MORE imbalanced (L0-14). Skew-reducing opens always pass.
     SkewCapExceeded = 89,
-    // 90 Frozen — reserved for L0-15 (emergency exit-only freeze)
+    /// Full-freeze pause (mode 2): even risk-reducing ops — closes,
+    /// liquidations, cross deposits/withdrawals, stops, funding — are halted
+    /// symmetrically (L0-15). Only cancel_order works; auto-degrades to
+    /// halt-open (closes/liquidations allowed) after 72h.
+    Frozen = 90,
     /// An open auto-nets to zero or beyond against the trader's opposite
     /// same-asset positions — gross opposite >= requested size, too many
     /// opposing legs, or a sub-min remainder (L1-3). Reductions and flips

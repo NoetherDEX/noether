@@ -493,7 +493,11 @@
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
               "function_name": "pause",
-              "args": []
+              "args": [
+                {
+                  "u32": 1
+                }
+              ]
             }
           },
           "sub_invocations": []
@@ -2393,6 +2397,25 @@
                         },
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "PauseState"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "vec": [
+                            {
+                              "u32": 0
+                            },
+                            {
+                              "u64": 1700000000
+                            }
+                          ]
                         }
                       },
                       {
@@ -5910,7 +5933,9 @@
                 "symbol": "pause"
               }
             ],
-            "data": "void"
+            "data": {
+              "u32": 1
+            }
           }
         }
       },
@@ -5928,7 +5953,16 @@
                 "symbol": "paused"
               }
             ],
-            "data": "void"
+            "data": {
+              "vec": [
+                {
+                  "u32": 1
+                },
+                {
+                  "u64": 1700000000
+                }
+              ]
+            }
           }
         }
       },
