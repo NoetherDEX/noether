@@ -70,6 +70,7 @@ const NOETHER_ERROR_MESSAGES: Record<number, string> = {
   87: 'Filled worse than your acceptable price — resubmit or widen the limit',
   88: 'This market has no risk parameters configured yet',
   89: 'This order would push the market past its long/short skew cap — try a smaller size or the other side',
+  90: 'The market is fully frozen right now — only order cancellation is available; it auto-resumes within 72h',
   91: 'This order only reduces your opposite position — use Close or reduce-only instead',
 };
 

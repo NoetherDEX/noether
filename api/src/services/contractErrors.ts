@@ -58,6 +58,7 @@ const NOETHER_ERROR_NAMES: Record<number, string> = {
   87: 'AcceptablePriceExceeded',
   88: 'AssetRiskNotConfigured',
   89: 'SkewCapExceeded',
+  90: 'Frozen',
   91: 'NetsToZero',
 };
 
