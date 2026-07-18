@@ -10,6 +10,10 @@
 # to keep the missing-address check strict.
 FROM node:22-alpine AS deps
 WORKDIR /app
+# node-usb (transitive dep of the wallet kit's hardware-wallet transports) has
+# no musl prebuilds — it compiles via node-gyp and needs python + libusb/udev
+# headers. Build-stage only; nothing here reaches the runtime image.
+RUN apk add --no-cache python3 make g++ linux-headers eudev-dev libusb-dev
 COPY package.json package-lock.json ./
 RUN npm ci
 
