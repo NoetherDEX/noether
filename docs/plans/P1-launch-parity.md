@@ -29,7 +29,7 @@
 | L1-19 | Protocol-vault indexing → real LP APY + NOE history | M | offchain | offchain-now | — | todo |
 | L1-20 | Mainnet fee sheet + all-in cost story + GET /v1/fees | S | mixed | offchain-now | — | todo |
 | L1-21 | Keeper-fee disclosure now + maker≤taker restructure in Batch 1 | M | mixed | batch-1-redeploy | L2-18 | in-progress — contracts done 2026-07-18 (Wave 5, commit 39b8ebd; KeeperFeeConfig→config bps-only, maker+keeper≤taker). web/api/docs disclosure pending sweep |
-| L1-22 | Insurance-fund seeding + fee stream + published coverage ratio | M | mixed | batch-1-redeploy | L1-18, L1-21, L2-18 | todo |
+| L1-22 | Insurance-fund seeding + fee stream + published coverage ratio | M | mixed | batch-1-redeploy | L1-18, L1-21, L2-18 | in-progress — contracts done 2026-07-18 (Wave 5, commit cde9d49; vault route_protocol_fee buffer-until-target + BufferTargetBps, market finalize_open rewire). api solvency block + web coverage card + seed/ops pending sweep |
 | L1-23 | Bankruptcy keeper bounty | S | contracts | batch-1-redeploy | L0-2, L0-4, L1-22 | in-progress — contracts done 2026-07-18 (Wave 5, commit bfa5542; vault pay_bounty + liq topup, coordinated MarketConfig shape) |
 | L1-24 | Listing pipeline runbook-as-code + per-asset halt | M | mixed | batch-1-redeploy | L0-12, L0-14 | in-progress — contracts done 2026-07-18 (Wave 5, commit e935bff; market per-asset halt #92 + router PriceBand). list_pair.ts + indexer/api/web pending sweep |
 | L1-25 | Public status page + monitoring (closes P3-1) | S | mixed | operator-track | — | todo |
