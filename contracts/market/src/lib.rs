@@ -3097,13 +3097,16 @@ impl MarketContract {
             let vault = get_vault(env);
             let usdc = get_usdc_token(env);
             let client = token::Client::new(env, &usdc);
-            // Protocol fee share (P1-10): a slice of every trading fee goes
-            // to the treasury (insurance/ops funding); inactive until
-            // set_fee_split wires a treasury address
+            // Protocol fee share (P1-10): a slice of every trading fee. L1-22:
+            // instead of a direct treasury transfer, the cut goes to the vault
+            // and route_protocol_fee fills the insurance buffer up to its target
+            // first, overflowing the rest to the treasury. Inactive until
+            // set_fee_split wires a treasury address.
             let mut cut = fee * (get_protocol_fee_bps(env) as i128) / (BASIS_POINTS as i128);
             match get_treasury(env) {
                 Some(t) if cut > 0 => {
-                    client.transfer(&env.current_contract_address(), &t, &cut);
+                    client.transfer(&env.current_contract_address(), &vault, &cut);
+                    Self::route_protocol_fee_to_vault(env, &vault, cut, &t);
                 }
                 _ => cut = 0,
             }
@@ -3369,6 +3372,17 @@ impl MarketContract {
         }
         let args: Vec<soroban_sdk::Val> = (keeper.clone(), topup).into_val(env);
         env.invoke_contract(vault, &Symbol::new(env, "pay_bounty"), args)
+    }
+
+    /// L1-22: route a protocol fee cut (already transferred to the vault) so
+    /// the vault fills its insurance buffer up to target, overflowing the rest
+    /// to the treasury. The USDC already moved market→vault; this is the
+    /// buffer-vs-overflow split on the vault side.
+    fn route_protocol_fee_to_vault(env: &Env, vault: &Address, amount: i128, treasury: &Address) {
+        if amount > 0 {
+            let args: Vec<soroban_sdk::Val> = (amount, treasury.clone()).into_val(env);
+            let _: () = env.invoke_contract(vault, &Symbol::new(env, "route_protocol_fee"), args);
+        }
     }
 
     /// Route a slice of liquidation proceeds into the vault's insurance
@@ -5076,31 +5090,30 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_fee_split_routes_to_treasury() {
+    fn test_protocol_fee_split_buffer_first() {
+        // L1-22: the protocol cut fills the insurance buffer UP TO target
+        // before the treasury sees anything; the LP share is never touched.
         let test = setup();
         let vault_client = vault::Client::new(&test.env, &test.vault_id);
         let treasury = Address::generate(&test.env);
         let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
 
-        test.market.set_fee_split(&treasury, &2_000); // 20%
+        test.market.set_fee_split(&treasury, &2_000); // 20% cut
 
-        let vault_acct_before = vault_client.get_total_usdc();
+        let acct_before = vault_client.get_total_usdc();
+        let buffer_before = vault_client.get_buffer_balance();
         let trader = fund_trader(&test, 1_000 * PRECISION);
         test.market.open_position(
-            &trader,
-            &Symbol::new(&test.env, "XLM"),
-            &(100 * PRECISION),
-            &5,
-            &Direction::Long, &0,
+            &trader, &Symbol::new(&test.env, "XLM"), &(100 * PRECISION), &5, &Direction::Long, &0,
         );
 
-        // Taker fee on $500 at 0.05% = $0.25 → 20% = $0.05 to treasury
-        let treasury_got = usdc.balance(&treasury);
-        assert!(treasury_got > 0);
-        // The vault's share is CREDITED to accounting (fees now count
-        // toward AUM instead of arriving as invisible balance)
-        let credited = vault_client.get_total_usdc() - vault_acct_before;
-        assert_eq!(credited * 2_000 / 8_000, treasury_got); // 80/20 split
+        // Fee $0.25 (taker on $500); cut = 20% = $0.05; LP share = $0.20.
+        // The open reserves payout → buffer target > 0 → the whole $0.05 cut
+        // fills the buffer; treasury gets nothing yet.
+        assert_eq!(usdc.balance(&treasury), 0, "buffer fills before the treasury");
+        assert_eq!(vault_client.get_buffer_balance() - buffer_before, 5 * PRECISION / 100);
+        // LP share credited EXACTLY fee − cut, untouched by the buffer routing.
+        assert_eq!(vault_client.get_total_usdc() - acct_before, 20 * PRECISION / 100);
     }
 
     // ═══════════════════════════════════════════════════════════════════

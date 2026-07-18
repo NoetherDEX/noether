@@ -473,6 +473,41 @@ impl VaultContract {
         Ok(paid)
     }
 
+    /// L1-22: route a protocol fee (already transferred into the vault by the
+    /// market) — fill the insurance buffer UP TO its target (10% of Reserved
+    /// Payout by default), then overflow the rest to `overflow_to` (treasury).
+    /// Market-only; NEVER touches LP value. Empty book (target 0) → all overflow.
+    pub fn route_protocol_fee(env: Env, amount: i128, overflow_to: Address) -> Result<(), NoetherError> {
+        require_initialized(&env)?;
+        let market_contract = get_market_contract(&env);
+        market_contract.require_auth();
+        if amount <= 0 {
+            return Ok(());
+        }
+        let target = get_reserved_payout(&env) * (storage::get_buffer_target_bps(&env) as i128)
+            / (BASIS_POINTS as i128);
+        let buffer = get_buffer_balance(&env);
+        let room = if target > buffer { target - buffer } else { 0 };
+        let to_buffer = if amount < room { amount } else { room };
+        if to_buffer > 0 {
+            set_buffer_balance(&env, buffer + to_buffer);
+        }
+        let overflow = amount - to_buffer;
+        if overflow > 0 {
+            let usdc_token = get_usdc_token(&env);
+            token::Client::new(&env, &usdc_token).transfer(
+                &env.current_contract_address(),
+                &overflow_to,
+                &overflow,
+            );
+        }
+        env.events().publish(
+            (Symbol::new(&env, "protocol_fee_routed"),),
+            (amount, to_buffer, overflow),
+        );
+        Ok(())
+    }
+
     /// Market-pushed exposure sync: sets one asset's unrealized trader
     /// PnL (folded into total UnrealizedPnl, which prices NOE via AUM)
     /// and releases reservation for closed positions in the same call.
@@ -749,6 +784,31 @@ impl VaultContract {
 
     pub fn get_last_deposit_ts(env: Env, who: Address) -> u64 {
         storage::get_last_deposit_ts(&env, &who)
+    }
+
+    /// L1-22: set the insurance-buffer target as bps of ReservedPayout (admin,
+    /// ≤ 10_000; default 1000 = 10%).
+    pub fn set_buffer_target(env: Env, bps: u32) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if bps > 10_000 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        storage::set_buffer_target_bps(&env, bps);
+        env.events().publish((Symbol::new(&env, "buffer_target_set"),), (bps,));
+        Ok(())
+    }
+
+    pub fn get_buffer_target_bps(env: Env) -> u32 {
+        storage::get_buffer_target_bps(&env)
+    }
+
+    /// L1-22 read-side (API coverage calc): aggregate + per-asset OI cap bps.
+    pub fn get_reserve_cap(env: Env) -> u32 {
+        storage::get_reserve_cap_bps(&env)
+    }
+
+    pub fn get_asset_cap(env: Env, asset: Symbol) -> u32 {
+        storage::get_asset_cap_bps(&env, &asset)
     }
 
     /// Cumulative USDC an account has deposited (against the cap).
@@ -1970,6 +2030,43 @@ mod tests {
         let t = setup(0);
         let keeper = Address::generate(&t.env);
         assert_eq!(t.vault.pay_bounty(&keeper, &(5 * PRECISION)), 0); // dry → 0, no revert
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // L1-22 · insurance-buffer target + protocol-fee stream
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn protocol_fee_fills_buffer_to_target_then_overflows() {
+        let t = setup(1_000 * PRECISION);
+        // Reserve payout so the buffer target is nonzero: 200 × 10% = 20 USDC.
+        t.vault.reserve_for_position(&btc(&t.env), &(200 * PRECISION), &(200 * PRECISION), &0, &0);
+        let treasury = Address::generate(&t.env);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+        // The market pre-transfers the fee into the vault; simulate with a mint.
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(30 * PRECISION));
+
+        // Route 30: 20 fills the buffer to target, 10 overflows to treasury.
+        t.vault.route_protocol_fee(&(30 * PRECISION), &treasury);
+        assert_eq!(t.vault.get_buffer_balance(), 20 * PRECISION);
+        assert_eq!(usdc.balance(&treasury), 10 * PRECISION);
+
+        // Already at target → a further fee overflows entirely.
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(7 * PRECISION));
+        t.vault.route_protocol_fee(&(7 * PRECISION), &treasury);
+        assert_eq!(t.vault.get_buffer_balance(), 20 * PRECISION, "buffer stays at target");
+        assert_eq!(usdc.balance(&treasury), 17 * PRECISION);
+    }
+
+    #[test]
+    fn set_buffer_target_capped() {
+        let t = setup(0);
+        assert!(matches!(
+            t.vault.try_set_buffer_target(&10_001u32),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        t.vault.set_buffer_target(&2_000u32);
+        assert_eq!(t.vault.get_buffer_target_bps(), 2_000);
     }
 
     #[test]

@@ -71,6 +71,10 @@ pub enum DataKey {
     Deposited(Address),
     /// Per-account cumulative-deposit cap (7 decimals); 0 = unlimited (P6-6).
     DepositCap,
+    /// L1-22: insurance-buffer target as bps of ReservedPayout (default 1000
+    /// = 10%). Protocol fees fill the buffer up to target, then overflow to
+    /// the treasury; 0 when the book is empty so all fee flow overflows.
+    BufferTargetBps,
     /// Max total reservation as bps of AUM (default 7000 = 70%)
     ReserveCapBps,
     /// Per-asset-side OI cap as bps of AUM (default 2500 = 25%)
@@ -355,6 +359,18 @@ pub fn get_deposit_cap(env: &Env) -> i128 {
 
 pub fn set_deposit_cap(env: &Env, cap: i128) {
     env.storage().instance().set(&DataKey::DepositCap, &cap);
+}
+
+// ── L1-22 insurance-buffer target ──
+/// Default buffer target: 10% of ReservedPayout.
+pub const BUFFER_TARGET_BPS_DEFAULT: u32 = 1_000;
+
+pub fn get_buffer_target_bps(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::BufferTargetBps).unwrap_or(BUFFER_TARGET_BPS_DEFAULT)
+}
+
+pub fn set_buffer_target_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&DataKey::BufferTargetBps, &bps);
 }
 
 pub fn get_reserve_cap_bps(env: &Env) -> u32 {
