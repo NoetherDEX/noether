@@ -215,9 +215,11 @@ impl VaultFactoryContract {
             return Err(FactoryError::AmountMustBePositive);
         }
         let mut info = storage::load_vault(&env, vault_id)?;
-        if info.paused {
-            return Err(FactoryError::Paused);
-        }
+        // L0-15 exit-only: a paused vault must NOT trap follower funds —
+        // withdraw is never pause-gated. L0-20's full-NAV pricing + the #17
+        // liquidity-deployed cap already protect deployed capital, so no
+        // blanket positions-open block is needed (that interim #21 gate is
+        // superseded by the Path-A NAV-fair partial-exit semantics).
         let owned = storage::shares_of(&env, vault_id, &depositor);
         if shares > owned {
             return Err(FactoryError::InsufficientShares);
@@ -1082,21 +1084,32 @@ mod tests {
     }
 
     #[test]
-    fn paused_vault_blocks_deposit_and_withdraw() {
+    fn test_paused_blocks_deposit_and_leader_trade_allows_withdraw() {
+        // L0-15 exit-only: a paused vault blocks NEW money (deposit) and NEW
+        // leader trades, but followers can always withdraw.
         let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
         client.deposit(&leader, &vault_id, &200_0000000);
         client.set_paused(&vault_id, &true);
 
-        let dep_res = client.try_deposit(&leader, &vault_id, &100_0000000);
-        assert_eq!(dep_res, Err(Ok(FactoryError::Paused)));
-        let wd_res = client.try_withdraw(&leader, &vault_id, &50_0000000);
-        assert_eq!(wd_res, Err(Ok(FactoryError::Paused)));
+        // Deposits blocked …
+        assert_eq!(
+            client.try_deposit(&leader, &vault_id, &100_0000000),
+            Err(Ok(FactoryError::Paused))
+        );
+        // … leader trading blocked (require_leader_call) …
+        assert_eq!(
+            client.try_leader_open_position(
+                &leader, &vault_id, &Symbol::new(&env, "BTC"), &50_0000000, &5u32, &0u32,
+            ),
+            Err(Ok(FactoryError::Paused))
+        );
+        // … but withdraw ALWAYS works (empty vault → NAV fast path).
+        assert!(client.withdraw(&leader, &vault_id, &50_0000000) > 0);
 
         client.set_paused(&vault_id, &false);
-        let again = client.deposit(&leader, &vault_id, &100_0000000);
-        assert!(again > 0);
+        assert!(client.deposit(&leader, &vault_id, &100_0000000) > 0);
     }
 
     /// Stub market contract used by leader_* tests. Records the calls it
