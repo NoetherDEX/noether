@@ -298,7 +298,7 @@
                         "symbol": "lenient_clamp_bps"
                       },
                       "val": {
-                        "u32": 300
+                        "u32": 0
                       }
                     },
                     {
@@ -2088,7 +2088,7 @@
                                 "symbol": "lenient_clamp_bps"
                               },
                               "val": {
-                                "u32": 300
+                                "u32": 0
                               }
                             },
                             {
@@ -4763,7 +4763,7 @@
                         "symbol": "lenient_clamp_bps"
                       },
                       "val": {
-                        "u32": 300
+                        "u32": 0
                       }
                     },
                     {

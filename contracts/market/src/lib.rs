@@ -3020,10 +3020,31 @@ impl MarketContract {
             }
         }
 
-        if fresh {
-            set_last_good_price(env, asset, price, now);
+        // L1-26: on the lenient (settlement) path, clamp a deviant print into
+        // ±lenient_clamp_bps of last-good — bounding close/liquidation
+        // mispricing to one round instead of unbounded. Clamps against the
+        // PRE-update last-good, only inside the band-disable window; a long
+        // halt (last-good too old) passes through so closes never brick.
+        let mut result = price;
+        if !strict && config.lenient_clamp_bps > 0 {
+            if let Some((last, last_ts)) = get_last_good_price(env, asset) {
+                if last > 0 && now.saturating_sub(last_ts) <= 10 * config.max_price_staleness {
+                    let d = last * (config.lenient_clamp_bps as i128) / (BASIS_POINTS as i128);
+                    let lo = last - d;
+                    let hi = last + d;
+                    if result < lo {
+                        result = lo;
+                    } else if result > hi {
+                        result = hi;
+                    }
+                }
+            }
         }
-        Ok(price)
+
+        if fresh {
+            set_last_good_price(env, asset, price, now); // last-good tracks the RAW feed
+        }
+        Ok(result)
     }
 
     /// Shared open finalisation: persist the position (indexing it under
@@ -3647,10 +3668,14 @@ mod tests {
     }
 
     fn setup_with_vault_deposit(vault_deposit: i128) -> TestEnv {
-        // L1-23: default-off in the shared harness so the many exact-keeper-
-        // reward liquidation tests stay pre-bounty; the bounty tests opt in
-        // via setup_with_config with a nonzero min_liq_bounty.
-        setup_full(vault_deposit, MarketConfig { min_liq_bounty: 0, ..MarketConfig::default() })
+        // Default-off in the shared harness for the two settlement-affecting
+        // Batch-1 riders so the many exact-PnL/keeper-reward tests stay as-is:
+        // L1-23 min_liq_bounty (bounty tests opt in) and L1-26 lenient_clamp
+        // _bps (clamp tests opt in). Both default to nonzero on a real deploy.
+        setup_full(
+            vault_deposit,
+            MarketConfig { min_liq_bounty: 0, lenient_clamp_bps: 0, ..MarketConfig::default() },
+        )
     }
 
     /// Custom-config variant (L0-4+): lets risk tests emulate the L0-12
@@ -5297,7 +5322,8 @@ mod tests {
     fn test_bankrupt_liquidation_pays_flat_bounty() {
         // L1-23: a bankrupt clear (equity ≤ 0 → 0 keeper reward from equity)
         // pays the keeper exactly the min_liq_bounty floor from the buffer.
-        let test = setup_with_config(MarketConfig::default()); // min_liq_bounty = 5 USDC
+        // min_liq_bounty = 5 USDC (default); clamp off so the crash prices exact.
+        let test = setup_with_config(MarketConfig { lenient_clamp_bps: 0, ..MarketConfig::default() });
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let keeper = fund_trader(&test, 10 * PRECISION);
         let seeder = fund_trader(&test, 100 * PRECISION);
@@ -5319,6 +5345,36 @@ mod tests {
         // Buffer funded the bounty (it also absorbs L0-2 bad debt here, so the
         // net debit exceeds the bounty — just confirm it came out of the buffer).
         assert!(vault.get_buffer_balance() < b0, "bounty paid from the buffer");
+    }
+
+    #[test]
+    fn test_lenient_clamp_bounds_wild_print_on_close() {
+        // L1-26: a wild +50% print is clamped to +3% of last-good on the
+        // settlement (lenient) read, capping the close PnL.
+        let cfg = MarketConfig { lenient_clamp_bps: 300, min_liq_bounty: 0, ..MarketConfig::default() };
+        let test = setup_with_config(cfg);
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM"); // entry $0.10, last-good $0.10
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 15 / 100)); // wild $0.15
+
+        // Clamped to $0.103 → PnL = size 500 × 3% = 15 (closes charge no fee).
+        assert_eq!(test.market.close_position(&trader, &pos.id, &0), 15 * PRECISION);
+    }
+
+    #[test]
+    fn test_clamp_zero_disables() {
+        // With the clamp off (setup default), the same print settles raw.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 15 / 100)); // $0.15
+
+        // Unclamped → PnL = size 500 × 50% = 250.
+        assert_eq!(test.market.close_position(&trader, &pos.id, &0), 250 * PRECISION);
     }
 
     #[test]
@@ -5524,7 +5580,14 @@ mod tests {
     /// The L0-12-ladder regime (MM 5% > penalty 1%) — the configuration
     /// where liquidation refunds are non-zero by construction.
     fn mm5_config() -> MarketConfig {
-        MarketConfig { maintenance_margin_bps: 500, ..MarketConfig::default() }
+        // Riders off (like setup()) so settlement-affecting L1-23/L1-26 don't
+        // perturb the cross-liquidation / penalty tests built on this config.
+        MarketConfig {
+            maintenance_margin_bps: 500,
+            lenient_clamp_bps: 0,
+            min_liq_bounty: 0,
+            ..MarketConfig::default()
+        }
     }
 
     // ── L0-12: per-market margin/leverage ladder ────────────────────────
@@ -6483,7 +6546,12 @@ mod tests {
     fn test_noe_price_flat_when_buffer_covers_bankruptcy() {
         // insurance_buffer_share_bps = 0 (the L0-4 migration value) makes
         // the invariance exact: mark removal − receipts − draw nets to zero.
-        let cfg = MarketConfig { insurance_buffer_share_bps: 0, ..MarketConfig::default() };
+        let cfg = MarketConfig {
+            insurance_buffer_share_bps: 0,
+            lenient_clamp_bps: 0,
+            min_liq_bounty: 0,
+            ..MarketConfig::default()
+        };
         let test = setup_with_config(cfg);
         let trader = fund_trader(&test, 1_000 * PRECISION);
         let keeper = fund_trader(&test, 10 * PRECISION);
