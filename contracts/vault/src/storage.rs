@@ -89,7 +89,17 @@ pub enum DataKey {
     /// L0-15 open recovery proposal (amount, execute_after) in (7-dec, secs).
     /// Absent = none pending.
     RecoveryProposal,
+    /// L1-28: ledger-seconds of an address's LATEST deposit (unwrap_or 0).
+    /// Every deposit re-arms the withdraw cooldown; 0 = never deposited
+    /// post-upgrade (exempt — clean migration, no backfill).
+    LastDepositTs(Address),
+    /// L1-28: withdraw cooldown window in seconds (instance, unwrap_or 1_800).
+    /// 0 disables.
+    WithdrawCooldownSecs,
 }
+
+/// Default LP withdraw cooldown after each deposit (L1-28): 30 min.
+pub const WITHDRAW_COOLDOWN_SECS_DEFAULT: u64 = 1_800;
 
 pub const RESERVE_CAP_BPS_DEFAULT: u32 = 7_000;
 pub const ASSET_CAP_BPS_DEFAULT: u32 = 2_500;
@@ -134,6 +144,28 @@ pub fn set_recovery_proposal(env: &Env, amount: i128, execute_after: u64) {
 
 pub fn clear_recovery_proposal(env: &Env) {
     env.storage().instance().remove(&DataKey::RecoveryProposal);
+}
+
+// ── L1-28 withdraw cooldown ──
+pub fn get_last_deposit_ts(env: &Env, who: &Address) -> u64 {
+    env.storage().persistent().get(&DataKey::LastDepositTs(who.clone())).unwrap_or(0)
+}
+
+pub fn set_last_deposit_ts(env: &Env, who: &Address, ts: u64) {
+    let key = DataKey::LastDepositTs(who.clone());
+    env.storage().persistent().set(&key, &ts);
+    extend_ttl(env, &key);
+}
+
+pub fn get_withdraw_cooldown_secs(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::WithdrawCooldownSecs)
+        .unwrap_or(WITHDRAW_COOLDOWN_SECS_DEFAULT)
+}
+
+pub fn set_withdraw_cooldown_secs(env: &Env, secs: u64) {
+    env.storage().instance().set(&DataKey::WithdrawCooldownSecs, &secs);
 }
 
 pub fn get_admin(env: &Env) -> Address {

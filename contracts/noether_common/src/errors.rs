@@ -2,7 +2,10 @@
 //!
 //! All possible errors in the Noether protocol.
 //! Error codes are grouped by category for easy identification.
-//! Note: Soroban contracterror has a limit of ~48 variants, so we consolidate similar errors.
+//! HARD LIMIT (verified 2026-07-18): `#[contracterror]` caps the enum at ~50
+//! VARIANTS (the macro panics `LengthExceedsMax` above it) — the discriminant
+//! VALUES are free u32s, but the COUNT is bounded. We're at the ceiling; adding
+//! a code means removing a genuinely-dead one first (see the REMOVED markers).
 
 use soroban_sdk::contracterror;
 
@@ -79,8 +82,8 @@ pub enum NoetherError {
 
     /// Position is healthy and cannot be liquidated
     NotLiquidatable = 50,
-    /// Liquidation operation failed
-    LiquidationFailed = 51,
+    // 51 LiquidationFailed REMOVED (L1-24/28): freed a slot for the ~50-variant
+    // contracterror cap (LengthExceedsMax). Never returned anywhere.
 
     // ═══════════════════════════════════════════════════════════════
     // Funding Rate Errors (55-59)
@@ -99,8 +102,9 @@ pub enum NoetherError {
     OrderNotPending = 61,
     /// Order trigger condition not met (price hasn't reached trigger)
     OrderNotTriggered = 62,
-    /// Slippage exceeds trader's tolerance
-    SlippageExceeded = 63,
+    // 63 SlippageExceeded REMOVED (L1-24/28): slippage is handled by
+    // cancel-and-refund (CancelledSlippage status), never this error. Freed a
+    // slot for the contracterror variant cap.
     /// Caller does not own this order
     NotOrderOwner = 64,
     /// Invalid trigger price (e.g., stop-loss above entry for long)
@@ -169,4 +173,10 @@ pub enum NoetherError {
     /// opposing legs, or a sub-min remainder (L1-3). Reductions and flips
     /// go through the close/reduce-only paths, never a one-tx flip.
     NetsToZero = 91,
+    /// Trading in this specific market is temporarily halted by admin (L1-24).
+    /// Risk-increasing paths only — closing/liquidating a position still works.
+    AssetHalted = 92,
+    /// LP withdrawal is inside the post-deposit cooldown window (L1-28) — an
+    /// anti-JIT/NAV-sniping delay after each deposit. Everything else is instant.
+    WithdrawCooldownActive = 93,
 }

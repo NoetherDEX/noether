@@ -193,6 +193,9 @@ impl VaultContract {
         // Update pool state
         set_total_usdc(&env, get_total_usdc(&env) + usdc_amount);
         set_deposited(&env, &depositor, already + usdc_amount);
+        // L1-28: re-arm the withdraw cooldown on every deposit (topping up
+        // resets the clock, killing deposit-just-before-a-settlement timing).
+        set_last_deposit_ts(&env, &depositor, env.ledger().timestamp());
         set_total_fees(&env, get_total_fees(&env) + fee);
 
         // Transfer NOE to depositor
@@ -236,6 +239,15 @@ impl VaultContract {
         }
 
         withdrawer.require_auth();
+
+        // L1-28: post-deposit cooldown (anti-JIT/NAV-sniping). Ordered AFTER
+        // exit-only pass and BEFORE the solvency floor so an emergency can't
+        // bypass it. last==0 (never deposited post-upgrade) is exempt.
+        let cooldown = storage::get_withdraw_cooldown_secs(&env);
+        let last = storage::get_last_deposit_ts(&env, &withdrawer);
+        if cooldown > 0 && last > 0 && env.ledger().timestamp() < last.saturating_add(cooldown) {
+            return Err(NoetherError::WithdrawCooldownActive);
+        }
 
         // Check NOE balance
         let noe_balance = noe::balance(&env, &withdrawer);
@@ -690,6 +702,27 @@ impl VaultContract {
     /// Current per-account deposit cap (0 = unlimited).
     pub fn get_deposit_cap(env: Env) -> i128 {
         storage::get_deposit_cap(&env)
+    }
+
+    /// L1-28: set the post-deposit withdraw cooldown (admin, ≤ 1 day; 0 off).
+    pub fn set_withdraw_cooldown(env: Env, secs: u64) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if secs > 86_400 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        storage::set_withdraw_cooldown_secs(&env, secs);
+        env.events().publish((Symbol::new(&env, "withdraw_cooldown_set"),), (secs,));
+        Ok(())
+    }
+
+    /// L1-28 views: the cooldown window + an address's latest-deposit ts (the
+    /// UI countdown source).
+    pub fn get_withdraw_cooldown(env: Env) -> u64 {
+        storage::get_withdraw_cooldown_secs(&env)
+    }
+
+    pub fn get_last_deposit_ts(env: Env, who: Address) -> u64 {
+        storage::get_last_deposit_ts(&env, &who)
     }
 
     /// Cumulative USDC an account has deposited (against the cap).
@@ -1265,6 +1298,7 @@ mod tests {
         assert!(noe_minted < 1_000 * PRECISION);
         assert!(t.vault.get_noe_balance(&t.lp) == noe_minted);
 
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe_minted);
         let usdc_back = t.vault.withdraw(&t.lp, &noe_minted);
         // Round trip pays both fees but can never mint value
@@ -1437,6 +1471,7 @@ mod tests {
             .reserve_for_position(&btc(&t.env), &(600 * PRECISION), &(600 * PRECISION), &0, &0);
 
         let noe = t.vault.get_noe_balance(&t.lp);
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe);
         // Withdrawing everything would leave less than the 600 reserved
         let blocked = t.vault.try_withdraw(&t.lp, &noe);
@@ -1608,6 +1643,7 @@ mod tests {
 
         // Withdrawing EVERYTHING would strip the earmarked 20 — blocked.
         let noe = t.vault.get_noe_balance(&t.lp);
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe);
         let blocked = t.vault.try_withdraw(&t.lp, &noe);
         assert!(matches!(blocked, Err(Ok(NoetherError::InsufficientLiquidity))));
@@ -1785,6 +1821,7 @@ mod tests {
             Err(Ok(NoetherError::Paused))
         ));
         // … but LPs can ALWAYS exit (exit-only).
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe_bal);
         assert!(t.vault.withdraw(&t.lp, &noe_bal) > 0);
     }
@@ -1799,6 +1836,7 @@ mod tests {
 
         // A full exit would strip liquidity out from under the reservation —
         // blocked by the solvency floor (#40), NOT by pause.
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe_bal);
         assert!(matches!(
             t.vault.try_withdraw(&t.lp, &noe_bal),
@@ -1876,5 +1914,95 @@ mod tests {
             Err(Ok(NoetherError::AlreadyInitialized))
         ));
         assert_eq!(t.vault.get_recovery_address(), Some(dest));
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // L1-28 · LP withdrawal cooldown (anti-JIT / NAV-sniping)
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn withdraw_inside_cooldown_rejected_93() {
+        let t = setup(0);
+        t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        let noe = t.vault.get_noe_balance(&t.lp);
+        approve_noe(&t, noe);
+        assert!(matches!(
+            t.vault.try_withdraw(&t.lp, &noe),
+            Err(Ok(NoetherError::WithdrawCooldownActive))
+        ));
+    }
+
+    #[test]
+    fn withdraw_after_cooldown_succeeds() {
+        let t = setup(0);
+        t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        let noe = t.vault.get_noe_balance(&t.lp);
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // exactly the window
+        approve_noe(&t, noe);
+        assert!(t.vault.withdraw(&t.lp, &noe) > 0);
+    }
+
+    #[test]
+    fn second_deposit_resets_cooldown() {
+        let t = setup(0);
+        t.vault.deposit(&t.lp, &(500 * PRECISION));
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // first window elapsed
+        t.vault.deposit(&t.lp, &(500 * PRECISION)); // re-arms the clock
+        let noe = t.vault.get_noe_balance(&t.lp);
+        approve_noe(&t, noe);
+        assert!(matches!(
+            t.vault.try_withdraw(&t.lp, &noe),
+            Err(Ok(NoetherError::WithdrawCooldownActive))
+        ));
+    }
+
+    #[test]
+    fn cooldown_zero_disables_gate() {
+        let t = setup(0);
+        t.vault.set_withdraw_cooldown(&0u64);
+        t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        let noe = t.vault.get_noe_balance(&t.lp);
+        approve_noe(&t, noe);
+        assert!(t.vault.withdraw(&t.lp, &noe) > 0); // instant when disabled
+    }
+
+    #[test]
+    fn pre_upgrade_depositor_exempt() {
+        // An address that never deposited post-upgrade (last==0) is exempt —
+        // simulated by receiving NOE via transfer, not deposit.
+        let t = setup(0);
+        t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        let noe = t.vault.get_noe_balance(&t.lp);
+        let lp2 = Address::generate(&t.env);
+        let noe_client = soroban_sdk::token::Client::new(&t.env, &t.noe);
+        noe_client.transfer(&t.lp, &lp2, &noe); // lp2 never deposited
+        noe_client.approve(&lp2, &t.vault_id, &noe, &1_000_000);
+        assert!(t.vault.withdraw(&lp2, &noe) > 0); // immediate — last==0 exempt
+    }
+
+    #[test]
+    fn set_withdraw_cooldown_capped() {
+        let t = setup(0);
+        assert!(matches!(
+            t.vault.try_set_withdraw_cooldown(&86_401u64),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        t.vault.set_withdraw_cooldown(&3_600u64);
+        assert_eq!(t.vault.get_withdraw_cooldown(), 3_600);
+    }
+
+    #[test]
+    fn cooldown_composes_with_reserved_payout_floor() {
+        // After the cooldown elapses, a full exit still hits the ReservedPayout
+        // floor (#40) — the two gates compose (cooldown first, then solvency).
+        let t = setup(1_000 * PRECISION);
+        t.vault.reserve_for_position(&btc(&t.env), &(200 * PRECISION), &(200 * PRECISION), &0, &0);
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // clear the cooldown
+        let noe = t.vault.get_noe_balance(&t.lp);
+        approve_noe(&t, noe);
+        assert!(matches!(
+            t.vault.try_withdraw(&t.lp, &noe),
+            Err(Ok(NoetherError::InsufficientLiquidity))
+        ));
     }
 }
