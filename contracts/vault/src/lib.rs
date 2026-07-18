@@ -1516,10 +1516,9 @@ mod tests {
 
         // A skew-REDUCING open (net 200 → 120, both over the cap) is ALLOWED —
         // the trade that helps must never be blocked.
-        let better = t.vault.reserve_for_position(
+        t.vault.reserve_for_position(
             &btc(&t.env), &(80 * PRECISION), &(80 * PRECISION), &(200 * PRECISION), &(120 * PRECISION),
         );
-        let _ = better;
         assert_eq!(t.vault.get_reserved_payout(), 80 * PRECISION);
     }
 

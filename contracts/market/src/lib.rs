@@ -6312,7 +6312,7 @@ mod tests {
 
         // Withdraw blocked at IM …
         assert!(matches!(
-            test.market.try_withdraw_cross_margin(&trader, &(1 * PRECISION)),
+            test.market.try_withdraw_cross_margin(&trader, &PRECISION),
             Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
         ));
         // … yet the account is NOT liquidatable (MM is the trigger, untouched).
