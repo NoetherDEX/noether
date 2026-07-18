@@ -14,15 +14,12 @@ const METHOD = 'close_position';
 export interface ClosePositionParams {
   trader: StellarAddress;
   positionId: number | bigint;
-  /** L0-10 acceptable-price bound on the close (7-dec i128); 0/omitted = unbounded. */
-  acceptablePrice?: bigint;
 }
 
 export function buildClosePositionArgs(params: ClosePositionParams): xdr.ScVal[] {
   return [
     toScVal(params.trader, 'address'),
     toScVal(params.positionId, 'u64'),
-    toScVal(params.acceptablePrice ?? 0n, 'i128'),
   ];
 }
 

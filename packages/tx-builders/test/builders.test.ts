@@ -79,21 +79,19 @@ describe('market builder XDR', () => {
   it('open_position', () => {
     const params = { trader: TRADER, asset: 'BTC', collateral: 1_000_000_000n, leverage: 5, direction: 'Long' as const };
     const args = Market.buildOpenPositionArgs(params);
-    expect(args).toHaveLength(6); // L0-10 added acceptable_price
+    expect(args).toHaveLength(5);
     expect(args[3]!.u32()).toBe(5);
     expect(args[4]!.switch().name).toBe('scvU32');
     expect(args[4]!.u32()).toBe(0);
-    expect(args[5]!.switch().name).toBe('scvI128'); // acceptable_price = 0 (unbounded)
-    expect(Market.buildOpenPositionOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAADW9wZW5fcG9zaXRpb24AAAAAAAAGAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAPAAAAA0JUQwAAAAAKAAAAAAAAAAAAAAAAO5rKAAAAAAMAAAAFAAAAAwAAAAAAAAAKAAAAAAAAAAAAAAAAAAAAAAAAAAA="`);
+    expect(Market.buildOpenPositionOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAADW9wZW5fcG9zaXRpb24AAAAAAAAFAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAPAAAAA0JUQwAAAAAKAAAAAAAAAAAAAAAAO5rKAAAAAAMAAAAFAAAAAwAAAAAAAAAA"`);
   });
 
   it('close_position', () => {
     const params = { trader: TRADER, positionId: 7 };
     const args = Market.buildClosePositionArgs(params);
-    expect(args).toHaveLength(3); // L0-10 added acceptable_price
+    expect(args).toHaveLength(2);
     expect(args[1]!.switch().name).toBe('scvU64');
-    expect(args[2]!.switch().name).toBe('scvI128'); // acceptable_price = 0 (unbounded)
-    expect(Market.buildClosePositionOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAADmNsb3NlX3Bvc2l0aW9uAAAAAAADAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAFAAAAAAAAAAcAAAAKAAAAAAAAAAAAAAAAAAAAAAAAAAA="`);
+    expect(Market.buildClosePositionOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAADmNsb3NlX3Bvc2l0aW9uAAAAAAACAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAFAAAAAAAAAAcAAAAA"`);
   });
 
   it('place_limit_order', () => {

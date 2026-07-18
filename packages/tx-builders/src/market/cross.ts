@@ -8,8 +8,6 @@ export interface OpenPositionCrossParams {
   collateral: bigint;
   leverage: number;
   direction: Direction;
-  /** L0-10 acceptable-price bound (7-dec i128); 0/omitted = unbounded. */
-  acceptablePrice?: bigint;
 }
 
 export async function buildOpenPositionCrossTx(
@@ -23,7 +21,6 @@ export async function buildOpenPositionCrossTx(
     toScVal(params.collateral, 'i128'),
     toScVal(params.leverage, 'u32'),
     toScVal(params.direction, 'direction'),
-    toScVal(params.acceptablePrice ?? 0n, 'i128'),
   ];
   return buildContractTx(ctx, params.trader, marketContractId, 'open_position_cross', args);
 }
@@ -31,8 +28,6 @@ export async function buildOpenPositionCrossTx(
 export interface ClosePositionCrossParams {
   trader: StellarAddress;
   positionId: number | bigint;
-  /** L0-10 acceptable-price bound (7-dec i128); 0/omitted = unbounded. */
-  acceptablePrice?: bigint;
 }
 
 export async function buildClosePositionCrossTx(
@@ -43,7 +38,6 @@ export async function buildClosePositionCrossTx(
   const args = [
     toScVal(params.trader, 'address'),
     toScVal(params.positionId, 'u64'),
-    toScVal(params.acceptablePrice ?? 0n, 'i128'),
   ];
   return buildContractTx(ctx, params.trader, marketContractId, 'close_position_cross', args);
 }
