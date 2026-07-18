@@ -447,6 +447,32 @@ impl VaultContract {
         Ok(())
     }
 
+    /// L1-23: pay a keeper bounty from the insurance buffer (market-only).
+    /// Returns the amount actually paid = min(requested, buffer, vault USDC
+    /// balance). A dry buffer returns 0 and NEVER errors — a bounty must never
+    /// block a liquidation clear. Buffer is debited; USDC moves vault→keeper.
+    pub fn pay_bounty(env: Env, keeper: Address, amount: i128) -> Result<i128, NoetherError> {
+        require_initialized(&env)?;
+        let market_contract = get_market_contract(&env);
+        market_contract.require_auth();
+        if amount <= 0 {
+            return Ok(0);
+        }
+        let buffer = get_buffer_balance(&env);
+        let usdc_token = get_usdc_token(&env);
+        let token_client = token::Client::new(&env, &usdc_token);
+        let bal = token_client.balance(&env.current_contract_address());
+        let paid = amount.min(buffer).min(bal);
+        if paid <= 0 {
+            env.events().publish((Symbol::new(&env, "bounty_paid"),), (keeper, amount, 0i128));
+            return Ok(0);
+        }
+        set_buffer_balance(&env, buffer - paid);
+        token_client.transfer(&env.current_contract_address(), &keeper, &paid);
+        env.events().publish((Symbol::new(&env, "bounty_paid"),), (keeper, amount, paid));
+        Ok(paid)
+    }
+
     /// Market-pushed exposure sync: sets one asset's unrealized trader
     /// PnL (folded into total UnrealizedPnl, which prices NOE via AUM)
     /// and releases reservation for closed positions in the same call.
@@ -1919,6 +1945,32 @@ mod tests {
     // ───────────────────────────────────────────────────────────────────
     // L1-28 · LP withdrawal cooldown (anti-JIT / NAV-sniping)
     // ───────────────────────────────────────────────────────────────────
+
+    // ───────────────────────────────────────────────────────────────────
+    // L1-23 · bankruptcy keeper bounty (pay_bounty)
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn bounty_capped_at_buffer() {
+        let t = setup(0);
+        let seeder = Address::generate(&t.env);
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&seeder, &(3 * PRECISION));
+        t.vault.seed_buffer(&seeder, &(3 * PRECISION));
+        assert_eq!(t.vault.get_buffer_balance(), 3 * PRECISION);
+
+        // Request 5 but the buffer holds only 3 → pay 3, buffer drained.
+        let keeper = Address::generate(&t.env);
+        assert_eq!(t.vault.pay_bounty(&keeper, &(5 * PRECISION)), 3 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert_eq!(soroban_sdk::token::Client::new(&t.env, &t.usdc).balance(&keeper), 3 * PRECISION);
+    }
+
+    #[test]
+    fn bounty_zero_buffer_returns_zero_never_errors() {
+        let t = setup(0);
+        let keeper = Address::generate(&t.env);
+        assert_eq!(t.vault.pay_bounty(&keeper, &(5 * PRECISION)), 0); // dry → 0, no revert
+    }
 
     #[test]
     fn withdraw_inside_cooldown_rejected_93() {

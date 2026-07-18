@@ -218,6 +218,16 @@ pub struct MarketConfig {
     /// Optional better-than-mark compensation paid from the buffer to an
     /// ADL'd winner, bps of closed notional (0 = disabled) (L0-1).
     pub adl_compensation_bps: u32,
+    /// Flat keeper bounty floor for bankrupt/small liquidations, paid from the
+    /// insurance buffer (7-dec USDC, 0 disables) (L1-23).
+    pub min_liq_bounty: i128,
+    /// Max lenient-read clamp vs last-good on settlement, in bps (0 disables)
+    /// (L1-26). Bounds a single deviant print reaching a close/liquidation.
+    pub lenient_clamp_bps: u32,
+    /// Keeper execution fee: flat base (7-dec USDC) + per-size deci-bps
+    /// (divisor FEE_PRECISION) (L1-21). Defaults keep maker+keeper ≤ taker.
+    pub keeper_fee_base: i128,
+    pub keeper_fee_deci_bps: u32,
 }
 
 /// Per-market risk parameters (L0-12). Stored per asset in market storage
@@ -289,6 +299,10 @@ impl Default for MarketConfig {
             adl_trigger_ratio_bps: 12_500,            // ADL when coverage < 1.25x payable uPnL
             adl_clear_ratio_bps: 15_000,              // clear only above 1.5x (hysteresis)
             adl_compensation_bps: 0,                  // better-than-mark comp disabled at launch
+            min_liq_bounty: 50_000_000,               // 5 USDC bankrupt-clear bounty (L1-23)
+            lenient_clamp_bps: 300,                   // 3% settlement clamp vs last-good (L1-26)
+            keeper_fee_base: 0,                       // no flat keeper fee (L1-21)
+            keeper_fee_deci_bps: 10,                  // 0.010% of size, bps-only (L1-21)
         }
     }
 }

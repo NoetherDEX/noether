@@ -255,6 +255,10 @@ impl MarketContract {
             || config.cross_close_out_bps >= BASIS_POINTS
             || config.adl_clear_ratio_bps < config.adl_trigger_ratio_bps
             || config.adl_compensation_bps > 100
+            || config.min_liq_bounty < 0                          // L1-23
+            || config.lenient_clamp_bps >= BASIS_POINTS           // L1-26
+            || config.keeper_fee_deci_bps > 15                    // L1-21: maker+keeper ≤ taker
+            || config.keeper_fee_base > 500_000                   // L1-21: ≤ 0.05 USDC dust
         {
             return Err(NoetherError::InvalidParameter);
         }
@@ -1102,14 +1106,20 @@ impl MarketContract {
         Self::cancel_position_orders(&env, position_id, None);
         delete_position(&env, position_id, &position.trader);
 
+        // L1-23: top the keeper leg up to the bankrupt-clear bounty floor from
+        // the insurance buffer (0 topup / dry buffer → no-op). Folded into the
+        // return + the keeper_reward event field — event FORMAT unchanged.
+        let total_reward = actual_keeper_reward
+            + Self::pay_vault_bounty(&env, &vault_address, &keeper, config.min_liq_bounty - actual_keeper_reward);
+
         env.events().publish(
             (Symbol::new(&env, "position_liquidated"),),
-            (position_id, position.trader, position.asset, position.direction, position.size, actual_keeper_reward, current_price),
+            (position_id, position.trader, position.asset, position.direction, position.size, total_reward, current_price),
         );
 
         extend_instance_ttl(&env);
 
-        Ok(actual_keeper_reward)
+        Ok(total_reward)
     }
 
     // is_liquidatable removed for WASM size — the keeper computes
@@ -1843,6 +1853,12 @@ impl MarketContract {
         }
 
         extend_instance_ttl(&env);
+
+        // L1-23: bounty topup on a bankrupt cross clear (dry buffer → no-op),
+        // folded into the cross_liq keeper_reward field (format unchanged).
+        total_keeper += Self::pay_vault_bounty(
+            &env, &get_vault(&env), &keeper, config.min_liq_bounty - total_keeper,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "cross_liq"),),
@@ -3294,6 +3310,17 @@ impl MarketContract {
         }
     }
 
+    /// L1-23: top the keeper leg up to min_liq_bounty from the insurance
+    /// buffer. Returns the amount actually paid (0 if the buffer is dry — a
+    /// bounty must never block a clear). Skips the call for a non-positive topup.
+    fn pay_vault_bounty(env: &Env, vault: &Address, keeper: &Address, topup: i128) -> i128 {
+        if topup <= 0 {
+            return 0;
+        }
+        let args: Vec<soroban_sdk::Val> = (keeper.clone(), topup).into_val(env);
+        env.invoke_contract(vault, &Symbol::new(env, "pay_bounty"), args)
+    }
+
     /// Route a slice of liquidation proceeds into the vault's insurance
     /// buffer (T3-D4). Accounting-only on the vault side — the USDC itself
     /// travels with the same transfer as the LP share.
@@ -3620,7 +3647,10 @@ mod tests {
     }
 
     fn setup_with_vault_deposit(vault_deposit: i128) -> TestEnv {
-        setup_full(vault_deposit, MarketConfig::default())
+        // L1-23: default-off in the shared harness so the many exact-keeper-
+        // reward liquidation tests stay pre-bounty; the bounty tests opt in
+        // via setup_with_config with a nonzero min_liq_bounty.
+        setup_full(vault_deposit, MarketConfig { min_liq_bounty: 0, ..MarketConfig::default() })
     }
 
     /// Custom-config variant (L0-4+): lets risk tests emulate the L0-12
@@ -5261,6 +5291,34 @@ mod tests {
         assert_eq!(vault.get_cum_shortfall_repaid(), owed);
         // Lifetime booked is history-independent.
         assert_eq!(vault.get_cum_shortfall(), owed);
+    }
+
+    #[test]
+    fn test_bankrupt_liquidation_pays_flat_bounty() {
+        // L1-23: a bankrupt clear (equity ≤ 0 → 0 keeper reward from equity)
+        // pays the keeper exactly the min_liq_bounty floor from the buffer.
+        let test = setup_with_config(MarketConfig::default()); // min_liq_bounty = 5 USDC
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let seeder = fund_trader(&test, 100 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        vault.seed_buffer(&seeder, &(100 * PRECISION)); // fund the buffer
+
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 80 / 1000)); // $0.08 → bankrupt on 10x
+
+        let k0 = usdc.balance(&keeper);
+        let b0 = vault.get_buffer_balance();
+        let reward = test.market.liquidate(&keeper, &pos.id);
+
+        assert_eq!(reward, 50_000_000, "keeper gets exactly the 5 USDC bounty");
+        assert_eq!(usdc.balance(&keeper) - k0, 50_000_000);
+        // Buffer funded the bounty (it also absorbs L0-2 bad debt here, so the
+        // net debit exceeds the bounty — just confirm it came out of the buffer).
+        assert!(vault.get_buffer_balance() < b0, "bounty paid from the buffer");
     }
 
     #[test]
