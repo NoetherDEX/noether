@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Self-contained server bundle for the Azure Container Apps deployment
+  // (web/Dockerfile). Vercel builds are unaffected by this setting.
+  output: 'standalone',
   images: { formats: ['image/avif', 'image/webp'] },
   // C9: iframe-wrapping is the cheapest phishing attack against a wallet
   // frontend — deny embedding everywhere, plus baseline hardening. Scoped

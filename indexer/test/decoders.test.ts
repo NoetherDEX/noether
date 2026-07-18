@@ -48,6 +48,51 @@ describe('decodeMarketEvent', () => {
     expect(decoded.txHash).toBe(FAKE_TX_HASH);
   });
 
+  it('decodes funding_applied as the L0-13 4-tuple (asset, rate, hours, cum)', () => {
+    const value = vec(
+      nativeToScVal('XLM', { type: 'symbol' }),
+      nativeToScVal(3_600n, { type: 'i128' }),
+      nativeToScVal(1n, { type: 'u64' }),
+      nativeToScVal(12_345n, { type: 'i128' }),
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('funding_applied', value));
+    if (decoded?.topic !== 'funding_applied') throw new Error('wrong topic');
+    expect(decoded.asset).toBe('XLM');
+    expect(decoded.fundingRate).toBe(3_600n);
+    expect(decoded.hoursElapsed).toBe(1n);
+    expect(decoded.cumulativeIndex).toBe(12_345n);
+  });
+
+  it('decodes the legacy funding_applied 2-tuple (rate, hours)', () => {
+    const value = vec(
+      nativeToScVal(3_600n, { type: 'i128' }),
+      nativeToScVal(2n, { type: 'u64' }),
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('funding_applied', value));
+    if (decoded?.topic !== 'funding_applied') throw new Error('wrong topic');
+    expect(decoded.asset).toBeUndefined();
+    expect(decoded.fundingRate).toBe(3_600n);
+    expect(decoded.hoursElapsed).toBe(2n);
+  });
+
+  it('decodes position_reduced (L0-6 partial close)', () => {
+    const value = vec(
+      nativeToScVal(9n, { type: 'u64' }),
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal('BTC', { type: 'symbol' }),
+      nativeToScVal(200_0000000n, { type: 'i128' }), // closed_size
+      nativeToScVal(300_0000000n, { type: 'i128' }), // remaining_size
+      nativeToScVal(60_000_0000000n, { type: 'i128' }),
+      nativeToScVal(50_0000000n, { type: 'i128' }), // pnl
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('position_reduced', value));
+    if (decoded?.topic !== 'position_reduced') throw new Error('wrong topic');
+    expect(decoded.positionId).toBe(9);
+    expect(decoded.closedSize).toBe(200_0000000n);
+    expect(decoded.remainingSize).toBe(300_0000000n);
+    expect(decoded.pnl).toBe(50_0000000n);
+  });
+
   it('decodes position_closed', () => {
     // Contract emits 8-tuple:
     //   (id, trader, asset, direction, size, entry_price, current_price, pnl)

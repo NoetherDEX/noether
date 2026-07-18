@@ -24,6 +24,7 @@ import type {
   PositionLiquidatedEvent,
   PositionOpenedEvent,
   PositionPartialLiqEvent,
+  PositionReducedEvent,
 } from '../types/events.js';
 import { decodeEventValue, decodeTopics, asBigInt, asNumber, asString } from './scval.js';
 
@@ -61,6 +62,8 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
       return decodePositionLiquidated(raw, value);
     case 'position_partial_liq':
       return decodePositionPartialLiq(raw, value);
+    case 'position_reduced':
+      return decodePositionReduced(raw, value);
     case 'cross_liq':
       return decodeCrossLiq(raw, value);
     case 'order_placed':
@@ -254,11 +257,38 @@ function decodeOrderExecuted(raw: RawEvent, v: unknown[]): OrderExecutedEvent {
 }
 
 function decodeFundingApplied(raw: RawEvent, v: unknown[]): FundingAppliedEvent {
+  // L0-13 made this a 4-tuple (asset, rate, hours, cum); the legacy event was
+  // a 2-tuple (rate, hours). Branch on arity so a redeploy doesn't misdecode
+  // (asset would otherwise be read as the rate).
+  if (v.length >= 4) {
+    return {
+      ...envelope(raw, 'funding_applied'),
+      topic: 'funding_applied',
+      asset: asString(v[0], 'funding_applied.asset'),
+      fundingRate: asBigInt(v[1], 'funding_applied.funding_rate'),
+      hoursElapsed: asBigInt(v[2], 'funding_applied.hours_elapsed'),
+      cumulativeIndex: asBigInt(v[3], 'funding_applied.cumulative_index'),
+    };
+  }
   return {
     ...envelope(raw, 'funding_applied'),
     topic: 'funding_applied',
     fundingRate: asBigInt(v[0], 'funding_applied.funding_rate'),
     hoursElapsed: asBigInt(v[1], 'funding_applied.hours_elapsed'),
+  };
+}
+
+function decodePositionReduced(raw: RawEvent, v: unknown[]): PositionReducedEvent {
+  return {
+    ...envelope(raw, 'position_reduced'),
+    topic: 'position_reduced',
+    positionId: asNumber(v[0], 'position_reduced.position_id'),
+    trader: asString(v[1], 'position_reduced.trader'),
+    asset: asString(v[2], 'position_reduced.asset'),
+    closedSize: asBigInt(v[3], 'position_reduced.closed_size'),
+    remainingSize: asBigInt(v[4], 'position_reduced.remaining_size'),
+    closePrice: asBigInt(v[5], 'position_reduced.close_price'),
+    pnl: asBigInt(v[6], 'position_reduced.pnl'),
   };
 }
 

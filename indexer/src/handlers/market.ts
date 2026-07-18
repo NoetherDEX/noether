@@ -201,6 +201,14 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
         args: [event.size.toString(), event.positionId],
       });
       return;
+    case 'position_reduced':
+      // L0-6 partial close: the event carries the exact remaining size, so
+      // set it directly (no arithmetic drift).
+      await db.execute({
+        sql: 'UPDATE positions SET size = ? WHERE position_id = ?',
+        args: [event.remainingSize.toString(), event.positionId],
+      });
+      return;
     default:
       return;
   }
@@ -322,6 +330,7 @@ const MARKET_TOPICS: DecodedMarketEvent['topic'][] = [
   'position_closed',
   'position_liquidated',
   'position_partial_liq',
+  'position_reduced',
   'cross_liq',
   'order_placed',
   'order_cancelled',

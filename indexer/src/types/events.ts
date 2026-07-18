@@ -101,8 +101,24 @@ export interface OrderExecutedEvent extends EventEnvelope {
 
 export interface FundingAppliedEvent extends EventEnvelope {
   topic: 'funding_applied';
+  /** L0-13: per-asset funding. undefined on the legacy 2-tuple event. */
+  asset?: string;
   fundingRate: bigint;
   hoursElapsed: bigint;
+  /** L0-13: per-asset cumulative funding index. undefined on the legacy event. */
+  cumulativeIndex?: bigint;
+}
+
+/** L0-6: a partial CLOSE (trader-initiated); the position SURVIVES, shrunk. */
+export interface PositionReducedEvent extends EventEnvelope {
+  topic: 'position_reduced';
+  positionId: number;
+  trader: StellarAddress;
+  asset: string;
+  closedSize: bigint;
+  remainingSize: bigint;
+  closePrice: bigint;
+  pnl: bigint;
 }
 
 export interface InitializedEvent extends EventEnvelope {
@@ -161,6 +177,7 @@ export type DecodedMarketEvent =
   | PositionClosedEvent
   | PositionLiquidatedEvent
   | PositionPartialLiqEvent
+  | PositionReducedEvent
   | CrossLiquidatedEvent
   | OrderPlacedEvent
   | OrderCancelledEvent
