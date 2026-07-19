@@ -11,23 +11,34 @@
 set -euo pipefail
 
 ENV_NAME="${1:-}"
-if [[ "$ENV_NAME" != "staging" && "$ENV_NAME" != "prod" ]]; then
-  echo "usage: $0 staging|prod [tag]"; exit 1
+if [[ "$ENV_NAME" != "staging" && "$ENV_NAME" != "prod" && "$ENV_NAME" != "testnet" ]]; then
+  echo "usage: $0 staging|prod|testnet [tag]"; exit 1
 fi
 TAG="${2:-$(date +%Y%m%d-%H%M)}"
 ACR=noetheracr2026
 RG=noether-rg
-if [[ "$ENV_NAME" == "prod" ]]; then APP=noether-web; else APP=noether-web-staging; fi
+case "$ENV_NAME" in
+  prod)    APP=noether-web ;;
+  testnet) APP=noether-web-testnet ;;
+  *)       APP=noether-web-staging ;;
+esac
 IMAGE="noether-web:${ENV_NAME}-${TAG}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VALUES="$ROOT/web/.env.azure.${ENV_NAME}.local"
 [[ -f "$VALUES" ]] || { echo "❌ missing $VALUES (build-time NEXT_PUBLIC_* values)"; exit 1; }
 
-# Prod ships main-branch code only — the staging branch is the staging site.
+# Branch discipline: prod ships main-branch code, testnet ships the frozen
+# testnet branch, staging ships the staging branch.
 if [[ "$ENV_NAME" == "prod" ]]; then
   BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)
   if [[ "$BRANCH" != "main" ]]; then
     echo "❌ prod image must build from a main checkout (current branch: $BRANCH)"; exit 1
+  fi
+fi
+if [[ "$ENV_NAME" == "testnet" ]]; then
+  BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)
+  if [[ "$BRANCH" != "testnet" ]]; then
+    echo "❌ testnet image must build from a testnet checkout (current branch: $BRANCH)"; exit 1
   fi
 fi
 

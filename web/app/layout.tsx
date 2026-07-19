@@ -74,6 +74,7 @@ import { Providers } from './providers'
 import { FeedbackButton } from '@/components/feedback/FeedbackButton'
 import { ReferralBanner } from '@/components/referral/ReferralBanner'
 import { AppFooter } from '@/components/layout/AppFooter'
+import { TestnetRibbon } from '@/components/TestnetRibbon'
 
 export default function RootLayout({
   children,
@@ -90,6 +91,7 @@ export default function RootLayout({
         >
           Skip to content
         </a>
+        <TestnetRibbon />
         <Providers>
           <ReferralBanner />
           {children}
