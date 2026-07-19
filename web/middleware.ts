@@ -47,8 +47,13 @@ export function middleware(request: NextRequest): NextResponse {
   );
   if (!guarded) return NextResponse.next();
 
+  // Vercel populates request.geo at its edge; self-hosted (Azure behind
+  // Cloudflare orange-cloud) the equivalent signal is the CF-IPCountry header.
+  // Header-sourced geo is country-level only — the CA-ON region check works
+  // only on the Vercel path; the api gateway enforces the same list
+  // server-side as the backstop.
   const geo = (request as unknown as { geo?: { country?: string; region?: string } }).geo;
-  const country = geo?.country ?? '';
+  const country = geo?.country ?? request.headers.get('cf-ipcountry') ?? '';
   const region = country && geo?.region ? `${country}-${geo.region}` : '';
 
   if (BLOCKED_COUNTRIES.has(country) || BLOCKED_REGIONS.has(region)) {
