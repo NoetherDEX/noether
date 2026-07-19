@@ -104,12 +104,19 @@ describe('market builder XDR', () => {
       triggerPrice: 650_000_000_000n,
       triggerCondition: 'Below' as const,
       slippageToleranceBps: 50,
+      timeInForce: 1 | 0x100, // IOC + reduce-only — pins the bit-8 packing
     };
     const args = Market.buildPlaceLimitOrderArgs(params);
-    expect(args).toHaveLength(8);
+    expect(args).toHaveLength(9);
     expect(args[6]!.switch().name).toBe('scvBool');
     expect(args[6]!.b()).toBe(false);
-    expect(Market.buildPlaceLimitOrderOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAAEXBsYWNlX2xpbWl0X29yZGVyAAAAAAAACAAAABIAAAAAAAAAAJSKOmrbbD3tzT/nAkRSWQV12gwG//PJMeE0yv1PgUEFAAAADwAAAANFVEgAAAAAAwAAAAEAAAAKAAAAAAAAAAAAAAAAO5rKAAAAAAMAAAADAAAACgAAAAAAAAAAAAAAl1cE5AAAAAAAAAAAAAAAAAMAAAAyAAAAAA=="`);
+    expect(args[8]!.switch().name).toBe('scvU32');
+    expect(args[8]!.u32()).toBe(257);
+    // Omitted timeInForce defaults to 0 (GTC) — the deployed 9-arg signature is always satisfied.
+    const defaulted = Market.buildPlaceLimitOrderArgs({ ...params, timeInForce: undefined });
+    expect(defaulted).toHaveLength(9);
+    expect(defaulted[8]!.u32()).toBe(0);
+    expect(Market.buildPlaceLimitOrderOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAAEXBsYWNlX2xpbWl0X29yZGVyAAAAAAAACQAAABIAAAAAAAAAAJSKOmrbbD3tzT/nAkRSWQV12gwG//PJMeE0yv1PgUEFAAAADwAAAANFVEgAAAAAAwAAAAEAAAAKAAAAAAAAAAAAAAAAO5rKAAAAAAMAAAADAAAACgAAAAAAAAAAAAAAl1cE5AAAAAAAAAAAAAAAAAMAAAAyAAAAAwAAAQEAAAAA"`);
   });
 
   it('place_stop_limit_order', () => {
@@ -125,10 +132,37 @@ describe('market builder XDR', () => {
       slippageToleranceBps: 25,
     };
     const args = Market.buildPlaceStopLimitOrderArgs(params);
-    expect(args).toHaveLength(9);
+    expect(args).toHaveLength(10);
     expect(args[7]!.switch().name).toBe('scvBool');
     expect(args[7]!.b()).toBe(true);
-    expect(Market.buildPlaceStopLimitOrderOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAAFnBsYWNlX3N0b3BfbGltaXRfb3JkZXIAAAAAAAkAAAASAAAAAAAAAACUijpq22w97c0/5wJEUlkFddoMBv/zyTHhNMr9T4FBBQAAAA8AAAADQlRDAAAAAAMAAAAAAAAACgAAAAAAAAAAAAAAADuaygAAAAADAAAACgAAAAoAAAAAAAAAAAAAAJdXBOQAAAAACgAAAAAAAAAAAAAAmasQyAAAAAAAAAAAAQAAAAMAAAAZAAAAAA=="`);
+    expect(args[9]!.switch().name).toBe('scvU32');
+    expect(args[9]!.u32()).toBe(0);
+    expect(Market.buildPlaceStopLimitOrderOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAAFnBsYWNlX3N0b3BfbGltaXRfb3JkZXIAAAAAAAoAAAASAAAAAAAAAACUijpq22w97c0/5wJEUlkFddoMBv/zyTHhNMr9T4FBBQAAAA8AAAADQlRDAAAAAAMAAAAAAAAACgAAAAAAAAAAAAAAADuaygAAAAADAAAACgAAAAoAAAAAAAAAAAAAAJdXBOQAAAAACgAAAAAAAAAAAAAAmasQyAAAAAAAAAAAAQAAAAMAAAAZAAAAAwAAAAAAAAAA"`);
+  });
+
+  it('set_stop_loss', () => {
+    const params = { trader: TRADER, positionId: 7, triggerPrice: 580_000_000_000n, slippageToleranceBps: 50 };
+    const args = Market.buildSetStopLossArgs(params);
+    expect(args).toHaveLength(4);
+    expect(args[1]!.switch().name).toBe('scvU64');
+    expect(Market.buildSetStopLossOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAADXNldF9zdG9wX2xvc3MAAAAAAAAEAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAFAAAAAAAAAAcAAAAKAAAAAAAAAAAAAACHCrGoAAAAAAMAAAAyAAAAAA=="`);
+  });
+
+  it('set_take_profit', () => {
+    const params = {
+      trader: TRADER,
+      positionId: 7,
+      triggerPrice: 720_000_000_000n,
+      slippageToleranceBps: 50,
+      limitPrice: 715_000_000_000n,
+    };
+    const args = Market.buildSetTakeProfitArgs(params);
+    expect(args).toHaveLength(5);
+    expect(args[4]!.switch().name).toBe('scvI128');
+    // Omitted limitPrice defaults to 0 (plain TP) — still the deployed 5-arg signature.
+    const defaulted = Market.buildSetTakeProfitArgs({ ...params, limitPrice: undefined });
+    expect(defaulted).toHaveLength(5);
+    expect(Market.buildSetTakeProfitOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAAD3NldF90YWtlX3Byb2ZpdAAAAAAFAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAFAAAAAAAAAAcAAAAKAAAAAAAAAAAAAACno1ggAAAAAAMAAAAyAAAACgAAAAAAAAAAAAAApnlSLgAAAAAA"`);
   });
 
   it('place_trailing_stop', () => {

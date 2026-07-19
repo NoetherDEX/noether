@@ -2,7 +2,10 @@
 //!
 //! All possible errors in the Noether protocol.
 //! Error codes are grouped by category for easy identification.
-//! Note: Soroban contracterror has a limit of ~48 variants, so we consolidate similar errors.
+//! HARD LIMIT (verified 2026-07-18): `#[contracterror]` caps the enum at ~50
+//! VARIANTS (the macro panics `LengthExceedsMax` above it) — the discriminant
+//! VALUES are free u32s, but the COUNT is bounded. We're at the ceiling; adding
+//! a code means removing a genuinely-dead one first (see the REMOVED markers).
 
 use soroban_sdk::contracterror;
 
@@ -45,6 +48,9 @@ pub enum NoetherError {
     NotPositionOwner = 24,
     /// Position has insufficient margin for operation
     InsufficientMargin = 25,
+    /// A partial close / reduce-only would leave a residual position below
+    /// the minimum collateral floor (L0-6). Close the whole position instead.
+    PositionTooSmall = 27,
 
     // ═══════════════════════════════════════════════════════════════
     // Oracle Errors (30-39)
@@ -76,8 +82,8 @@ pub enum NoetherError {
 
     /// Position is healthy and cannot be liquidated
     NotLiquidatable = 50,
-    /// Liquidation operation failed
-    LiquidationFailed = 51,
+    // 51 LiquidationFailed REMOVED (L1-24/28): freed a slot for the ~50-variant
+    // contracterror cap (LengthExceedsMax). Never returned anywhere.
 
     // ═══════════════════════════════════════════════════════════════
     // Funding Rate Errors (55-59)
@@ -96,8 +102,9 @@ pub enum NoetherError {
     OrderNotPending = 61,
     /// Order trigger condition not met (price hasn't reached trigger)
     OrderNotTriggered = 62,
-    /// Slippage exceeds trader's tolerance
-    SlippageExceeded = 63,
+    // 63 SlippageExceeded REMOVED (L1-24/28): slippage is handled by
+    // cancel-and-refund (CancelledSlippage status), never this error. Freed a
+    // slot for the contracterror variant cap.
     /// Caller does not own this order
     NotOrderOwner = 64,
     /// Invalid trigger price (e.g., stop-loss above entry for long)
@@ -139,4 +146,37 @@ pub enum NoetherError {
     /// grace period and cannot be liquidated again yet (bankruptcy
     /// overrides the grace period)
     LiquidationCooldown = 83,
+    /// adl_close called while ADL is not active for the position's asset
+    /// (L0-1; check_adl_trigger or a shortfall settle flips the flag)
+    AdlNotActive = 84,
+    /// adl_close target is not a net winner at the current mark — only
+    /// positive-uPnL positions are ADL candidates (L0-1)
+    AdlNotEligible = 85,
+    // 86 LiquidationNotConfirmed — reserved for L0-9 (smoothed mark)
+    /// A market open/close filled worse than the trader's acceptable_price
+    /// bound (L0-10). The tx reverts; resubmit with 0 to fill unbounded.
+    AcceptablePriceExceeded = 87,
+    /// A risk-increasing op (open / limit / stop-limit placement) hit an
+    /// asset with no per-market risk params configured — fail-closed
+    /// (L0-12). Risk-reducing paths fall back to the legacy MM instead.
+    AssetRiskNotConfigured = 88,
+    /// An open would push the asset's net long-short skew past its cap and
+    /// make it MORE imbalanced (L0-14). Skew-reducing opens always pass.
+    SkewCapExceeded = 89,
+    /// Full-freeze pause (mode 2): even risk-reducing ops — closes,
+    /// liquidations, cross deposits/withdrawals, stops, funding — are halted
+    /// symmetrically (L0-15). Only cancel_order works; auto-degrades to
+    /// halt-open (closes/liquidations allowed) after 72h.
+    Frozen = 90,
+    /// An open auto-nets to zero or beyond against the trader's opposite
+    /// same-asset positions — gross opposite >= requested size, too many
+    /// opposing legs, or a sub-min remainder (L1-3). Reductions and flips
+    /// go through the close/reduce-only paths, never a one-tx flip.
+    NetsToZero = 91,
+    /// Trading in this specific market is temporarily halted by admin (L1-24).
+    /// Risk-increasing paths only — closing/liquidating a position still works.
+    AssetHalted = 92,
+    /// LP withdrawal is inside the post-deposit cooldown window (L1-28) — an
+    /// anti-JIT/NAV-sniping delay after each deposit. Everything else is instant.
+    WithdrawCooldownActive = 93,
 }

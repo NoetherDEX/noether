@@ -20,7 +20,7 @@ export type IndexerBusChannel =
 
 export interface IndexerBusMap {
   event: DecodedMarketEvent;
-  trade: { kind: 'open' | 'close' | 'liquidation'; positionId: number; trader: string; price: bigint; size: bigint; ts: number; asset?: string };
+  trade: { kind: 'open' | 'close' | 'liquidation' | 'adl'; positionId: number; trader: string; price: bigint; size: bigint; ts: number; asset?: string };
   position: { positionId: number; trader: string; state: 'opened' | 'closed' | 'liquidated' };
   order: { orderId: number; state: 'placed' | 'cancelled' | 'executed' };
   funding: { fundingRate: bigint; hoursElapsed: bigint; ts: number };

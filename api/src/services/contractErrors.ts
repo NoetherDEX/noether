@@ -30,6 +30,7 @@ const NOETHER_ERROR_NAMES: Record<number, string> = {
   40: 'InsufficientLiquidity',
   41: 'InvalidAmount',
   42: 'InsufficientBalance',
+  43: 'DepositCapExceeded',
   50: 'NotLiquidatable',
   51: 'LiquidationFailed',
   55: 'FundingIntervalNotElapsed',
@@ -51,6 +52,16 @@ const NOETHER_ERROR_NAMES: Record<number, string> = {
   80: 'CrossMarginOrderNotSupported',
   81: 'PriceDeviationTooHigh',
   82: 'OpenInterestCapExceeded',
+  83: 'LiquidationCooldown',
+  84: 'AdlNotActive',
+  85: 'AdlNotEligible',
+  87: 'AcceptablePriceExceeded',
+  88: 'AssetRiskNotConfigured',
+  89: 'SkewCapExceeded',
+  90: 'Frozen',
+  91: 'NetsToZero',
+  92: 'AssetHalted',
+  93: 'WithdrawCooldownActive',
 };
 
 export function contractErrorFromCode(code: number): ContractErrorInfo {

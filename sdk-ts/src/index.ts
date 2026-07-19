@@ -28,6 +28,8 @@ export {
   type PlaceLimitOrderRequest,
   type PlaceStopLimitOrderRequest,
   type PlaceTrailingStopRequest,
+  type SetStopLossRequest,
+  type SetTakeProfitRequest,
   type SetStopOrTakeProfitRequest,
   type CancelOrderRequest,
   type PreparedTransaction,

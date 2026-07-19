@@ -7,7 +7,8 @@ export interface ApiConfig {
   host: string;
   port: number;
   logLevel: string;
-  corsOrigin: string;
+  /** One origin, '*' (dev only), or a parsed comma-separated LIST. */
+  corsOrigin: string | string[];
   rpcUrls: string[];
   rpcUrl: string;
   /** Public key whose account will be used as source for read-only simulations. */
@@ -40,10 +41,22 @@ export function loadConfig(): ApiConfig {
   const contracts = loadContracts();
   const network = (process.env.NETWORK ?? 'testnet') as Network;
   const rpcUrls = getRpcUrls(network);
-  const corsOrigin = process.env.API_CORS_ORIGIN ?? '*';
+  const corsOriginRaw = process.env.API_CORS_ORIGIN ?? '*';
   if (process.env.NODE_ENV === 'production') {
-    assertProductionEnv(corsOrigin);
+    assertProductionEnv(corsOriginRaw);
   }
+  // Comma-separated origins MUST become a list. Passed as one string,
+  // @fastify/cors echoes the raw value verbatim into
+  // Access-Control-Allow-Origin — and a comma-joined header is invalid
+  // CORS, so browsers on every listed site rejected every direct gateway
+  // response while the web's fallback paths quietly masked the breakage
+  // (bit prod + staging from the 2026-07-15 cutover until 2026-07-17).
+  const corsOrigin = corsOriginRaw.includes(',')
+    ? corsOriginRaw
+        .split(',')
+        .map((o) => o.trim())
+        .filter(Boolean)
+    : corsOriginRaw;
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     // No local-file fallback exists on Postgres. Tests inject their own db,

@@ -3,7 +3,7 @@
 //! Storage keys and helpers for the Market contract.
 
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
-use noether_common::{NoetherError, Position, MarketConfig, Order, OrderStatus, FeeTier, VolumeRecord};
+use noether_common::{NoetherError, Position, MarketConfig, AssetRiskParams, Order, OrderStatus, FeeTier, VolumeRecord};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage Keys
@@ -36,8 +36,21 @@ pub enum DataKey {
     CumulativeFundingRate,
     /// Whether initialized
     Initialized,
-    /// Whether paused
+    /// Whether paused (LEGACY bool — left unread after the L0-15 upgrade;
+    /// superseded by PauseState. Kept so old stored value doesn't break decode)
     Paused,
+    /// Two-tier pause (L0-15): (mode, since) where mode 0=live, 1=halt-open,
+    /// 2=full-freeze; since = ledger seconds the current mode began.
+    PauseState,
+    /// L1-24: per-asset trading halt (persistent bool, unwrap_or false). When
+    /// true, risk-INCREASING ops on the asset revert #92; closing/liquidating
+    /// still works — one broken feed no longer forces a whole-venue pause.
+    AssetHalted(Symbol),
+    /// L1-30: proceeds (USDC to trader) from a full isolated close, keyed by
+    /// position_id, in TEMPORARY storage. Lets a vault_factory owner reconcile
+    /// a keeper-executed protective close to the exact amount that landed at
+    /// the factory (no factory call fires on a keeper execution).
+    ClosedProceeds(u64),
     /// Position by ID
     Position(u64),
     /// Position IDs for a trader
@@ -83,6 +96,29 @@ pub enum DataKey {
     /// Ledger timestamp of the last partial liquidation of a position
     /// (T3-D4 grace period). Removed with the position.
     PartialLiqTs(u64),
+    /// Ledger timestamp of the last STAGED cross-account liquidation round
+    /// (L0-5 grace period) — account-scoped, cleared on full close.
+    CrossPartialLiqTs(Address),
+    /// ADL solvency flag per asset (L0-1): while set, new opens are
+    /// rejected and adl_close may force-realize winners at mark.
+    AdlActive(Symbol),
+    /// Per-market risk params (L0-12): leverage cap, IM/MM/close-out,
+    /// max size, funding velocity/clamp, skew scale. Unset = ladder
+    /// inactive for the asset (risk-increasing ops fail #88).
+    AssetRisk(Symbol),
+    /// Ledger timestamp the ladder went live (L0-12), stamped once by the
+    /// first set_asset_risk. Positions opened before it keep the legacy
+    /// maintenance margin so an in-place upgrade liquidates nobody.
+    RiskEpochTs,
+    /// Per-asset funding state (L0-13): (cumulative_index, current_rate,
+    /// last_ts), all fraction-units/h (1e7 = 100%/h) except last_ts.
+    /// Replaces the single global CumulativeFundingRate for per-market
+    /// funding. Absent = (0, 0, 0).
+    FundingState(Symbol),
+    /// Per-asset time-weighted skew integral (L0-13, M-7 kill):
+    /// (integral [notional×seconds], last_touch_ts). Accumulated in
+    /// adjust_oi, drained by apply_funding.
+    SkewIntegral(Symbol),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -97,12 +133,69 @@ pub fn set_initialized(env: &Env, value: bool) {
     env.storage().instance().set(&DataKey::Initialized, &value);
 }
 
-pub fn get_paused(env: &Env) -> bool {
-    env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
-}
-
+/// LEGACY (L0-15): the pre-two-tier bool, still written by initialize for a
+/// clean default; superseded by PauseState. Never read on any gate path
+/// (get_paused removed — nothing reads it).
 pub fn set_paused(env: &Env, value: bool) {
     env.storage().instance().set(&DataKey::Paused, &value);
+}
+
+/// Full-freeze (mode 2) auto-degrades to halt-open (mode 1) after this many
+/// seconds — a bounded blast radius so a stuck full-freeze can't strand
+/// closes/liquidations forever (L0-15). Mode 1 never auto-expires.
+pub const FULL_FREEZE_MAX_SECS: u64 = 259_200; // 72h
+
+/// Raw stored (mode, since). Unset = (0, 0) = live.
+pub fn get_pause_state(env: &Env) -> (u32, u64) {
+    env.storage().instance().get(&DataKey::PauseState).unwrap_or((0u32, 0u64))
+}
+
+pub fn set_pause_state(env: &Env, mode: u32, since: u64) {
+    env.storage().instance().set(&DataKey::PauseState, &(mode, since));
+}
+
+/// Effective pause mode for a WRITE path: reads the stored mode and, if a
+/// full-freeze has outlived FULL_FREEZE_MAX_SECS, persists the degrade to
+/// mode 1 + emits pause_degraded before returning 1. Safe to write because
+/// every caller is a write entrypoint (a rejecting gate simply rolls the
+/// degrade back — it re-fires on the next op). Read-only callers use
+/// effective_pause_mode_view instead.
+pub fn effective_mode(env: &Env) -> u32 {
+    let (mode, since) = get_pause_state(env);
+    if mode == 2 && env.ledger().timestamp() >= since.saturating_add(FULL_FREEZE_MAX_SECS) {
+        set_pause_state(env, 1, since);
+        env.events().publish((Symbol::new(env, "pause_degraded"),), (2u32, 1u32));
+        return 1;
+    }
+    mode
+}
+
+/// Read-only effective mode (no persist, no event) — for views. Same 72h
+/// degrade logic, computed logically.
+pub fn effective_pause_mode_view(env: &Env) -> u32 {
+    let (mode, since) = get_pause_state(env);
+    if mode == 2 && env.ledger().timestamp() >= since.saturating_add(FULL_FREEZE_MAX_SECS) {
+        return 1;
+    }
+    mode
+}
+
+/// Gate for risk-INCREASING ops (opens, non-reduce-only order placement,
+/// margin removal): allowed ONLY when fully live. #4 Paused in mode 1/2.
+pub fn require_can_increase_risk(env: &Env) -> Result<(), NoetherError> {
+    if effective_mode(env) != 0 {
+        return Err(NoetherError::Paused);
+    }
+    Ok(())
+}
+
+/// Gate for risk-REDUCING ops (closes, liquidations, cross deposit/withdraw,
+/// stops, funding): allowed in live + halt-open; #90 Frozen only in mode 2.
+pub fn require_can_reduce_risk(env: &Env) -> Result<(), NoetherError> {
+    if effective_mode(env) > 1 {
+        return Err(NoetherError::Frozen);
+    }
+    Ok(())
 }
 
 pub fn get_admin(env: &Env) -> Address {
@@ -183,18 +276,14 @@ pub fn set_total_short_size(env: &Env, size: i128) {
     extend_persistent_ttl(env, &DataKey::TotalShortSize);
 }
 
-pub fn get_last_funding_time(env: &Env) -> u64 {
-    env.storage().persistent().get(&DataKey::LastFundingTime).unwrap_or(0)
-}
+// L0-13: legacy global funding replaced by per-asset FundingState. The
+// LastFundingTime/CurrentFundingRate keys are seeded at initialize for
+// consistency but no longer read on the funding path; get_last_funding_time
+// and set_current_funding_rate were removed as dead.
 
 pub fn set_last_funding_time(env: &Env, time: u64) {
     env.storage().persistent().set(&DataKey::LastFundingTime, &time);
     extend_persistent_ttl(env, &DataKey::LastFundingTime);
-}
-
-pub fn set_current_funding_rate(env: &Env, rate: i128) {
-    env.storage().persistent().set(&DataKey::CurrentFundingRate, &rate);
-    extend_persistent_ttl(env, &DataKey::CurrentFundingRate);
 }
 
 pub fn get_treasury(env: &Env) -> Option<Address> {
@@ -305,6 +394,71 @@ pub fn set_partial_liq_ts(env: &Env, position_id: u64, ts: u64) {
     extend_persistent_ttl(env, &key);
 }
 
+pub fn get_cross_partial_liq_ts(env: &Env, trader: &Address) -> Option<u64> {
+    env.storage().persistent().get(&DataKey::CrossPartialLiqTs(trader.clone()))
+}
+
+pub fn set_cross_partial_liq_ts(env: &Env, trader: &Address, ts: u64) {
+    let key = DataKey::CrossPartialLiqTs(trader.clone());
+    env.storage().persistent().set(&key, &ts);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn remove_cross_partial_liq_ts(env: &Env, trader: &Address) {
+    env.storage().persistent().remove(&DataKey::CrossPartialLiqTs(trader.clone()));
+}
+
+pub fn get_adl_active(env: &Env, asset: &Symbol) -> bool {
+    env.storage().persistent().get(&DataKey::AdlActive(asset.clone())).unwrap_or(false)
+}
+
+pub fn set_adl_active(env: &Env, asset: &Symbol, active: bool) {
+    let key = DataKey::AdlActive(asset.clone());
+    env.storage().persistent().set(&key, &active);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn get_asset_risk(env: &Env, asset: &Symbol) -> Option<AssetRiskParams> {
+    env.storage().persistent().get(&DataKey::AssetRisk(asset.clone()))
+}
+
+pub fn set_asset_risk(env: &Env, asset: &Symbol, params: &AssetRiskParams) {
+    let key = DataKey::AssetRisk(asset.clone());
+    env.storage().persistent().set(&key, params);
+    extend_persistent_ttl(env, &key);
+}
+
+pub fn get_risk_epoch_ts(env: &Env) -> u64 {
+    env.storage().persistent().get(&DataKey::RiskEpochTs).unwrap_or(0)
+}
+
+pub fn set_risk_epoch_ts(env: &Env, ts: u64) {
+    env.storage().persistent().set(&DataKey::RiskEpochTs, &ts);
+    extend_persistent_ttl(env, &DataKey::RiskEpochTs);
+}
+
+/// Per-asset funding state (L0-13): (cumulative, current_rate, last_ts).
+pub fn get_funding_state(env: &Env, asset: &Symbol) -> (i128, i128, u64) {
+    env.storage().persistent().get(&DataKey::FundingState(asset.clone())).unwrap_or((0, 0, 0))
+}
+
+pub fn set_funding_state(env: &Env, asset: &Symbol, state: &(i128, i128, u64)) {
+    let key = DataKey::FundingState(asset.clone());
+    env.storage().persistent().set(&key, state);
+    extend_persistent_ttl(env, &key);
+}
+
+/// Per-asset skew integral (L0-13): (integral, last_touch_ts).
+pub fn get_skew_integral(env: &Env, asset: &Symbol) -> (i128, u64) {
+    env.storage().persistent().get(&DataKey::SkewIntegral(asset.clone())).unwrap_or((0, 0))
+}
+
+pub fn set_skew_integral(env: &Env, asset: &Symbol, v: &(i128, u64)) {
+    let key = DataKey::SkewIntegral(asset.clone());
+    env.storage().persistent().set(&key, v);
+    extend_persistent_ttl(env, &key);
+}
+
 pub fn delete_position(env: &Env, id: u64, trader: &Address) {
     // Remove from storage (incl. any partial-liquidation grace marker)
     env.storage().persistent().remove(&DataKey::Position(id));
@@ -372,12 +526,8 @@ pub fn require_initialized(env: &Env) -> Result<(), NoetherError> {
     Ok(())
 }
 
-pub fn require_not_paused(env: &Env) -> Result<(), NoetherError> {
-    if get_paused(env) {
-        return Err(NoetherError::Paused);
-    }
-    Ok(())
-}
+// require_not_paused REMOVED (L0-15) — replaced by require_can_increase_risk
+// / require_can_reduce_risk per the two-tier pause matrix.
 
 pub fn require_admin(env: &Env) -> Result<(), NoetherError> {
     require_initialized(env)?;
@@ -478,6 +628,47 @@ pub fn update_order_status(env: &Env, order_id: u64, status: OrderStatus) {
         if status != OrderStatus::Pending {
             remove_order_from_lists(env, order_id, &order.trader);
         }
+    }
+}
+
+// ── L1-24 per-asset halt ──
+pub fn get_asset_halted(env: &Env, asset: &Symbol) -> bool {
+    env.storage().persistent().get(&DataKey::AssetHalted(asset.clone())).unwrap_or(false)
+}
+
+pub fn set_asset_halted(env: &Env, asset: &Symbol, halted: bool) {
+    let key = DataKey::AssetHalted(asset.clone());
+    env.storage().persistent().set(&key, &halted);
+    extend_persistent_ttl(env, &key);
+}
+
+/// L1-30: record a full isolated close's trader-proceeds in TEMPORARY storage
+/// so a vault_factory owner can reconcile a keeper-executed protective close to
+/// the exact amount (a keeper execution fires no factory call). Temporary =
+/// auto-GC'd; the keeper reconciles promptly. Recorded even when 0 (a total
+/// loss) so reconcile can distinguish a closed position from an open one.
+pub fn record_close_proceeds(env: &Env, position_id: u64, amount: i128) {
+    let key = DataKey::ClosedProceeds(position_id);
+    env.storage().temporary().set(&key, &amount);
+    env.storage().temporary().extend_ttl(&key, 17_280, 34_560); // ~1-2 days
+}
+
+pub fn get_close_proceeds(env: &Env, position_id: u64) -> i128 {
+    env.storage()
+        .temporary()
+        .get(&DataKey::ClosedProceeds(position_id))
+        .unwrap_or(0)
+}
+
+/// Record the position an entry order created on its (persisted) row (L0-20).
+/// The row survives execution with its final status, so vault_factory can
+/// trustlessly reconcile a leader's executed limit order to its position via
+/// market.get_order. No-op if the order row is gone.
+pub fn set_order_position_id(env: &Env, order_id: u64, position_id: u64) {
+    if let Some(mut order) = get_order(env, order_id) {
+        order.position_id = position_id;
+        env.storage().persistent().set(&DataKey::Order(order_id), &order);
+        extend_persistent_ttl(env, &DataKey::Order(order_id));
     }
 }
 

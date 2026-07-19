@@ -23,6 +23,7 @@ import {
   isUnderwater,
   isLiquidationCandidate,
   isCrossLiquidationCandidate,
+  adlRank,
   HealthPosition,
 } from './health';
 
@@ -124,5 +125,21 @@ check(
   false,
 );
 check('cross account: no positions → never a candidate', isCrossLiquidationCandidate(0n, [], priceMapCrashed), false);
+
+// ── ADL ranking parity (L0-1) ───────────────────────────────────────────
+// rank = (pnl × 10_000 / collateral) × leverage — pins parity with the
+// contract's inlined formula and contracts/risk::adl_rank.
+check(
+  'adlRank: higher leverage ranks first at equal pnl%',
+  adlRank(50n * PRECISION, 100n * PRECISION, 10n) > adlRank(50n * PRECISION, 100n * PRECISION, 5n),
+  true,
+);
+check(
+  'adlRank: exact value (50% of collateral × 10x = 50_000 bps-leverage)',
+  adlRank(50n * PRECISION, 100n * PRECISION, 10n),
+  50_000n,
+);
+check('adlRank: a loser never ranks', adlRank(-1n, 100n * PRECISION, 10n), 0n);
+check('adlRank: zero collateral is safe', adlRank(50n * PRECISION, 0n, 10n), 0n);
 
 console.log(`\n✅ smoke: all ${checks} assertions passed (no network calls made)`);

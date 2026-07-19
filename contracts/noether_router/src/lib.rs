@@ -67,6 +67,10 @@ pub enum DataKey {
     StorkAssets,
     /// Last verified Stork price per tag (temporary storage)
     StorkPrice(BytesN<8>),
+    /// L1-24: admin-set sanity band (lo, hi) overriding the compiled BANDS
+    /// table for one asset — a new pair needs no router redeploy, only a
+    /// set_price_band + the shim upgrade() for its tag.
+    PriceBand(Symbol),
 }
 
 /// Stork second-source configuration (T3-D1). The feature is inert until an
@@ -224,6 +228,33 @@ impl NoetherRouterContract {
         Ok(pnl)
     }
 
+    /// Verify + store a fresh price, then partially close the position
+    /// against it (L0-6) — web partial closes get the same fresh-fill path
+    /// as full closes. Returns pnl on the closed portion.
+    pub fn close_partial_with_price(
+        env: Env,
+        trader: Address,
+        position_id: u64,
+        close_size: i128,
+        asset: Symbol,
+        price: i128,
+        timestamp: u64,
+        round_id: u64,
+        pubkeys: Vec<BytesN<32>>,
+        sigs: Vec<BytesN<64>>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        trader.require_auth();
+
+        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (trader, position_id, close_size).into_val(&env);
+        let pnl: i128 =
+            env.invoke_contract(&market, &Symbol::new(&env, "close_position_partial"), args);
+        Ok(pnl)
+    }
+
     /// Verify + store a fresh price, then liquidate the position against
     /// it — liquidations no longer depend on the heartbeat staying inside
     /// the market's 60s staleness window (O-3/K-3). Returns the keeper
@@ -248,6 +279,32 @@ impl NoetherRouterContract {
         let args: Vec<Val> = (keeper, position_id).into_val(&env);
         let reward: i128 = env.invoke_contract(&market, &Symbol::new(&env, "liquidate"), args);
         Ok(reward)
+    }
+
+    /// Verify + store a fresh price, then force-realize an ADL candidate
+    /// against it in the same tx (L0-1) — forced realizations settle on a
+    /// fresh mark rather than a stale lenient-path print. Mirrors
+    /// liquidate_with_price. `asset` MUST be the position's asset.
+    pub fn adl_with_price(
+        env: Env,
+        caller: Address,
+        position_id: u64,
+        asset: Symbol,
+        price: i128,
+        timestamp: u64,
+        round_id: u64,
+        pubkeys: Vec<BytesN<32>>,
+        sigs: Vec<BytesN<64>>,
+    ) -> Result<i128, NoetherError> {
+        Self::require_initialized(&env)?;
+        caller.require_auth();
+
+        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+
+        let market = Self::market_addr(&env)?;
+        let args: Vec<Val> = (caller, position_id).into_val(&env);
+        let realized: i128 = env.invoke_contract(&market, &Symbol::new(&env, "adl_close"), args);
+        Ok(realized)
     }
 
     /// Verify + store a fresh price, then execute the pending order
@@ -489,6 +546,23 @@ impl NoetherRouterContract {
         Ok(())
     }
 
+    /// L1-24: set/override the price sanity band for one asset (admin, 0<lo<hi).
+    /// A stored band lets a new pair relay without a router redeploy.
+    pub fn set_price_band(env: Env, asset: Symbol, lo: i128, hi: i128) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        if lo <= 0 || hi <= lo {
+            return Err(NoetherError::InvalidParameter);
+        }
+        env.storage().persistent().set(&DataKey::PriceBand(asset.clone()), &(lo, hi));
+        env.events().publish((Symbol::new(&env, "price_band_set"), asset), (lo, hi));
+        Ok(())
+    }
+
+    /// L1-24 view: the stored band override (None = compiled BANDS fallback).
+    pub fn get_price_band(env: Env, asset: Symbol) -> Option<(i128, i128)> {
+        env.storage().persistent().get(&DataKey::PriceBand(asset))
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Views
     // ───────────────────────────────────────────────────────────────────────
@@ -657,6 +731,15 @@ impl NoetherRouterContract {
 // Coarse per-asset sanity bands, 7-decimal fixed point. Deliberately
 // wide — they only reject obvious garbage, never legitimate volatility.
 fn price_bounds(env: &Env, asset: &Symbol) -> Result<(i128, i128), NoetherError> {
+    // L1-24: an admin-stored band wins over the compiled table (new pairs +
+    // per-asset retuning without a router redeploy).
+    if let Some(band) = env
+        .storage()
+        .persistent()
+        .get::<_, (i128, i128)>(&DataKey::PriceBand(asset.clone()))
+    {
+        return Ok(band);
+    }
     const P: i128 = 10_000_000;
     // Coarse sanity bands in 7-dec USD: wide enough to never bind in a real
     // market, tight enough to reject a wildly wrong attestation. Must cover
@@ -779,6 +862,12 @@ mod tests {
                 4_321
             }
 
+            pub fn close_position_partial(
+                _env: Env, _trader: Address, _position_id: u64, _close_size: i128,
+            ) -> i128 {
+                2_100
+            }
+
             pub fn liquidate(_env: Env, _keeper: Address, _position_id: u64) -> i128 {
                 55
             }
@@ -819,6 +908,28 @@ mod tests {
         let client = NoetherRouterContractClient::new(&env, &router_id);
         client.initialize(&admin, &market_id, &noeracle_id, &pubkeys(&env));
         Fixture { env, admin, market_id, noeracle_id, client }
+    }
+
+    #[test]
+    fn set_price_band_override_and_validation() {
+        let f = setup();
+        let btc = Symbol::new(&f.env, "BTC");
+        assert_eq!(f.client.get_price_band(&btc), None); // compiled table by default
+
+        f.client.set_price_band(&btc, &(100 * 10_000_000), &(200 * 10_000_000));
+        assert_eq!(
+            f.client.get_price_band(&btc),
+            Some((100 * 10_000_000, 200 * 10_000_000))
+        );
+        // Inverted / non-positive bounds rejected.
+        assert!(matches!(
+            f.client.try_set_price_band(&btc, &(200 * 10_000_000), &(100 * 10_000_000)),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+        assert!(matches!(
+            f.client.try_set_price_band(&btc, &0, &(100 * 10_000_000)),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
     }
 
     #[test]
@@ -891,6 +1002,26 @@ mod tests {
             noeracle.recorded_tag(),
             BytesN::from_array(&f.env, &[b'E', b'T', b'H', b'U', b'S', b'D', 0, 0])
         );
+    }
+
+    #[test]
+    fn close_partial_with_price_stores_then_reduces() {
+        let f = setup();
+        let price = 350_000_000_000i128;
+        let pnl = f.client.close_partial_with_price(
+            &Address::generate(&f.env),
+            &99u64,
+            &(500_0000000i128), // close_size
+            &Symbol::new(&f.env, "ETH"),
+            &price,
+            &1_700_000_000u64,
+            &7u64,
+            &pubkeys(&f.env),
+            &sigs(&f.env),
+        );
+        assert_eq!(pnl, 2_100); // mock partial-close return
+        let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
+        assert_eq!(noeracle.recorded_price(), price);
     }
 
     #[test]

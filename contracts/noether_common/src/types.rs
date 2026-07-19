@@ -195,6 +195,83 @@ pub struct MarketConfig {
     /// Share of liquidation proceeds routed to the vault's insurance
     /// buffer instead of LP value (bps).
     pub insurance_buffer_share_bps: u32,
+    /// Liquidation penalty as bps of the notional CLOSED in the call
+    /// (L0-4). Charged only on non-bankrupt liquidations; the residual
+    /// equity above the penalty refunds to the trader.
+    pub liquidation_penalty_bps: u32,
+    /// Keeper's share of the liquidation penalty (bps); the remainder
+    /// funds the insurance buffer (L0-4).
+    pub penalty_keeper_share_bps: u32,
+    /// Staged cross liquidation stops once equity ≥ this share of the
+    /// aggregate maintenance margin (bps of MM; 15_000 = 1.5× MM) (L0-5).
+    pub cross_liq_restore_target_bps: u32,
+    /// Below this share of aggregate MM (bps; 6_667 = 2/3 MM) a cross
+    /// account is closed out in full instead of staged (L0-5).
+    pub cross_close_out_bps: u32,
+    /// ADL trips when payable winner uPnL × this ratio (bps) exceeds the
+    /// pool's coverage (buffer + LP USDC): 12_500 = trigger when coverage
+    /// < 1.25× payable uPnL (L0-1).
+    pub adl_trigger_ratio_bps: u32,
+    /// Hysteresis: the ADL flag clears only once coverage ≥ this ratio of
+    /// payable uPnL (bps; must be ≥ the trigger ratio) (L0-1).
+    pub adl_clear_ratio_bps: u32,
+    /// Optional better-than-mark compensation paid from the buffer to an
+    /// ADL'd winner, bps of closed notional (0 = disabled) (L0-1).
+    pub adl_compensation_bps: u32,
+    /// Flat keeper bounty floor for bankrupt/small liquidations, paid from the
+    /// insurance buffer (7-dec USDC, 0 disables) (L1-23).
+    pub min_liq_bounty: i128,
+    /// Max lenient-read clamp vs last-good on settlement, in bps (0 disables)
+    /// (L1-26). Bounds a single deviant print reaching a close/liquidation.
+    pub lenient_clamp_bps: u32,
+    /// Keeper execution fee: flat base (7-dec USDC) + per-size deci-bps
+    /// (divisor FEE_PRECISION) (L1-21). Defaults keep maker+keeper ≤ taker.
+    pub keeper_fee_base: i128,
+    pub keeper_fee_deci_bps: u32,
+}
+
+/// Per-market risk parameters (L0-12). Stored per asset in market storage
+/// (DataKey::AssetRisk) and read on the hot path — no cross-contract call.
+/// Invariant mm_bps == im_bps/2 (P5-2), enforced by is_valid() at the
+/// admin setter. The `close_out_bps` and funding/skew fields are consumed
+/// by L0-5 / L0-13 / L0-14 respectively but MUST be in the day-one layout:
+/// Soroban decodes structs by exact field set, so adding a field later
+/// re-bricks every stored entry.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AssetRiskParams {
+    /// Explicit leverage cap; may sit BELOW 10000/im_bps (launch policy).
+    pub max_leverage: u32,
+    /// Initial margin, bps of notional (400 = 4% = 25x implied).
+    pub im_bps: u32,
+    /// Maintenance margin, bps; invariant mm == im/2.
+    pub mm_bps: u32,
+    /// Full-close band, bps of notional (< mm_bps) — consumed by L0-5.
+    pub close_out_bps: u32,
+    /// Max position size, 7-decimal USD notional.
+    pub max_position_size: i128,
+    /// Funding velocity ceiling, bps/DAY — consumed by L0-13.
+    pub max_funding_velocity_bps: u32,
+    /// Funding rate ceiling, bps/HOUR — consumed by L0-13.
+    pub funding_clamp_bps: u32,
+    /// SIP-279 skew scale, 7-decimal USD notional (≈ 2× the OI cap) — L0-13.
+    pub skew_scale: i128,
+}
+
+impl AssetRiskParams {
+    /// The structural invariant the admin setter enforces (L0-12).
+    pub fn is_valid(&self) -> bool {
+        self.im_bps > 0
+            && self.mm_bps > 0
+            && self.mm_bps == self.im_bps / 2
+            && self.im_bps >= 400 // <= 25x
+            && self.max_leverage >= 1
+            && (self.max_leverage as i128) <= (BASIS_POINTS as i128) / (self.im_bps as i128)
+            && self.close_out_bps < self.mm_bps
+            && self.max_position_size > 0
+            && self.funding_clamp_bps <= 1_000
+            && self.skew_scale >= 0
+    }
 }
 
 impl Default for MarketConfig {
@@ -215,6 +292,17 @@ impl Default for MarketConfig {
             partial_liq_tranche_bps: 2_000,           // close 20% per round
             partial_liq_cooldown_secs: 30,            // 30s grace before the next round
             insurance_buffer_share_bps: 1_000,        // 10% of proceeds -> insurance buffer
+            liquidation_penalty_bps: 100,             // 1% of closed notional (L0-4)
+            penalty_keeper_share_bps: 5_000,          // 50% of penalty -> keeper, rest -> buffer
+            cross_liq_restore_target_bps: 15_000,     // staged cross stops at 1.5x MM (L0-5)
+            cross_close_out_bps: 6_667,               // full close-out below 2/3 MM (L0-5)
+            adl_trigger_ratio_bps: 12_500,            // ADL when coverage < 1.25x payable uPnL
+            adl_clear_ratio_bps: 15_000,              // clear only above 1.5x (hysteresis)
+            adl_compensation_bps: 0,                  // better-than-mark comp disabled at launch
+            min_liq_bounty: 50_000_000,               // 5 USDC bankrupt-clear bounty (L1-23)
+            lenient_clamp_bps: 300,                   // 3% settlement clamp vs last-good (L1-26)
+            keeper_fee_base: 0,                       // no flat keeper fee (L1-21)
+            keeper_fee_deci_bps: 10,                  // 0.010% of size, bps-only (L1-21)
         }
     }
 }
@@ -365,21 +453,58 @@ pub struct Order {
     pub stop_limit_phase: u32,
 }
 
-/// Keeper fee configuration for order execution
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct KeeperFeeConfig {
-    /// Base fee in USDC (7 decimals) - e.g., 5_000_000 = 0.50 USDC
-    pub base_fee: i128,
-    /// Variable fee in basis points of position size - e.g., 5 = 0.05%
-    pub variable_fee_bps: u32,
-}
+// KeeperFeeConfig DELETED (L1-21): the keeper fee is now config-driven
+// (MarketConfig.keeper_fee_base + keeper_fee_deci_bps, FEE_PRECISION divisor),
+// so the resting/maker path is never strictly dominated by the market taker.
 
-impl Default for KeeperFeeConfig {
-    fn default() -> Self {
-        Self {
-            base_fee: 5_000_000,    // 0.50 USDC
-            variable_fee_bps: 5,    // 0.05%
+#[cfg(test)]
+mod asset_risk_tests {
+    use super::*;
+
+    fn base() -> AssetRiskParams {
+        AssetRiskParams {
+            max_leverage: 10,
+            im_bps: 400,
+            mm_bps: 200,
+            close_out_bps: 133,
+            max_position_size: 100_000 * PRECISION,
+            max_funding_velocity_bps: 3_600,
+            funding_clamp_bps: 50,
+            skew_scale: 200_000 * PRECISION,
         }
+    }
+
+    #[test]
+    fn valid_major_config() {
+        assert!(base().is_valid());
+    }
+
+    #[test]
+    fn mm_must_equal_im_over_two() {
+        let mut p = base();
+        p.mm_bps = 300; // != 400/2
+        assert!(!p.is_valid());
+    }
+
+    #[test]
+    fn im_capped_at_25x() {
+        let mut p = base();
+        p.im_bps = 200; // 50x — below the 400 floor
+        p.mm_bps = 100;
+        assert!(!p.is_valid());
+    }
+
+    #[test]
+    fn max_leverage_cannot_exceed_implied() {
+        let mut p = base();
+        p.max_leverage = 30; // > 10000/400 = 25
+        assert!(!p.is_valid());
+    }
+
+    #[test]
+    fn close_out_below_mm() {
+        let mut p = base();
+        p.close_out_bps = 200; // == mm, must be strictly below
+        assert!(!p.is_valid());
     }
 }

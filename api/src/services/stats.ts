@@ -45,11 +45,22 @@ export interface AssetStats {
   volume24h: string;
 }
 
+/** Protocol-level solvency summary (L0-2): lifetime bad debt the insurance
+ * buffer absorbed vs what fell through to LP NAV, market-scoped. 7-decimal
+ * USDC strings. Chain-truth buffer balance is served separately via the
+ * vault views (get_buffer_balance); these are the indexed cumulative
+ * totals nothing else exposes. */
+export interface SolvencyStats {
+  cumulativeBadDebtCovered: string;
+  cumulativeBadDebtLpAbsorbed: string;
+  badDebtEvents: number;
+}
+
 export interface RealizedTradeRow {
   /** Null for account-level rows (cross_liquidation carries no position id). */
   positionId: number | null;
   trader: string;
-  kind: 'open' | 'close' | 'liquidation' | 'cross_liquidation';
+  kind: 'open' | 'close' | 'liquidation' | 'cross_liquidation' | 'adl';
   asset: string | null;
   direction: number | null;
   size: string | null;
@@ -97,6 +108,7 @@ export interface CandlePoint {
  */
 export class StatsService {
   private readonly cache = new TtlCache<AssetStats[]>(STATS_TTL_MS);
+  private readonly solvencyCache = new TtlCache<SolvencyStats>(STATS_TTL_MS);
   private readonly lbCache = new TtlCache<LeaderboardBoard>(STATS_TTL_MS);
   private readonly candleCache = new TtlCache<CandlePoint[]>(STATS_TTL_MS);
 
@@ -146,6 +158,42 @@ export class StatsService {
 
   async marketStats(): Promise<AssetStats[]> {
     return this.cache.getOrLoad('market_stats', () => this.computeMarketStats());
+  }
+
+  /** Market-scoped cumulative bad-debt totals from the L0-2 projection. */
+  async solvencyStats(): Promise<SolvencyStats> {
+    return this.solvencyCache.getOrLoad('solvency_stats', () => this.computeSolvencyStats());
+  }
+
+  private async computeSolvencyStats(): Promise<SolvencyStats> {
+    const empty: SolvencyStats = {
+      cumulativeBadDebtCovered: '0',
+      cumulativeBadDebtLpAbsorbed: '0',
+      badDebtEvents: 0,
+    };
+    try {
+      const res = await this.db.execute({
+        sql: `
+          SELECT
+            COALESCE(SUM((buffer_covered)::numeric), 0)::text AS covered,
+            COALESCE(SUM((lp_absorbed)::numeric), 0)::text AS absorbed,
+            COUNT(*) AS n
+          FROM bad_debt
+          WHERE contract_id = ?
+        `,
+        args: [this.marketContractId],
+      });
+      const row = res.rows[0];
+      if (!row) return empty;
+      return {
+        cumulativeBadDebtCovered: String(row.covered ?? '0'),
+        cumulativeBadDebtLpAbsorbed: String(row.absorbed ?? '0'),
+        badDebtEvents: Number(row.n ?? 0),
+      };
+    } catch (err) {
+      if (isMissingTable(err)) return empty;
+      throw err;
+    }
   }
 
   private async computeMarketStats(now = nowSec()): Promise<AssetStats[]> {
@@ -249,9 +297,11 @@ export class StatsService {
       }
     };
 
-    // Realized closes + isolated liquidations, joined to their open.
+    // Realized closes + isolated liquidations + ADL fills, joined to their
+    // open. adl_executed carries its own asset (unlike close/liq), but the
+    // join still supplies direction/size/entry uniformly.
     {
-      const conditions = [`c.topic IN ('position_closed', 'position_liquidated')`];
+      const conditions = [`c.topic IN ('position_closed', 'position_liquidated', 'adl_executed')`];
       sharedConditions(conditions, args);
       if (opts.asset) {
         conditions.push(`o.payload_json ->> 'asset' = ?`);
@@ -558,6 +608,10 @@ function mapRealizedRow(row: Row): RealizedTradeRow {
     pnl?: string;
     closePrice?: string;
     totalPnl?: string;
+    asset?: string;
+    direction?: number;
+    size?: string;
+    price?: string;
   };
   const open =
     row.open_payload_json == null
@@ -576,21 +630,26 @@ function mapRealizedRow(row: Row): RealizedTradeRow {
         ? 'cross_liquidation'
         : topic === 'position_liquidated'
           ? 'liquidation'
-          : 'close';
+          : topic === 'adl_executed'
+            ? 'adl'
+            : 'close';
   return {
     // cross_liq is account-level: no position id (and no asset/size below).
     positionId: kind === 'cross_liquidation' ? null : Number(payload.positionId ?? 0),
     trader: String(payload.trader ?? ''),
     kind,
-    asset: open?.asset ?? null,
-    direction: open?.direction ?? null,
-    size: open?.size ?? null,
+    // adl_executed carries its own asset/direction/size (the join may miss
+    // if the open was pruned); fall back to the event payload.
+    asset: open?.asset ?? payload.asset ?? null,
+    direction: open?.direction ?? payload.direction ?? null,
+    size: open?.size ?? payload.size ?? null,
     entryPrice: open?.entryPrice ?? null,
-    closePrice: kind === 'open' ? null : (payload.closePrice ?? null),
-    // Closes carry per-position pnl; cross liquidations carry the account
-    // total. Opens and isolated liquidations have none (liq events omit pnl).
+    // ADL fills settle at the oracle mark carried as `price`.
+    closePrice: kind === 'open' ? null : (payload.closePrice ?? payload.price ?? null),
+    // Closes and ADL fills carry per-position pnl; cross liquidations carry
+    // the account total. Opens and isolated liquidations have none.
     pnl:
-      kind === 'close'
+      kind === 'close' || kind === 'adl'
         ? (payload.pnl ?? null)
         : kind === 'cross_liquidation'
           ? (payload.totalPnl ?? null)

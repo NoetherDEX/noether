@@ -10,9 +10,13 @@ import type { rpc, xdr } from '@stellar/stellar-sdk';
 import type {
   DecodedMarketEvent,
   EventEnvelope,
+  AdlExecutedEvent,
+  AdlFlagEvent,
+  BadDebtRecordedEvent,
   CrossLiquidatedEvent,
   FundingAppliedEvent,
   InitializedEvent,
+  LiqRefundEvent,
   OrderCancelledEvent,
   OrderExecutedEvent,
   OrderPlacedEvent,
@@ -20,6 +24,7 @@ import type {
   PositionLiquidatedEvent,
   PositionOpenedEvent,
   PositionPartialLiqEvent,
+  PositionReducedEvent,
 } from '../types/events.js';
 import { decodeEventValue, decodeTopics, asBigInt, asNumber, asString } from './scval.js';
 
@@ -57,6 +62,8 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
       return decodePositionLiquidated(raw, value);
     case 'position_partial_liq':
       return decodePositionPartialLiq(raw, value);
+    case 'position_reduced':
+      return decodePositionReduced(raw, value);
     case 'cross_liq':
       return decodeCrossLiq(raw, value);
     case 'order_placed':
@@ -69,6 +76,15 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
       return decodeFundingApplied(raw, value);
     case 'initialized':
       return decodeInitialized(raw, value);
+    case 'liq_refund':
+      return decodeLiqRefund(raw, value);
+    case 'bad_debt_recorded':
+      return decodeBadDebtRecorded(raw, value);
+    case 'adl_executed':
+      return decodeAdlExecuted(raw, value);
+    case 'adl_triggered':
+    case 'adl_cleared':
+      return decodeAdlFlag(raw, value, topic);
     default:
       return null;
   }
@@ -153,6 +169,63 @@ function decodeCrossLiq(raw: RawEvent, v: unknown[]): CrossLiquidatedEvent {
   };
 }
 
+// liq_refund: (trader, position_id [0 = cross account-level], refund, penalty) — L0-4
+function decodeLiqRefund(raw: RawEvent, v: unknown[]): LiqRefundEvent {
+  return {
+    ...envelope(raw, 'liq_refund'),
+    topic: 'liq_refund',
+    trader: asString(v[0], 'liq_refund.trader'),
+    positionId: asNumber(v[1], 'liq_refund.position_id'),
+    refund: asBigInt(v[2], 'liq_refund.refund'),
+    penalty: asBigInt(v[3], 'liq_refund.penalty'),
+  };
+}
+
+// bad_debt_recorded: (trader, asset, amount, buffer_covered, lp_absorbed) — L0-2
+function decodeBadDebtRecorded(raw: RawEvent, v: unknown[]): BadDebtRecordedEvent {
+  return {
+    ...envelope(raw, 'bad_debt_recorded'),
+    topic: 'bad_debt_recorded',
+    trader: asString(v[0], 'bad_debt_recorded.trader'),
+    asset: asString(v[1], 'bad_debt_recorded.asset'),
+    amount: asBigInt(v[2], 'bad_debt_recorded.amount'),
+    bufferCovered: asBigInt(v[3], 'bad_debt_recorded.buffer_covered'),
+    lpAbsorbed: asBigInt(v[4], 'bad_debt_recorded.lp_absorbed'),
+  };
+}
+
+// adl_executed: (position_id, trader, asset, direction, size, price, pnl, score) — L0-1
+function decodeAdlExecuted(raw: RawEvent, v: unknown[]): AdlExecutedEvent {
+  return {
+    ...envelope(raw, 'adl_executed'),
+    topic: 'adl_executed',
+    positionId: asNumber(v[0], 'adl_executed.position_id'),
+    trader: asString(v[1], 'adl_executed.trader'),
+    asset: asString(v[2], 'adl_executed.asset'),
+    direction: asNumber(v[3], 'adl_executed.direction'),
+    size: asBigInt(v[4], 'adl_executed.size'),
+    price: asBigInt(v[5], 'adl_executed.price'),
+    pnl: asBigInt(v[6], 'adl_executed.pnl'),
+    score: asBigInt(v[7], 'adl_executed.score'),
+  };
+}
+
+// adl_triggered / adl_cleared: (asset, reason, payable_upnl, coverage) — L0-1
+function decodeAdlFlag(
+  raw: RawEvent,
+  v: unknown[],
+  topic: 'adl_triggered' | 'adl_cleared',
+): AdlFlagEvent {
+  return {
+    ...envelope(raw, topic),
+    topic,
+    asset: asString(v[0], `${topic}.asset`),
+    reason: asNumber(v[1], `${topic}.reason`),
+    payableUpnl: asBigInt(v[2], `${topic}.payable_upnl`),
+    coverage: asBigInt(v[3], `${topic}.coverage`),
+  };
+}
+
 function decodeOrderPlaced(raw: RawEvent, v: unknown[]): OrderPlacedEvent {
   return {
     ...envelope(raw, 'order_placed'),
@@ -184,11 +257,38 @@ function decodeOrderExecuted(raw: RawEvent, v: unknown[]): OrderExecutedEvent {
 }
 
 function decodeFundingApplied(raw: RawEvent, v: unknown[]): FundingAppliedEvent {
+  // L0-13 made this a 4-tuple (asset, rate, hours, cum); the legacy event was
+  // a 2-tuple (rate, hours). Branch on arity so a redeploy doesn't misdecode
+  // (asset would otherwise be read as the rate).
+  if (v.length >= 4) {
+    return {
+      ...envelope(raw, 'funding_applied'),
+      topic: 'funding_applied',
+      asset: asString(v[0], 'funding_applied.asset'),
+      fundingRate: asBigInt(v[1], 'funding_applied.funding_rate'),
+      hoursElapsed: asBigInt(v[2], 'funding_applied.hours_elapsed'),
+      cumulativeIndex: asBigInt(v[3], 'funding_applied.cumulative_index'),
+    };
+  }
   return {
     ...envelope(raw, 'funding_applied'),
     topic: 'funding_applied',
     fundingRate: asBigInt(v[0], 'funding_applied.funding_rate'),
     hoursElapsed: asBigInt(v[1], 'funding_applied.hours_elapsed'),
+  };
+}
+
+function decodePositionReduced(raw: RawEvent, v: unknown[]): PositionReducedEvent {
+  return {
+    ...envelope(raw, 'position_reduced'),
+    topic: 'position_reduced',
+    positionId: asNumber(v[0], 'position_reduced.position_id'),
+    trader: asString(v[1], 'position_reduced.trader'),
+    asset: asString(v[2], 'position_reduced.asset'),
+    closedSize: asBigInt(v[3], 'position_reduced.closed_size'),
+    remainingSize: asBigInt(v[4], 'position_reduced.remaining_size'),
+    closePrice: asBigInt(v[5], 'position_reduced.close_price'),
+    pnl: asBigInt(v[6], 'position_reduced.pnl'),
   };
 }
 

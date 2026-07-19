@@ -17,6 +17,8 @@ dist/
 *.log
 .env.local
 .env*.local
+.env.claude
+.env.cutover.local
 
 # IDE
 # .vscode/  # Keep VS Code settings for rust-analyzer configuration

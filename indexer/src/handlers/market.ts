@@ -24,6 +24,7 @@ function handle(topic: DecodedMarketEvent['topic']): Handler {
       }
       await maintainPositionsProjection(tx, event);
       await recordRealizedTrade(tx, event);
+      await recordBadDebt(tx, event);
       await tx.commit();
     } catch (err) {
       await rollbackQuietly(tx);
@@ -120,7 +121,22 @@ function emitBus(ctx: HandlerContext, event: DecodedMarketEvent): void {
         ts: event.ledgerCloseTs,
       });
       break;
-    // initialized / cross_liq are persisted but have no bus fan-out
+    case 'adl_executed':
+      // A forced realization is both a position removal and a fill.
+      ctx.bus.emit('position', { positionId: event.positionId, trader: event.trader, state: 'closed' });
+      ctx.bus.emit('trade', {
+        kind: 'adl',
+        positionId: event.positionId,
+        trader: event.trader,
+        price: event.price,
+        size: event.size,
+        ts: event.ledgerCloseTs,
+        asset: event.asset,
+      });
+      break;
+    // initialized / cross_liq / liq_refund / bad_debt_recorded /
+    // adl_triggered / adl_cleared are persisted (and reach account.events
+    // via the generic 'event' emit above) with no dedicated fan-out.
     default:
       break;
   }
@@ -167,6 +183,7 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
       return;
     case 'position_closed':
     case 'position_liquidated':
+    case 'adl_executed':
       await db.execute({
         sql: 'DELETE FROM positions WHERE position_id = ?',
         args: [event.positionId],
@@ -182,6 +199,14 @@ async function maintainPositionsProjection(db: DbConn, event: DecodedMarketEvent
           WHERE position_id = ?
         `,
         args: [event.size.toString(), event.positionId],
+      });
+      return;
+    case 'position_reduced':
+      // L0-6 partial close: the event carries the exact remaining size, so
+      // set it directly (no arithmetic drift).
+      await db.execute({
+        sql: 'UPDATE positions SET size = ? WHERE position_id = ?',
+        args: [event.remainingSize.toString(), event.positionId],
       });
       return;
     default:
@@ -200,11 +225,13 @@ async function recordRealizedTrade(db: DbConn, event: DecodedMarketEvent): Promi
   if (
     event.topic !== 'position_closed' &&
     event.topic !== 'position_liquidated' &&
-    event.topic !== 'position_partial_liq'
+    event.topic !== 'position_partial_liq' &&
+    event.topic !== 'adl_executed'
   ) {
     return;
   }
   const isClose = event.topic === 'position_closed';
+  const isAdl = event.topic === 'adl_executed';
   await db.execute({
     sql: `
       INSERT INTO trades (
@@ -219,11 +246,37 @@ async function recordRealizedTrade(db: DbConn, event: DecodedMarketEvent): Promi
       event.trader,
       event.asset,
       Number(event.direction),
-      isClose ? 'close' : 'liquidation',
+      isClose ? 'close' : isAdl ? 'adl' : 'liquidation',
       event.size.toString(),
       isClose ? event.entryPrice.toString() : null,
-      event.closePrice.toString(),
-      isClose ? event.pnl.toString() : null,
+      isAdl ? event.price.toString() : event.closePrice.toString(),
+      isClose || isAdl ? event.pnl.toString() : null,
+      event.ledger,
+      event.ledgerCloseTs,
+      event.txHash,
+      event.contractId,
+    ],
+  });
+}
+
+/** L0-2: bad-debt projection — one idempotent row per bad_debt_recorded. */
+async function recordBadDebt(db: DbConn, event: DecodedMarketEvent): Promise<void> {
+  if (event.topic !== 'bad_debt_recorded') return;
+  await db.execute({
+    sql: `
+      INSERT INTO bad_debt (
+        event_id, trader, asset, amount, buffer_covered, lp_absorbed,
+        ledger, ts, tx_hash, contract_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (event_id) DO NOTHING
+    `,
+    args: [
+      event.id,
+      event.trader,
+      event.asset,
+      event.amount.toString(),
+      event.bufferCovered.toString(),
+      event.lpAbsorbed.toString(),
       event.ledger,
       event.ledgerCloseTs,
       event.txHash,
@@ -277,11 +330,18 @@ const MARKET_TOPICS: DecodedMarketEvent['topic'][] = [
   'position_closed',
   'position_liquidated',
   'position_partial_liq',
+  'position_reduced',
   'cross_liq',
   'order_placed',
   'order_cancelled',
   'order_executed',
   'funding_applied',
+  // Wave-1 solvency events (L0-1/L0-2/L0-4) — inert until the redeploy emits them.
+  'liq_refund',
+  'bad_debt_recorded',
+  'adl_executed',
+  'adl_triggered',
+  'adl_cleared',
 ];
 
 export function buildMarketRegistrations(marketContractId: string): MarketHandlerRegistration[] {

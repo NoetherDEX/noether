@@ -63,6 +63,17 @@ const NOETHER_ERROR_MESSAGES: Record<number, string> = {
   80: 'Stop-loss/take-profit orders are not supported on cross-margin positions',
   81: 'Price moved too fast — please retry in a moment',
   82: 'Open interest cap reached for this market — try a smaller size',
+  // Solvency / risk / execution (83-91)
+  83: 'This position was just partially liquidated — try again in a moment',
+  84: 'Auto-deleveraging is not active for this market right now',
+  85: 'Only winning positions can be auto-deleveraged',
+  87: 'Filled worse than your acceptable price — resubmit or widen the limit',
+  88: 'This market has no risk parameters configured yet',
+  89: 'This order would push the market past its long/short skew cap — try a smaller size or the other side',
+  90: 'The market is fully frozen right now — only order cancellation is available; it auto-resumes within 72h',
+  91: 'This order only reduces your opposite position — use Close or reduce-only instead',
+  92: 'Trading in this market is temporarily halted — closing positions still works',
+  93: 'Withdrawals unlock a short cooldown after your latest deposit — try again shortly',
 };
 
 /** FactoryError — contracts/vault_factory/src/types.rs. */
@@ -82,6 +93,12 @@ const FACTORY_ERROR_MESSAGES: Record<number, string> = {
   13: 'Amount too large — arithmetic overflow',
   14: 'Could not compute the vault share price — please retry',
   15: 'No performance fees to claim yet',
+  // L0-20: fund isolation + full-NAV valuation
+  16: 'That position or order does not belong to this vault',
+  17: 'Capital is deployed in open positions — wait for the leader to free liquidity before withdrawing this much',
+  18: 'Could not value the vault right now (price feed unavailable) — please retry',
+  19: 'This vault has too many open positions and orders — close some first',
+  20: 'Vault creation is currently restricted (allowlist or max-vaults cap)',
 };
 
 /** ReferralError — contracts/referral/src/types.rs. */
@@ -123,11 +140,11 @@ function toMessageString(err: unknown): string {
  * Look up the human-readable message for a numeric contract error code.
  *
  * `context` selects the per-contract table (defaults to the NoetherError
- * market/vault table). For `vault_factory`, codes ≥ 20 fall back to the
- * NoetherError table: factory codes stop at 15, and leader-trade proxies
- * surface market-side errors (positions/oracle/orders) through the factory
- * frame (outside FactoryError's 1-15 range — no collision possible). Returns
- * null when the code is unknown for the given context.
+ * market/vault table). For `vault_factory`, codes ≥ 21 fall back to the
+ * NoetherError table: FactoryError now owns 1-20 (L0-20 added 16-20), and
+ * leader-trade proxies surface market-side errors (positions/oracle/orders,
+ * all ≥ 21 except the practically-unreachable PositionNotFound=20) through
+ * the factory frame. Returns null when the code is unknown for the context.
  */
 export function messageForCode(
   code: number,
@@ -135,7 +152,7 @@ export function messageForCode(
 ): string | null {
   return (
     TABLES[context][code] ??
-    (context === 'vault_factory' && code >= 20 ? NOETHER_ERROR_MESSAGES[code] : undefined) ??
+    (context === 'vault_factory' && code >= 21 ? NOETHER_ERROR_MESSAGES[code] : undefined) ??
     null
   );
 }

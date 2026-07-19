@@ -86,7 +86,9 @@ export interface PoolInfo {
   noePrice: bigint;
 }
 
-export type TradeKind = 'open' | 'close' | 'liquidation';
+// Mirrors the gateway /v1/trades kind enum. 'adl' is a forced realization
+// at the oracle mark (L0-1); 'cross_liquidation' is an account-level row.
+export type TradeKind = 'open' | 'close' | 'liquidation' | 'cross_liquidation' | 'adl';
 
 export interface Trade {
   id: string;

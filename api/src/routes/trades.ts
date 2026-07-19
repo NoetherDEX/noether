@@ -14,7 +14,7 @@ const TRADE_SCHEMA = {
   properties: {
     positionId: { type: ['integer', 'null'] },
     trader: { type: 'string' },
-    kind: { type: 'string', enum: ['open', 'close', 'liquidation', 'cross_liquidation'] },
+    kind: { type: 'string', enum: ['open', 'close', 'liquidation', 'cross_liquidation', 'adl'] },
     asset: { type: ['string', 'null'] },
     direction: { type: ['integer', 'null'] },
     size: { type: ['string', 'null'] },
@@ -42,7 +42,8 @@ export async function registerTradesRoutes(
           'event (null when the open predates the indexer history). Cross-margin account ' +
           'liquidations appear as kind:cross_liquidation with null position fields (the chain ' +
           'emits one account-level event; pnl is the account total) — omitted when filtering by ' +
-          'asset. Pass include_opens=true to also receive position_opened rows as kind:open.',
+          'asset. Auto-deleveraging fills appear as kind:adl (settled at the oracle mark, with ' +
+          'per-position pnl). Pass include_opens=true to also receive position_opened rows as kind:open.',
         tags: ['markets'],
         querystring: {
           type: 'object',
