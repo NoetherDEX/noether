@@ -146,6 +146,31 @@ check(
 check('adlRank: a loser never ranks', adlRank(-1n, 100n * PRECISION, 10n), 0n);
 check('adlRank: zero collateral is safe', adlRank(50n * PRECISION, 0n, 10n), 0n);
 
+// ── Per-asset mm resolver in the cross prefilter (L0-12) ────────────────
+// Same account, same prices: a 5% per-asset mm makes it a candidate where
+// the legacy flat 1% does not — the resolver must flow into the sum.
+{
+  const pos: HealthPosition = {
+    asset: 'BTC',
+    collateral: 9n * PRECISION, // between the 1%×2 (2) and 5%×2 (10) thresholds
+    size: 100n * PRECISION,
+    entry_price: PRECISION,
+    direction: 'Long',
+    liquidation_price: 0n,
+  };
+  const flat = new Map([['BTC', PRECISION]]);
+  check(
+    'cross mm resolver: legacy 1% flat → healthy',
+    isCrossLiquidationCandidate(0n, [pos], flat, () => 100n),
+    false,
+  );
+  check(
+    'cross mm resolver: 5% ladder mm flips the same account to candidate',
+    isCrossLiquidationCandidate(0n, [pos], flat, () => 500n),
+    true,
+  );
+}
+
 // ── ADL trigger mirror + walk order (L0-1) ──────────────────────────────
 // assetPayableUpnl mirrors check_adl_trigger's per-side exposure formula:
 //   long_upnl = price × lk / PRECISION − ls, clamped per side at 0.

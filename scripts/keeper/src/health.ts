@@ -135,7 +135,7 @@ export function isCrossLiquidationCandidate(
   poolBalance: bigint,
   positions: HealthPosition[],
   prices: Map<string, bigint>,
-  maintenanceMarginBps: bigint = DEFAULT_MAINTENANCE_MARGIN_BPS,
+  maintenanceMarginBps: bigint | ((position: HealthPosition) => bigint) = DEFAULT_MAINTENANCE_MARGIN_BPS,
   buffer: bigint = CANDIDATE_BUFFER,
 ): boolean {
   if (positions.length === 0) return false;
@@ -147,7 +147,13 @@ export function isCrossLiquidationCandidate(
     const price = prices.get(position.asset);
     if (price === undefined || price <= 0n) return true;
     equity += position.collateral + calculatePnl(position, price);
-    totalMaintenance += maintenanceMargin(position.size, maintenanceMarginBps);
+    // L0-12: mm may vary per asset — accept a per-position resolver, so
+    // the cross sum mirrors the contract's per-leg mm_bps_for.
+    const mmBps =
+      typeof maintenanceMarginBps === 'function'
+        ? maintenanceMarginBps(position)
+        : maintenanceMarginBps;
+    totalMaintenance += maintenanceMargin(position.size, mmBps);
   }
 
   return equity < totalMaintenance * buffer;

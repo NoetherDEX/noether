@@ -42,6 +42,7 @@ import {
 import { initAlerts, sendAlert } from './alerts';
 import { loadKeeperState, saveKeeperState } from './state';
 import {
+  DEFAULT_MAINTENANCE_MARGIN_BPS,
   adlFlagDecision,
   assetPayableUpnl,
   isCrossLiquidationCandidate,
@@ -92,6 +93,8 @@ const FULL_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 const CROSS_BALANCE_CACHE_MS = 60_000;
 /** Vault coverage (buffer + LP USDC) for the ADL mirror — 30s cache (L0-1). */
 const VAULT_COVERAGE_CACHE_MS = 30_000;
+/** Per-asset mm_bps for the prefilters — risk params change rarely (L0-12). */
+const ASSET_RISK_CACHE_MS = 10 * 60 * 1000;
 /** Funding cadence (K-7): contract enforces 1h; 30s slack avoids an early #55. */
 const FUNDING_INTERVAL_MS = 60 * 60 * 1000 + 30_000;
 const FUNDING_NOT_DUE_RETRY_MS = 5 * 60 * 1000;
@@ -158,6 +161,11 @@ class KeeperBot {
   /** undefined = unknown; false = deployed factory predates L0-20 (duty inert). */
   private factoryReconcileSupported: boolean | undefined;
   private factoryReconcileUnsupportedLogged = false;
+  // Per-asset risk ladder (L0-12)
+  /** Prefilter mm_bps per asset, 10-min cached. */
+  private assetMmBpsCache: Map<string, { mmBps: bigint; fetchedAt: number }> = new Map();
+  /** undefined = unknown; false = deployed market predates L0-12 (legacy mm). */
+  private riskLadderSupported: boolean | undefined;
   private throttledLogAt: Map<string, number> = new Map();
   private nextTtlBumpAt: number = 0; // P3-9
 
@@ -851,7 +859,7 @@ class KeeperBot {
         const candidate =
           fullSweep ||
           price === undefined || // no local price → let the simulation decide
-          isLiquidationCandidate(position, price);
+          isLiquidationCandidate(position, price, await this.prefilterMmBps(position.asset));
         if (!candidate) continue;
 
         const sim = await this.stellar.simulateLiquidate(position.id);
@@ -942,7 +950,20 @@ class KeeperBot {
         if (!candidate) {
           const balance = await this.getCrossBalanceCached(trader);
           if (balance === undefined) continue; // balance unreadable → RPC issue; full sweep covers it
-          candidate = isCrossLiquidationCandidate(balance, positions, prices);
+          // L0-12: per-leg mm from the ladder (resolved up front — the
+          // health resolver itself must stay synchronous and pure).
+          const mmByAsset = new Map<string, bigint>();
+          for (const position of positions) {
+            if (!mmByAsset.has(position.asset)) {
+              mmByAsset.set(position.asset, await this.prefilterMmBps(position.asset));
+            }
+          }
+          candidate = isCrossLiquidationCandidate(
+            balance,
+            positions,
+            prices,
+            (p) => mmByAsset.get(p.asset) ?? DEFAULT_MAINTENANCE_MARGIN_BPS,
+          );
         }
         if (!candidate) continue;
 
@@ -975,6 +996,42 @@ class KeeperBot {
         );
       }
     }
+  }
+
+  /**
+   * Prefilter mm_bps for an asset (L0-12 ladder parity). The keeper cannot
+   * read RiskEpochTs (no view), so it cannot reproduce per-position
+   * grandfathering — instead it uses max(ladder mm, legacy mm), which is
+   * CONSERVATIVE for the prefilter: it can only over-trigger simulations
+   * (the simulation is the on-chain truth), never miss a liquidatable
+   * position under either regime. Legacy default on pre-L0-12 markets
+   * (missing export), unconfigured assets, and read failures.
+   */
+  private async prefilterMmBps(asset: string): Promise<bigint> {
+    if (this.riskLadderSupported === false) return DEFAULT_MAINTENANCE_MARGIN_BPS;
+    const now = Date.now();
+    const cached = this.assetMmBpsCache.get(asset);
+    if (cached && now - cached.fetchedAt < ASSET_RISK_CACHE_MS) return cached.mmBps;
+
+    let mmBps = DEFAULT_MAINTENANCE_MARGIN_BPS;
+    try {
+      const ladder = await this.stellar.getAssetRiskMmBps(asset);
+      this.riskLadderSupported = true;
+      if (ladder !== null && ladder > 0) {
+        const ladderBps = BigInt(ladder);
+        mmBps = ladderBps > DEFAULT_MAINTENANCE_MARGIN_BPS ? ladderBps : DEFAULT_MAINTENANCE_MARGIN_BPS;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isMissingContractFunction(message)) {
+        this.riskLadderSupported = false; // pre-L0-12 market — legacy mm everywhere
+      } else {
+        this.logThrottled(`risk-${asset}`, `⚠️  get_asset_risk read failed for ${asset}: ${message}`);
+        return cached?.mmBps ?? DEFAULT_MAINTENANCE_MARGIN_BPS; // stale beats blind, cache untouched
+      }
+    }
+    this.assetMmBpsCache.set(asset, { mmBps, fetchedAt: now });
+    return mmBps;
   }
 
   /** Cross pool balance with a 60s cache; stale value on read failure. */

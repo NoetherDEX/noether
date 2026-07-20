@@ -605,6 +605,25 @@ export class StellarClient {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Risk Ladder Functions (L0-12)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Per-asset risk params (L0-12 ladder). Returns null when the asset has
+   * no params configured; THROWS on transport failure and on a pre-L0-12
+   * market (missing export — callers detect with isMissingContractFunction).
+   */
+  async getAssetRiskMmBps(asset: string): Promise<number | null> {
+    const result = await this.invokeContractRead<{ mm_bps?: number | bigint } | null>(
+      this.marketContract,
+      'get_asset_risk',
+      [nativeToScVal(asset, { type: 'symbol' })],
+    );
+    if (result == null || result.mm_bps == null) return null;
+    return Number(result.mm_bps);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Vault Factory Functions (L0-20)
   // ═══════════════════════════════════════════════════════════════════════
 
