@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { StrKey, scValToNative } from '@stellar/stellar-sdk';
-import { Market, Router, buildInvokeOp, toScVal } from '../src/index.js';
+import { Market, Referral, Router, buildInvokeOp, toScVal } from '../src/index.js';
 import type { PriceAttestation } from '../src/router/index.js';
 
 // Fixed, valid StrKey inputs so every op XDR below is fully deterministic.
@@ -252,5 +252,20 @@ describe('router builder XDR', () => {
     const viaHelper = Router.buildOpenWithPriceOp(ROUTER, params).toXDR('base64');
     const viaGeneric = buildInvokeOp(ROUTER, 'open_with_price', Router.buildOpenWithPriceArgs(params)).toXDR('base64');
     expect(viaGeneric).toBe(viaHelper);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Referral builders (L1-18) — the wallet-only claim, single source of truth
+// for web + both SDKs. Snapshot pins the XDR (the G-6 drift-class guard).
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('referral builders', () => {
+  it('claim', () => {
+    const params = { referrer: TRADER };
+    const args = Referral.buildReferralClaimArgs(params);
+    expect(args).toHaveLength(1);
+    expect(args[0]!.switch().name).toBe('scvAddress');
+    expect(Referral.buildReferralClaimOp(MARKET, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAbRz75D5nMaFr5NlBCKSxi68Lc5bKY3mZShWnQyNsc0vAAAABWNsYWltAAAAAAAAAQAAABIAAAAAAAAAAJSKOmrbbD3tzT/nAkRSWQV12gwG//PJMeE0yv1PgUEFAAAAAA=="`);
   });
 });

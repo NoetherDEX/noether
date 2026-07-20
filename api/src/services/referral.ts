@@ -26,6 +26,8 @@ export interface ReferralTradeRow {
   originalFee: string;
   discount: string;
   payout: string;
+  /** L1-18: referred notional (7-dec string); null on pre-Batch-1 rows. */
+  volume: string | null;
   ledger: number;
   ts: number;
   txHash: string;
@@ -78,6 +80,7 @@ function toTradeRow(row: Record<string, unknown>): ReferralTradeRow {
     originalFee: String(row.original_fee),
     discount: String(row.discount),
     payout: String(row.payout),
+    volume: row.volume == null ? null : String(row.volume),
     ledger: Number(row.ledger),
     ts: Number(row.ts),
     txHash: String(row.tx_hash),

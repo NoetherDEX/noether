@@ -66,6 +66,9 @@ export function decodeReferralEvent(raw: RawEvent): ReferralEvent | null {
         originalFee: asBigInt(value[2], 'trade_recorded.original_fee'),
         discount: asBigInt(value[3], 'trade_recorded.discount'),
         payout: asBigInt(value[4], 'trade_recorded.payout'),
+        // L1-18: 6th field on the Batch-1 payload; pre-redeploy history
+        // stays 5-field — decode both, never reject old events.
+        volume: value.length > 5 ? asBigInt(value[5], 'trade_recorded.volume') : null,
       } satisfies ReferralTradeRecordedEvent;
     case 'claimed':
       return {

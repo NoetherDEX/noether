@@ -123,6 +123,9 @@ const REFERRAL_ERROR_MESSAGES: Record<number, string> = {
   13: 'Not enough trading volume yet to create a referral code',
   14: 'Nothing to claim yet',
   15: 'Amount too large — arithmetic overflow',
+  16: 'Claim pool is refilling — your balance is safe, try again shortly',
+  17: 'Referral registry is paused — existing balances stay claimable',
+  18: 'This referral code has been revoked',
 };
 
 const TABLES: Record<ContractErrorContext, Record<number, string>> = {
