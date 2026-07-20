@@ -43,93 +43,15 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-              "function_name": "set_stork_config",
-              "args": [
-                {
-                  "map": [
-                    {
-                      "key": {
-                        "symbol": "enabled"
-                      },
-                      "val": {
-                        "bool": true
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "max_age_secs"
-                      },
-                      "val": {
-                        "u64": 60
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "max_dev_bps"
-                      },
-                      "val": {
-                        "u32": 100
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "require_fresh"
-                      },
-                      "val": {
-                        "bool": true
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "signer"
-                      },
-                      "val": {
-                        "bytes": "17c5185167401ed00cf5f5b2fc97d9bbfdb7d025"
-                      }
-                    },
-                    {
-                      "key": {
-                        "symbol": "taxonomy"
-                      },
-                      "val": {
-                        "u32": 1
-                      }
-                    }
-                  ]
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4",
-              "function_name": "set_stork_assets",
+              "function_name": "set_publishers",
               "args": [
                 {
                   "vec": [
                     {
-                      "u32": 0
+                      "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
                     },
                     {
-                      "u32": 1
-                    }
-                  ]
-                },
-                {
-                  "vec": [
-                    {
-                      "bytes": "4254435553440000"
-                    },
-                    {
-                      "bytes": "4554485553440000"
+                      "bytes": "0808080808080808080808080808080808080808080808080808080808080808"
                     }
                   ]
                 }
@@ -145,7 +67,7 @@
   "ledger": {
     "protocol_version": 21,
     "sequence_number": 0,
-    "timestamp": 1700000000,
+    "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
     "min_persistent_entry_ttl": 4096,
@@ -174,39 +96,6 @@
                 "key": {
                   "ledger_key_nonce": {
                     "nonce": 801925984706572462
-                  }
-                },
-                "durability": "temporary",
-                "val": "void"
-              }
-            },
-            "ext": "v0"
-          },
-          6311999
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-            "key": {
-              "ledger_key_nonce": {
-                "nonce": 1033654523790656264
-              }
-            },
-            "durability": "temporary"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-                "key": {
-                  "ledger_key_nonce": {
-                    "nonce": 1033654523790656264
                   }
                 },
                 "durability": "temporary",
@@ -398,100 +287,9 @@
                           "vec": [
                             {
                               "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "Stork"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "map": [
-                            {
-                              "key": {
-                                "symbol": "enabled"
-                              },
-                              "val": {
-                                "bool": true
-                              }
                             },
                             {
-                              "key": {
-                                "symbol": "max_age_secs"
-                              },
-                              "val": {
-                                "u64": 60
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "max_dev_bps"
-                              },
-                              "val": {
-                                "u32": 100
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "require_fresh"
-                              },
-                              "val": {
-                                "bool": true
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "signer"
-                              },
-                              "val": {
-                                "bytes": "17c5185167401ed00cf5f5b2fc97d9bbfdb7d025"
-                              }
-                            },
-                            {
-                              "key": {
-                                "symbol": "taxonomy"
-                              },
-                              "val": {
-                                "u32": 1
-                              }
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "StorkAssets"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "vec": [
-                            {
-                              "vec": [
-                                {
-                                  "u32": 0
-                                },
-                                {
-                                  "bytes": "4254435553440000"
-                                }
-                              ]
-                            },
-                            {
-                              "vec": [
-                                {
-                                  "u32": 1
-                                },
-                                {
-                                  "bytes": "4554485553440000"
-                                }
-                              ]
+                              "bytes": "0808080808080808080808080808080808080808080808080808080808080808"
                             }
                           ]
                         }
@@ -609,126 +407,16 @@
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
               },
               {
-                "symbol": "set_stork_config"
-              }
-            ],
-            "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "enabled"
-                  },
-                  "val": {
-                    "bool": true
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "max_age_secs"
-                  },
-                  "val": {
-                    "u64": 60
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "max_dev_bps"
-                  },
-                  "val": {
-                    "u32": 100
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "require_fresh"
-                  },
-                  "val": {
-                    "bool": true
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "signer"
-                  },
-                  "val": {
-                    "bytes": "17c5185167401ed00cf5f5b2fc97d9bbfdb7d025"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "taxonomy"
-                  },
-                  "val": {
-                    "u32": 1
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "set_stork_config"
-              }
-            ],
-            "data": "void"
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
-              },
-              {
-                "symbol": "set_stork_assets"
+                "symbol": "set_publishers"
               }
             ],
             "data": {
               "vec": [
                 {
-                  "vec": [
-                    {
-                      "u32": 0
-                    },
-                    {
-                      "u32": 1
-                    }
-                  ]
+                  "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
                 },
                 {
-                  "vec": [
-                    {
-                      "bytes": "4254435553440000"
-                    },
-                    {
-                      "bytes": "4554485553440000"
-                    }
-                  ]
+                  "bytes": "0808080808080808080808080808080808080808080808080808080808080808"
                 }
               ]
             }
@@ -749,7 +437,7 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "set_stork_assets"
+                "symbol": "set_publishers"
               }
             ],
             "data": "void"
@@ -820,6 +508,12 @@
                               "hi": 0,
                               "lo": 700000000000
                             }
+                          },
+                          {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 10000000
+                            }
                           }
                         ]
                       }
@@ -832,6 +526,9 @@
                         "vec": [
                           {
                             "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                          },
+                          {
+                            "bytes": "0808080808080808080808080808080808080808080808080808080808080808"
                           }
                         ]
                       }
@@ -841,7 +538,7 @@
                         "symbol": "round_id"
                       },
                       "val": {
-                        "u64": 1
+                        "u64": 42
                       }
                     },
                     {
@@ -852,6 +549,9 @@
                         "vec": [
                           {
                             "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                          },
+                          {
+                            "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
                           }
                         ]
                       }
@@ -882,110 +582,6 @@
           "v0": {
             "topics": [
               {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000002"
-              },
-              {
-                "symbol": "update_quorum_ed25519_persistent"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "vec": [
-                    {
-                      "bytes": "4254435553440000"
-                    }
-                  ]
-                },
-                {
-                  "u64": 1700000000
-                },
-                {
-                  "u64": 1
-                },
-                {
-                  "vec": [
-                    {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "prices"
-                          },
-                          "val": {
-                            "vec": [
-                              {
-                                "i128": {
-                                  "hi": 0,
-                                  "lo": 700000000000
-                                }
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "pubkey"
-                          },
-                          "val": {
-                            "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "sigs"
-                          },
-                          "val": {
-                            "vec": [
-                              {
-                                "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
-                              }
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": true
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000002",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "update_quorum_ed25519_persistent"
-              }
-            ],
-            "data": "void"
-          }
-        }
-      },
-      "failed_call": true
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
                 "symbol": "fn_return"
               },
               {
@@ -994,7 +590,7 @@
             ],
             "data": {
               "error": {
-                "contract": 30
+                "contract": 31
               }
             }
           }
@@ -1015,7 +611,7 @@
               },
               {
                 "error": {
-                  "contract": 30
+                  "contract": 31
                 }
               }
             ],
@@ -1040,14 +636,14 @@
               },
               {
                 "error": {
-                  "contract": 30
+                  "contract": 31
                 }
               }
             ],
             "data": {
               "vec": [
                 {
-                  "string": "contract try_call failed"
+                  "string": "contract call failed"
                 },
                 {
                   "symbol": "open_with_price"
@@ -1096,6 +692,12 @@
                                   "hi": 0,
                                   "lo": 700000000000
                                 }
+                              },
+                              {
+                                "i128": {
+                                  "hi": 0,
+                                  "lo": 10000000
+                                }
                               }
                             ]
                           }
@@ -1108,6 +710,9 @@
                             "vec": [
                               {
                                 "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                              },
+                              {
+                                "bytes": "0808080808080808080808080808080808080808080808080808080808080808"
                               }
                             ]
                           }
@@ -1117,7 +722,7 @@
                             "symbol": "round_id"
                           },
                           "val": {
-                            "u64": 1
+                            "u64": 42
                           }
                         },
                         {
@@ -1128,6 +733,9 @@
                             "vec": [
                               {
                                 "bytes": "09090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909"
+                              },
+                              {
+                                "bytes": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
                               }
                             ]
                           }
@@ -1145,6 +753,31 @@
                   ]
                 }
               ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 31
+                }
+              }
+            ],
+            "data": {
+              "string": "escalating error to panic"
             }
           }
         }
