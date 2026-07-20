@@ -10,7 +10,8 @@ const TRADER = 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
 const KEEPER = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 7));
 
 const ATT: PriceAttestation = {
-  price: 700_000_000_000n,
+  asset: 'BTC',
+  prices: [700_000_000_000n],
   timestamp: 1_700_000_000,
   roundId: 42,
   pubkeys: ['11'.repeat(32)],
@@ -182,71 +183,137 @@ describe('market builder XDR', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// Router builders — verify-then-trade, price attestation carried in the tail.
+// Router builders — verify-then-trade, Batch-1 quorum ABI (L0-8): every
+// entry point ends in ONE PriceAttestation struct; the asset rides inside.
 // ───────────────────────────────────────────────────────────────────────────
 
-function expectAttestationTail(args: ReturnType<typeof toScVal>[]): void {
-  const [pubkeys, sigs] = args.slice(-2);
-  const price = args[args.length - 5]!;
-  expect(price.switch().name).toBe('scvI128');
-  expect(pubkeys!.switch().name).toBe('scvVec');
-  expect(sigs!.switch().name).toBe('scvVec');
-  expect(pubkeys!.vec()![0]!.bytes()).toHaveLength(32);
-  expect(sigs!.vec()![0]!.bytes()).toHaveLength(64);
+function expectAttestationStruct(att: ReturnType<typeof toScVal>): void {
+  expect(att.switch().name).toBe('scvMap');
+  const entries = att.map()!;
+  // Soroban UDT maps are key-sorted; a wrong order fails on-chain decode.
+  expect(entries.map((e) => e.key().sym().toString())).toEqual([
+    'asset',
+    'prices',
+    'pubkeys',
+    'round_id',
+    'sigs',
+    'timestamp',
+  ]);
+  expect(entries[1]!.val().vec()![0]!.switch().name).toBe('scvI128');
+  expect(entries[2]!.val().vec()![0]!.bytes()).toHaveLength(32);
+  expect(entries[4]!.val().vec()![0]!.bytes()).toHaveLength(64);
 }
 
 describe('router builder XDR', () => {
   it('open_with_price', () => {
     const params = {
       trader: TRADER,
-      asset: 'BTC',
       collateral: 1_000_000_000n,
       leverage: 5,
       direction: 'Long' as const,
+      acceptablePrice: 710_000_000_000n,
       attestation: ATT,
     };
     const args = Router.buildOpenWithPriceArgs(params);
-    expect(args).toHaveLength(10);
-    expect(args[4]!.u32()).toBe(0);
-    expectAttestationTail(args);
-    expect(Router.buildOpenWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAD29wZW5fd2l0aF9wcmljZQAAAAAKAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAPAAAAA0JUQwAAAAAKAAAAAAAAAAAAAAAAO5rKAAAAAAMAAAAFAAAAAwAAAAAAAAAKAAAAAAAAAAAAAACi+0BYAAAAAAUAAAAAZVPxAAAAAAUAAAAAAAAAKgAAABAAAAABAAAAAQAAAA0AAAAgEREREREREREREREREREREREREREREREREREREREREREAAAAQAAAAAQAAAAEAAAANAAAAQCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIAAAAA"`);
+    expect(args).toHaveLength(6);
+    expect(args[3]!.u32()).toBe(0); // direction Long
+    expect(args[4]!.switch().name).toBe('scvI128'); // acceptable_price
+    expectAttestationStruct(args[5]!);
+    expect(Router.buildOpenWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAD29wZW5fd2l0aF9wcmljZQAAAAAGAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAKAAAAAAAAAAAAAAAAO5rKAAAAAAMAAAAFAAAAAwAAAAAAAAAKAAAAAAAAAAAAAAClT0w8AAAAABEAAAABAAAABgAAAA8AAAAFYXNzZXQAAAAAAAAPAAAAA0JUQwAAAAAPAAAABnByaWNlcwAAAAAAEAAAAAEAAAABAAAACgAAAAAAAAAAAAAAovtAWAAAAAAPAAAAB3B1YmtleXMAAAAAEAAAAAEAAAABAAAADQAAACAREREREREREREREREREREREREREREREREREREREREREQAAAA8AAAAIcm91bmRfaWQAAAAFAAAAAAAAACoAAAAPAAAABHNpZ3MAAAAQAAAAAQAAAAEAAAANAAAAQCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIAAAAPAAAACXRpbWVzdGFtcAAAAAAAAAUAAAAAZVPxAAAAAAA="`);
   });
 
   it('close_with_price', () => {
-    const params = { trader: TRADER, positionId: 7, asset: 'ETH', attestation: ATT };
+    const params = {
+      trader: TRADER,
+      positionId: 7,
+      acceptablePrice: 0n,
+      attestation: { ...ATT, asset: 'ETH' },
+    };
     const args = Router.buildCloseWithPriceArgs(params);
-    expect(args).toHaveLength(8);
+    expect(args).toHaveLength(4);
     expect(args[1]!.switch().name).toBe('scvU64');
-    expect(args[2]!.switch().name).toBe('scvSymbol');
-    expectAttestationTail(args);
-    expect(Router.buildCloseWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAEGNsb3NlX3dpdGhfcHJpY2UAAAAIAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAFAAAAAAAAAAcAAAAPAAAAA0VUSAAAAAAKAAAAAAAAAAAAAACi+0BYAAAAAAUAAAAAZVPxAAAAAAUAAAAAAAAAKgAAABAAAAABAAAAAQAAAA0AAAAgEREREREREREREREREREREREREREREREREREREREREREAAAAQAAAAAQAAAAEAAAANAAAAQCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIAAAAA"`);
+    expect(args[2]!.switch().name).toBe('scvI128');
+    expectAttestationStruct(args[3]!);
+    expect(Router.buildCloseWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAEGNsb3NlX3dpdGhfcHJpY2UAAAAEAAAAEgAAAAAAAAAAlIo6attsPe3NP+cCRFJZBXXaDAb/88kx4TTK/U+BQQUAAAAFAAAAAAAAAAcAAAAKAAAAAAAAAAAAAAAAAAAAAAAAABEAAAABAAAABgAAAA8AAAAFYXNzZXQAAAAAAAAPAAAAA0VUSAAAAAAPAAAABnByaWNlcwAAAAAAEAAAAAEAAAABAAAACgAAAAAAAAAAAAAAovtAWAAAAAAPAAAAB3B1YmtleXMAAAAAEAAAAAEAAAABAAAADQAAACAREREREREREREREREREREREREREREREREREREREREREQAAAA8AAAAIcm91bmRfaWQAAAAFAAAAAAAAACoAAAAPAAAABHNpZ3MAAAAQAAAAAQAAAAEAAAANAAAAQCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIAAAAPAAAACXRpbWVzdGFtcAAAAAAAAAUAAAAAZVPxAAAAAAA="`);
+  });
+
+  it('close_partial_with_price', () => {
+    const params = {
+      trader: TRADER,
+      positionId: 7,
+      closeSize: 500_000_000n,
+      attestation: { ...ATT, asset: 'ETH' },
+    };
+    const args = Router.buildClosePartialWithPriceArgs(params);
+    expect(args).toHaveLength(4);
+    expect(args[2]!.switch().name).toBe('scvI128');
+    expectAttestationStruct(args[3]!);
+    expect(Router.buildClosePartialWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAGGNsb3NlX3BhcnRpYWxfd2l0aF9wcmljZQAAAAQAAAASAAAAAAAAAACUijpq22w97c0/5wJEUlkFddoMBv/zyTHhNMr9T4FBBQAAAAUAAAAAAAAABwAAAAoAAAAAAAAAAAAAAAAdzWUAAAAAEQAAAAEAAAAGAAAADwAAAAVhc3NldAAAAAAAAA8AAAADRVRIAAAAAA8AAAAGcHJpY2VzAAAAAAAQAAAAAQAAAAEAAAAKAAAAAAAAAAAAAACi+0BYAAAAAA8AAAAHcHVia2V5cwAAAAAQAAAAAQAAAAEAAAANAAAAIBERERERERERERERERERERERERERERERERERERERERERAAAADwAAAAhyb3VuZF9pZAAAAAUAAAAAAAAAKgAAAA8AAAAEc2lncwAAABAAAAABAAAAAQAAAA0AAABAIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIgAAAA8AAAAJdGltZXN0YW1wAAAAAAAABQAAAABlU/EAAAAAAA=="`);
   });
 
   it('liquidate_with_price', () => {
-    const params = { keeper: KEEPER, positionId: 7, asset: 'BTC', attestation: ATT };
+    const params = { keeper: KEEPER, positionId: 7, attestation: ATT };
     const args = Router.buildLiquidateWithPriceArgs(params);
-    expect(args).toHaveLength(8);
+    expect(args).toHaveLength(3);
     expect(args[0]!.switch().name).toBe('scvAddress');
-    expectAttestationTail(args);
-    expect(Router.buildLiquidateWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAFGxpcXVpZGF0ZV93aXRoX3ByaWNlAAAACAAAABIAAAAAAAAAAAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHAAAABQAAAAAAAAAHAAAADwAAAANCVEMAAAAACgAAAAAAAAAAAAAAovtAWAAAAAAFAAAAAGVT8QAAAAAFAAAAAAAAACoAAAAQAAAAAQAAAAEAAAANAAAAIBERERERERERERERERERERERERERERERERERERERERERAAAAEAAAAAEAAAABAAAADQAAAEAiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAAAAAA=="`);
+    expectAttestationStruct(args[2]!);
+    expect(Router.buildLiquidateWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAFGxpcXVpZGF0ZV93aXRoX3ByaWNlAAAAAwAAABIAAAAAAAAAAAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHAAAABQAAAAAAAAAHAAAAEQAAAAEAAAAGAAAADwAAAAVhc3NldAAAAAAAAA8AAAADQlRDAAAAAA8AAAAGcHJpY2VzAAAAAAAQAAAAAQAAAAEAAAAKAAAAAAAAAAAAAACi+0BYAAAAAA8AAAAHcHVia2V5cwAAAAAQAAAAAQAAAAEAAAANAAAAIBERERERERERERERERERERERERERERERERERERERERERAAAADwAAAAhyb3VuZF9pZAAAAAUAAAAAAAAAKgAAAA8AAAAEc2lncwAAABAAAAABAAAAAQAAAA0AAABAIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIgAAAA8AAAAJdGltZXN0YW1wAAAAAAAABQAAAABlU/EAAAAAAA=="`);
+  });
+
+  it('adl_with_price', () => {
+    const params = { caller: KEEPER, positionId: 9, attestation: ATT };
+    const args = Router.buildAdlWithPriceArgs(params);
+    expect(args).toHaveLength(3);
+    expectAttestationStruct(args[2]!);
+    expect(Router.buildAdlWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAADmFkbF93aXRoX3ByaWNlAAAAAAADAAAAEgAAAAAAAAAABwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcAAAAFAAAAAAAAAAkAAAARAAAAAQAAAAYAAAAPAAAABWFzc2V0AAAAAAAADwAAAANCVEMAAAAADwAAAAZwcmljZXMAAAAAABAAAAABAAAAAQAAAAoAAAAAAAAAAAAAAKL7QFgAAAAADwAAAAdwdWJrZXlzAAAAABAAAAABAAAAAQAAAA0AAAAgEREREREREREREREREREREREREREREREREREREREREREAAAAPAAAACHJvdW5kX2lkAAAABQAAAAAAAAAqAAAADwAAAARzaWdzAAAAEAAAAAEAAAABAAAADQAAAEAiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAAAADwAAAAl0aW1lc3RhbXAAAAAAAAAFAAAAAGVT8QAAAAAA"`);
   });
 
   it('execute_with_price', () => {
-    const params = { keeper: KEEPER, orderId: 12, asset: 'XLM', attestation: ATT };
+    const params = { keeper: KEEPER, orderId: 12, attestation: { ...ATT, asset: 'XLM' } };
     const args = Router.buildExecuteWithPriceArgs(params);
-    expect(args).toHaveLength(8);
+    expect(args).toHaveLength(3);
     expect(args[1]!.switch().name).toBe('scvU64');
-    expectAttestationTail(args);
-    expect(Router.buildExecuteWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAEmV4ZWN1dGVfd2l0aF9wcmljZQAAAAAACAAAABIAAAAAAAAAAAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHAAAABQAAAAAAAAAMAAAADwAAAANYTE0AAAAACgAAAAAAAAAAAAAAovtAWAAAAAAFAAAAAGVT8QAAAAAFAAAAAAAAACoAAAAQAAAAAQAAAAEAAAANAAAAIBERERERERERERERERERERERERERERERERERERERERERAAAAEAAAAAEAAAABAAAADQAAAEAiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAAAAAA=="`);
+    expectAttestationStruct(args[2]!);
+    expect(Router.buildExecuteWithPriceOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAEmV4ZWN1dGVfd2l0aF9wcmljZQAAAAAAAwAAABIAAAAAAAAAAAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHAAAABQAAAAAAAAAMAAAAEQAAAAEAAAAGAAAADwAAAAVhc3NldAAAAAAAAA8AAAADWExNAAAAAA8AAAAGcHJpY2VzAAAAAAAQAAAAAQAAAAEAAAAKAAAAAAAAAAAAAACi+0BYAAAAAA8AAAAHcHVia2V5cwAAAAAQAAAAAQAAAAEAAAANAAAAIBERERERERERERERERERERERERERERERERERERERERERAAAADwAAAAhyb3VuZF9pZAAAAAUAAAAAAAAAKgAAAA8AAAAEc2lncwAAABAAAAABAAAAAQAAAA0AAABAIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIgAAAA8AAAAJdGltZXN0YW1wAAAAAAAABQAAAABlU/EAAAAAAA=="`);
+  });
+
+  it('liquidate_cross_with_prices', () => {
+    const params = {
+      keeper: KEEPER,
+      trader: TRADER,
+      attestations: [ATT, { ...ATT, asset: 'XLM', prices: [1_000_000n] }],
+    };
+    const args = Router.buildLiquidateCrossWithPricesArgs(params);
+    expect(args).toHaveLength(3);
+    expect(args[2]!.switch().name).toBe('scvVec');
+    expect(args[2]!.vec()).toHaveLength(2);
+    expectAttestationStruct(args[2]!.vec()![0]!);
+    expect(Router.buildLiquidateCrossWithPricesOp(ROUTER, params).toXDR('base64')).toMatchInlineSnapshot(`"AAAAAAAAABgAAAAAAAAAAYkEqDu1QDdISxMLde6hzyKsEMURuSTV5IrKS0kFYi0XAAAAG2xpcXVpZGF0ZV9jcm9zc193aXRoX3ByaWNlcwAAAAADAAAAEgAAAAAAAAAABwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcAAAASAAAAAAAAAACUijpq22w97c0/5wJEUlkFddoMBv/zyTHhNMr9T4FBBQAAABAAAAABAAAAAgAAABEAAAABAAAABgAAAA8AAAAFYXNzZXQAAAAAAAAPAAAAA0JUQwAAAAAPAAAABnByaWNlcwAAAAAAEAAAAAEAAAABAAAACgAAAAAAAAAAAAAAovtAWAAAAAAPAAAAB3B1YmtleXMAAAAAEAAAAAEAAAABAAAADQAAACAREREREREREREREREREREREREREREREREREREREREREQAAAA8AAAAIcm91bmRfaWQAAAAFAAAAAAAAACoAAAAPAAAABHNpZ3MAAAAQAAAAAQAAAAEAAAANAAAAQCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIAAAAPAAAACXRpbWVzdGFtcAAAAAAAAAUAAAAAZVPxAAAAABEAAAABAAAABgAAAA8AAAAFYXNzZXQAAAAAAAAPAAAAA1hMTQAAAAAPAAAABnByaWNlcwAAAAAAEAAAAAEAAAABAAAACgAAAAAAAAAAAAAAAAAPQkAAAAAPAAAAB3B1YmtleXMAAAAAEAAAAAEAAAABAAAADQAAACAREREREREREREREREREREREREREREREREREREREREREQAAAA8AAAAIcm91bmRfaWQAAAAFAAAAAAAAACoAAAAPAAAABHNpZ3MAAAAQAAAAAQAAAAEAAAANAAAAQCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIAAAAPAAAACXRpbWVzdGFtcAAAAAAAAAUAAAAAZVPxAAAAAAA="`);
+  });
+
+  it('multi-publisher bundle keeps arrays aligned in the struct', () => {
+    const quorum: PriceAttestation = {
+      asset: 'BTC',
+      prices: [700_000_000_000n, 702_000_000_000n],
+      timestamp: 1_700_000_000,
+      roundId: 42,
+      pubkeys: ['11'.repeat(32), '33'.repeat(32)],
+      sigs: ['22'.repeat(64), '44'.repeat(64)],
+    };
+    const att = Router.attestationStructArg(quorum);
+    const entries = att.map()!;
+    expect(entries[1]!.val().vec()).toHaveLength(2); // prices
+    expect(entries[2]!.val().vec()).toHaveLength(2); // pubkeys
+    expect(entries[4]!.val().vec()).toHaveLength(2); // sigs
   });
 
   it('buildInvokeOp matches the per-builder op helper', () => {
     const params = {
       trader: TRADER,
-      asset: 'BTC',
       collateral: 1_000_000_000n,
       leverage: 5,
       direction: 'Long' as const,
+      acceptablePrice: 0n,
       attestation: ATT,
     };
     const viaHelper = Router.buildOpenWithPriceOp(ROUTER, params).toXDR('base64');

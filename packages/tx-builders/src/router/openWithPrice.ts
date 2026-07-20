@@ -8,27 +8,29 @@ import {
   type TxBuildContext,
 } from '../client.js';
 import { toScVal } from '../scval.js';
-import { attestationTailArgs, type PriceAttestation } from './attestation.js';
+import { attestationStructArg, type PriceAttestation } from './attestation.js';
 
 const METHOD = 'open_with_price';
 
 export interface OpenWithPriceParams {
   trader: StellarAddress;
-  asset: string;
   collateral: bigint;
   leverage: number;
   direction: Direction;
+  /** L0-10 worst-fill bound (7dp). 0 = unbounded. */
+  acceptablePrice: bigint;
+  /** Carries the asset — there is no separate asset arg. */
   attestation: PriceAttestation;
 }
 
 export function buildOpenWithPriceArgs(params: OpenWithPriceParams): xdr.ScVal[] {
   return [
     toScVal(params.trader, 'address'),
-    toScVal(params.asset, 'symbol'),
     toScVal(params.collateral, 'i128'),
     toScVal(params.leverage, 'u32'),
     toScVal(params.direction, 'direction'),
-    ...attestationTailArgs(params.attestation),
+    toScVal(params.acceptablePrice, 'i128'),
+    attestationStructArg(params.attestation),
   ];
 }
 
