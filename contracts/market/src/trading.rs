@@ -18,12 +18,15 @@ const SECONDS_PER_DAY: u64 = 86400;
 
 /// Create default fee tiers using deci-bps (0.1 bps = 0.001% precision).
 ///
+/// Thresholds below are the TESTNET values (lowered for demo volume);
+/// mainnet intent is $1M / $5M / $25M via set-at-init tiers, not this default.
+///
 /// | Tier | 14-Day Volume | Maker       | Taker       |
 /// |------|--------------|-------------|-------------|
-/// | 0    | $0 - $1M     | 0.020% (20) | 0.050% (50) |
-/// | 1    | > $1M        | 0.015% (15) | 0.040% (40) |
-/// | 2    | > $5M        | 0.010% (10) | 0.030% (30) |
-/// | 3    | > $25M       | 0.005% (5)  | 0.020% (20) |
+/// | 0    | $0 - $20K    | 0.020% (20) | 0.050% (50) |
+/// | 1    | > $20K       | 0.015% (15) | 0.040% (40) |
+/// | 2    | > $50K       | 0.010% (10) | 0.030% (30) |
+/// | 3    | > $100K      | 0.005% (5)  | 0.020% (20) |
 pub fn default_fee_tiers(env: &Env) -> Vec<FeeTier> {
     let mut tiers = Vec::new(env);
     tiers.push_back(FeeTier {
