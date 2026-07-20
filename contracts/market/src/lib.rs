@@ -423,7 +423,7 @@ impl MarketContract {
             let id = legs.get(i).unwrap();
             if let Some(p) = get_position(env, id) {
                 if cross {
-                    Self::settle_cross_close(env, &p, entry_price);
+                    Self::settle_cross_close(env, &p, entry_price, 0, None, None);
                 } else {
                     Self::settle_isolated_close(env, &p, entry_price, 0, None, None)?;
                 }
@@ -1543,7 +1543,7 @@ impl MarketContract {
         // Get current price and settle through the shared close core (L0-5).
         let current_price = Self::get_oracle_price(&env, &pos.asset, false)?;
         Self::check_close_bound(pos.direction, current_price, acceptable_price)?;
-        let pnl = Self::settle_cross_close(&env, &pos, current_price);
+        let pnl = Self::settle_cross_close(&env, &pos, current_price, 0, None, None);
 
         // Record volume (trader-initiated closes only — ADL doesn't count)
         record_volume_only(&env, &trader, pos.size);
@@ -1552,16 +1552,27 @@ impl MarketContract {
         Ok(pnl)
     }
 
-    /// Shared cross-close settlement core (L0-1/L0-5): used by
-    /// close_position_cross (behind its auth/pause gates) and adl_close.
+    /// Shared cross-close settlement core (L0-1/L0-5/L1-1): used by
+    /// close_position_cross (behind its auth/pause gates), adl_close, the
+    /// L1-3 netting path, and cross trigger executions (SL/TP/trailing).
     /// Outflow cap = the account's own funds (L0-2); deficit legs debit the
-    /// shared pool down to zero; emits position_closed. Returns pnl.
-    fn settle_cross_close(env: &Env, pos: &Position, current_price: i128) -> i128 {
+    /// shared pool down to zero; the keeper fee (trigger executions only)
+    /// is paid FROM THIS CLOSE'S POOL PROCEEDS, capped so it can never
+    /// draw other accounts' custody funds; emits position_closed
+    /// (unchanged 8-tuple). Returns pnl.
+    fn settle_cross_close(
+        env: &Env,
+        pos: &Position,
+        current_price: i128,
+        keeper_fee: i128,
+        keeper: Option<&Address>,
+        skip_order: Option<u64>,
+    ) -> i128 {
         let trader = pos.trader.clone();
         let account_funds = get_cross_margin_balance(env, &trader)
             .checked_add(pos.collateral).unwrap_or(pos.collateral);
         let (pnl, pool_delta, loss_wanted, loss_transferred) =
-            Self::close_cross_leg(env, pos, current_price, account_funds);
+            Self::close_cross_leg(env, pos, current_price, account_funds, skip_order);
         if loss_wanted > loss_transferred {
             let vault_address = get_vault(env);
             Self::record_bad_debt(
@@ -1570,10 +1581,30 @@ impl MarketContract {
             );
         }
 
+        // L1-1: keeper fee comes out of the positive proceeds of THIS close
+        // only — a broke close pays no fee (execution still lands).
+        let mut credited = pool_delta;
+        if let Some(keeper_addr) = keeper {
+            if keeper_fee > 0 && pool_delta > 0 {
+                let usdc_token = get_usdc_token(env);
+                let token_client = token::Client::new(env, &usdc_token);
+                let market_addr = env.current_contract_address();
+                let bal = token_client.balance(&market_addr);
+                let mut fee_paid = if keeper_fee > pool_delta { pool_delta } else { keeper_fee };
+                if fee_paid > bal {
+                    fee_paid = if bal > 0 { bal } else { 0 };
+                }
+                if fee_paid > 0 {
+                    token_client.transfer(&market_addr, keeper_addr, &fee_paid);
+                    credited = pool_delta - fee_paid;
+                }
+            }
+        }
+
         // Return remaining equity to the cross pool (NOT trader wallet).
-        if pool_delta != 0 {
+        if credited != 0 {
             let current_balance = get_cross_margin_balance(env, &trader);
-            let mut new_balance = current_balance.checked_add(pool_delta).unwrap_or(current_balance);
+            let mut new_balance = current_balance.checked_add(credited).unwrap_or(current_balance);
             if new_balance < 0 {
                 new_balance = 0;
             }
@@ -1605,6 +1636,7 @@ impl MarketContract {
         pos: &Position,
         current_price: i128,
         max_outflow: i128,
+        skip_order: Option<u64>,
     ) -> (i128, i128, i128, i128) {
         let trader = pos.trader.clone();
         let cumulative = Self::cum_funding(env, &pos.asset);
@@ -1651,7 +1683,7 @@ impl MarketContract {
             .checked_sub(funding).unwrap_or(0);
 
         Self::adjust_oi(env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
-        Self::cancel_position_orders(env, pos.id, None);
+        Self::cancel_position_orders(env, pos.id, skip_order);
         remove_cross_margin_position(env, &trader, pos.id);
         delete_position(env, pos.id, &trader);
 
@@ -1783,7 +1815,7 @@ impl MarketContract {
             remaining_account_funds = remaining_account_funds
                 .checked_add(pos.collateral).unwrap_or(remaining_account_funds);
             let (pnl, pool_delta, loss_wanted, loss_transferred) =
-                Self::close_cross_leg(&env, &pos, current_price, remaining_account_funds);
+                Self::close_cross_leg(&env, &pos, current_price, remaining_account_funds, None);
             remaining_account_funds -= loss_transferred;
             if loss_wanted > loss_transferred {
                 total_bad_debt += loss_wanted - loss_transferred;
@@ -2037,7 +2069,7 @@ impl MarketContract {
         };
 
         let realized = if pos.margin_mode == 1 {
-            Self::settle_cross_close(&env, &pos, price)
+            Self::settle_cross_close(&env, &pos, price, 0, None, None)
         } else {
             Self::settle_isolated_close(&env, &pos, price, 0, None, None)?
         };
@@ -2298,11 +2330,8 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
-        // Cross-margin positions must close via the cross path; an attached
-        // order would pay out of the shared pool through the isolated path.
-        if position.margin_mode == 1 {
-            return Err(NoetherError::CrossMarginOrderNotSupported);
-        }
+        // L1-1: cross positions accepted — triggers settle through
+        // settle_cross_close (proceeds to the shared pool, never the wallet).
 
         // Check if SL already exists
         if get_position_stop_loss(&env, position_id).is_some() {
@@ -2407,10 +2436,7 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
-        // Cross-margin positions must close via the cross path
-        if position.margin_mode == 1 {
-            return Err(NoetherError::CrossMarginOrderNotSupported);
-        }
+        // L1-1: cross positions accepted — settles via settle_cross_close.
 
         // Check if TP already exists
         if get_position_take_profit(&env, position_id).is_some() {
@@ -2898,10 +2924,7 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
-        // Cross-margin positions must close via the cross path
-        if position.margin_mode == 1 {
-            return Err(NoetherError::CrossMarginOrderNotSupported);
-        }
+        // L1-1: cross positions accepted — settles via settle_cross_close.
 
         // One trailing stop per position
         if get_position_trailing_stop(&env, position_id).is_some() {
@@ -3520,9 +3543,13 @@ impl MarketContract {
             let mut target: Option<Position> = None;
             for pid in get_trader_position_ids(env, &order.trader).iter() {
                 if let Some(pos) = get_position(env, pid) {
+                    // L1-1: cross targets accepted ONLY when the order fully
+                    // covers them — cross partial settlement does not exist
+                    // (L0-6 scope), so selection guarantees the full-close
+                    // branch below by construction.
                     if pos.asset == order.asset
                         && pos.direction != order.direction
-                        && pos.margin_mode == 0
+                        && (pos.margin_mode == 0 || intended_size >= pos.size)
                         && target.as_ref().is_none_or(|t| pos.size > t.size)
                     {
                         target = Some(pos);
@@ -3541,11 +3568,20 @@ impl MarketContract {
                     let reduce_size = if intended_size < pos.size { intended_size } else { pos.size };
                     let config = get_config(env);
                     let collateral_closed = pos.collateral * reduce_size / pos.size;
-                    // Full reduce, or a residual that would breach the dust
-                    // floor → close the whole position (never trap the keeper).
-                    if reduce_size >= pos.size
+                    if pos.margin_mode == 1 {
+                        // L1-1: always a full close here (selection guarantees
+                        // intended_size >= pos.size for cross targets);
+                        // proceeds credit the shared pool, keeper fee from
+                        // this close's proceeds.
+                        Self::settle_cross_close(
+                            env, &pos, current_price, keeper_fee, Some(keeper), Some(order.id),
+                        );
+                        record_volume_only(env, &pos.trader, pos.size);
+                    } else if reduce_size >= pos.size
                         || pos.collateral - collateral_closed < config.min_collateral
                     {
+                        // Full reduce, or a residual that would breach the dust
+                        // floor → close the whole position (never trap the keeper).
                         Self::settle_isolated_close(
                             env, &pos, current_price, keeper_fee, Some(keeper), Some(order.id),
                         )?;
@@ -3669,9 +3705,20 @@ impl MarketContract {
         let position = get_position(env, order.position_id)
             .ok_or(NoetherError::PositionNotFound)?;
 
-        Self::settle_isolated_close(
-            env, &position, current_price, keeper_fee, Some(keeper), Some(order.id),
-        )?;
+        if position.margin_mode == 1 {
+            // L1-1: cross triggers settle through the shared pool core —
+            // proceeds credit CrossMarginBalance (never the wallet), keeper
+            // fee paid from this close's proceeds. Trader-initiated → counts
+            // toward fee-tier volume (ADL path deliberately does not).
+            Self::settle_cross_close(
+                env, &position, current_price, keeper_fee, Some(keeper), Some(order.id),
+            );
+            record_volume_only(env, &position.trader, position.size);
+        } else {
+            Self::settle_isolated_close(
+                env, &position, current_price, keeper_fee, Some(keeper), Some(order.id),
+            )?;
+        }
 
         Ok(keeper_fee)
     }
@@ -4553,7 +4600,9 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     #[test]
-    fn test_cross_position_rejects_attached_orders() {
+    fn test_cross_position_accepts_attached_orders() {
+        // L1-1: the deliberate M-3 #80 ban is lifted — all three attach
+        // paths accept cross positions (execution settles via the pool).
         let test = setup();
         let trader = fund_trader(&test, 10_000 * PRECISION);
 
@@ -4566,19 +4615,249 @@ mod tests {
             &Direction::Long, &0,
         );
 
-        // All three attach paths must reject cross-margin positions (#80)
-        let sl = test.market.try_set_stop_loss(
-            &trader, &pos.id, &(55_000 * PRECISION), &500,
-        );
-        assert!(matches!(sl, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
-
-        let tp = test.market.try_set_take_profit(
-            &trader, &pos.id, &(70_000 * PRECISION), &500, &0,
-        );
-        assert!(matches!(tp, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
-
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(55_000 * PRECISION), &500);
+        assert_eq!(sl.order_type, OrderType::StopLoss);
+        let tp = test.market.set_take_profit(&trader, &pos.id, &(70_000 * PRECISION), &500, &0);
+        assert_eq!(tp.order_type, OrderType::TakeProfit);
         let ts = test.market.try_place_trailing_stop(&trader, &pos.id, &500, &500);
-        assert!(matches!(ts, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
+        assert!(ts.is_ok(), "trailing stop must attach to cross positions post-L1-1");
+    }
+
+    #[test]
+    fn test_cross_sl_executes_settles_to_pool() {
+        // L1-1 acceptance: proceeds credit the CROSS POOL (never the
+        // wallet), the keeper is paid from this close's proceeds, and the
+        // sibling TP auto-cancels.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1000), &500);
+        let tp = test.market.set_take_profit(&trader, &pos.id, &(PRECISION * 12 / 100), &500, &0);
+
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+        let wallet_before = usdc.balance(&trader);
+        let keeper_before = usdc.balance(&keeper);
+
+        // −5% on a 5x long: pnl = 1000 × (0.095 − 0.10)/0.10 = −50.
+        oracle.set_price(&xlm, &(PRECISION * 95 / 1000));
+        let reward = test.market.execute_order(&keeper, &sl.id);
+        assert!(reward > 0);
+
+        assert_eq!(usdc.balance(&trader), wallet_before, "wallet must be untouched");
+        assert_eq!(usdc.balance(&keeper) - keeper_before, reward, "keeper paid the fee");
+        // Stored collateral is NET of the open taker fee; size stays gross.
+        let expected_pool_delta = pos.collateral - 50 * PRECISION - reward;
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            expected_pool_delta,
+            "pool credit must be collateral + pnl − keeper fee",
+        );
+
+        assert_eq!(test.market.get_order(&sl.id).unwrap().status, OrderStatus::Executed);
+        assert_eq!(test.market.get_order(&tp.id).unwrap().status, OrderStatus::Cancelled);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_cross_tp_and_take_limit_execute() {
+        // A cross take-profit with a limit price (take-limit) fills and
+        // settles the winner's payout into the pool.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        // Take-limit: trigger $0.11, limit $0.105 (entry < limit < trigger).
+        let tp = test.market.set_take_profit(
+            &trader, &pos.id, &(PRECISION * 11 / 100), &500, &(PRECISION * 105 / 1000),
+        );
+
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+        let wallet_before = usdc.balance(&trader);
+
+        // +10%: pnl = 1000 × (0.11 − 0.10)/0.10 = +100 (vault-funded winner).
+        oracle.set_price(&xlm, &(PRECISION * 11 / 100));
+        let reward = test.market.execute_order(&keeper, &tp.id);
+        assert!(reward > 0);
+
+        assert_eq!(usdc.balance(&trader), wallet_before);
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            pos.collateral + 100 * PRECISION - reward,
+        );
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_cross_trailing_executes() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        // 1% trail — every oracle step must stay inside the 1% deviation
+        // band (max_oracle_deviation_bps default 100), so the trail cannot
+        // be wider than the band in a single-step fixture.
+        let ts = test.market.place_trailing_stop(&trader, &pos.id, &100, &500);
+
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+
+        // Ratchet the peak to $0.1009 (+0.9%), walk last-good down within
+        // the band, then cross peak × (1 − 1%) = $0.099891 at $0.0998.
+        oracle.set_price(&xlm, &(PRECISION * 1009 / 10_000));
+        assert!(test.market.update_trailing_peak(&ts.id));
+        oracle.set_price(&xlm, &(PRECISION / 10));
+        let _ = test.market.update_trailing_peak(&ts.id); // no-op read refreshes last-good
+        oracle.set_price(&xlm, &(PRECISION * 998 / 10_000));
+        let reward = test.market.execute_order(&keeper, &ts.id);
+        assert!(reward > 0);
+
+        // pnl = 1000 × (0.0998 − 0.10)/0.10 = −2, to the pool minus fee.
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            pos.collateral - 2 * PRECISION - reward,
+        );
+        assert!(test.market.get_position(&pos.id).is_none());
+        assert_eq!(test.market.get_order(&ts.id).unwrap().status, OrderStatus::Executed);
+    }
+
+    #[test]
+    fn test_cross_keeper_fee_capped_when_proceeds_small() {
+        // The keeper fee comes ONLY from this close's positive proceeds:
+        // a nearly-wiped close pays out its whole sliver as the fee and
+        // credits the pool nothing — never other accounts' custody funds.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1000), &500);
+
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+        let keeper_before = usdc.balance(&keeper);
+
+        // Pick the price so proceeds = collateral + pnl land at exactly
+        // 0.05 USDC — smaller than the ~0.1 USDC keeper fee (10 deci-bps
+        // of $1000). pnl = 10_000 × (price − entry) at this size/entry.
+        let proceeds: i128 = 500_000; // 0.05 USDC in 7-dec
+        let target_pnl = proceeds - pos.collateral;
+        let price = PRECISION / 10 + target_pnl / 10_000;
+        oracle.set_price(&xlm, &price);
+        let reward = test.market.execute_order(&keeper, &sl.id);
+
+        assert!(reward > proceeds, "fixture must exercise the cap (fee > proceeds)");
+        assert_eq!(usdc.balance(&keeper) - keeper_before, proceeds, "fee capped at proceeds");
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader),
+            pool_before,
+            "nothing left to credit after the capped fee",
+        );
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_reduce_only_closes_cross_via_pool() {
+        // L1-1: a keeper-executed reduce-only entry may target a cross
+        // position when it fully covers it — close settles to the pool,
+        // the order's own escrowed collateral refunds to the wallet.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        let wallet_before_place = usdc.balance(&trader);
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+
+        // Reduce-only (bit 8) short covering the whole 1000 notional,
+        // trigger at the current price (met, and zero distance so the
+        // LimitEntry slippage band cannot cancel the execution).
+        let ro = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Short, &(200 * PRECISION), &5,
+            &(PRECISION / 10), &true, &500, &0x100,
+        );
+        let reward = test.market.execute_order(&keeper, &ro.id);
+        assert!(reward > 0);
+
+        // Escrowed order collateral came back to the wallet (net 0 vs
+        // before placing); close proceeds (pnl 0 at the entry price) went
+        // to the pool minus the keeper fee.
+        assert_eq!(usdc.balance(&trader), wallet_before_place);
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            pos.collateral - reward,
+        );
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_cross_close_conservation_property() {
+        // MANDATORY property (the M-3 failure mode reborn otherwise): a
+        // cross trigger execution conserves total USDC across every party
+        // (trader, keeper, market custody, vault), and the pool ledger
+        // moves by exactly collateral + pnl − keeper fee.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1000), &500);
+
+        let total_before = usdc.balance(&trader)
+            + usdc.balance(&keeper)
+            + usdc.balance(&test.market_id)
+            + usdc.balance(&test.vault_id);
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+
+        oracle.set_price(&xlm, &(PRECISION * 95 / 1000));
+        let reward = test.market.execute_order(&keeper, &sl.id);
+
+        let total_after = usdc.balance(&trader)
+            + usdc.balance(&keeper)
+            + usdc.balance(&test.market_id)
+            + usdc.balance(&test.vault_id);
+        assert_eq!(total_after, total_before, "no USDC minted or destroyed");
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            pos.collateral - 50 * PRECISION - reward,
+            "pool ledger delta = collateral + pnl − keeper fee",
+        );
     }
 
     #[test]
