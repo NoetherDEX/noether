@@ -217,6 +217,10 @@ export function loadConfig(): KeeperConfig {
       process.env.REFERENCE_TICKER_URL || 'https://api.binance.com/api/v3/ticker/price',
     referenceDivergencePct: envFloat('REFERENCE_DIVERGENCE_PCT', 5),
 
+    // L0-9 interim smoothing: two-strike liquidation confirm + spike alert.
+    triggerConfirmReads: Math.max(1, envInt('KEEPER_TRIGGER_CONFIRM_READS', 2)),
+    spikeAlertPct: envFloat('KEEPER_SPIKE_ALERT_PCT', 1.5),
+
     // Stork secondary oracle (T3-D1). Empty key = disabled = the keeper
     // runs Noeracle-only, exactly as before — fail-open by design.
     storkApiKey: process.env.STORK_API_KEY || '',

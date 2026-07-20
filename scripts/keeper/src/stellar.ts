@@ -118,12 +118,14 @@ export interface RouterRound {
 }
 
 /**
- * Args for router execute_with_price / liquidate_with_price /
- * adl_with_price — all three share the exact signature
- * (actor: Address, id: u64, asset: Symbol, price: i128, timestamp: u64,
- * round_id: u64, pubkeys: Vec<BytesN<32>>, sigs: Vec<BytesN<64>>).
- * Pure and exported so the smoke suite pins the arg order/types offline
- * (the G-6 arity-drift class).
+ * LEGACY (pre-Batch-1 deployed router): args for router execute_with_price
+ * / liquidate_with_price / adl_with_price — all three share the exact
+ * signature (actor: Address, id: u64, asset: Symbol, price: i128,
+ * timestamp: u64, round_id: u64, pubkeys: Vec<BytesN<32>>,
+ * sigs: Vec<BytesN<64>>). The Batch-1 router uses buildRouterCallArgsV2;
+ * StellarClient.routerAbiV2() picks per deployment. Pure and exported so
+ * the smoke suite pins the arg order/types offline (the G-6 arity-drift
+ * class).
  */
 export function buildRouterCallArgs(
   actor: string,
@@ -144,10 +146,12 @@ export function buildRouterCallArgs(
 }
 
 /**
- * PriceAttestation struct ScVal for liquidate_cross_with_prices. Soroban
- * UDT structs decode from an ScMap whose entries are SORTED BY KEY —
- * for this struct: asset < price < pubkeys < round_id < sigs < timestamp.
- * Pure and exported for the smoke suite.
+ * LEGACY (pre-Batch-1) PriceAttestation struct ScVal for
+ * liquidate_cross_with_prices. Soroban UDT structs decode from an ScMap
+ * whose entries are SORTED BY KEY — for this struct: asset < price <
+ * pubkeys < round_id < sigs < timestamp. The Batch-1 struct replaces
+ * `price` with the `prices` vec (buildPriceAttestationScValV2). Pure and
+ * exported for the smoke suite.
  */
 export function buildPriceAttestationScVal(asset: string, round: RouterRound): xdr.ScVal {
   const entry = (key: string, val: xdr.ScVal) =>
@@ -155,6 +159,43 @@ export function buildPriceAttestationScVal(asset: string, round: RouterRound): x
   return xdr.ScVal.scvMap([
     entry('asset', nativeToScVal(asset, { type: 'symbol' })),
     entry('price', nativeToScVal(BigInt(round.price), { type: 'i128' })),
+    entry('pubkeys', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.publisher, 'hex'))])),
+    entry('round_id', nativeToScVal(BigInt(round.round_id), { type: 'u64' })),
+    entry('sigs', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.signature, 'hex'))])),
+    entry('timestamp', nativeToScVal(BigInt(round.timestamp), { type: 'u64' })),
+  ]);
+}
+
+/**
+ * L0-8 (Batch-1 quorum ABI): (actor: Address, id: u64, att: PriceAttestation)
+ * — the flattened tail collapsed into ONE struct arg and the asset moved
+ * inside it. Pure and exported for the smoke suite.
+ */
+export function buildRouterCallArgsV2(
+  actor: string,
+  id: bigint,
+  asset: string,
+  round: RouterRound,
+): xdr.ScVal[] {
+  return [
+    new Address(actor).toScVal(),
+    nativeToScVal(id, { type: 'u64' }),
+    buildPriceAttestationScValV2(asset, round),
+  ];
+}
+
+/**
+ * L0-8 PriceAttestation struct (Batch-1): `price` became the per-publisher
+ * `prices` vec, aligned with pubkeys/sigs. Key-sorted for UDT decode:
+ * asset < prices < pubkeys < round_id < sigs < timestamp. Single-publisher
+ * bundle — the attestation service returns one signer per round.
+ */
+export function buildPriceAttestationScValV2(asset: string, round: RouterRound): xdr.ScVal {
+  const entry = (key: string, val: xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+  return xdr.ScVal.scvMap([
+    entry('asset', nativeToScVal(asset, { type: 'symbol' })),
+    entry('prices', xdr.ScVal.scvVec([nativeToScVal(BigInt(round.price), { type: 'i128' })])),
     entry('pubkeys', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.publisher, 'hex'))])),
     entry('round_id', nativeToScVal(BigInt(round.round_id), { type: 'u64' })),
     entry('sigs', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.signature, 'hex'))])),
@@ -672,6 +713,41 @@ export class StellarClient {
   // Router Verify-Then-Trade Functions (L0-19)
   // ═══════════════════════════════════════════════════════════════════════
 
+  /** Memoized Batch-1 router detection — see routerAbiV2(). */
+  private routerAbiV2Memo: boolean | undefined;
+
+  /**
+   * Router generation probe (L0-8): the Batch-1 quorum-ABI router exports
+   * `get_reflector_config`; the deployed v1 router does not. Same entry
+   * point names, different arg shapes — missing-export detection on the
+   * calls themselves can't tell the generations apart, so this one view
+   * probe decides which arg builder every router call uses. Probe-once,
+   * memoized; a transport failure resolves v1 WITHOUT memoizing so a later
+   * call re-probes (the keeper must keep serving the deployed chain).
+   */
+  private async routerAbiV2(): Promise<boolean> {
+    if (this.routerAbiV2Memo !== undefined) return this.routerAbiV2Memo;
+    if (!this.routerContract) return false;
+    try {
+      await this.invokeContractRead(this.routerContract, 'get_reflector_config', []);
+      this.routerAbiV2Memo = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isMissingContractFunction(message)) return false; // transient — re-probe later
+      this.routerAbiV2Memo = false;
+    }
+    console.log(
+      `   Router ABI: ${this.routerAbiV2Memo ? 'v2 (Batch-1 quorum struct)' : 'v1 (legacy flattened)'}`,
+    );
+    return this.routerAbiV2Memo;
+  }
+
+  private async routerCallArgs(id: bigint, asset: string, round: RouterRound): Promise<xdr.ScVal[]> {
+    return (await this.routerAbiV2())
+      ? buildRouterCallArgsV2(this.publicKey, id, asset, round)
+      : buildRouterCallArgs(this.publicKey, id, asset, round);
+  }
+
   /**
    * Preview a router *_with_price call — relays the signed round and runs
    * the market op in one simulated tx. Market business codes (#62/#50/#78/
@@ -685,11 +761,7 @@ export class StellarClient {
     round: RouterRound,
   ): Promise<SimulationOutcome> {
     if (!this.routerContract) return { ok: false, error: 'router contract id not configured' };
-    return this.simulateCall(
-      this.routerContract,
-      fn,
-      buildRouterCallArgs(this.publicKey, id, asset, round),
-    );
+    return this.simulateCall(this.routerContract, fn, await this.routerCallArgs(id, asset, round));
   }
 
   /** Execute a triggered order via router execute_with_price (fresh mark). */
@@ -698,7 +770,7 @@ export class StellarClient {
     return this.invokeContractWriteWithRetry(
       this.routerContract,
       'execute_with_price',
-      buildRouterCallArgs(this.publicKey, orderId, asset, round),
+      await this.routerCallArgs(orderId, asset, round),
       {
         recheck: async () => {
           const order = await this.getOrder(orderId);
@@ -714,7 +786,7 @@ export class StellarClient {
     return this.invokeContractWriteWithRetry(
       this.routerContract,
       'liquidate_with_price',
-      buildRouterCallArgs(this.publicKey, positionId, asset, round),
+      await this.routerCallArgs(positionId, asset, round),
       {
         escalateFees: true,
         recheck: async () => (await this.getPosition(positionId)) !== null,
@@ -728,7 +800,7 @@ export class StellarClient {
     return this.invokeContractWriteWithRetry(
       this.routerContract,
       'adl_with_price',
-      buildRouterCallArgs(this.publicKey, positionId, asset, round),
+      await this.routerCallArgs(positionId, asset, round),
       {
         escalateFees: true,
         recheck: async () => (await this.getPosition(positionId)) !== null,
@@ -745,13 +817,20 @@ export class StellarClient {
     rounds: Array<{ asset: string; round: RouterRound }>,
   ): Promise<ExecutionResult> {
     if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    const v2 = await this.routerAbiV2();
     return this.invokeContractWriteWithRetry(
       this.routerContract,
       'liquidate_cross_with_prices',
       [
         new Address(this.publicKey).toScVal(),
         new Address(trader).toScVal(),
-        xdr.ScVal.scvVec(rounds.map((r) => buildPriceAttestationScVal(r.asset, r.round))),
+        xdr.ScVal.scvVec(
+          rounds.map((r) =>
+            v2
+              ? buildPriceAttestationScValV2(r.asset, r.round)
+              : buildPriceAttestationScVal(r.asset, r.round),
+          ),
+        ),
       ],
       {
         escalateFees: true,

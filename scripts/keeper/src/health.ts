@@ -160,6 +160,27 @@ export function isCrossLiquidationCandidate(
 }
 
 /**
+ * Cross-account equity at the keeper's local prices (L0-9 interim):
+ * pool_balance + Σ collateral + Σ pnl. Returns null when any leg's price
+ * is missing — bankruptcy can't be judged, so callers must NOT treat the
+ * account as bankrupt. Used only for the two-strike bankruptcy override;
+ * the on-chain preflight stays the liquidation truth.
+ */
+export function crossEquity(
+  poolBalance: bigint,
+  positions: HealthPosition[],
+  prices: Map<string, bigint>,
+): bigint | null {
+  let equity = poolBalance;
+  for (const position of positions) {
+    const price = prices.get(position.asset);
+    if (price === undefined || price <= 0n) return null;
+    equity += position.collateral + calculatePnl(position, price);
+  }
+  return equity;
+}
+
+/**
  * ADL ranking score (L0-1) — the ADVISORY order in which the keeper walks
  * winners when ADL is active for an asset. Mirrors the contract's inlined
  * formula (and contracts/risk::adl_rank): PnL% of collateral, in bps,

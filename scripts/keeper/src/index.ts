@@ -52,8 +52,10 @@ import {
   DEFAULT_MAINTENANCE_MARGIN_BPS,
   adlFlagDecision,
   assetPayableUpnl,
+  crossEquity,
   isCrossLiquidationCandidate,
   isLiquidationCandidate,
+  positionMargin,
   rankAdlCandidates,
 } from './health';
 import { getReferencePrice } from './reference';
@@ -189,6 +191,11 @@ class KeeperBot {
   private routerFnSupported: Map<string, boolean> = new Map();
   /** Dead-man counters: triggered-but-still-pending cycles per order id. */
   private triggeredStuckCounts: Map<string, number> = new Map();
+  /** L0-9 interim two-strike: consecutive liquidatable reads per key
+   *  (`iso:<id>` / `cross:<trader>`). Cleared on any healthy read. */
+  private liqStrikes: Map<string, number> = new Map();
+  /** L0-9 spike-alert throttle: last alert ms epoch per symbol. */
+  private spikeAlertAt: Map<string, number> = new Map();
   private throttledLogAt: Map<string, number> = new Map();
   private nextTtlBumpAt: number = 0; // P3-9
 
@@ -600,6 +607,17 @@ class KeeperBot {
         for (const attestation of batch) {
           const symbol = symbolByPair.get(attestation.asset);
           if (!symbol) continue;
+          // L0-9 spike flag: compare against the previous PUSHED price
+          // before overwriting it. Alert-only — the push already landed.
+          const previous = this.currentPrices.get(symbol);
+          if (previous && previous.priceScaled > 0n && this.config.spikeAlertPct > 0) {
+            const delta = BigInt(attestation.price) - previous.priceScaled;
+            const deltaPct =
+              (Math.abs(Number(delta)) / Number(previous.priceScaled)) * 100;
+            if (deltaPct > this.config.spikeAlertPct) {
+              this.alertSpike(symbol, previous.price, attestation.price_human, deltaPct);
+            }
+          }
           this.currentPrices.set(symbol, {
             asset: symbol,
             price: attestation.price_human,
@@ -872,6 +890,48 @@ class KeeperBot {
     return prices;
   }
 
+  /**
+   * L0-9 interim two-strike confirmation: pre-Batch-1 the contract cannot
+   * confirm liquidations on a smoothed mark (#86), so the keeper requires
+   * `triggerConfirmReads` CONSECUTIVE liquidatable reads (~one poll
+   * interval apart) before firing — a one-round oracle spike that
+   * mean-reverts within a cycle never liquidates anyone. Bankrupt
+   * positions (local equity ≤ 0) never wait: delaying bad debt costs LPs.
+   * Returns true when the liquidation may fire now.
+   */
+  private confirmStrike(key: string, bankrupt: boolean): boolean {
+    if (bankrupt || this.config.triggerConfirmReads <= 1) {
+      this.liqStrikes.delete(key);
+      return true;
+    }
+    const strikes = (this.liqStrikes.get(key) ?? 0) + 1;
+    if (strikes >= this.config.triggerConfirmReads) {
+      this.liqStrikes.delete(key);
+      return true;
+    }
+    this.liqStrikes.set(key, strikes);
+    return false;
+  }
+
+  /**
+   * L0-9 spike flag — ALERT ONLY, pushes are never blocked here (the K-2
+   * jump bound handles garbage). Surfaces the single-round manipulation
+   * window for a human while the interim two-strike holds the line.
+   * Throttled to one alert per symbol per 5 minutes.
+   */
+  private alertSpike(symbol: string, from: number, to: number, deltaPct: number): void {
+    const last = this.spikeAlertAt.get(symbol) ?? 0;
+    if (Date.now() - last < 5 * 60 * 1000) return;
+    this.spikeAlertAt.set(symbol, Date.now());
+    console.warn(`\n⚡ ${symbol} moved ${deltaPct.toFixed(2)}% in one push ($${from} → $${to})`);
+    void sendAlert(
+      'warn',
+      `Price spike: ${symbol} ${deltaPct.toFixed(2)}% in one round`,
+      `$${from} → $${to} between consecutive pushes (> ${this.config.spikeAlertPct}%). ` +
+        `Single-round spikes are the L0-9 manipulation window — verify against reference feeds.`,
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   // Liquidations
   // ═══════════════════════════════════════════════════════════════════════
@@ -891,6 +951,15 @@ class KeeperBot {
   private async checkLiquidations(snapshot: CycleSnapshot, fullSweep: boolean): Promise<void> {
     const prices = this.localPriceMap();
 
+    // Drop strike counters for positions/accounts no longer in the snapshot.
+    const liveKeys = new Set<string>();
+    for (const p of snapshot.positions) {
+      liveKeys.add(p.margin_mode === 1 ? `cross:${p.trader}` : `iso:${p.id}`);
+    }
+    for (const key of this.liqStrikes.keys()) {
+      if (!liveKeys.has(key)) this.liqStrikes.delete(key);
+    }
+
     for (const position of snapshot.positions) {
       // Cross-margin positions use account-level liquidation
       if (position.margin_mode === 1) continue;
@@ -901,7 +970,10 @@ class KeeperBot {
           fullSweep ||
           price === undefined || // no local price → let the simulation decide
           isLiquidationCandidate(position, price, await this.prefilterMmBps(position.asset));
-        if (!candidate) continue;
+        if (!candidate) {
+          this.liqStrikes.delete(`iso:${position.id}`);
+          continue;
+        }
 
         const sim = await this.stellar.simulateLiquidate(position.id);
         if (!sim.ok) {
@@ -909,10 +981,21 @@ class KeeperBot {
           // 50 healthy / 20 already gone / 83 within the partial-liq grace
           // window (L0-5) / 90 full-freeze pause (L0-15) / 86 confirmation
           // pending (L0-9) — all expected, no alert.
+          if (code === 50 || code === 20) this.liqStrikes.delete(`iso:${position.id}`);
           if (code === 50 || code === 20 || code === 83 || code === 90 || code === 86) continue;
           this.logThrottled(
             `liq-sim-${position.id}`,
             `⚠️  Liquidation preflight for position ${position.id} rejected: ${sim.error}`,
+          );
+          continue;
+        }
+
+        // L0-9 interim: require consecutive liquidatable reads before
+        // firing; a locally-bankrupt position (equity ≤ 0) never waits.
+        const bankrupt = price !== undefined && positionMargin(position, price) <= 0n;
+        if (!this.confirmStrike(`iso:${position.id}`, bankrupt)) {
+          console.log(
+            `\n⏳ Position ${position.id} liquidatable — confirming next cycle (L0-9 two-strike)`,
           );
           continue;
         }
@@ -1026,7 +1109,23 @@ class KeeperBot {
             (p) => mmByAsset.get(p.asset) ?? DEFAULT_MAINTENANCE_MARGIN_BPS,
           );
         }
-        if (!candidate) continue;
+        if (!candidate) {
+          this.liqStrikes.delete(`cross:${trader}`);
+          continue;
+        }
+
+        // L0-9 interim two-strike (bankrupt accounts skip the wait; a null
+        // equity — missing price — must NOT count as bankrupt).
+        const equityBalance = await this.getCrossBalanceCached(trader);
+        const equity =
+          equityBalance === undefined ? null : crossEquity(equityBalance, positions, prices);
+        const bankrupt = equity !== null && equity <= 0n;
+        if (!this.confirmStrike(`cross:${trader}`, bankrupt)) {
+          console.log(
+            `\n⏳ Cross account ${trader.slice(0, 8)}... liquidatable — confirming next cycle (L0-9 two-strike)`,
+          );
+          continue;
+        }
 
         // Preflight stays inside the write path: the pre-submit simulation
         // rejects healthy accounts with #78 before any fee is spent.

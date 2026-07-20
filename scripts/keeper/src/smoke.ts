@@ -17,7 +17,9 @@ import { scValToNative } from '@stellar/stellar-sdk';
 import { loadConfig } from './config';
 import {
   buildRouterCallArgs,
+  buildRouterCallArgsV2,
   buildPriceAttestationScVal,
+  buildPriceAttestationScValV2,
   extractContractErrorCode,
   isMissingContractFunction,
 } from './stellar';
@@ -31,6 +33,7 @@ import {
   isUnderwater,
   isLiquidationCandidate,
   isCrossLiquidationCandidate,
+  crossEquity,
   adlRank,
   assetPayableUpnl,
   adlFlagDecision,
@@ -316,6 +319,57 @@ check('adlWalk: score ties break by lower id', tie[0].position.id, 3n);
   const native = scValToNative(att) as Record<string, unknown>;
   check('attestation map: asset roundtrips', native.asset, 'ETH');
   check('attestation map: price roundtrips', native.price, 1234567n);
+
+  // ── Batch-1 quorum ABI (L0-8): struct-tail call + prices vec ──────────
+  const argsV2 = buildRouterCallArgsV2(NULL_KEY, 7n, 'BTC', round);
+  check('router v2 args: exactly 3 (actor, id, att struct)', argsV2.length, 3);
+  check('router v2 args[0]: actor address', scValToNative(argsV2[0]), NULL_KEY);
+  check('router v2 args[1]: id u64', scValToNative(argsV2[1]), 7n);
+  const attV2 = buildPriceAttestationScValV2('ETH', round);
+  const keysV2 = attV2
+    .map()!
+    .map((entry) => entry.key().sym().toString());
+  check(
+    'v2 attestation map: entries key-sorted for UDT decode',
+    keysV2.join(','),
+    'asset,prices,pubkeys,round_id,sigs,timestamp',
+  );
+  const nativeV2 = scValToNative(attV2) as Record<string, unknown>;
+  check('v2 attestation map: asset roundtrips', nativeV2.asset, 'ETH');
+  const pricesV2 = nativeV2.prices as bigint[];
+  check(
+    'v2 attestation map: prices is an aligned 1-elem vec',
+    `${pricesV2.length}:${pricesV2[0]}`,
+    '1:1234567',
+  );
+  check(
+    'v2 attestation embedded in call args matches the standalone builder',
+    (scValToNative(argsV2[2]) as Record<string, unknown>).round_id,
+    42n,
+  );
+}
+
+// ── L0-9 interim: crossEquity for the two-strike bankruptcy override ────
+{
+  const long: HealthPosition = {
+    asset: 'BTC',
+    collateral: 100n * PRECISION,
+    size: 1000n * PRECISION,
+    entry_price: 100n * PRECISION,
+    direction: 'Long',
+    liquidation_price: 0n,
+  };
+  const px = new Map([['BTC', 90n * PRECISION]]); // −10% → pnl −100
+  check(
+    'crossEquity: balance + collateral + pnl',
+    crossEquity(50n * PRECISION, [long], px),
+    50n * PRECISION, // 50 + 100 − 100
+  );
+  check(
+    'crossEquity: missing price → null (never counts as bankrupt)',
+    crossEquity(50n * PRECISION, [long], new Map()),
+    null,
+  );
 }
 
 // ── Market error codes survive the router hop (L0-19) ───────────────────

@@ -201,6 +201,14 @@ export interface KeeperConfig {
   /** Skip the push when attestation vs reference diverges more than this %. */
   referenceDivergencePct: number;
 
+  // L0-9 interim smoothing (pre-Batch-1 the contract can't confirm on TWAP)
+  /** Consecutive liquidatable reads required before firing (1 = off).
+   *  Bankrupt positions (equity ≤ 0 locally) never wait. */
+  triggerConfirmReads: number;
+  /** Alert (never skip) when a pushed price moves more than this % vs the
+   *  previous push — flags the single-round spike window L0-9 defends. */
+  spikeAlertPct: number;
+
   // Stork secondary oracle (T3-D1) — fail-open: empty key disables it.
   /** Stork API token (Authorization: Basic <token>). Empty = disabled. */
   storkApiKey: string;
