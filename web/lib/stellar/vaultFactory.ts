@@ -263,6 +263,29 @@ export async function getVaultInfo(source: string, vaultId: number): Promise<OnC
 }
 
 /**
+ * L0-20 full NAV (Batch-1 factory): liquid USDC + Σ live position equity +
+ * Σ pending order collateral — the price deposits/withdrawals/claims use.
+ * Fail-closed on-chain (#18 ValuationUnavailable) while any leg is
+ * unreadable — surfaced as 'unavailable' so pages explain instead of
+ * rendering a wrong number. null = the deployed factory predates L0-20
+ * (or the read failed) — callers omit the row entirely.
+ */
+export async function getFullNav(
+  source: string,
+  vaultId: number,
+): Promise<bigint | 'unavailable' | null> {
+  const factory = vaultFactoryContract();
+  try {
+    const raw = await simulateView(factory, source, 'get_full_nav', [toScVal(vaultId, 'u32')]);
+    return BigInt(raw as bigint);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/Error\(Contract, #18\)/.test(msg)) return 'unavailable';
+    return null;
+  }
+}
+
+/**
  * Read every vault from the chain in parallel. Used by the marketplace
  * page so it doesn't depend on the indexer/API being up.
  */

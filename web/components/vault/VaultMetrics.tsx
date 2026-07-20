@@ -32,7 +32,16 @@ function fmtBps(bps: number | undefined, signed = false): string {
   return `${sign}${pct.toFixed(pct < 10 ? 2 : 1)}%`;
 }
 
-export function VaultMetrics({ vault }: { vault: VaultRow }) {
+export function VaultMetrics({
+  vault,
+  fullNav,
+}: {
+  vault: VaultRow;
+  /** L0-20 (Batch-1): on-chain full NAV — bigint value, 'unavailable' while
+   *  the contract fail-closes (#18), or null/undefined on pre-L0-20
+   *  factories (row omitted). */
+  fullNav?: bigint | 'unavailable' | null;
+}) {
   const nav = vaultNav(vault);
   const leaderPct = vaultLeaderHoldingPct(vault);
   // Closed-trade PnL is the lifetime gain from closed leader trades
@@ -58,6 +67,22 @@ export function VaultMetrics({ vault }: { vault: VaultRow }) {
       value: `$${fmtUsdc7(vault.totalUsdc)}`,
       hint: 'USDC sitting in the vault — excludes capital deployed in open positions',
     },
+    // L0-20 (Batch-1): the valuation deposits/withdrawals actually use.
+    ...(fullNav == null
+      ? []
+      : [
+          fullNav === 'unavailable'
+            ? ({
+                label: 'Full NAV',
+                value: '—',
+                hint: 'Position equity is momentarily unreadable (a leg awaits reconciliation or a fresh price). Deposits and withdrawals fail closed until it clears — usually within a keeper cycle.',
+              } as Stat)
+            : ({
+                label: 'Full NAV',
+                value: `$${fmtUsdc7(fullNav.toString())}`,
+                hint: 'Liquid USDC + live equity of open positions + pending order collateral — the share price deposits and withdrawals use',
+              } as Stat),
+        ]),
     {
       label: vault.apyKind === 'inception' ? 'Since inception' : 'APY',
       value: fmtBps(vault.apyBps, true),
