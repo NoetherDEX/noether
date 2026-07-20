@@ -294,6 +294,7 @@ impl MarketContract {
             || config.lenient_clamp_bps >= BASIS_POINTS           // L1-26
             || config.keeper_fee_deci_bps > 15                    // L1-21: maker+keeper ≤ taker
             || config.keeper_fee_base > 500_000                   // L1-21: ≤ 0.05 USDC dust
+            || config.twap_records > 32                           // L0-9: upstream RING_CAP
         {
             return Err(NoetherError::InvalidParameter);
         }
@@ -968,6 +969,19 @@ impl MarketContract {
             if let Some(last) = get_partial_liq_ts(&env, position_id) {
                 if now.saturating_sub(last) < config.partial_liq_cooldown_secs {
                     return Err(NoetherError::LiquidationCooldown);
+                }
+            }
+        }
+
+        // ── L0-9 smoothed confirmation ──
+        // Trigger on smoothed, settle on fresh: a NON-BANKRUPT liquidation
+        // must also breach on the 1-3min TWAP mark, so a single wick can't
+        // seize margin. Every smoothed-read failure degrades to today's
+        // spot-only behavior — smoothing never blocks a bankrupt close.
+        if !bankrupt {
+            if let Some(smoothed) = Self::get_smoothed_price(&env, &position.asset) {
+                if !Self::should_liquidate_with_funding(&env, &position, smoothed) {
+                    return Err(NoetherError::LiquidationNotConfirmed);
                 }
             }
         }
@@ -1791,6 +1805,22 @@ impl MarketContract {
             &env, &trader, config.maintenance_margin_bps, &get_price,
         ) {
             return Err(NoetherError::CrossMarginNotLiquidatable);
+        }
+
+        // ── L0-9 smoothed confirmation (account level) ──
+        // A non-bankrupt account (spot equity > 0) must ALSO breach on the
+        // smoothed mark, per-asset spot fallback. Bankrupt accounts never
+        // wait — delay only grows bad debt.
+        let spot_equity = position::calculate_cross_equity(&env, &trader, &get_price);
+        if spot_equity > 0 {
+            let smoothed_price = |asset: &Symbol| -> i128 {
+                Self::get_smoothed_price(&env, asset).unwrap_or_else(|| get_price(asset))
+            };
+            if !position::is_cross_account_liquidatable(
+                &env, &trader, config.maintenance_margin_bps, &smoothed_price,
+            ) {
+                return Err(NoetherError::LiquidationNotConfirmed);
+            }
         }
 
         let position_ids = get_cross_margin_position_ids(&env, &trader);
@@ -2715,10 +2745,25 @@ impl MarketContract {
 
         let ref_price = Self::order_ref_price(&env, &order);
 
+        // L0-9: wick-resistant triggers — pure protective closes (SL,
+        // trailing, TP-market) evaluate on the SMOOTHED mark (spot fallback
+        // when the ring can't answer); settlement and the slippage
+        // reference below stay the FRESH spot. Entries and take-limit keep
+        // spot evaluation — they ride the strict path + explicit bands.
+        let smoothed_eval = matches!(
+            order.order_type,
+            OrderType::StopLoss | OrderType::TrailingStop
+        ) || (order.order_type == OrderType::TakeProfit && order.limit_price == 0);
+        let eval_price = if smoothed_eval {
+            Self::get_smoothed_price(&env, &order.asset).unwrap_or(current_price)
+        } else {
+            current_price
+        };
+
         // Check if trigger condition is met
         let triggered = match order.trigger_condition {
-            TriggerCondition::Above => current_price >= ref_price,
-            TriggerCondition::Below => current_price <= ref_price,
+            TriggerCondition::Above => eval_price >= ref_price,
+            TriggerCondition::Below => eval_price <= ref_price,
         };
 
         if !triggered {
@@ -3244,6 +3289,33 @@ impl MarketContract {
                 position.entry_price,
             ),
         );
+    }
+
+    /// L0-9: the smoothed (TWAP) mark from the shim's ring view — used for
+    /// liquidation/trigger ELIGIBILITY only, never settlement. NEVER traps:
+    /// a pre-upgrade shim, empty ring, unknown pair, stale ring or the
+    /// twap_records=0 kill switch all degrade to None (spot-only).
+    fn get_smoothed_price(env: &Env, asset: &Symbol) -> Option<i128> {
+        let config = get_config(env);
+        if config.twap_records == 0 {
+            return None;
+        }
+        let shim = get_oracle_adapter(env);
+        let args: Vec<soroban_sdk::Val> = (asset.clone(), config.twap_records).into_val(env);
+        match env.try_invoke_contract::<Option<(i128, u64)>, soroban_sdk::Error>(
+            &shim,
+            &Symbol::new(env, "twap"),
+            args,
+        ) {
+            Ok(Ok(Some((price, newest_ts)))) if price > 0 => {
+                if env.ledger().timestamp().saturating_sub(newest_ts) > config.twap_max_age_secs {
+                    None
+                } else {
+                    Some(price)
+                }
+            }
+            _ => None,
+        }
     }
 
     /// L1-18: referral hook — try-invoke record_trade(trader, gross_fee,
@@ -3981,6 +4053,7 @@ mod tests {
         #[contracttype]
         pub enum DataKey {
             Price(Symbol),
+            Twap(Symbol),
         }
 
         #[contract]
@@ -3997,6 +4070,18 @@ mod tests {
 
             pub fn lastprice(env: Env, asset: Symbol) -> (i128, u64) {
                 env.storage().persistent().get(&DataKey::Price(asset)).unwrap()
+            }
+
+            /// L0-9 fixture: a settable smoothed mark, shim-shaped. Unset
+            /// asset → None, which is exactly the pre-ring degradation the
+            /// rest of the suite relies on (spot-only fallback).
+            pub fn set_twap(env: Env, asset: Symbol, price: i128) {
+                let ts = env.ledger().timestamp();
+                env.storage().persistent().set(&DataKey::Twap(asset), &(price, ts));
+            }
+
+            pub fn twap(env: Env, asset: Symbol, _records: u32) -> Option<(i128, u64)> {
+                env.storage().persistent().get(&DataKey::Twap(asset))
             }
         }
 
@@ -4942,6 +5027,131 @@ mod tests {
             pos.collateral - reward,
         );
         assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // L0-9 Smoothed-Mark Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_liquidation_needs_smoothed_confirmation() {
+        // Spot breach + healthy TWAP → #86; TWAP breach too → liquidates.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
+        );
+
+        // 10x long at $0.10: a −9.5% wick is liquidatable on spot but the
+        // ring still says −2% — a wick, not a move.
+        oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
+        oracle.set_twap(&xlm, &(PRECISION * 98 / 1_000));
+        let blocked = test.market.try_liquidate(&keeper, &pos.id);
+        assert_eq!(blocked, Err(Ok(NoetherError::LiquidationNotConfirmed)));
+
+        // The smoothed mark catches down → confirmation passes.
+        oracle.set_twap(&xlm, &(PRECISION * 905 / 10_000));
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(reward >= 0);
+    }
+
+    #[test]
+    fn test_liquidation_bankrupt_overrides_smoothed() {
+        // Equity gone at spot → liquidate immediately, TWAP ignored.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
+        );
+
+        // −15% on 10x = deep bankruptcy; ring still perfectly healthy.
+        oracle.set_price(&xlm, &(PRECISION * 85 / 1_000));
+        oracle.set_twap(&xlm, &(PRECISION / 10));
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(reward >= 0);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_liquidation_spot_only_when_twap_missing() {
+        // No ring data (mock returns None) → exactly today's behavior.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
+        );
+        oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(reward >= 0);
+    }
+
+    #[test]
+    fn test_stop_trigger_evaluates_smoothed_settles_fresh() {
+        // A spot wick through the SL trigger does NOT fire while the
+        // smoothed mark holds (#62 to the keeper); once the smoothed mark
+        // crosses, the stop fills AT THE FRESH SPOT.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1_000), &500);
+
+        // Wick: spot crosses the trigger, ring does not.
+        oracle.set_price(&xlm, &(PRECISION * 94 / 1_000));
+        oracle.set_twap(&xlm, &(PRECISION * 97 / 1_000));
+        let held = test.market.try_execute_order(&keeper, &sl.id);
+        assert_eq!(held, Err(Ok(NoetherError::OrderNotTriggered)));
+
+        // Sustained move: the smoothed mark crosses too → guaranteed fill.
+        oracle.set_twap(&xlm, &(PRECISION * 94 / 1_000));
+        let reward = test.market.execute_order(&keeper, &sl.id);
+        assert!(reward > 0);
+        assert!(test.market.get_position(&pos.id).is_none());
+        assert_eq!(test.market.get_order(&sl.id).unwrap().status, OrderStatus::Executed);
+    }
+
+    #[test]
+    fn test_cross_liquidation_needs_smoothed_confirmation() {
+        // Account-level: spot breach + healthy per-asset TWAP → #86;
+        // smoothed breach → liquidates. (Deep loss keeps equity in the
+        // (0, MM) band because the whole pool backs the account.)
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        // pnl = 1000 × (0.0005 − 0.10)/0.10 = −995 → equity ≈ 4 ∈ (0, MM=10).
+        oracle.set_price(&xlm, &(PRECISION * 5 / 10_000));
+        oracle.set_twap(&xlm, &(PRECISION / 10));
+        let blocked = test.market.try_liquidate_cross_account(&keeper, &trader);
+        assert_eq!(blocked, Err(Ok(NoetherError::LiquidationNotConfirmed)));
+
+        oracle.set_twap(&xlm, &(PRECISION * 5 / 10_000));
+        let reward = test.market.liquidate_cross_account(&keeper, &trader);
+        assert!(reward >= 0);
     }
 
     /// L1-18 mock registry mirroring the real defaults: 4% of fee discount,

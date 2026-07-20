@@ -113,8 +113,9 @@ pub enum NoetherError {
     InvalidSlippageTolerance = 66,
     /// Position already has this type of order attached
     OrderAlreadyExists = 67,
-    /// Invalid limit price for stop-limit order
-    InvalidLimitPrice = 68,
+    // 68 InvalidLimitPrice — RETIRED (never constructed anywhere; slot
+    // freed for #86 under the ~50-variant contracterror ceiling). Never
+    // reassign 68 — deployed clients decode by code.
     /// Invalid trailing percentage (must be 1-5000 bps = 0.01%-50%)
     InvalidTrailingPercent = 69,
     /// Post-only order would execute immediately (rejected)
@@ -152,7 +153,10 @@ pub enum NoetherError {
     /// adl_close target is not a net winner at the current mark — only
     /// positive-uPnL positions are ADL candidates (L0-1)
     AdlNotEligible = 85,
-    // 86 LiquidationNotConfirmed — reserved for L0-9 (smoothed mark)
+    /// Liquidation eligible on the fresh spot but NOT yet confirmed by the
+    /// smoothed (TWAP) mark (L0-9). Bankruptcy overrides — a genuinely
+    /// underwater position never waits. Retry next keeper cycle.
+    LiquidationNotConfirmed = 86,
     /// A market open/close filled worse than the trader's acceptable_price
     /// bound (L0-10). The tx reverts; resubmit with 0 to fill unbounded.
     AcceptablePriceExceeded = 87,

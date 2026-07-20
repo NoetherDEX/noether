@@ -180,6 +180,50 @@ impl NoeracleShimContract {
         (Self::rescale(&env, price), timestamp)
     }
 
+    /// L0-9: time-weighted mean over the newest `records` ring entries,
+    /// paired with the RING'S NEWEST timestamp so callers can age-bound
+    /// liveness. (Upstream `twap` returns the bare mean; the newest entry
+    /// comes from `prices(feed, 1)` — the oldest-used timestamp is not
+    /// exposed upstream, and ring liveness is the operative bound.)
+    /// Mode 1 (SEP-40) delegates twap to the vendor and reports "now" —
+    /// age governance is the vendor's, documented divergence.
+    /// None whenever the backend/ring cannot answer (<2 entries, unknown
+    /// pair) — callers degrade to spot, never trap on None.
+    pub fn twap(env: Env, asset: Symbol, records: u32) -> Option<(i128, u64)> {
+        Self::require_initialized(&env);
+        if records == 0 {
+            return None;
+        }
+        let backend: Address = env.storage().instance().get(&DataKey::NoeracleOracle)?;
+        let mode: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::BackendMode)
+            .unwrap_or(BACKEND_NOERACLE);
+
+        if mode == BACKEND_SEP40 {
+            let args: Vec<soroban_sdk::Val> =
+                (Sep40Asset::Other(asset.clone()), records).into_val(&env);
+            let mean: Option<i128> =
+                env.invoke_contract(&backend, &Symbol::new(&env, "twap"), args);
+            return mean
+                .filter(|value| *value > 0)
+                .map(|value| (Self::rescale(&env, value), env.ledger().timestamp()));
+        }
+
+        let tag = noether_common::assets::symbol_to_tag(&env, &asset).ok()?;
+        let args: Vec<soroban_sdk::Val> = (tag.clone(), records).into_val(&env);
+        let mean: Option<i128> = env.invoke_contract(&backend, &Symbol::new(&env, "twap"), args);
+        let mean = mean.filter(|value| *value > 0)?;
+
+        let args: Vec<soroban_sdk::Val> = (tag, 1u32).into_val(&env);
+        let newest: Option<Vec<NoeraclePriceEntry>> =
+            env.invoke_contract(&backend, &Symbol::new(&env, "prices"), args);
+        let newest_ts = newest.and_then(|ring| ring.first().map(|entry| entry.timestamp))?;
+
+        Some((Self::rescale(&env, mean), newest_ts))
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // Admin
     // ───────────────────────────────────────────────────────────────────────
@@ -367,6 +411,30 @@ mod tests {
                 }
                 None
             }
+
+            /// L0-9 ring views: BTC has a live ring (mean 690, newest ts
+            /// 1_700_000_030); everything else has none.
+            pub fn twap(_env: Env, asset: BytesN<8>, records: u32) -> Option<i128> {
+                let bytes = asset.to_array();
+                if records >= 2 && bytes[..6] == [b'B', b'T', b'C', b'U', b'S', b'D'] {
+                    return Some(690_000_000_000_000);
+                }
+                None
+            }
+
+            pub fn prices(env: Env, asset: BytesN<8>, _records: u32) -> Option<soroban_sdk::Vec<NoeraclePriceEntry>> {
+                let bytes = asset.to_array();
+                if bytes[..6] == [b'B', b'T', b'C', b'U', b'S', b'D'] {
+                    let mut out = soroban_sdk::Vec::new(&env);
+                    out.push_back(NoeraclePriceEntry {
+                        price: 700_000_000_000_000,
+                        timestamp: 1_700_000_030,
+                        round_id: 43,
+                    });
+                    return Some(out);
+                }
+                None
+            }
         }
     }
 
@@ -405,6 +473,24 @@ mod tests {
         let (price, ts) = client.lastprice(&Symbol::new(&env, "BTC"));
         assert_eq!(price, 700_000_000_000_000);
         assert_eq!(ts, 1_700_000_000);
+    }
+
+    #[test]
+    fn twap_btc_returns_mean_with_newest_ring_timestamp() {
+        // L0-9: mean from the upstream twap view, liveness timestamp from
+        // the ring's newest entry (prices(feed, 1)).
+        let (env, _, _, client) = setup();
+        let result = client.twap(&Symbol::new(&env, "BTC"), &4);
+        assert_eq!(result, Some((690_000_000_000_000, 1_700_000_030)));
+    }
+
+    #[test]
+    fn twap_none_propagates_for_unknown_pair_and_zero_records() {
+        // The mock has no ETH ring; records=0 is the caller-side kill
+        // switch. Both degrade to None — spot-only behavior, never a trap.
+        let (env, _, _, client) = setup();
+        assert_eq!(client.twap(&Symbol::new(&env, "ETH"), &4), None);
+        assert_eq!(client.twap(&Symbol::new(&env, "BTC"), &0), None);
     }
 
     #[test]
@@ -472,6 +558,16 @@ mod tests {
                     _ => None,
                 }
             }
+
+            /// L0-9 mode-1 passthrough target: $69,000 mean at 14 decimals.
+            pub fn twap(env: Env, asset: Sep40Asset, _records: u32) -> Option<i128> {
+                match asset {
+                    Sep40Asset::Other(sym) if sym == Symbol::new(&env, "BTC") => {
+                        Some(6_900_000_000_000_000_000)
+                    }
+                    _ => None,
+                }
+            }
         }
     }
 
@@ -488,6 +584,12 @@ mod tests {
         assert_eq!(price, 700_000_000_000);
         assert_eq!(ts, 1_700_000_100);
         assert_eq!(client.get_backend(), (BACKEND_SEP40, sep40_id, 14u32));
+
+        // L0-9: mode-1 twap rescales the vendor mean the same way; the
+        // timestamp is "now" (age governance is the vendor's).
+        let twap = client.twap(&Symbol::new(&env, "BTC"), &4).unwrap();
+        assert_eq!(twap.0, 690_000_000_000);
+        assert_eq!(twap.1, env.ledger().timestamp());
     }
 
     #[test]
