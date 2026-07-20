@@ -1,9 +1,10 @@
 'use client';
 
 import { memo, useState } from 'react';
-import { TrendingUp, X, RefreshCw, Share2, AlertTriangle, Shield, Target } from 'lucide-react';
+import { TrendingUp, X, RefreshCw, Share2, AlertTriangle, Shield, Target, Coins } from 'lucide-react';
 import { Button, Badge, Modal, Card } from '@/components/ui';
 import { formatUSD, formatPrice, formatPercent, formatDateTime, priceDecimals } from '@/lib/utils';
+import { TRADING } from '@/lib/utils/constants';
 import { formatPairPrice } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
 import type { DisplayPosition, DisplayOrder, PnlShareData } from '@/types';
@@ -38,6 +39,14 @@ interface PositionsListProps {
   isLoading?: boolean;
   isRefreshing?: boolean;
   onClosePosition?: (id: number) => Promise<void>;
+  /** L0-6 (Batch-1): partial close — closeSize is 7-decimal notional. */
+  onClosePartial?: (id: number, closeSize: bigint) => Promise<void>;
+  /** L0-6 (Batch-1): margin management on isolated positions (7-dec USDC). */
+  onAddCollateral?: (id: number, amount: bigint) => Promise<void>;
+  onRemoveCollateral?: (id: number, amount: bigint) => Promise<void>;
+  /** True once the deployed market exposes the Batch-1 entry points —
+   *  gates the partial-close pills and the margin modal (inert before). */
+  batch1Features?: boolean;
   onSetStopLoss?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
   onSetTakeProfit?: (id: number, triggerPrice: number, slippageBps: number, limitPrice?: number) => Promise<void>;
   onRefresh?: () => void;
@@ -51,13 +60,23 @@ export function PositionsList({
   isLoading,
   isRefreshing,
   onClosePosition,
+  onClosePartial,
+  onAddCollateral,
+  onRemoveCollateral,
+  batch1Features,
   onSetStopLoss,
   onSetTakeProfit,
   onRefresh,
   onStartTrading,
 }: PositionsListProps) {
   const [selectedPosition, setSelectedPosition] = useState<DisplayPosition | null>(null);
-  const [actionModal, setActionModal] = useState<'close' | 'stop-loss' | 'take-profit' | null>(null);
+  const [actionModal, setActionModal] = useState<'close' | 'stop-loss' | 'take-profit' | 'margin' | null>(null);
+  // L0-6 partial close: percentage of size to close (100 = full close).
+  const [closePct, setClosePct] = useState(100);
+  // L0-6 margin edit modal state.
+  const [marginTab, setMarginTab] = useState<'add' | 'remove'>('add');
+  const [marginAmount, setMarginAmount] = useState('');
+  const [isEditingMargin, setIsEditingMargin] = useState(false);
 
   // B8: pending SL/TP triggers per position, from the orders the page
   // already polls — protected vs unprotected at a glance, no extra RPC.
@@ -136,18 +155,77 @@ export function PositionsList({
     );
   }
 
+  // L0-6 snap rule: a partial close whose residual collateral would fall
+  // under the 10 USDC minimum closes the full position instead (mirrors the
+  // contract's #27 dust guard so users never see a raw revert).
+  const partialWouldSnap = (pos: DisplayPosition, pct: number) =>
+    pct < 100 && pos.collateral * (1 - pct / 100) < TRADING.MIN_COLLATERAL;
+
+  const partialCloseAvailable = (pos: DisplayPosition | null) =>
+    !!pos && !!batch1Features && !!onClosePartial && pos.marginMode !== 'Cross';
+
   const handleClose = async () => {
     if (!selectedPosition || !onClosePosition || isClosing) return;
 
     setIsClosing(true);
     try {
-      await onClosePosition(selectedPosition.id);
+      const full =
+        closePct >= 100 ||
+        !partialCloseAvailable(selectedPosition) ||
+        partialWouldSnap(selectedPosition, closePct);
+      if (full) {
+        await onClosePosition(selectedPosition.id);
+      } else {
+        // 7-decimal notional, floored — matches the contract's own floor.
+        const closeSize = BigInt(Math.floor(selectedPosition.size * (closePct / 100) * 10_000_000));
+        await onClosePartial!(selectedPosition.id, closeSize);
+      }
       setActionModal(null);
       setSelectedPosition(null);
+      setClosePct(100);
     } catch (error) {
       console.error('Failed to close position:', error);
     } finally {
       setIsClosing(false);
+    }
+  };
+
+  // L0-6 margin edit: preview math mirrors math.rs liquidation_price at the
+  // default 100 bps maintenance margin — estimate only, the contract's
+  // strict-price check is the truth.
+  const previewLiqPrice = (pos: DisplayPosition, newCollateral: number): number | null => {
+    if (newCollateral <= 0 || pos.size <= 0) return null;
+    const leverage = pos.size / newCollateral;
+    const delta = 1 / leverage - 0.01;
+    return pos.direction === 'Long'
+      ? pos.entryPrice * (1 - delta)
+      : pos.entryPrice * (1 + delta);
+  };
+
+  // IM floor (size / max leverage): the contract rejects removals below it.
+  const maxRemovable = (pos: DisplayPosition): number =>
+    Math.max(0, pos.collateral - pos.size / TRADING.MAX_LEVERAGE);
+
+  const handleEditMargin = async () => {
+    if (!selectedPosition || isEditingMargin) return;
+    const amount = parseFloat(marginAmount);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+
+    setIsEditingMargin(true);
+    try {
+      const scaled = BigInt(Math.round(amount * 10_000_000));
+      if (marginTab === 'add') {
+        await onAddCollateral?.(selectedPosition.id, scaled);
+      } else {
+        await onRemoveCollateral?.(selectedPosition.id, scaled);
+      }
+      setActionModal(null);
+      setSelectedPosition(null);
+      setMarginAmount('');
+    } catch (error) {
+      console.error('Failed to edit margin:', error);
+    } finally {
+      setIsEditingMargin(false);
     }
   };
 
@@ -249,8 +327,16 @@ export function PositionsList({
                 isLiquidationRisk={isLiquidationRisk(position)}
                 onClose={() => {
                   setSelectedPosition(position);
+                  setClosePct(100);
                   setActionModal('close');
                 }}
+                onEditMargin={() => {
+                  setSelectedPosition(position);
+                  setMarginTab('add');
+                  setMarginAmount('');
+                  setActionModal('margin');
+                }}
+                showMarginButton={!!batch1Features && !!onAddCollateral && !!onRemoveCollateral}
                 onSetStopLoss={() => {
                   setSelectedPosition(position);
                   // Suggest a stop-loss 5% below entry for long, 5% above for short
@@ -286,6 +372,7 @@ export function PositionsList({
             position={position}
             onClose={() => {
               setSelectedPosition(position);
+              setClosePct(100);
               setActionModal('close');
             }}
             onSetStopLoss={() => {
@@ -366,6 +453,41 @@ export function PositionsList({
               </div>
             </div>
 
+            {/* L0-6 partial close — isolated positions on the Batch-1 market */}
+            {partialCloseAvailable(selectedPosition) && (
+              <div className="mb-5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Close amount</span>
+                  <span className="text-xs font-mono text-foreground">
+                    {partialWouldSnap(selectedPosition, closePct) ? '100% (snapped)' : `${closePct}%`}
+                  </span>
+                </div>
+                <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
+                  {[25, 50, 75, 100].map((pct) => (
+                    <button
+                      key={pct}
+                      onClick={() => setClosePct(pct)}
+                      className={cn(
+                        'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
+                        closePct === pct
+                          ? 'bg-surface-3 text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {pct === 100 ? 'Max' : `${pct}%`}
+                    </button>
+                  ))}
+                </div>
+                {closePct < 100 && (
+                  <p className="text-[11px] text-faint">
+                    {partialWouldSnap(selectedPosition, closePct)
+                      ? 'Residual collateral would fall under the $10 minimum — this closes the full position instead.'
+                      : `Closes ${formatUSD(selectedPosition.size * (closePct / 100))} of ${formatUSD(selectedPosition.size)}. Entry price and leverage stay unchanged; funding settles pro-rata.`}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="flex gap-3">
               <Button
                 variant="secondary"
@@ -382,11 +504,156 @@ export function PositionsList({
                 disabled={isClosing}
                 isLoading={isClosing}
               >
-                {isClosing ? 'Closing...' : 'Close Position'}
+                {isClosing
+                  ? 'Closing...'
+                  : partialCloseAvailable(selectedPosition) &&
+                      closePct < 100 &&
+                      !partialWouldSnap(selectedPosition, closePct)
+                    ? `Close ${closePct}%`
+                    : 'Close Position'}
               </Button>
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* L0-6 Margin Edit Modal — isolated positions, Batch-1 market only */}
+      <Modal
+        isOpen={actionModal === 'margin'}
+        onClose={() => setActionModal(null)}
+        title="Adjust Margin"
+        size="sm"
+      >
+        {selectedPosition && (() => {
+          const amount = parseFloat(marginAmount) || 0;
+          const newCollateral =
+            marginTab === 'add'
+              ? selectedPosition.collateral + amount
+              : selectedPosition.collateral - amount;
+          const maxOut = maxRemovable(selectedPosition);
+          const overFloor = marginTab === 'remove' && amount > maxOut;
+          const newLeverage = newCollateral > 0 ? selectedPosition.size / newCollateral : null;
+          const newLiq = newCollateral > 0 ? previewLiqPrice(selectedPosition, newCollateral) : null;
+          const invalid = amount <= 0 || overFloor || newCollateral <= 0;
+
+          return (
+            <div>
+              <div className="mb-4 pb-4 border-b border-border space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Position</span>
+                  <span className="text-foreground">
+                    {selectedPosition.asset} {selectedPosition.direction} {selectedPosition.leverage}x
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Current collateral</span>
+                  <span className="text-foreground">{formatUSD(selectedPosition.collateral)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Current liq. price</span>
+                  <span className="text-foreground font-mono">
+                    {formatPairPrice(selectedPosition.asset, selectedPosition.liquidationPrice)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-0.5 bg-surface-2 rounded-md p-0.5 mb-4">
+                {(['add', 'remove'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setMarginTab(tab)}
+                    className={cn(
+                      'rounded-[4px] py-1.5 text-xs font-medium transition-colors',
+                      marginTab === tab
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {tab === 'add' ? 'Add margin' : 'Remove margin'}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-2 mb-4">
+                <div className="flex justify-between">
+                  <label className="text-xs text-muted-foreground">Amount (USDC)</label>
+                  {marginTab === 'remove' && (
+                    <button
+                      className="text-[11px] text-primary hover:underline"
+                      onClick={() => setMarginAmount(maxOut > 0 ? maxOut.toFixed(2) : '0')}
+                    >
+                      Max {formatUSD(maxOut)}
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={marginAmount}
+                  onChange={(e) => setMarginAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                  placeholder="0.00"
+                  aria-label="Margin amount in USDC"
+                  className="w-full h-9 bg-surface-2 border border-border rounded-md px-3 text-right font-mono text-sm placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-border-strong focus:border-border-strong"
+                />
+              </div>
+
+              {amount > 0 && !overFloor && newCollateral > 0 && (
+                <div className="mb-4 space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">New collateral</span>
+                    <span className="text-foreground">{formatUSD(newCollateral)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">New effective leverage</span>
+                    <span className="text-foreground font-mono">
+                      {newLeverage == null ? '—' : `${newLeverage.toFixed(2)}x`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">New liq. price (est.)</span>
+                    <span className="text-foreground font-mono">
+                      {newLiq == null || newLiq <= 0 ? '—' : formatPairPrice(selectedPosition.asset, newLiq)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {overFloor && (
+                <div className="mb-4 flex items-start gap-2 text-[11px] text-short">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    Removal capped at {formatUSD(maxOut)} — collateral cannot drop below the
+                    initial-margin floor (size ÷ {TRADING.MAX_LEVERAGE}x). The contract also
+                    re-checks maintenance margin at the live price.
+                  </span>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <Button
+                  variant="secondary"
+                  className="flex-1"
+                  onClick={() => setActionModal(null)}
+                  disabled={isEditingMargin}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleEditMargin}
+                  disabled={isEditingMargin || invalid}
+                  isLoading={isEditingMargin}
+                >
+                  {isEditingMargin
+                    ? 'Submitting...'
+                    : marginTab === 'add'
+                      ? 'Add Margin'
+                      : 'Remove Margin'}
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       {/* Stop-Loss Modal */}
@@ -822,6 +1089,8 @@ const PositionRow = memo(function PositionRow({
   hasSlTpCallbacks,
   protection,
   onShare,
+  onEditMargin,
+  showMarginButton,
 }: {
   position: DisplayPosition;
   isLiquidationRisk: boolean;
@@ -831,6 +1100,8 @@ const PositionRow = memo(function PositionRow({
   hasSlTpCallbacks: boolean;
   protection?: { tp?: number; sl?: number };
   onShare: () => void;
+  onEditMargin?: () => void;
+  showMarginButton?: boolean;
 }) {
   // NaN pnl = mark price unknown — render '—' in neutral color, never a
   // signed/colored fabrication (formatters dash NaN automatically).
@@ -987,6 +1258,15 @@ const PositionRow = memo(function PositionRow({
               </button>
             </>
           )}
+          {showMarginButton && !isCross && (
+            <button
+              onClick={onEditMargin}
+              className="p-1.5 rounded-sm hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+              title="Adjust Margin"
+            >
+              <Coins className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button
             onClick={onShare}
             className="p-1.5 rounded-sm hover:bg-surface-3 text-muted-foreground hover:text-foreground transition-colors"
@@ -1008,6 +1288,8 @@ const PositionRow = memo(function PositionRow({
   );
 }, (prev, next) => prev.isLiquidationRisk === next.isLiquidationRisk
   && prev.hasSlTpCallbacks === next.hasSlTpCallbacks
+  // L0-6: the margin button appears when the Batch-1 probe resolves.
+  && prev.showMarginButton === next.showMarginButton
   // B8: the TP/SL cell must re-render when protection orders change.
   && prev.protection?.tp === next.protection?.tp
   && prev.protection?.sl === next.protection?.sl

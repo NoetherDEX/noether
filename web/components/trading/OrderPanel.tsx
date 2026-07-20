@@ -11,6 +11,7 @@ import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, 
 import { leaderOpenPosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
 import { fetchTraderVolume14d } from '@/lib/api/volume';
+import { marketHasBatch1Features } from '@/lib/stellar/capabilities';
 import { VAULT_PRECISION } from '@/types/vault';
 import {
   formatUSD,
@@ -156,6 +157,33 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // isolated positions until the contract fix deploys.
   const trailingEligiblePositions = positions.filter(p => p.marginMode !== 'Cross');
   const hasCrossPositions = positions.length > trailingEligiblePositions.length;
+
+  // L1-3 (Batch-1): the market auto-nets a new open against opposite
+  // same-asset/same-mode positions — surface it BEFORE the signature.
+  const [batch1Features, setBatch1Features] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    marketHasBatch1Features()
+      .then((ok) => {
+        if (!cancelled) setBatch1Features(ok);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const opposingNotional = useMemo(() => {
+    if (!batch1Features || orderType !== 'Market') return 0;
+    const wantCross = marginMode === 'Cross';
+    return positions
+      .filter(
+        (p) =>
+          p.asset === asset &&
+          p.direction !== direction &&
+          (p.marginMode === 'Cross') === wantCross,
+      )
+      .reduce((sum, p) => sum + p.size, 0);
+  }, [batch1Features, orderType, positions, asset, direction, marginMode]);
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1433,6 +1461,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               Attached as separate signatures right after the position opens
               (1 of 2: open · 2 of 2: TP/SL).
             </p>
+          </div>
+        )}
+
+        {/* L1-3 auto-net notice (Batch-1): an opposite market open nets at
+            the execution price before any new exposure is created. */}
+        {opposingNotional > 0 && positionSize > 0 && (
+          <div className="rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-[11px] text-primary">
+            {positionSize <= opposingNotional ? (
+              <>
+                This order is not larger than your opposite {asset} exposure ($
+                {formatNumber(opposingNotional)}) and would net to zero — the market rejects it
+                (#91). Use Close or a partial close to reduce instead.
+              </>
+            ) : (
+              <>
+                Nets against your opposite {asset} exposure first: ~$
+                {formatNumber(opposingNotional)} closes at the execution price with no fee; only
+                the ${formatNumber(positionSize - opposingNotional)} remainder opens as a new
+                position (fee on the remainder only).
+              </>
+            )}
           </div>
         )}
 

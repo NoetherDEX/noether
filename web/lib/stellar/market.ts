@@ -3,7 +3,7 @@ import { fetchAttestation, priceTailArgs } from './noeracle';
 import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, DisplayOrder, OrderType, TriggerCondition, OrderStatus } from '@/types';
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
 import { rpc, scValToNative, xdr, Horizon, Address } from '@stellar/stellar-sdk';
-import { CONTRACTS, NETWORK } from '@/lib/utils/constants';
+import { CONTRACTS, NETWORK, NULL_ACCOUNT } from '@/lib/utils/constants';
 import { debugLog } from '@/lib/utils/debug';
 
 /**
@@ -177,16 +177,103 @@ export async function closePosition(
 }
 
 /**
- * Add collateral to a position.
- * NOTE: Contract function removed for WASM size. Close and reopen with more collateral.
+ * Partially close an isolated position (L0-6, Batch-1): shrinks size and
+ * collateral in place, entry price unchanged, funding settled pro-rata.
+ * closeSize is 7-decimal notional. The contract enforces the residual dust
+ * floor (#27 PositionTooSmall) — callers snap to a full close before that
+ * bites. Returns realized pnl for the closed slice.
+ */
+export async function closePositionPartial(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  positionId: number,
+  closeSize: bigint,
+  asset: string,
+): Promise<bigint> {
+  let xdrStr: string;
+  if (routerContract) {
+    // close_partial_with_price(trader, position_id, close_size, asset, price, timestamp, round_id, pubkeys, sigs) -> i128 pnl
+    const att = await fetchAttestation(asset);
+    if (!att) throw new Error('Noeracle price unavailable — cannot close position');
+    xdrStr = await buildTransaction(signerPublicKey, routerContract, 'close_partial_with_price', [
+      toScVal(signerPublicKey, 'address'), // trader: Address
+      toScVal(positionId, 'u64'),          // position_id: u64
+      toScVal(closeSize, 'i128'),          // close_size: i128
+      toScVal(asset, 'symbol'),            // asset: Symbol
+      ...priceTailArgs(att),
+    ]);
+  } else {
+    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_partial', [
+      toScVal(signerPublicKey, 'address'),
+      toScVal(positionId, 'u64'),
+      toScVal(closeSize, 'i128'),
+    ]);
+  }
+
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    return scValToNative(result.returnValue) as bigint;
+  }
+  throw new Error('Failed to partially close position');
+}
+
+/**
+ * Add collateral to an isolated position (L0-6, Batch-1 — replaces the old
+ * removed-for-WASM stub). amount is 7-decimal USDC.
  */
 export async function addCollateral(
-  _signerPublicKey: string,
-  _signTransaction: (xdr: string) => Promise<string>,
-  _positionId: number,
-  _amount: bigint
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  positionId: number,
+  amount: bigint,
 ): Promise<void> {
-  throw new Error('Add collateral is not available. Close the position and reopen with more collateral.');
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(positionId, 'u64'),
+    toScVal(amount, 'i128'),
+  ];
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'add_collateral', args);
+  const result = await submitTransaction(await signTransaction(xdrStr));
+  if (result.status !== 'SUCCESS') throw new Error('Failed to add collateral');
+}
+
+/**
+ * Remove collateral from an isolated position (L0-6, Batch-1). The contract
+ * enforces the initial-margin floor (size / max leverage) and a strict-price
+ * maintenance check — previews mirror the floor client-side.
+ */
+export async function removeCollateral(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  positionId: number,
+  amount: bigint,
+): Promise<void> {
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(positionId, 'u64'),
+    toScVal(amount, 'i128'),
+  ];
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'remove_collateral', args);
+  const result = await submitTransaction(await signTransaction(xdrStr));
+  if (result.status !== 'SUCCESS') throw new Error('Failed to remove collateral');
+}
+
+/**
+ * L0-15 two-tier pause state: mode 0 live / 1 halt-open (exit-only) /
+ * 2 full-freeze. null = the deployed market predates Batch-1 (no view) or
+ * the read failed — callers treat null as "no banner, no Batch-1 UI".
+ */
+export async function getPauseState(): Promise<{ mode: number; since: number } | null> {
+  try {
+    const tx = await buildSimulateTransaction(NULL_ACCOUNT, 'get_pause_state', []);
+    const sim = await sorobanRpc.simulateTransaction(tx);
+    if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) return null;
+    const native = scValToNative(sim.result.retval) as [number | bigint, number | bigint];
+    return { mode: Number(native[0]), since: Number(native[1]) };
+  } catch {
+    return null;
+  }
 }
 
 /**
