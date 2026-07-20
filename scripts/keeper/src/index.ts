@@ -29,8 +29,14 @@
  */
 
 import { loadConfig } from './config';
-import { StellarClient, extractContractErrorCode } from './stellar';
 import {
+  StellarClient,
+  extractContractErrorCode,
+  isMissingContractFunction,
+  RouterRound,
+} from './stellar';
+import {
+  ExecutionResult,
   FundingOutcome,
   KeeperConfig,
   KeeperState,
@@ -39,9 +45,19 @@ import {
   Position,
   PriceData,
 } from './types';
+import { trackTriggeredStuck } from './deadman';
 import { initAlerts, sendAlert } from './alerts';
 import { loadKeeperState, saveKeeperState } from './state';
-import { isCrossLiquidationCandidate, isLiquidationCandidate } from './health';
+import {
+  DEFAULT_MAINTENANCE_MARGIN_BPS,
+  adlFlagDecision,
+  assetPayableUpnl,
+  crossEquity,
+  isCrossLiquidationCandidate,
+  isLiquidationCandidate,
+  positionMargin,
+  rankAdlCandidates,
+} from './health';
 import { getReferencePrice } from './reference';
 import { getStorkPrice, getStorkStatus, refreshStorkPrices } from './stork';
 import { sendHeartbeat } from './heartbeat';
@@ -84,6 +100,18 @@ const READ_FAILURE_BACKOFF_MS = 10_000;
 const FULL_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 /** Cross-margin pool balances change rarely — cache for the old scan interval. */
 const CROSS_BALANCE_CACHE_MS = 60_000;
+/** Vault coverage (buffer + LP USDC) for the ADL mirror — 30s cache (L0-1). */
+const VAULT_COVERAGE_CACHE_MS = 30_000;
+/** Per-asset mm_bps for the prefilters — risk params change rarely (L0-12). */
+const ASSET_RISK_CACHE_MS = 10 * 60 * 1000;
+/**
+ * Round sourcing for router executions (L0-19): a cached round ≤15s old is
+ * already fresher than the 30s publish cadence — use it without an HTTP
+ * hop; past that do ONE fresh fetch; past the on-chain staleness bound the
+ * round is useless and the caller falls back to the direct market call.
+ */
+const ROUND_FRESH_FAST_PATH_MS = 15_000;
+const ROUND_MAX_AGE_MS = 60_000;
 /** Funding cadence (K-7): contract enforces 1h; 30s slack avoids an early #55. */
 const FUNDING_INTERVAL_MS = 60 * 60 * 1000 + 30_000;
 const FUNDING_NOT_DUE_RETRY_MS = 5 * 60 * 1000;
@@ -137,6 +165,37 @@ class KeeperBot {
   private lastFullSweepAt: number = 0;
   private crossBalanceCache: Map<string, { balance: bigint; fetchedAt: number }> = new Map();
   private orphanedOrderIds: Set<string> = new Set();
+  // ADL manager (L0-1)
+  /** Last known on-chain ADL flag per asset (probe-synced). */
+  private adlActive: Map<string, boolean> = new Map();
+  /** Per-asset throttle on check_adl_trigger probes while the flag is off. */
+  private adlLastProbeAt: Map<string, number> = new Map();
+  /** undefined = unknown; false = deployed market predates L0-1 (phase inert). */
+  private adlSupported: boolean | undefined;
+  private adlUnsupportedLogged = false;
+  private vaultCoverageCache?: { value: bigint; fetchedAt: number };
+  // Factory reconcile duty (L0-20)
+  /** undefined = unknown; false = deployed factory predates L0-20 (duty inert). */
+  private factoryReconcileSupported: boolean | undefined;
+  private factoryReconcileUnsupportedLogged = false;
+  // Per-asset risk ladder (L0-12)
+  /** Prefilter mm_bps per asset, 10-min cached. */
+  private assetMmBpsCache: Map<string, { mmBps: bigint; fetchedAt: number }> = new Map();
+  /** undefined = unknown; false = deployed market predates L0-12 (legacy mm). */
+  private riskLadderSupported: boolean | undefined;
+  // Router execution path (L0-19)
+  /** Latest defense-passed signed round per symbol (execution relays). */
+  private latestRounds: Map<string, { att: Attestation; cachedAt: number }> = new Map();
+  /** Per-entrypoint support: adl_with_price is Batch-1-only while
+   *  execute/liquidate/cross shipped with the deployed routers. */
+  private routerFnSupported: Map<string, boolean> = new Map();
+  /** Dead-man counters: triggered-but-still-pending cycles per order id. */
+  private triggeredStuckCounts: Map<string, number> = new Map();
+  /** L0-9 interim two-strike: consecutive liquidatable reads per key
+   *  (`iso:<id>` / `cross:<trader>`). Cleared on any healthy read. */
+  private liqStrikes: Map<string, number> = new Map();
+  /** L0-9 spike-alert throttle: last alert ms epoch per symbol. */
+  private spikeAlertAt: Map<string, number> = new Map();
   private throttledLogAt: Map<string, number> = new Map();
   private nextTtlBumpAt: number = 0; // P3-9
 
@@ -158,6 +217,10 @@ class KeeperBot {
       syncPnlPushes: 0,
       trailingPeakUpdates: 0,
       fundingApplications: 0,
+      adlCloses: 0,
+      adlFlagFlips: 0,
+      ordersReconciled: 0,
+      routerExecutions: 0,
     };
   }
 
@@ -185,6 +248,7 @@ class KeeperBot {
       discordWebhookUrl: this.config.discordWebhookUrl,
       telegramBotToken: this.config.telegramBotToken,
       telegramChatId: this.config.telegramChatId,
+      instanceId: this.config.instanceId,
     });
 
     // Seed the price circuit breaker from persisted state (K-2)
@@ -211,6 +275,9 @@ class KeeperBot {
     console.log(`  Poll Interval:     ${this.config.pollIntervalMs}ms`);
     console.log(`  Oracle Interval:   ${this.config.oracleUpdateIntervalMs}ms`);
     console.log(`  Watchdog:          exit after ${this.config.watchdogTimeoutMs}ms without a completed cycle`);
+    console.log(`  Instance:          ${this.config.instanceId}${this.config.pollOffsetMs > 0 ? ` (poll offset ${this.config.pollOffsetMs}ms)` : ''}`);
+    console.log(`  Router:            ${this.config.routerContractId ? `${this.config.routerContractId.slice(0, 8)}… (verify-then-trade preferred)` : 'not configured (direct market calls only)'}`);
+    console.log(`  Healthcheck:       ${this.config.healthcheckUrl ? 'enabled' : 'disabled'}`);
     console.log(`  State File:        ${this.config.stateFilePath}`);
     console.log(`  Assets:            ${this.config.assets.map(a => `${a.symbol} (±${a.maxMovePct}%, $${a.minPrice}-$${a.maxPrice})`).join(', ')}`);
     console.log('');
@@ -241,6 +308,13 @@ class KeeperBot {
     console.log('🚀 Keeper bot started. Monitoring...\n');
     console.log('═'.repeat(80) + '\n');
 
+    // L0-19: stagger active-active instances — the second instance sets
+    // KEEPER_POLL_OFFSET_MS ≈ pollIntervalMs/2 so the pair halves the
+    // effective heartbeat instead of racing in phase.
+    if (this.config.pollOffsetMs > 0) {
+      await this.sleep(this.config.pollOffsetMs);
+    }
+
     // Main loop
     while (this.isRunning) {
       try {
@@ -263,6 +337,9 @@ class KeeperBot {
 
       // Heartbeat: the cycle ran to completion (watchdog watches for hangs).
       this.lastCycleCompletedAt = Date.now();
+      // L0-19: dead-man ping — silence at healthchecks.io means BOTH
+      // instances are down (or wedged), independent of the alert path.
+      this.pingHealthcheck();
 
       await this.sleep(this.config.pollIntervalMs);
     }
@@ -315,6 +392,9 @@ class KeeperBot {
     console.log(`  Orders Cancelled:      ${this.stats.ordersCancelledSlippage} (slippage)`);
     console.log(`  Orders Skipped:        ${this.stats.ordersSkippedOrphaned} (orphaned - position closed)`);
     console.log(`  Trailing Peak Updates: ${this.stats.trailingPeakUpdates}`);
+    console.log(`  ADL Closes: ${this.stats.adlCloses} (flag flips: ${this.stats.adlFlagFlips})`);
+    console.log(`  Factory Orders Reconciled: ${this.stats.ordersReconciled}`);
+    console.log(`  Router Executions: ${this.stats.routerExecutions}`);
     console.log(`  Funding Applications:  ${this.stats.fundingApplications}`);
     console.log(`  PnL Syncs:             ${this.stats.syncPnlPushes}`);
     console.log(`  Total Rewards:         ${this.formatAmount(this.stats.totalRewardsEarned)} USDC`);
@@ -385,6 +465,10 @@ class KeeperBot {
 
       // 5. Order execution (simulate-first)
       await this.checkOrders(snapshot);
+
+      // 5.5 ADL manager (L0-1) — advisory ranking authority; quiet no-op
+      //     until the deployed market exports the ADL entry points.
+      await this.manageAdl(snapshot, fullSweep);
     }
 
     // 6. Apply funding rate (hourly, tri-state — K-7)
@@ -402,7 +486,7 @@ class KeeperBot {
       .filter(Boolean)
       .join(' | ');
 
-    process.stdout.write(`\r[${timestamp}] ${priceStr}    `);
+    process.stdout.write(`\r[${this.config.instanceId} ${timestamp}] ${priceStr}    `);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -486,6 +570,8 @@ class KeeperBot {
 
       eligible.push(attestation);
       symbolByPair.set(attestation.asset, asset.symbol);
+      // L0-19: defense-passed rounds double as execution relays.
+      this.latestRounds.set(asset.symbol, { att: attestation, cachedAt: Date.now() });
     }
 
     if (eligible.length === 0) {
@@ -521,6 +607,17 @@ class KeeperBot {
         for (const attestation of batch) {
           const symbol = symbolByPair.get(attestation.asset);
           if (!symbol) continue;
+          // L0-9 spike flag: compare against the previous PUSHED price
+          // before overwriting it. Alert-only — the push already landed.
+          const previous = this.currentPrices.get(symbol);
+          if (previous && previous.priceScaled > 0n && this.config.spikeAlertPct > 0) {
+            const delta = BigInt(attestation.price) - previous.priceScaled;
+            const deltaPct =
+              (Math.abs(Number(delta)) / Number(previous.priceScaled)) * 100;
+            if (deltaPct > this.config.spikeAlertPct) {
+              this.alertSpike(symbol, previous.price, attestation.price_human, deltaPct);
+            }
+          }
           this.currentPrices.set(symbol, {
             asset: symbol,
             price: attestation.price_human,
@@ -793,6 +890,48 @@ class KeeperBot {
     return prices;
   }
 
+  /**
+   * L0-9 interim two-strike confirmation: pre-Batch-1 the contract cannot
+   * confirm liquidations on a smoothed mark (#86), so the keeper requires
+   * `triggerConfirmReads` CONSECUTIVE liquidatable reads (~one poll
+   * interval apart) before firing — a one-round oracle spike that
+   * mean-reverts within a cycle never liquidates anyone. Bankrupt
+   * positions (local equity ≤ 0) never wait: delaying bad debt costs LPs.
+   * Returns true when the liquidation may fire now.
+   */
+  private confirmStrike(key: string, bankrupt: boolean): boolean {
+    if (bankrupt || this.config.triggerConfirmReads <= 1) {
+      this.liqStrikes.delete(key);
+      return true;
+    }
+    const strikes = (this.liqStrikes.get(key) ?? 0) + 1;
+    if (strikes >= this.config.triggerConfirmReads) {
+      this.liqStrikes.delete(key);
+      return true;
+    }
+    this.liqStrikes.set(key, strikes);
+    return false;
+  }
+
+  /**
+   * L0-9 spike flag — ALERT ONLY, pushes are never blocked here (the K-2
+   * jump bound handles garbage). Surfaces the single-round manipulation
+   * window for a human while the interim two-strike holds the line.
+   * Throttled to one alert per symbol per 5 minutes.
+   */
+  private alertSpike(symbol: string, from: number, to: number, deltaPct: number): void {
+    const last = this.spikeAlertAt.get(symbol) ?? 0;
+    if (Date.now() - last < 5 * 60 * 1000) return;
+    this.spikeAlertAt.set(symbol, Date.now());
+    console.warn(`\n⚡ ${symbol} moved ${deltaPct.toFixed(2)}% in one push ($${from} → $${to})`);
+    void sendAlert(
+      'warn',
+      `Price spike: ${symbol} ${deltaPct.toFixed(2)}% in one round`,
+      `$${from} → $${to} between consecutive pushes (> ${this.config.spikeAlertPct}%). ` +
+        `Single-round spikes are the L0-9 manipulation window — verify against reference feeds.`,
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   // Liquidations
   // ═══════════════════════════════════════════════════════════════════════
@@ -812,6 +951,15 @@ class KeeperBot {
   private async checkLiquidations(snapshot: CycleSnapshot, fullSweep: boolean): Promise<void> {
     const prices = this.localPriceMap();
 
+    // Drop strike counters for positions/accounts no longer in the snapshot.
+    const liveKeys = new Set<string>();
+    for (const p of snapshot.positions) {
+      liveKeys.add(p.margin_mode === 1 ? `cross:${p.trader}` : `iso:${p.id}`);
+    }
+    for (const key of this.liqStrikes.keys()) {
+      if (!liveKeys.has(key)) this.liqStrikes.delete(key);
+    }
+
     for (const position of snapshot.positions) {
       // Cross-margin positions use account-level liquidation
       if (position.margin_mode === 1) continue;
@@ -821,15 +969,20 @@ class KeeperBot {
         const candidate =
           fullSweep ||
           price === undefined || // no local price → let the simulation decide
-          isLiquidationCandidate(position, price);
-        if (!candidate) continue;
+          isLiquidationCandidate(position, price, await this.prefilterMmBps(position.asset));
+        if (!candidate) {
+          this.liqStrikes.delete(`iso:${position.id}`);
+          continue;
+        }
 
         const sim = await this.stellar.simulateLiquidate(position.id);
         if (!sim.ok) {
           const code = extractContractErrorCode(sim.error);
           // 50 healthy / 20 already gone / 83 within the partial-liq grace
-          // window (L0-5) — all expected, no alert.
-          if (code === 50 || code === 20 || code === 83) continue;
+          // window (L0-5) / 90 full-freeze pause (L0-15) / 86 confirmation
+          // pending (L0-9) — all expected, no alert.
+          if (code === 50 || code === 20) this.liqStrikes.delete(`iso:${position.id}`);
+          if (code === 50 || code === 20 || code === 83 || code === 90 || code === 86) continue;
           this.logThrottled(
             `liq-sim-${position.id}`,
             `⚠️  Liquidation preflight for position ${position.id} rejected: ${sim.error}`,
@@ -837,8 +990,18 @@ class KeeperBot {
           continue;
         }
 
+        // L0-9 interim: require consecutive liquidatable reads before
+        // firing; a locally-bankrupt position (equity ≤ 0) never waits.
+        const bankrupt = price !== undefined && positionMargin(position, price) <= 0n;
+        if (!this.confirmStrike(`iso:${position.id}`, bankrupt)) {
+          console.log(
+            `\n⏳ Position ${position.id} liquidatable — confirming next cycle (L0-9 two-strike)`,
+          );
+          continue;
+        }
+
         console.log(`\n⚠️  Position ${position.id} is liquidatable (local margin check + simulation)`);
-        await this.executeLiquidation(position.id);
+        await this.executeLiquidation(position);
       } catch (error) {
         // Transport failure on the preflight — next cycle retries.
         this.logThrottled(
@@ -852,12 +1015,32 @@ class KeeperBot {
   /**
    * Execute a liquidation
    */
-  private async executeLiquidation(positionId: bigint): Promise<void> {
-    console.log(`   Executing liquidation for position ${positionId}...`);
+  private async executeLiquidation(position: Position): Promise<void> {
+    console.log(`   Executing liquidation for position ${position.id}...`);
 
-    const result = await this.stellar.liquidate(positionId);
+    // L0-19: settle on a relayed fresh mark when a round is available; any
+    // router-side failure falls back to the direct call — a liquidation is
+    // never lost to the router path.
+    let via: 'router' | 'direct' = 'direct';
+    let result: ExecutionResult | null = null;
+    if (this.routerAvailable('liquidate_with_price')) {
+      const round = await this.getExecutionRound(position.asset);
+      if (round) {
+        result = await this.stellar.liquidateViaRouter(position.id, position.asset, round);
+        via = 'router';
+        if (!result.success && !result.indeterminate) {
+          if (isMissingContractFunction(result.error ?? '')) {
+            this.routerFnSupported.set('liquidate_with_price', false);
+          }
+          result = null;
+          via = 'direct';
+        }
+      }
+    }
+    if (result === null) result = await this.stellar.liquidate(position.id);
 
     if (result.success) {
+      if (via === 'router') this.stats.routerExecutions++;
       this.stats.liquidationsExecuted++;
       if (result.reward) {
         this.stats.totalRewardsEarned += result.reward;
@@ -911,14 +1094,77 @@ class KeeperBot {
         if (!candidate) {
           const balance = await this.getCrossBalanceCached(trader);
           if (balance === undefined) continue; // balance unreadable → RPC issue; full sweep covers it
-          candidate = isCrossLiquidationCandidate(balance, positions, prices);
+          // L0-12: per-leg mm from the ladder (resolved up front — the
+          // health resolver itself must stay synchronous and pure).
+          const mmByAsset = new Map<string, bigint>();
+          for (const position of positions) {
+            if (!mmByAsset.has(position.asset)) {
+              mmByAsset.set(position.asset, await this.prefilterMmBps(position.asset));
+            }
+          }
+          candidate = isCrossLiquidationCandidate(
+            balance,
+            positions,
+            prices,
+            (p) => mmByAsset.get(p.asset) ?? DEFAULT_MAINTENANCE_MARGIN_BPS,
+          );
         }
-        if (!candidate) continue;
+        if (!candidate) {
+          this.liqStrikes.delete(`cross:${trader}`);
+          continue;
+        }
+
+        // L0-9 interim two-strike (bankrupt accounts skip the wait; a null
+        // equity — missing price — must NOT count as bankrupt).
+        const equityBalance = await this.getCrossBalanceCached(trader);
+        const equity =
+          equityBalance === undefined ? null : crossEquity(equityBalance, positions, prices);
+        const bankrupt = equity !== null && equity <= 0n;
+        if (!this.confirmStrike(`cross:${trader}`, bankrupt)) {
+          console.log(
+            `\n⏳ Cross account ${trader.slice(0, 8)}... liquidatable — confirming next cycle (L0-9 two-strike)`,
+          );
+          continue;
+        }
 
         // Preflight stays inside the write path: the pre-submit simulation
         // rejects healthy accounts with #78 before any fee is spent.
-        const result = await this.stellar.liquidateCrossAccount(trader);
+        // L0-19: prefer the router relay when EVERY leg's asset has a fresh
+        // round (the account settles on relayed marks); business rejections
+        // stand, router-specific failures fall back to the direct call.
+        let result: ExecutionResult | null = null;
+        let via: 'router' | 'direct' = 'direct';
+        if (this.routerAvailable('liquidate_cross_with_prices')) {
+          const rounds: Array<{ asset: string; round: RouterRound }> = [];
+          for (const asset of new Set(positions.map(p => p.asset))) {
+            const round = await this.getExecutionRound(asset);
+            if (!round) {
+              rounds.length = 0;
+              break;
+            }
+            rounds.push({ asset, round });
+          }
+          if (rounds.length > 0) {
+            result = await this.stellar.liquidateCrossViaRouter(trader, rounds);
+            via = 'router';
+            if (!result.success && !result.indeterminate) {
+              if (isMissingContractFunction(result.error ?? '')) {
+                this.routerFnSupported.set('liquidate_cross_with_prices', false);
+              }
+              const code = extractContractErrorCode(result.error ?? '');
+              if (code !== 78 && code !== 83 && code !== 90 && code !== 86) {
+                result = null; // router-specific failure → direct fallback
+                via = 'direct';
+              }
+            }
+          }
+        }
+        if (result === null) {
+          result = await this.stellar.liquidateCrossAccount(trader);
+          via = 'direct';
+        }
         if (result.success) {
+          if (via === 'router') this.stats.routerExecutions++;
           this.stats.liquidationsExecuted++;
           if (result.reward) this.stats.totalRewardsEarned += result.reward;
           console.log(`\n⚠️  Cross-margin account ${trader.slice(0, 8)}... liquidated!`);
@@ -927,9 +1173,10 @@ class KeeperBot {
           console.log(`\n⏳ Cross liquidation for ${trader.slice(0, 8)}... indeterminate — re-checking next cycle`);
         } else {
           const code = extractContractErrorCode(result.error ?? '');
-          // #78 healthy (prefilter was conservative) or #83 inside the
-          // account-scoped staged-liq grace window (L0-5) — both expected.
-          if (code !== 78 && code !== 83) {
+          // #78 healthy (prefilter was conservative), #83 inside the
+          // account-scoped staged-liq grace window (L0-5), #90 full-freeze
+          // pause (L0-15), #86 confirmation pending (L0-9) — all expected.
+          if (code !== 78 && code !== 83 && code !== 90 && code !== 86) {
             this.logThrottled(
               `cross-liq-${trader}`,
               `⚠️  Cross liquidation attempt for ${trader.slice(0, 8)}... failed: ${result.error}`,
@@ -943,6 +1190,42 @@ class KeeperBot {
         );
       }
     }
+  }
+
+  /**
+   * Prefilter mm_bps for an asset (L0-12 ladder parity). The keeper cannot
+   * read RiskEpochTs (no view), so it cannot reproduce per-position
+   * grandfathering — instead it uses max(ladder mm, legacy mm), which is
+   * CONSERVATIVE for the prefilter: it can only over-trigger simulations
+   * (the simulation is the on-chain truth), never miss a liquidatable
+   * position under either regime. Legacy default on pre-L0-12 markets
+   * (missing export), unconfigured assets, and read failures.
+   */
+  private async prefilterMmBps(asset: string): Promise<bigint> {
+    if (this.riskLadderSupported === false) return DEFAULT_MAINTENANCE_MARGIN_BPS;
+    const now = Date.now();
+    const cached = this.assetMmBpsCache.get(asset);
+    if (cached && now - cached.fetchedAt < ASSET_RISK_CACHE_MS) return cached.mmBps;
+
+    let mmBps = DEFAULT_MAINTENANCE_MARGIN_BPS;
+    try {
+      const ladder = await this.stellar.getAssetRiskMmBps(asset);
+      this.riskLadderSupported = true;
+      if (ladder !== null && ladder > 0) {
+        const ladderBps = BigInt(ladder);
+        mmBps = ladderBps > DEFAULT_MAINTENANCE_MARGIN_BPS ? ladderBps : DEFAULT_MAINTENANCE_MARGIN_BPS;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isMissingContractFunction(message)) {
+        this.riskLadderSupported = false; // pre-L0-12 market — legacy mm everywhere
+      } else {
+        this.logThrottled(`risk-${asset}`, `⚠️  get_asset_risk read failed for ${asset}: ${message}`);
+        return cached?.mmBps ?? DEFAULT_MAINTENANCE_MARGIN_BPS; // stale beats blind, cache untouched
+      }
+    }
+    this.assetMmBpsCache.set(asset, { mmBps, fetchedAt: now });
+    return mmBps;
   }
 
   /** Cross pool balance with a 60s cache; stale value on read failure. */
@@ -961,6 +1244,380 @@ class KeeperBot {
         `⚠️  Cross balance read failed for ${trader.slice(0, 8)}...: ${error instanceof Error ? error.message : error}`,
       );
       return cached?.balance; // stale beats blind
+    }
+  }
+
+  /**
+   * L0-20 keeper duty: a factory-vault order that just executed (or was
+   * cancelled by slippage) leaves the vault's full-NAV under-counted (an
+   * executed order contributes 0 until its OrderVault mapping moves to the
+   * created position; a cancel refund sits uncredited). reconcile_order is
+   * permissionless — the keeper calls it right after its own execution.
+   * Quiet no-op for non-factory orders, stacks without a factory id, and
+   * pre-L0-20 factories (missing export → duty marks itself inert).
+   */
+  private async maybeReconcileFactoryOrder(orderId: bigint): Promise<void> {
+    if (!this.config.vaultFactoryContractId || this.factoryReconcileSupported === false) return;
+
+    let vaultId: number | null;
+    try {
+      vaultId = await this.stellar.getOrderVault(orderId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isMissingContractFunction(message)) {
+        this.factoryReconcileSupported = false;
+        if (!this.factoryReconcileUnsupportedLogged) {
+          this.factoryReconcileUnsupportedLogged = true;
+          console.log(
+            '\nℹ️  Factory reconcile views not present on this deployment — reconcile duty disabled until the Batch-1 redeploy.',
+          );
+        }
+      } else {
+        this.logThrottled(`reconcile-read-${orderId}`, `⚠️  get_order_vault read failed for ${orderId}: ${message}`);
+      }
+      return;
+    }
+    this.factoryReconcileSupported = true;
+    if (vaultId == null) return; // not a factory-vault order
+
+    const result = await this.stellar.reconcileOrder(vaultId, orderId);
+    if (result.success) {
+      this.stats.ordersReconciled++;
+      console.log(`   🔗 Factory order ${orderId} reconciled to vault ${vaultId}`);
+    } else if (!result.indeterminate) {
+      const code = extractContractErrorCode(result.error ?? '');
+      // #3 InvalidParameter = order still Pending (stop→limit phase
+      // transition) — reconcile applies only once it finalizes.
+      if (code === 3) return;
+      this.logThrottled(
+        `reconcile-${orderId}`,
+        `⚠️  reconcile_order failed for order ${orderId} (vault ${vaultId}): ${result.error}`,
+      );
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Router Execution Path (L0-19)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /** True unless a probe proved the deployed router lacks this entry point. */
+  private routerAvailable(fn: string): boolean {
+    return !!this.config.routerContractId && this.routerFnSupported.get(fn) !== false;
+  }
+
+  /**
+   * Signed round for one asset, freshest-first: cache ≤15s (already
+   * fresher than the 30s publish cadence — no HTTP hop) → one fresh
+   * Noeracle fetch under the existing timeout (refreshes every symbol's
+   * cache) → cache ≤60s (the on-chain staleness bound) → null, and the
+   * caller falls back to the DIRECT market call. Round sourcing must never
+   * cost execution liveness.
+   */
+  private async getExecutionRound(symbol: string): Promise<RouterRound | null> {
+    const now = Date.now();
+    const cached = this.latestRounds.get(symbol);
+    if (cached && now - cached.cachedAt <= ROUND_FRESH_FAST_PATH_MS) return cached.att;
+
+    try {
+      const fresh = await this.fetchNoeracleFresh();
+      const fetchedAt = Date.now();
+      for (const att of fresh.attestations) {
+        const sym = att.asset.endsWith('/USD') ? att.asset.slice(0, -4) : att.asset;
+        this.latestRounds.set(sym, { att, cachedAt: fetchedAt });
+      }
+    } catch (error) {
+      this.logThrottled(
+        'round-fetch',
+        `⚠️  Noeracle round fetch for execution failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+
+    const fallback = this.latestRounds.get(symbol);
+    if (fallback && Date.now() - fallback.cachedAt <= ROUND_MAX_AGE_MS) return fallback.att;
+    return null;
+  }
+
+  /** healthchecks.io-style liveness ping after every completed cycle. */
+  private pingHealthcheck(): void {
+    if (!this.config.healthcheckUrl) return;
+    fetch(this.config.healthcheckUrl).catch(() => {});
+  }
+
+  /**
+   * #30 rescue (the core L0-19 fix): a strict-path entry execution that
+   * fails PriceStale on the direct simulation is exactly what the router
+   * relay repairs — verify-then-trade carries a fresh signed round in the
+   * same tx. Returns true when the order was handled via the router.
+   */
+  private async tryRouterRescue(order: Order): Promise<boolean> {
+    if (!this.routerAvailable('execute_with_price')) return false;
+    const round = await this.getExecutionRound(order.asset);
+    if (!round) return false;
+
+    const sim = await this.stellar.simulateRouterCall('execute_with_price', order.id, order.asset, round);
+    if (!sim.ok) {
+      if (isMissingContractFunction(sim.error)) {
+        this.routerFnSupported.set('execute_with_price', false);
+      } else {
+        this.classifyOrderSimRejection(order, sim.error);
+      }
+      return false;
+    }
+
+    console.log(
+      `\n📋 Order ${order.id} triggered via router relay (${order.order_type} ${order.direction} ${order.asset})`,
+    );
+    console.log(`   Executing order ${order.id}...`);
+    const result = await this.stellar.executeOrderViaRouter(order.id, order.asset, round);
+    await this.handleOrderExecutionResult(order.id, order.order_type, result, 'router');
+    return true;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ADL Manager (L0-1)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Advisory ADL phase (L0-1). The keeper is the RANKING authority only —
+   * the on-chain #84/#85 gates are the consensus. Per asset with open
+   * positions: mirror the trigger math locally (payable uPnL from the
+   * snapshot at the keeper's own prices vs cached vault coverage) and
+   * spend a check_adl_trigger simulation only when the mirror says the
+   * flag should flip, the flag is already active, or the periodic full
+   * sweep is due (shortfall auto-flips happen on-chain with no keeper
+   * involvement — the sweep bounds their discovery latency). While the
+   * flag is active: walk positive-pnl positions by adlRank desc through
+   * adl_close (bounded per cycle), re-checking the trigger between
+   * closes. Every activation / clear / execution fires the alert channel —
+   * ADL is a five-alarm event. Against a pre-L0-1 market every probe
+   * fails with "unknown export": the phase marks itself unsupported and
+   * goes quiet until the next restart (the Batch-1 redeploy).
+   */
+  /** True once a probe proved the deployed market lacks the ADL entry points. */
+  private adlDisabled(): boolean {
+    return this.adlSupported === false;
+  }
+
+  private async manageAdl(snapshot: CycleSnapshot, fullSweep: boolean): Promise<void> {
+    if (this.adlDisabled()) return;
+
+    const prices = this.localPriceMap();
+    const byAsset = new Map<string, Position[]>();
+    for (const position of snapshot.positions) {
+      const list = byAsset.get(position.asset);
+      if (list) list.push(position);
+      else byAsset.set(position.asset, [position]);
+    }
+
+    for (const [asset, positions] of byAsset) {
+      if (this.adlDisabled()) return; // flipped mid-loop by a probe
+      const price = prices.get(asset);
+      if (price === undefined || price <= 0n) continue;
+
+      try {
+        const active = this.adlActive.get(asset) ?? false;
+        const probeDue =
+          fullSweep ||
+          active ||
+          Date.now() - (this.adlLastProbeAt.get(asset) ?? 0) >= this.config.adlCheckIntervalMs;
+        if (!probeDue) continue;
+
+        if (!active && !fullSweep) {
+          // Local mirror: only spend the probe when it could matter.
+          const payable = assetPayableUpnl(positions, price);
+          if (payable === 0n) continue; // nothing payable → ADL cannot be needed
+          const coverage = await this.getVaultCoverageCached();
+          if (coverage !== undefined) {
+            const decision = adlFlagDecision(
+              payable,
+              coverage,
+              false,
+              BigInt(this.config.adlTriggerRatioBps),
+              BigInt(this.config.adlClearRatioBps),
+            );
+            if (decision === 'hold') continue;
+          }
+          // coverage unreadable or mirror says activate → probe on-chain truth
+        }
+
+        await this.probeAndDriveAdl(asset, positions, price);
+      } catch (error) {
+        this.logThrottled(
+          `adl-${asset}`,
+          `⚠️  ADL phase error for ${asset}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Probe the on-chain flag (check_adl_trigger simulation — its retval is
+   * the flag AFTER the call would run), reconcile it on-chain when it
+   * would change, and while active walk ranked winners through adl_close.
+   */
+  private async probeAndDriveAdl(asset: string, positions: Position[], price: bigint): Promise<void> {
+    this.adlLastProbeAt.set(asset, Date.now());
+
+    const sim = await this.stellar.simulateCheckAdlTrigger(asset);
+    if (!sim.ok) {
+      if (isMissingContractFunction(sim.error)) {
+        this.adlSupported = false;
+        if (!this.adlUnsupportedLogged) {
+          this.adlUnsupportedLogged = true;
+          console.log(
+            '\nℹ️  ADL entry points not present on this market deployment — ADL phase disabled until the Batch-1 redeploy.',
+          );
+        }
+      } else {
+        this.logThrottled(
+          `adl-sim-${asset}`,
+          `⚠️  check_adl_trigger preflight failed for ${asset}: ${sim.error}`,
+        );
+      }
+      return;
+    }
+    this.adlSupported = true;
+
+    const simFlag = sim.retval === true;
+    const cached = this.adlActive.get(asset);
+
+    // Reconcile: submit only when the call would actually change the
+    // stored on-chain flag — a same-state submit is a wasted fee.
+    if (cached === undefined || simFlag !== cached) {
+      let onChain: boolean;
+      try {
+        onChain = await this.stellar.isAdlActive(asset);
+      } catch (error) {
+        this.logThrottled(
+          `adl-read-${asset}`,
+          `⚠️  is_adl_active read failed for ${asset}: ${error instanceof Error ? error.message : error}`,
+        );
+        return;
+      }
+      if (simFlag !== onChain) {
+        const result = await this.stellar.checkAdlTrigger(asset);
+        if (!result.success) {
+          if (!result.indeterminate) {
+            this.logThrottled(
+              `adl-flip-${asset}`,
+              `⚠️  check_adl_trigger submit failed for ${asset}: ${result.error}`,
+            );
+          }
+          return; // cache untouched — re-probed next cycle
+        }
+        this.stats.adlFlagFlips++;
+        if (simFlag) {
+          console.log(`\n🚨 ADL ACTIVATED for ${asset} — auto-deleveraging ranked winners`);
+          await sendAlert(
+            'critical',
+            `ADL activated for ${asset}`,
+            'Pool coverage fell under the trigger ratio — the keeper is force-realizing ranked winners.',
+          );
+        } else {
+          console.log(`\n✅ ADL cleared for ${asset}`);
+          await sendAlert('warn', `ADL cleared for ${asset}`, 'Pool coverage recovered above the clear ratio.');
+        }
+      }
+      this.adlActive.set(asset, simFlag);
+    }
+
+    if (!this.adlActive.get(asset)) return;
+
+    // The walk: ranked winners, bounded per cycle, re-check between closes.
+    const ranked = rankAdlCandidates(positions, price);
+    let closes = 0;
+    for (const candidate of ranked) {
+      if (closes >= this.config.adlMaxClosesPerCycle) break;
+
+      // L0-19: forced realizations settle on a relayed fresh mark when
+      // available; business rejections (#84/#85/#20) stand either way,
+      // router-specific failures fall back to the direct call.
+      let result: ExecutionResult | null = null;
+      let via: 'router' | 'direct' = 'direct';
+      if (this.routerAvailable('adl_with_price')) {
+        const round = await this.getExecutionRound(asset);
+        if (round) {
+          result = await this.stellar.adlCloseViaRouter(candidate.position.id, asset, round);
+          via = 'router';
+          if (!result.success && !result.indeterminate) {
+            if (isMissingContractFunction(result.error ?? '')) {
+              this.routerFnSupported.set('adl_with_price', false);
+            }
+            const code = extractContractErrorCode(result.error ?? '');
+            if (code !== 84 && code !== 85 && code !== 20) {
+              result = null; // router-specific failure → direct fallback
+              via = 'direct';
+            }
+          }
+        }
+      }
+      if (result === null) result = await this.stellar.adlClose(candidate.position.id);
+      if (result.success) {
+        if (via === 'router') this.stats.routerExecutions++;
+        closes++;
+        this.stats.adlCloses++;
+        console.log(
+          `\n⚡ ADL closed position ${candidate.position.id} (${asset} ${candidate.position.direction}, score ${candidate.score})`,
+        );
+        await sendAlert(
+          'critical',
+          `ADL executed on ${asset}`,
+          `Position ${candidate.position.id} force-realized (rank score ${candidate.score}).`,
+        );
+
+        // Re-check the trigger between closes; clear on-chain and stop
+        // as soon as coverage has recovered.
+        const recheck = await this.stellar.simulateCheckAdlTrigger(asset);
+        if (recheck.ok && recheck.retval === false) {
+          const clear = await this.stellar.checkAdlTrigger(asset);
+          if (clear.success) {
+            this.stats.adlFlagFlips++;
+            this.adlActive.set(asset, false);
+            console.log(`\n✅ ADL cleared for ${asset} after ${closes} close(s)`);
+            await sendAlert(
+              'warn',
+              `ADL cleared for ${asset}`,
+              `Coverage recovered after ${closes} ADL close(s).`,
+            );
+          }
+          break;
+        }
+      } else if (result.indeterminate) {
+        break; // may still land — never stack closes on a stale ranking
+      } else {
+        const code = extractContractErrorCode(result.error ?? '');
+        if (code === 84) {
+          this.adlActive.set(asset, false); // flag off on-chain — cache was stale
+          break;
+        }
+        if (code === 85 || code === 20) continue; // no longer a winner / gone — next candidate
+        this.logThrottled(
+          `adl-close-${candidate.position.id}`,
+          `⚠️  adl_close failed for position ${candidate.position.id}: ${result.error}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Vault coverage (buffer + LP USDC) with a 30s cache; stale beats blind,
+   * undefined only when never readable (the mirror then defers to probes).
+   */
+  private async getVaultCoverageCached(): Promise<bigint | undefined> {
+    const now = Date.now();
+    if (this.vaultCoverageCache && now - this.vaultCoverageCache.fetchedAt < VAULT_COVERAGE_CACHE_MS) {
+      return this.vaultCoverageCache.value;
+    }
+    try {
+      const value = await this.stellar.getVaultCoverage();
+      this.vaultCoverageCache = { value, fetchedAt: now };
+      return value;
+    } catch (error) {
+      this.logThrottled(
+        'adl-coverage',
+        `⚠️  Vault coverage read failed: ${error instanceof Error ? error.message : error}`,
+      );
+      return this.vaultCoverageCache?.value;
     }
   }
 
@@ -1018,24 +1675,48 @@ class KeeperBot {
    */
   private async checkOrders(snapshot: CycleSnapshot): Promise<void> {
     const pendingOrders = snapshot.orders.filter(o => o.status === 'Pending');
-    if (pendingOrders.length === 0) return;
+    const triggeredIds = new Set<string>();
 
     for (const order of pendingOrders) {
       try {
         const sim = await this.stellar.simulateExecuteOrder(order.id);
         if (!sim.ok) {
+          // L0-19: strict-path staleness (#30) is exactly what the router
+          // relay fixes — try execute_with_price before giving up the tick.
+          if (extractContractErrorCode(sim.error) === 30 && (await this.tryRouterRescue(order))) {
+            triggeredIds.add(order.id.toString());
+            continue;
+          }
           this.classifyOrderSimRejection(order, sim.error);
           continue;
         }
 
+        triggeredIds.add(order.id.toString());
         console.log(`\n📋 Order ${order.id} triggered! (${order.order_type} ${order.direction} ${order.asset})`);
-        await this.executeOrder(order.id, order.order_type);
+        await this.executeOrder(order.id, order.order_type, order.asset);
       } catch (error) {
         this.logThrottled(
           `order-err-${order.id}`,
           `⚠️  Order check error for ${order.id}: ${error instanceof Error ? error.message : error}`,
         );
       }
+    }
+
+    // L0-19 dead-man: a triggered order still pending after N cycles means
+    // executions are not landing (RPC dead, fee starvation, sequence
+    // pinning) — the silent single-keeper failure mode. Runs even on an
+    // empty book so counters for gone orders are pruned.
+    const stuck = trackTriggeredStuck(
+      this.triggeredStuckCounts,
+      triggeredIds,
+      this.config.triggeredStuckAlertCycles,
+    );
+    if (stuck.length > 0) {
+      await sendAlert(
+        'critical',
+        'Triggered orders stuck pending',
+        `Orders ${stuck.join(', ')} triggered for ${this.config.triggeredStuckAlertCycles}+ consecutive cycles without executing — check RPC health, fees, and keeper sequence.`,
+      );
     }
   }
 
@@ -1057,10 +1738,17 @@ class KeeperBot {
       return;
     }
 
-    // Business rejections for this tick (new contract): #80 cross-order
-    // unsupported, #81 price deviation too high, #82 OI cap exceeded.
-    // Also #61 (already executed elsewhere) and #30 (price stale).
-    if (code === 80 || code === 81 || code === 82 || code === 61 || code === 30) {
+    // Business rejections for this tick: #80 cross-order unsupported
+    // (PRE-Batch-1 markets only — the L1-1 market accepts cross triggers),
+    // #81 price deviation too high, #82 OI cap exceeded.
+    // Also #61 (already executed elsewhere), #30 (price stale), and the
+    // Batch-1 codes — #87 acceptable-price bound (L0-10), #89 skew cap
+    // (L0-14), #90 frozen (L0-15), #91 nets-to-zero (L1-3), #92 asset
+    // halted (L1-24).
+    if (
+      code === 80 || code === 81 || code === 82 || code === 61 || code === 30 ||
+      code === 87 || code === 89 || code === 90 || code === 91 || code === 92
+    ) {
       this.logThrottled(
         `order-biz-${order.id}-${code}`,
         `ℹ️  Order ${order.id} not executable this tick (contract #${code})`,
@@ -1072,13 +1760,41 @@ class KeeperBot {
   }
 
   /**
-   * Execute a triggered order
+   * Execute a triggered order — via the router relay when a fresh signed
+   * round is available (settles on the relayed mark), falling back to the
+   * direct market call otherwise (L0-19: liveness before freshness).
    */
-  private async executeOrder(orderId: bigint, orderType: string): Promise<void> {
+  private async executeOrder(orderId: bigint, orderType: string, asset: string): Promise<void> {
     console.log(`   Executing order ${orderId}...`);
 
-    const result = await this.stellar.executeOrder(orderId);
+    let via: 'router' | 'direct' = 'direct';
+    let result: ExecutionResult | null = null;
+    if (this.routerAvailable('execute_with_price')) {
+      const round = await this.getExecutionRound(asset);
+      if (round) {
+        const sim = await this.stellar.simulateRouterCall('execute_with_price', orderId, asset, round);
+        if (sim.ok) {
+          result = await this.stellar.executeOrderViaRouter(orderId, asset, round);
+          via = 'router';
+        } else if (isMissingContractFunction(sim.error)) {
+          this.routerFnSupported.set('execute_with_price', false);
+        }
+        // Any other router-sim rejection → fall through to the direct path.
+      }
+    }
+    if (result === null) result = await this.stellar.executeOrder(orderId);
 
+    await this.handleOrderExecutionResult(orderId, orderType, result, via);
+  }
+
+  /** Shared outcome handling for direct and router order executions. */
+  private async handleOrderExecutionResult(
+    orderId: bigint,
+    orderType: string,
+    result: ExecutionResult,
+    via: 'router' | 'direct',
+  ): Promise<void> {
+    if (result.success && via === 'router') this.stats.routerExecutions++;
     if (result.success) {
       // Check if order was cancelled due to slippage or StopLimit phase transition (reward = 0)
       if (result.reward === BigInt(0)) {
@@ -1087,6 +1803,9 @@ class KeeperBot {
         } else {
           this.stats.ordersCancelledSlippage++;
           console.log(`   ⚠️  Order ${orderId} cancelled due to slippage exceeded (collateral refunded)`);
+          // L0-20: a cancelled factory-vault order left its refund sitting
+          // uncredited at the factory — reconcile books it.
+          await this.maybeReconcileFactoryOrder(orderId);
         }
       } else {
         this.stats.ordersExecuted++;
@@ -1094,6 +1813,9 @@ class KeeperBot {
         console.log(`   ✅ Order executed successfully!`);
         console.log(`   Transaction: ${result.txHash}`);
         console.log(`   Keeper fee: ${this.formatAmount(result.reward!)} USDC`);
+        // L0-20: an executed factory-vault order contributes 0 to the
+        // vault's full-NAV until reconciled to its created position.
+        await this.maybeReconcileFactoryOrder(orderId);
       }
     } else if (result.indeterminate) {
       console.log(`   ⏳ Order execution indeterminate (tx ${result.txHash?.slice(0, 8)}... may still land) — will re-check next cycle`);

@@ -15,7 +15,7 @@ import {
   getVaultWithdraws,
   getVaultTrades,
 } from '@/lib/api/vaults';
-import { getVaultInfo } from '@/lib/stellar/vaultFactory';
+import { getVaultInfo, getFullNav } from '@/lib/stellar/vaultFactory';
 import { vaultRowFromOnChain } from '@/types/vault';
 import { formatDate } from '@/lib/utils/format';
 import { STELLAR_EXPERT_BASE, NULL_ACCOUNT } from '@/lib/utils/constants';
@@ -51,11 +51,13 @@ export default async function VaultDetailPage({
   }
   if (!vault) notFound();
 
-  const [deposits, withdraws, feeClaims, trades] = await Promise.all([
+  const [deposits, withdraws, feeClaims, trades, fullNav] = await Promise.all([
     getVaultDeposits(id, 200).catch(() => []),
     getVaultWithdraws(id, 200).catch(() => []),
     getVaultFeeClaims(id, 50).catch(() => []),
     getVaultTrades(id, 200).catch(() => []),
+    // L0-20 (Batch-1): null on the pre-L0-20 factory → row omitted.
+    getFullNav(NULL_ACCOUNT, id).catch(() => null),
   ]);
 
   return (
@@ -129,7 +131,7 @@ export default async function VaultDetailPage({
           </div>
 
           {/* Stat rows */}
-          <VaultMetrics vault={vault} />
+          <VaultMetrics vault={vault} fullNav={fullNav} />
 
           {/* PnL history chart + summary tiles (SCF Tranche 2 deliverable #4) */}
           <VaultPnlSummary

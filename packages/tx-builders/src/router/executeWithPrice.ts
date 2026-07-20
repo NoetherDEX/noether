@@ -8,14 +8,13 @@ import {
   type TxBuildContext,
 } from '../client.js';
 import { toScVal } from '../scval.js';
-import { attestationTailArgs, type PriceAttestation } from './attestation.js';
+import { attestationStructArg, type PriceAttestation } from './attestation.js';
 
 const METHOD = 'execute_with_price';
 
 export interface ExecuteWithPriceParams {
   keeper: StellarAddress;
   orderId: number | bigint;
-  asset: string;
   attestation: PriceAttestation;
 }
 
@@ -23,8 +22,7 @@ export function buildExecuteWithPriceArgs(params: ExecuteWithPriceParams): xdr.S
   return [
     toScVal(params.keeper, 'address'),
     toScVal(params.orderId, 'u64'),
-    toScVal(params.asset, 'symbol'),
-    ...attestationTailArgs(params.attestation),
+    attestationStructArg(params.attestation),
   ];
 }
 

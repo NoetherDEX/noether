@@ -81,6 +81,14 @@ export interface KeeperStats {
   trailingPeakUpdates: number;
   /** apply_funding submissions that landed. */
   fundingApplications: number;
+  /** adl_close submissions that landed (L0-1). */
+  adlCloses: number;
+  /** check_adl_trigger submissions that flipped the on-chain flag (L0-1). */
+  adlFlagFlips: number;
+  /** Factory reconcile_order submissions that landed (L0-20). */
+  ordersReconciled: number;
+  /** Executions/liquidations that settled via the router *_with_price path (L0-19). */
+  routerExecutions: number;
 }
 
 // Execution result
@@ -138,6 +146,8 @@ export interface KeeperConfig {
   /** Noeracle on-chain contract — destination for update_batch_ed25519_persistent. */
   noeracleContractId: string;
   vaultContractId: string;
+  /** Vault factory — L0-20 reconcile duty. Empty = duty disabled. */
+  vaultFactoryContractId: string;
   /** Router — extended by the TTL job (P3-9). */
   routerContractId: string;
   /** Noeracle shim — extended by the TTL job (P3-9). */
@@ -146,6 +156,16 @@ export interface KeeperConfig {
   // Timing
   pollIntervalMs: number;
   oracleUpdateIntervalMs: number;
+
+  // ADL manager (L0-1) — advisory local mirror of the on-chain trigger
+  // ratios (MarketConfig adl_trigger_ratio_bps / adl_clear_ratio_bps).
+  // Gates when simulations are spent, never who gets closed.
+  adlTriggerRatioBps: number;
+  adlClearRatioBps: number;
+  /** Bound on adl_close submissions per asset per cycle. */
+  adlMaxClosesPerCycle: number;
+  /** Per-asset check_adl_trigger probe throttle while the flag is off. */
+  adlCheckIntervalMs: number;
 
   // TTL bump job (P3-9) + wallet-funding alarm (P3-10)
   /** How often to extend contract instance TTLs. */
@@ -161,6 +181,18 @@ export interface KeeperConfig {
   /** Alert after this many consecutive main-cycle errors. */
   alertErrorStreak: number;
 
+  // Active-active + liveness (L0-19)
+  /** Stamped into the status line + every alert (disambiguates instances). */
+  instanceId: string;
+  /** One-time sleep before the first cycle — set ~pollIntervalMs/2 on the
+   *  second instance so the pair staggers. Default 0. */
+  pollOffsetMs: number;
+  /** Cycles a triggered order may stay pending before the CRITICAL alert. */
+  triggeredStuckAlertCycles: number;
+  /** healthchecks.io-style URL pinged after every completed cycle. Empty =
+   *  disabled (fail-open). */
+  healthcheckUrl: string;
+
   // Publish-path defenses (K-2)
   /** File the circuit-breaker state (last pushed prices) persists to. */
   stateFilePath: string;
@@ -168,6 +200,14 @@ export interface KeeperConfig {
   referenceTickerUrl: string;
   /** Skip the push when attestation vs reference diverges more than this %. */
   referenceDivergencePct: number;
+
+  // L0-9 interim smoothing (pre-Batch-1 the contract can't confirm on TWAP)
+  /** Consecutive liquidatable reads required before firing (1 = off).
+   *  Bankrupt positions (equity ≤ 0 locally) never wait. */
+  triggerConfirmReads: number;
+  /** Alert (never skip) when a pushed price moves more than this % vs the
+   *  previous push — flags the single-round spike window L0-9 defends. */
+  spikeAlertPct: number;
 
   // Stork secondary oracle (T3-D1) — fail-open: empty key disables it.
   /** Stork API token (Authorization: Basic <token>). Empty = disabled. */

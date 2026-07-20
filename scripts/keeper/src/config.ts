@@ -147,17 +147,23 @@ export function loadConfig(): KeeperConfig {
       contracts.contracts?.market ||
       '',
     // Noeracle on-chain contract — keeper publishes signed attestation
-    // batches here via the hardened update_batch_ed25519_persistent.
-    // NOTE: requires a post-S-1 Noeracle deployment that exports the
-    // hardened entrypoint; the legacy default below (CAYIP67…) predates
-    // it and must be repointed at cutover.
+    // batches here via the hardened update_batch_ed25519_persistent, which
+    // only exists on post-S-1 Noeracle deployments. No hardcoded fallback:
+    // an unset or legacy address is a boot error (validated below), never a
+    // silent publish-to-nowhere.
     noeracleContractId:
       process.env.NEXT_PUBLIC_NOERACLE_ID ||
       contracts.contracts?.noeracle ||
-      'CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG',
+      '',
     vaultContractId:
       process.env.NEXT_PUBLIC_VAULT_ID ||
       contracts.contracts?.vault ||
+      '',
+    // Vault factory — enables the L0-20 order-reconcile duty; empty is
+    // fine on stacks without user vaults (duty stays disabled).
+    vaultFactoryContractId:
+      process.env.NEXT_PUBLIC_VAULT_FACTORY_ID ||
+      contracts.contracts?.vaultFactory ||
       '',
     // Router + shim — extended alongside market/vault by the TTL job (P3-9).
     routerContractId:
@@ -173,10 +179,27 @@ export function loadConfig(): KeeperConfig {
     pollIntervalMs: envInt('POLL_INTERVAL_MS', 5000),
     oracleUpdateIntervalMs: envInt('ORACLE_UPDATE_INTERVAL_MS', 30000),
 
+    // ADL manager (L0-1). Defaults mirror the MarketConfig contract
+    // defaults (12_500 = flag when coverage < 1.25× payable uPnL, clear
+    // above 1.5×) — advisory only, the on-chain gate is the consensus.
+    adlTriggerRatioBps: envInt('ADL_TRIGGER_RATIO_BPS', 12_500),
+    adlClearRatioBps: envInt('ADL_CLEAR_RATIO_BPS', 15_000),
+    adlMaxClosesPerCycle: envInt('ADL_MAX_CLOSES_PER_CYCLE', 5),
+    adlCheckIntervalMs: envInt('ADL_CHECK_INTERVAL_MS', 30_000),
+
     // TTL bump job (P3-9) + wallet-funding alarm (P3-10)
     ttlBumpIntervalMs: envInt('TTL_BUMP_INTERVAL_MS', 6 * 60 * 60 * 1000), // 6h
     ttlExtendToLedgers: envInt('TTL_EXTEND_TO_LEDGERS', 518_400), // ~30 days
     minKeeperXlm: envFloat('MIN_KEEPER_XLM', 20),
+
+    // Active-active + liveness (L0-19). NOTE: pollOffsetMs defaults to 0 —
+    // the spec's "default POLL_INTERVAL_MS/2" reading would give BOTH
+    // instances the same offset and no stagger; set it explicitly (~2500)
+    // on the second instance only.
+    instanceId: process.env.KEEPER_INSTANCE_ID || 'keeper-1',
+    pollOffsetMs: envInt('KEEPER_POLL_OFFSET_MS', 0),
+    triggeredStuckAlertCycles: envInt('TRIGGERED_STUCK_ALERT_CYCLES', 3),
+    healthcheckUrl: process.env.HEALTHCHECK_URL || '',
 
     // Reliability (K-1). The default watchdog scales with the asset count:
     // a full oracle pass costs ~10-12s per asset (tx confirm + NAV sync +
@@ -193,6 +216,10 @@ export function loadConfig(): KeeperConfig {
     referenceTickerUrl:
       process.env.REFERENCE_TICKER_URL || 'https://api.binance.com/api/v3/ticker/price',
     referenceDivergencePct: envFloat('REFERENCE_DIVERGENCE_PCT', 5),
+
+    // L0-9 interim smoothing: two-strike liquidation confirm + spike alert.
+    triggerConfirmReads: Math.max(1, envInt('KEEPER_TRIGGER_CONFIRM_READS', 2)),
+    spikeAlertPct: envFloat('KEEPER_SPIKE_ALERT_PCT', 1.5),
 
     // Stork secondary oracle (T3-D1). Empty key = disabled = the keeper
     // runs Noeracle-only, exactly as before — fail-open by design.
@@ -219,8 +246,23 @@ export function loadConfig(): KeeperConfig {
   if (!config.marketContractId) {
     console.warn('⚠️  Warning: MARKET_CONTRACT_ID not set. Liquidations and orders will not work.');
   }
+  // Price publishing is this keeper's core duty and the market's only price
+  // source — fail fast instead of running a keeper that cannot publish.
   if (!config.noeracleContractId) {
-    console.warn('⚠️  Warning: NOERACLE_CONTRACT_ID not set. Price publishing will not work.');
+    throw new Error(
+      'Noeracle contract id not set. Set NEXT_PUBLIC_NOERACLE_ID (or contracts.json .contracts.noeracle) ' +
+        'to a post-S-1 Noeracle deployment — price publishing cannot work without it.',
+    );
+  }
+  // The pre-S-1 contract does not export update_batch_ed25519_persistent;
+  // every publish would fail on-chain. Refuse it at boot (L0-7 cutover trap).
+  const LEGACY_PRE_S1_NOERACLE = 'CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG';
+  if (config.noeracleContractId === LEGACY_PRE_S1_NOERACLE) {
+    throw new Error(
+      `Noeracle contract id ${LEGACY_PRE_S1_NOERACLE} is the LEGACY pre-S-1 deployment — it lacks the ` +
+        'hardened batch entrypoint this keeper publishes through. Point NEXT_PUBLIC_NOERACLE_ID at the ' +
+        'hardened Noeracle (see the L0-7 cutover runbook).',
+    );
   }
   if (config.storkApiKey) {
     console.log('🔐 Stork secondary oracle ENABLED (dual-source cross-validation active)');

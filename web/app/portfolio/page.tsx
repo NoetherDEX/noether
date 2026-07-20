@@ -16,7 +16,12 @@ import {
   getCrossMarginBalance,
   closePosition,
   closePositionCross,
+  closePositionPartial,
+  addCollateral,
+  removeCollateral,
 } from '@/lib/stellar/market';
+import { marketHasBatch1Features } from '@/lib/stellar/capabilities';
+import { ShortfallCard } from '@/components/portfolio/ShortfallCard';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { listTrades, toTrade } from '@/lib/api/trades';
 import { gatewayServesThisMarket } from '@/lib/api/gateway';
@@ -198,6 +203,20 @@ function PortfolioPage() {
   };
   const isRetrying = isLoadingPositions || isLoadingTrades;
 
+  // L0-6/L0-15 (Batch-1) capability probe — gates partial close + margin edit.
+  const [batch1Features, setBatch1Features] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    marketHasBatch1Features()
+      .then((ok) => {
+        if (!cancelled) setBatch1Features(ok);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // B12: the account page manages exposure — closing here uses the exact
   // toast.promise lifecycle /trade uses, then refreshes everything.
   const handleClosePosition = async (positionId: number): Promise<void> => {
@@ -228,6 +247,58 @@ function PortfolioPage() {
     });
 
     await closePromise.catch(() => {});
+  };
+
+  // L0-6 (Batch-1): partial close + margin management, /trade-style lifecycle.
+  const handleClosePartial = async (positionId: number, closeSize: bigint): Promise<void> => {
+    if (!publicKey) return;
+    const pos = positions.find((p) => p.id === positionId);
+    const label = pos ? `${pos.asset} ${pos.direction}` : `position #${positionId}`;
+    const pct = pos && pos.size > 0 ? `${Math.round((fromPrecision(closeSize) / pos.size) * 100)}%` : 'part';
+
+    const promise = closePositionPartial(publicKey, sign, positionId, closeSize, pos?.asset ?? 'BTC');
+    toast.promise(promise, {
+      loading: `Closing ${pct} of ${label}…`,
+      success: (pnl) => {
+        fetchPositions(false);
+        fetchTrades();
+        refreshBalances();
+        const pnlUsd = fromPrecision(pnl);
+        return `Closed ${pct} of ${label} — PnL ${pnlUsd >= 0 ? '+' : '−'}$${Math.abs(pnlUsd).toFixed(2)}`;
+      },
+      error: (err) => (err instanceof Error ? err.message : 'Failed to partially close position'),
+    });
+    await promise.catch(() => {});
+  };
+
+  const handleAddCollateral = async (positionId: number, amount: bigint): Promise<void> => {
+    if (!publicKey) return;
+    const promise = addCollateral(publicKey, sign, positionId, amount);
+    toast.promise(promise, {
+      loading: 'Adding margin…',
+      success: () => {
+        fetchPositions(false);
+        refreshBalances();
+        return `Margin added to position #${positionId}`;
+      },
+      error: (err) => (err instanceof Error ? err.message : 'Failed to add margin'),
+    });
+    await promise.catch(() => {});
+  };
+
+  const handleRemoveCollateral = async (positionId: number, amount: bigint): Promise<void> => {
+    if (!publicKey) return;
+    const promise = removeCollateral(publicKey, sign, positionId, amount);
+    toast.promise(promise, {
+      loading: 'Removing margin…',
+      success: () => {
+        fetchPositions(false);
+        refreshBalances();
+        return `Margin removed from position #${positionId}`;
+      },
+      error: (err) => (err instanceof Error ? err.message : 'Failed to remove margin'),
+    });
+    await promise.catch(() => {});
   };
 
   // A8: retryable degraded-data banner (failed loads, missing/stale prices)
@@ -276,6 +347,12 @@ function PortfolioPage() {
             pricesStale={staleAssets.length > 0}
           />
 
+          {/* L0-3 (Batch-1): claimable shortfall — renders only when the
+              vault actually owes this wallet. */}
+          {isConnected && publicKey && (
+            <ShortfallCard publicKey={publicKey} sign={sign} onClaimed={refreshBalances} />
+          )}
+
           {/* Row 1.5 — Open Positions with real management actions (B12):
               traders expect the account page to manage exposure, not
               context-switch to /trade for every close. */}
@@ -286,6 +363,10 @@ function PortfolioPage() {
                 positions={positions}
                 isLoading={isLoadingPositions}
                 onClosePosition={handleClosePosition}
+                onClosePartial={handleClosePartial}
+                onAddCollateral={handleAddCollateral}
+                onRemoveCollateral={handleRemoveCollateral}
+                batch1Features={batch1Features}
                 onRefresh={retry}
                 onStartTrading={() => router.push('/trade')}
               />

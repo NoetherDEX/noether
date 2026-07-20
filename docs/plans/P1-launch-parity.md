@@ -8,7 +8,7 @@
 
 | ID | Title | Effort | Lane | Ships in | Needs | Status |
 |----|-------|--------|------|----------|-------|--------|
-| L1-1 | Protective orders on cross-margin positions (lift #80 via cross-aware settlement) | M | mixed | batch-1-redeploy | — | todo |
+| L1-1 | Protective orders on cross-margin positions (lift #80 via cross-aware settlement) | M | mixed | batch-1-redeploy | — | in-progress — contracts+tests+web ungate done 2026-07-20 (commits 31ba586 + 9fb527a, conservation property test in; web gated on the Batch-1 capability probe); live verification at the Batch-1 deploy |
 | L1-2 | Atomic bracket placement (router open_with_price_and_tpsl — G-1) | M | mixed | batch-1-redeploy | L0-21, L1-1, L0-10 | todo |
 | L1-3 | Auto-net at open (minimum-viable position netting) | M | mixed | batch-1-redeploy | L0-6, L1-1 | in-progress — contracts+tests done 2026-07-18 (Wave 3, commit 264b240, #91; v1 no-partial-leg); web netting UX + indexer multi-event fixture pending sweep |
 | L1-4 | Cross-collateral operations via API/SDK | S | offchain | offchain-now | L0-21 | todo |
@@ -25,7 +25,7 @@
 | L1-15 | Open-access mode + MM tier path + key management surface | M | offchain | offchain-now | L1-27 | todo |
 | L1-16 | Docs corrections + stable API domain + changelog channel | S | mixed | operator-track | L1-14 | todo |
 | L1-17 | Points program v1 (indexer-driven, wash-resistant) | M | offchain | offchain-now | L1-19 | todo |
-| L1-18 | Referral economics activation — IN Redeploy Batch 1 (founder decision 2026-07-17) | M | mixed | batch-1-redeploy | L2-18 | todo |
+| L1-18 | Referral economics activation — IN Redeploy Batch 1 (founder decision 2026-07-17) | M | mixed | batch-1-redeploy | L2-18 | in-progress — contracts+offchain done 2026-07-20 (commits 5d7dc4c + 1e779d9: fee-path hook w/ pot-from-cut, funded claims, R-3/R-5/R-8 fixes, 6-field event both-generations plumbing, gated web claims); LEFT: sdk claim mirrors (rides L1-14 publish), docs page, deploy-day ops (initialize w/ usdc → set_referral → set_fee_split → smoke) |
 | L1-19 | Protocol-vault indexing → real LP APY + NOE history | M | offchain | offchain-now | — | todo |
 | L1-20 | Mainnet fee sheet + all-in cost story + GET /v1/fees | S | mixed | offchain-now | — | todo |
 | L1-21 | Keeper-fee disclosure now + maker≤taker restructure in Batch 1 | M | mixed | batch-1-redeploy | L2-18 | in-progress — contracts done 2026-07-18 (Wave 5, commit 39b8ebd; KeeperFeeConfig→config bps-only, maker+keeper≤taker). web/api/docs disclosure pending sweep |

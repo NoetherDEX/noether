@@ -7,9 +7,11 @@ import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore, useLeaderModeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
-import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo, setStopLoss, setTakeProfit } from '@/lib/stellar/market';
+import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo, setStopLoss, setTakeProfit, getAssetMaxLeverage } from '@/lib/stellar/market';
 import { leaderOpenPosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
+import { fetchTraderVolume14d } from '@/lib/api/volume';
+import { marketHasBatch1Features } from '@/lib/stellar/capabilities';
 import { VAULT_PRECISION } from '@/types/vault';
 import {
   formatUSD,
@@ -129,7 +131,23 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // router path is a later contract change).
   const [attachSl, setAttachSl] = useState<string>('');
   const [attachTp, setAttachTp] = useState<string>('');
-  const canAttachTpSl = orderType === 'Market' && marginMode === 'Isolated' && !isLeader;
+  // L1-1: the Batch-1 market settles cross triggers through the shared
+  // pool, so protective orders ungate once the capability probe passes.
+  const [batch1Features, setBatch1Features] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    marketHasBatch1Features()
+      .then((ok) => {
+        if (!cancelled) setBatch1Features(ok);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const canAttachTpSl =
+    orderType === 'Market' && !isLeader && (batch1Features || marginMode === 'Isolated');
 
   // Stop Limit states
   const [stopPrice, setStopPrice] = useState<string>('');
@@ -143,17 +161,53 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const [timeInForce, setTimeInForce] = useState<number>(0); // 0=GTC, 1=IOC, 2=PostOnly
   const [reduceOnly, setReduceOnly] = useState<boolean>(false);
 
-  // Fee tier info — existing 14d volume. null = UNKNOWN (the on-chain view
-  // was removed for WASM size, so the read currently always fails): tier UI
-  // is hidden and the fee is quoted at the base tier, labeled estimated
-  // (A18). Session trades accumulate a known lower bound.
+  // Fee tier info — existing 14d volume. Source order: on-chain
+  // get_trader_fee_info (removed for WASM size — null until the Batch-1
+  // restore) → indexer-backed gateway estimate (/v1/account/volume) →
+  // session accumulation. null = UNKNOWN: tier UI hidden, fee quoted at the
+  // base tier and labeled estimated (A18).
   const [existing14dVolume, setExisting14dVolume] = useState<number | null>(null);
 
-  // M-3 interim guard: trailing stops attached to cross positions execute via
-  // the isolated close path on-chain, corrupting the shared pool. Only offer
-  // isolated positions until the contract fix deploys.
-  const trailingEligiblePositions = positions.filter(p => p.marginMode !== 'Cross');
+  // Pre-Batch-1 markets execute attached orders via the isolated path
+  // (the M-3 pool-escape) — cross positions stay excluded until the
+  // capability probe confirms the L1-1 market. Post-probe: all positions.
+  const trailingEligiblePositions = batch1Features
+    ? positions
+    : positions.filter(p => p.marginMode !== 'Cross');
   const hasCrossPositions = positions.length > trailingEligiblePositions.length;
+  // L0-12 (Batch-1): per-asset leverage cap from the risk ladder — legacy
+  // global cap when the ladder is unset or the market predates it. Clamps
+  // the current selection on asset switch so a 25x BTC choice can't ride
+  // into a 5x-capped pair.
+  const [assetMaxLeverage, setAssetMaxLeverage] = useState<number>(TRADING.MAX_LEVERAGE);
+  useEffect(() => {
+    let cancelled = false;
+    getAssetMaxLeverage(asset)
+      .then((cap) => {
+        if (cancelled) return;
+        const effective = cap ?? TRADING.MAX_LEVERAGE;
+        setAssetMaxLeverage(effective);
+        if (leverage > effective) setLeverage(effective);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clamp only on asset switch
+  }, [asset]);
+
+  const opposingNotional = useMemo(() => {
+    if (!batch1Features || orderType !== 'Market') return 0;
+    const wantCross = marginMode === 'Cross';
+    return positions
+      .filter(
+        (p) =>
+          p.asset === asset &&
+          p.direction !== direction &&
+          (p.marginMode === 'Cross') === wantCross,
+      )
+      .reduce((sum, p) => sum + p.size, 0);
+  }, [batch1Features, orderType, positions, asset, direction, marginMode]);
 
   // UI states
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -186,12 +240,22 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   useEffect(() => {
     if (!publicKey) return;
     const load = async () => {
+      let volumeSeeded = false;
       try {
         const info = await getTraderFeeInfo(publicKey);
         if (info) {
           setExisting14dVolume(Number(info.volume14d) / 10_000_000);
+          volumeSeeded = true;
         }
       } catch {}
+      if (!volumeSeeded) {
+        // On-chain view removed for WASM size (null until the Batch-1
+        // restore) — seed from the indexer-backed gateway estimate so the
+        // tier preview isn't blind before the first session trade. null =
+        // keep session accumulation only.
+        const est = await fetchTraderVolume14d(publicKey);
+        if (est != null) setExisting14dVolume(est);
+      }
       try {
         const bal = await getCrossMarginBalance(publicKey);
         setCrossBalance(bal == null ? null : Number(bal) / 10_000_000);
@@ -311,8 +375,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const errors: string[] = [];
   if (orderType === 'TrailingStop') {
     if (!trailingPositionId) errors.push('Select a position');
-    if (positions.find(p => p.id === Number(trailingPositionId))?.marginMode === 'Cross')
-      errors.push('Unavailable for cross-margin positions (contract fix pending)');
+    if (!batch1Features && positions.find(p => p.id === Number(trailingPositionId))?.marginMode === 'Cross')
+      errors.push('Not yet available for cross-margin positions');
     if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
   } else {
     if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
@@ -419,9 +483,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (orderType === 'TrailingStop') {
       // Trailing stop - attach to existing position
       const posId = parseInt(trailingPositionId) || 0;
-      // M-3 interim guard — cross positions must never reach place_trailing_stop.
-      if (positions.find(p => p.id === posId)?.marginMode === 'Cross') {
-        toast.error('Unavailable for cross-margin positions (contract fix pending)');
+      // Pre-Batch-1 guard — cross positions must never reach the isolated
+      // execution path on the old market (M-3 pool escape).
+      if (!batch1Features && positions.find(p => p.id === posId)?.marginMode === 'Cross') {
+        toast.error('Not yet available for cross-margin positions');
         setIsSubmitting(false);
         return;
       }
@@ -989,7 +1054,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             <input
               type="range"
               min={1}
-              max={10}
+              max={assetMaxLeverage}
               step={1}
               value={leverage}
               onChange={(e) => setLeverage(parseInt(e.target.value))}
@@ -999,23 +1064,32 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             />
           </div>
 
-          {/* Quick leverage buttons */}
+          {/* Quick leverage buttons — capped by the per-asset ladder (L0-12) */}
           <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
-            {[1, 2, 5, 8, 10].map((lev) => (
-              <button
-                key={lev}
-                onClick={() => setLeverage(lev)}
-                className={cn(
-                  'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
-                  leverage === lev
-                    ? 'bg-surface-3 text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                {lev}x
-              </button>
-            ))}
+            {Array.from(
+              new Set([1, 2, 5, 8, 10].filter((lev) => lev <= assetMaxLeverage).concat(assetMaxLeverage)),
+            )
+              .sort((a, b) => a - b)
+              .map((lev) => (
+                <button
+                  key={lev}
+                  onClick={() => setLeverage(lev)}
+                  className={cn(
+                    'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
+                    leverage === lev
+                      ? 'bg-surface-3 text-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {lev}x
+                </button>
+              ))}
           </div>
+          {assetMaxLeverage !== TRADING.MAX_LEVERAGE && (
+            <p className="text-[11px] text-faint">
+              Max {assetMaxLeverage}x for {asset} — per-asset risk limit.
+            </p>
+          )}
         </div>}
 
         {/* Limit Order Settings (only show when Limit is selected) */}
@@ -1072,130 +1146,6 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
                 <span className="text-[11px] text-faint">this price</span>
               </div>
             </div>
-
-            {/* Slippage Tolerance */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                  Slippage Tolerance
-                  <Tooltip content="Maximum difference between trigger and execution price before the order cancels itself.">
-                    <Info className="h-3 w-3 opacity-50" />
-                  </Tooltip>
-                </label>
-                <span className="text-xs font-mono text-foreground">
-                  {(slippageTolerance / 100).toFixed(2)}%
-                </span>
-              </div>
-              <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
-                {/* Preset buttons */}
-                {[50, 100, 200].map((bps) => (
-                  <button
-                    key={bps}
-                    onClick={() => {
-                      setSlippageTolerance(bps);
-                      setCustomSlippage('');
-                    }}
-                    className={cn(
-                      'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
-                      slippageTolerance === bps && customSlippage === ''
-                        ? 'bg-surface-3 text-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    {(bps / 100).toFixed(1)}%
-                  </button>
-                ))}
-                {/* Custom input */}
-                <div className="relative">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={customSlippage}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/[^0-9.]/g, '');
-                      setCustomSlippage(val);
-                      const parsed = parseFloat(val);
-                      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
-                        setSlippageTolerance(Math.round(parsed * 100)); // Convert % to bps
-                      }
-                    }}
-                    placeholder="Custom"
-                    aria-label="Custom slippage tolerance in percent"
-                    className={cn(
-                      'w-full h-full rounded-[4px] bg-transparent px-2 py-1.5 text-xs font-mono text-center placeholder:text-faint focus:outline-none transition-colors pr-4',
-                      customSlippage !== ''
-                        ? 'bg-surface-3 text-foreground'
-                        : 'text-muted-foreground'
-                    )}
-                  />
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
-                </div>
-              </div>
-              <p className="text-[11px] text-faint">
-                Order cancelled if execution price differs by more than this
-              </p>
-            </div>
-
-            {/* Time-in-Force */}
-            <div className="space-y-2">
-              <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                Time-in-Force
-                <Tooltip content="How long the order stays working before it fills or cancels.">
-                  <Info className="h-3 w-3 opacity-50" />
-                </Tooltip>
-              </label>
-              <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
-                {([
-                  { value: 0, label: 'GTC' },
-                  { value: 1, label: 'IOC' },
-                  { value: 2, label: 'Post Only' },
-                ] as const).map((tif) => (
-                  <button
-                    key={tif.value}
-                    onClick={() => setTimeInForce(tif.value)}
-                    className={cn(
-                      'rounded-[4px] py-1.5 text-xs font-medium transition-colors',
-                      timeInForce === tif.value
-                        ? 'bg-surface-3 text-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    {tif.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-faint">
-                {timeInForce === 0
-                  ? 'Good Till Cancel — order stays open until filled or cancelled'
-                  : timeInForce === 1
-                  ? 'Immediate Or Cancel — fills now or cancels instantly'
-                  : 'Post Only — rejected if it would fill immediately (maker only)'}
-              </p>
-            </div>
-
-            {/* Reduce Only — the tooltip trigger sits OUTSIDE the label so
-                hovering/focusing it never toggles the checkbox. */}
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={reduceOnly}
-                  onChange={(e) => setReduceOnly(e.target.checked)}
-                  className="w-3.5 h-3.5 rounded-sm border-border-strong bg-surface-2 text-primary focus:ring-primary focus:ring-offset-0"
-                />
-                <span className="text-xs text-muted-foreground">
-                  Reduce Only
-                </span>
-              </label>
-              <Tooltip content="Executes only if it reduces an existing position — it can never open or grow one.">
-                <Info className="h-3 w-3 opacity-50 text-muted-foreground" />
-              </Tooltip>
-            </div>
-            {reduceOnly && (
-              <p className="text-[11px] text-faint -mt-1 ml-5">
-                Order will only execute if it reduces an existing position
-              </p>
-            )}
           </div>
         )}
 
@@ -1290,7 +1240,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               )}
               {hasCrossPositions && (
                 <p className="text-[11px] text-faint">
-                  Unavailable for cross-margin positions (contract fix pending)
+                  Not yet available for cross-margin positions
                 </p>
               )}
             </div>
@@ -1324,6 +1274,150 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             <p className="text-[11px] text-faint">
               Stop follows peak price. Triggers when price drops {trailingPercent || '?'}% from peak.
             </p>
+          </div>
+        )}
+
+        {/* Execution settings — shared by every non-market order type (moved
+            out of the Limit-only block so Stop-Limit stops silently sending
+            GTC/no-RO and Trail Stop stops silently defaulting slippage).
+            TIF + Reduce-Only encode into the contract's u32 (bits 0-7 TIF,
+            bit 8 RO) and apply to Limit orders and the Stop-Limit's limit
+            phase; trailing stops take only the slippage band. Market orders
+            get the acceptable-price treatment in the Batch-1 L0-10 work. */}
+        {orderType !== 'Market' && (
+          <div className="space-y-3 border-t border-border pt-4">
+            {/* Slippage Tolerance */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  Slippage Tolerance
+                  <Tooltip content="Maximum difference between trigger and execution price before the order cancels itself.">
+                    <Info className="h-3 w-3 opacity-50" />
+                  </Tooltip>
+                </label>
+                <span className="text-xs font-mono text-foreground">
+                  {(slippageTolerance / 100).toFixed(2)}%
+                </span>
+              </div>
+              <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
+                {/* Preset buttons */}
+                {[50, 100, 200].map((bps) => (
+                  <button
+                    key={bps}
+                    onClick={() => {
+                      setSlippageTolerance(bps);
+                      setCustomSlippage('');
+                    }}
+                    className={cn(
+                      'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
+                      slippageTolerance === bps && customSlippage === ''
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {(bps / 100).toFixed(1)}%
+                  </button>
+                ))}
+                {/* Custom input */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customSlippage}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9.]/g, '');
+                      setCustomSlippage(val);
+                      const parsed = parseFloat(val);
+                      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
+                        setSlippageTolerance(Math.round(parsed * 100)); // Convert % to bps
+                      }
+                    }}
+                    placeholder="Custom"
+                    aria-label="Custom slippage tolerance in percent"
+                    className={cn(
+                      'w-full h-full rounded-[4px] bg-transparent px-2 py-1.5 text-xs font-mono text-center placeholder:text-faint focus:outline-none transition-colors pr-4',
+                      customSlippage !== ''
+                        ? 'bg-surface-3 text-foreground'
+                        : 'text-muted-foreground'
+                    )}
+                  />
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-faint">
+                Order cancelled if execution price differs by more than this
+              </p>
+            </div>
+
+            {(orderType === 'Limit' || orderType === 'StopLimit') && (
+              <>
+                {/* Time-in-Force */}
+                <div className="space-y-2">
+                  <label className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    Time-in-Force
+                    <Tooltip content="How long the order stays working before it fills or cancels.">
+                      <Info className="h-3 w-3 opacity-50" />
+                    </Tooltip>
+                  </label>
+                  <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
+                    {([
+                      { value: 0, label: 'GTC' },
+                      { value: 1, label: 'IOC' },
+                      { value: 2, label: 'Post Only' },
+                    ] as const).map((tif) => (
+                      <button
+                        key={tif.value}
+                        onClick={() => setTimeInForce(tif.value)}
+                        className={cn(
+                          'rounded-[4px] py-1.5 text-xs font-medium transition-colors',
+                          timeInForce === tif.value
+                            ? 'bg-surface-3 text-foreground'
+                            : 'text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {tif.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-faint">
+                    {timeInForce === 0
+                      ? 'Good Till Cancel — order stays open until filled or cancelled'
+                      : timeInForce === 1
+                      ? 'Immediate Or Cancel — fills now or cancels instantly'
+                      : 'Post Only — rejected if it would fill immediately (maker only)'}
+                  </p>
+                  {orderType === 'StopLimit' && (
+                    <p className="text-[11px] text-faint">
+                      Applies to the limit phase after the stop triggers.
+                    </p>
+                  )}
+                </div>
+
+                {/* Reduce Only — the tooltip trigger sits OUTSIDE the label so
+                    hovering/focusing it never toggles the checkbox. */}
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={reduceOnly}
+                      onChange={(e) => setReduceOnly(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded-sm border-border-strong bg-surface-2 text-primary focus:ring-primary focus:ring-offset-0"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Reduce Only
+                    </span>
+                  </label>
+                  <Tooltip content="Executes only if it reduces an existing position — it can never open or grow one.">
+                    <Info className="h-3 w-3 opacity-50 text-muted-foreground" />
+                  </Tooltip>
+                </div>
+                {reduceOnly && (
+                  <p className="text-[11px] text-faint -mt-1 ml-5">
+                    Order will only execute if it reduces an existing position
+                  </p>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -1401,6 +1495,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               Attached as separate signatures right after the position opens
               (1 of 2: open · 2 of 2: TP/SL).
             </p>
+          </div>
+        )}
+
+        {/* L1-3 auto-net notice (Batch-1): an opposite market open nets at
+            the execution price before any new exposure is created. */}
+        {opposingNotional > 0 && positionSize > 0 && (
+          <div className="rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-[11px] text-primary">
+            {positionSize <= opposingNotional ? (
+              <>
+                This order is not larger than your opposite {asset} exposure ($
+                {formatNumber(opposingNotional)}) and would net to zero — the market rejects it
+                (#91). Use Close or a partial close to reduce instead.
+              </>
+            ) : (
+              <>
+                Nets against your opposite {asset} exposure first: ~$
+                {formatNumber(opposingNotional)} closes at the execution price with no fee; only
+                the ${formatNumber(positionSize - opposingNotional)} remainder opens as a new
+                position (fee on the remainder only).
+              </>
+            )}
           </div>
         )}
 

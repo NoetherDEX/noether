@@ -41,7 +41,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, V
 use noether_common::{
     NoetherError, Position, Direction, MarketConfig, AssetRiskParams,
     Order, OrderType, OrderStatus, TriggerCondition, FEE_PRECISION,
-    VolumeRecord, BASIS_POINTS, PRECISION,
+    TraderFeeInfo, VolumeRecord, BASIS_POINTS, PRECISION,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
     calculate_trading_fee, calculate_cumulative_funding, funding_velocity,
     should_liquidate,
@@ -245,6 +245,16 @@ impl MarketContract {
         Ok(())
     }
 
+    /// L1-18: wire the referral registry. Every fee-bearing open then
+    /// try-invokes referral.record_trade for the discount/payout split;
+    /// unset (or a broken registry) is a silent no-op — fail-open, trading
+    /// never blocks on referrals.
+    pub fn set_referral(env: Env, referral: Address) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        set_referral_addr(&env, &referral);
+        Ok(())
+    }
+
     /// Swap the running WASM in place; all storage (positions, orders,
     /// cross balances) is preserved across the upgrade.
     ///
@@ -284,6 +294,7 @@ impl MarketContract {
             || config.lenient_clamp_bps >= BASIS_POINTS           // L1-26
             || config.keeper_fee_deci_bps > 15                    // L1-21: maker+keeper ≤ taker
             || config.keeper_fee_base > 500_000                   // L1-21: ≤ 0.05 USDC dust
+            || config.twap_records > 32                           // L0-9: upstream RING_CAP
         {
             return Err(NoetherError::InvalidParameter);
         }
@@ -423,7 +434,7 @@ impl MarketContract {
             let id = legs.get(i).unwrap();
             if let Some(p) = get_position(env, id) {
                 if cross {
-                    Self::settle_cross_close(env, &p, entry_price);
+                    Self::settle_cross_close(env, &p, entry_price, 0, None, None);
                 } else {
                     Self::settle_isolated_close(env, &p, entry_price, 0, None, None)?;
                 }
@@ -545,6 +556,10 @@ impl MarketContract {
         // Taker fee + volume — on the remainder only (closes charge no trading
         // fee, so this matches a manual close-then-open on the net new size).
         let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
+        // L1-18: the referral discount comes off the fee BEFORE net
+        // collateral; the referrer payout rides to finalize_open (paid
+        // from the protocol cut, never the LP share).
+        let (fee, referrer_payout) = Self::apply_referral(&env, &trader, fee, size);
         let net_collateral = collateral - fee;
         if net_collateral <= 0 {
             return Err(NoetherError::InsufficientCollateral);
@@ -585,7 +600,7 @@ impl MarketContract {
             margin_mode: if cross { 1 } else { 0 },
         };
 
-        Self::finalize_open(&env, &position, fee);
+        Self::finalize_open(&env, &position, fee, referrer_payout);
         extend_instance_ttl(&env);
 
         Ok(position)
@@ -954,6 +969,19 @@ impl MarketContract {
             if let Some(last) = get_partial_liq_ts(&env, position_id) {
                 if now.saturating_sub(last) < config.partial_liq_cooldown_secs {
                     return Err(NoetherError::LiquidationCooldown);
+                }
+            }
+        }
+
+        // ── L0-9 smoothed confirmation ──
+        // Trigger on smoothed, settle on fresh: a NON-BANKRUPT liquidation
+        // must also breach on the 1-3min TWAP mark, so a single wick can't
+        // seize margin. Every smoothed-read failure degrades to today's
+        // spot-only behavior — smoothing never blocks a bankrupt close.
+        if !bankrupt {
+            if let Some(smoothed) = Self::get_smoothed_price(&env, &position.asset) {
+                if !Self::should_liquidate_with_funding(&env, &position, smoothed) {
+                    return Err(NoetherError::LiquidationNotConfirmed);
                 }
             }
         }
@@ -1405,7 +1433,68 @@ impl MarketContract {
     // set_fee_tiers_config, get_fee_tiers_config removed for WASM size
     // Fee tiers are set at initialization. Redeploy to change.
 
-    // get_trader_fee_info removed for WASM size - frontend computes from on-chain volume data
+    /// L1-18: rolling 14-day traded volume for a trader — the referral
+    /// registry's create_code gate cross-reads this (min_code_volume).
+    /// Read-only local window rotation, nothing persisted.
+    pub fn get_trader_volume(env: Env, trader: Address) -> i128 {
+        let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+        match get_trader_volume(&env, &trader) {
+            Some(mut record) => {
+                trading::rotate_volume_window(&env, &mut record, current_day);
+                trading::sum_rolling_volume(&record)
+            }
+            None => 0,
+        }
+    }
+
+    /// Trader's live fee-tier standing (C2 restore — the 128 KB WASM limit
+    /// gives the view room again; the OrderPanel fee preview reads it
+    /// directly instead of estimating from the gateway). Read-only: the
+    /// rolling window rotates on a LOCAL copy, nothing is persisted.
+    pub fn get_trader_fee_info(env: Env, trader: Address) -> TraderFeeInfo {
+        let tiers = get_fee_tiers(&env);
+        let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+        let volume_14d = match get_trader_volume(&env, &trader) {
+            Some(mut record) => {
+                trading::rotate_volume_window(&env, &mut record, current_day);
+                trading::sum_rolling_volume(&record)
+            }
+            None => 0,
+        };
+
+        if tiers.is_empty() {
+            // Legacy flat-fee deployment (no tiers configured): report the
+            // flat rate for both sides, bps → deci-bps.
+            let config = get_config(&env);
+            return TraderFeeInfo {
+                volume_14d,
+                tier: 0,
+                maker_fee_bps: config.trading_fee_bps * 10,
+                taker_fee_bps: config.trading_fee_bps * 10,
+                next_tier_volume: 0,
+            };
+        }
+
+        let mut tier_idx: u32 = 0;
+        let mut current = tiers.get(0).unwrap();
+        let mut next_tier_volume: i128 = 0;
+        for (i, tier) in tiers.iter().enumerate() {
+            if volume_14d >= tier.min_volume {
+                tier_idx = i as u32;
+                current = tier;
+            } else if next_tier_volume == 0 {
+                next_tier_volume = tier.min_volume - volume_14d;
+            }
+        }
+
+        TraderFeeInfo {
+            volume_14d,
+            tier: tier_idx,
+            maker_fee_bps: current.maker_fee_bps,
+            taker_fee_bps: current.taker_fee_bps,
+            next_tier_volume,
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // Cross-Margin Functions
@@ -1543,7 +1632,7 @@ impl MarketContract {
         // Get current price and settle through the shared close core (L0-5).
         let current_price = Self::get_oracle_price(&env, &pos.asset, false)?;
         Self::check_close_bound(pos.direction, current_price, acceptable_price)?;
-        let pnl = Self::settle_cross_close(&env, &pos, current_price);
+        let pnl = Self::settle_cross_close(&env, &pos, current_price, 0, None, None);
 
         // Record volume (trader-initiated closes only — ADL doesn't count)
         record_volume_only(&env, &trader, pos.size);
@@ -1552,16 +1641,27 @@ impl MarketContract {
         Ok(pnl)
     }
 
-    /// Shared cross-close settlement core (L0-1/L0-5): used by
-    /// close_position_cross (behind its auth/pause gates) and adl_close.
+    /// Shared cross-close settlement core (L0-1/L0-5/L1-1): used by
+    /// close_position_cross (behind its auth/pause gates), adl_close, the
+    /// L1-3 netting path, and cross trigger executions (SL/TP/trailing).
     /// Outflow cap = the account's own funds (L0-2); deficit legs debit the
-    /// shared pool down to zero; emits position_closed. Returns pnl.
-    fn settle_cross_close(env: &Env, pos: &Position, current_price: i128) -> i128 {
+    /// shared pool down to zero; the keeper fee (trigger executions only)
+    /// is paid FROM THIS CLOSE'S POOL PROCEEDS, capped so it can never
+    /// draw other accounts' custody funds; emits position_closed
+    /// (unchanged 8-tuple). Returns pnl.
+    fn settle_cross_close(
+        env: &Env,
+        pos: &Position,
+        current_price: i128,
+        keeper_fee: i128,
+        keeper: Option<&Address>,
+        skip_order: Option<u64>,
+    ) -> i128 {
         let trader = pos.trader.clone();
         let account_funds = get_cross_margin_balance(env, &trader)
             .checked_add(pos.collateral).unwrap_or(pos.collateral);
         let (pnl, pool_delta, loss_wanted, loss_transferred) =
-            Self::close_cross_leg(env, pos, current_price, account_funds);
+            Self::close_cross_leg(env, pos, current_price, account_funds, skip_order);
         if loss_wanted > loss_transferred {
             let vault_address = get_vault(env);
             Self::record_bad_debt(
@@ -1570,10 +1670,30 @@ impl MarketContract {
             );
         }
 
+        // L1-1: keeper fee comes out of the positive proceeds of THIS close
+        // only — a broke close pays no fee (execution still lands).
+        let mut credited = pool_delta;
+        if let Some(keeper_addr) = keeper {
+            if keeper_fee > 0 && pool_delta > 0 {
+                let usdc_token = get_usdc_token(env);
+                let token_client = token::Client::new(env, &usdc_token);
+                let market_addr = env.current_contract_address();
+                let bal = token_client.balance(&market_addr);
+                let mut fee_paid = if keeper_fee > pool_delta { pool_delta } else { keeper_fee };
+                if fee_paid > bal {
+                    fee_paid = if bal > 0 { bal } else { 0 };
+                }
+                if fee_paid > 0 {
+                    token_client.transfer(&market_addr, keeper_addr, &fee_paid);
+                    credited = pool_delta - fee_paid;
+                }
+            }
+        }
+
         // Return remaining equity to the cross pool (NOT trader wallet).
-        if pool_delta != 0 {
+        if credited != 0 {
             let current_balance = get_cross_margin_balance(env, &trader);
-            let mut new_balance = current_balance.checked_add(pool_delta).unwrap_or(current_balance);
+            let mut new_balance = current_balance.checked_add(credited).unwrap_or(current_balance);
             if new_balance < 0 {
                 new_balance = 0;
             }
@@ -1605,6 +1725,7 @@ impl MarketContract {
         pos: &Position,
         current_price: i128,
         max_outflow: i128,
+        skip_order: Option<u64>,
     ) -> (i128, i128, i128, i128) {
         let trader = pos.trader.clone();
         let cumulative = Self::cum_funding(env, &pos.asset);
@@ -1651,7 +1772,7 @@ impl MarketContract {
             .checked_sub(funding).unwrap_or(0);
 
         Self::adjust_oi(env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
-        Self::cancel_position_orders(env, pos.id, None);
+        Self::cancel_position_orders(env, pos.id, skip_order);
         remove_cross_margin_position(env, &trader, pos.id);
         delete_position(env, pos.id, &trader);
 
@@ -1684,6 +1805,22 @@ impl MarketContract {
             &env, &trader, config.maintenance_margin_bps, &get_price,
         ) {
             return Err(NoetherError::CrossMarginNotLiquidatable);
+        }
+
+        // ── L0-9 smoothed confirmation (account level) ──
+        // A non-bankrupt account (spot equity > 0) must ALSO breach on the
+        // smoothed mark, per-asset spot fallback. Bankrupt accounts never
+        // wait — delay only grows bad debt.
+        let spot_equity = position::calculate_cross_equity(&env, &trader, &get_price);
+        if spot_equity > 0 {
+            let smoothed_price = |asset: &Symbol| -> i128 {
+                Self::get_smoothed_price(&env, asset).unwrap_or_else(|| get_price(asset))
+            };
+            if !position::is_cross_account_liquidatable(
+                &env, &trader, config.maintenance_margin_bps, &smoothed_price,
+            ) {
+                return Err(NoetherError::LiquidationNotConfirmed);
+            }
         }
 
         let position_ids = get_cross_margin_position_ids(&env, &trader);
@@ -1783,7 +1920,7 @@ impl MarketContract {
             remaining_account_funds = remaining_account_funds
                 .checked_add(pos.collateral).unwrap_or(remaining_account_funds);
             let (pnl, pool_delta, loss_wanted, loss_transferred) =
-                Self::close_cross_leg(&env, &pos, current_price, remaining_account_funds);
+                Self::close_cross_leg(&env, &pos, current_price, remaining_account_funds, None);
             remaining_account_funds -= loss_transferred;
             if loss_wanted > loss_transferred {
                 total_bad_debt += loss_wanted - loss_transferred;
@@ -2037,7 +2174,7 @@ impl MarketContract {
         };
 
         let realized = if pos.margin_mode == 1 {
-            Self::settle_cross_close(&env, &pos, price)
+            Self::settle_cross_close(&env, &pos, price, 0, None, None)
         } else {
             Self::settle_isolated_close(&env, &pos, price, 0, None, None)?
         };
@@ -2298,11 +2435,8 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
-        // Cross-margin positions must close via the cross path; an attached
-        // order would pay out of the shared pool through the isolated path.
-        if position.margin_mode == 1 {
-            return Err(NoetherError::CrossMarginOrderNotSupported);
-        }
+        // L1-1: cross positions accepted — triggers settle through
+        // settle_cross_close (proceeds to the shared pool, never the wallet).
 
         // Check if SL already exists
         if get_position_stop_loss(&env, position_id).is_some() {
@@ -2407,10 +2541,7 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
-        // Cross-margin positions must close via the cross path
-        if position.margin_mode == 1 {
-            return Err(NoetherError::CrossMarginOrderNotSupported);
-        }
+        // L1-1: cross positions accepted — settles via settle_cross_close.
 
         // Check if TP already exists
         if get_position_take_profit(&env, position_id).is_some() {
@@ -2614,10 +2745,25 @@ impl MarketContract {
 
         let ref_price = Self::order_ref_price(&env, &order);
 
+        // L0-9: wick-resistant triggers — pure protective closes (SL,
+        // trailing, TP-market) evaluate on the SMOOTHED mark (spot fallback
+        // when the ring can't answer); settlement and the slippage
+        // reference below stay the FRESH spot. Entries and take-limit keep
+        // spot evaluation — they ride the strict path + explicit bands.
+        let smoothed_eval = matches!(
+            order.order_type,
+            OrderType::StopLoss | OrderType::TrailingStop
+        ) || (order.order_type == OrderType::TakeProfit && order.limit_price == 0);
+        let eval_price = if smoothed_eval {
+            Self::get_smoothed_price(&env, &order.asset).unwrap_or(current_price)
+        } else {
+            current_price
+        };
+
         // Check if trigger condition is met
         let triggered = match order.trigger_condition {
-            TriggerCondition::Above => current_price >= ref_price,
-            TriggerCondition::Below => current_price <= ref_price,
+            TriggerCondition::Above => eval_price >= ref_price,
+            TriggerCondition::Below => eval_price <= ref_price,
         };
 
         if !triggered {
@@ -2898,10 +3044,7 @@ impl MarketContract {
             return Err(NoetherError::NotPositionOwner);
         }
 
-        // Cross-margin positions must close via the cross path
-        if position.margin_mode == 1 {
-            return Err(NoetherError::CrossMarginOrderNotSupported);
-        }
+        // L1-1: cross positions accepted — settles via settle_cross_close.
 
         // One trailing stop per position
         if get_position_trailing_stop(&env, position_id).is_some() {
@@ -3079,7 +3222,7 @@ impl MarketContract {
     /// Shared open finalisation: persist the position (indexing it under
     /// the cross account when applicable), update OI/exposure aggregates,
     /// move the trading fee to the vault and emit position_opened.
-    fn finalize_open(env: &Env, position: &Position, fee: i128) {
+    fn finalize_open(env: &Env, position: &Position, fee: i128, referrer_payout: i128) {
         save_position(env, position);
         if position.margin_mode == 1 {
             add_cross_margin_position(env, &position.trader, position.id);
@@ -3105,8 +3248,27 @@ impl MarketContract {
             let mut cut = fee * (get_protocol_fee_bps(env) as i128) / (BASIS_POINTS as i128);
             match get_treasury(env) {
                 Some(t) if cut > 0 => {
-                    client.transfer(&env.current_contract_address(), &vault, &cut);
-                    Self::route_protocol_fee_to_vault(env, &vault, cut, &t);
+                    // L1-18: the referrer's share is carved FROM THE CUT —
+                    // min(payout, cut) — so the LP share (fee − cut) is
+                    // structurally never reduced by referral economics. The
+                    // pot funds the referral contract's claim pool push-style.
+                    let mut pot = if referrer_payout < cut { referrer_payout } else { cut };
+                    if pot < 0 {
+                        pot = 0;
+                    }
+                    if pot > 0 {
+                        match get_referral(env) {
+                            Some(referral) => {
+                                client.transfer(&env.current_contract_address(), &referral, &pot);
+                            }
+                            None => pot = 0,
+                        }
+                    }
+                    let rest = cut - pot;
+                    if rest > 0 {
+                        client.transfer(&env.current_contract_address(), &vault, &rest);
+                        Self::route_protocol_fee_to_vault(env, &vault, rest, &t);
+                    }
                 }
                 _ => cut = 0,
             }
@@ -3127,6 +3289,60 @@ impl MarketContract {
                 position.entry_price,
             ),
         );
+    }
+
+    /// L0-9: the smoothed (TWAP) mark from the shim's ring view — used for
+    /// liquidation/trigger ELIGIBILITY only, never settlement. NEVER traps:
+    /// a pre-upgrade shim, empty ring, unknown pair, stale ring or the
+    /// twap_records=0 kill switch all degrade to None (spot-only).
+    fn get_smoothed_price(env: &Env, asset: &Symbol) -> Option<i128> {
+        let config = get_config(env);
+        if config.twap_records == 0 {
+            return None;
+        }
+        let shim = get_oracle_adapter(env);
+        let args: Vec<soroban_sdk::Val> = (asset.clone(), config.twap_records).into_val(env);
+        match env.try_invoke_contract::<Option<(i128, u64)>, soroban_sdk::Error>(
+            &shim,
+            &Symbol::new(env, "twap"),
+            args,
+        ) {
+            Ok(Ok(Some((price, newest_ts)))) if price > 0 => {
+                if env.ledger().timestamp().saturating_sub(newest_ts) > config.twap_max_age_secs {
+                    None
+                } else {
+                    Some(price)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// L1-18: referral hook — try-invoke record_trade(trader, gross_fee,
+    /// size) on the wired registry. Returns (net_fee, referrer_payout).
+    /// Fail-open to (gross_fee, 0): an unset, broken, revoked or paused
+    /// registry must never block trading; the discount can never exceed
+    /// the fee.
+    fn apply_referral(env: &Env, trader: &Address, gross_fee: i128, size: i128) -> (i128, i128) {
+        if gross_fee <= 0 {
+            return (gross_fee, 0);
+        }
+        let referral = match get_referral(env) {
+            Some(addr) => addr,
+            None => return (gross_fee, 0),
+        };
+        let args: Vec<soroban_sdk::Val> = (trader.clone(), gross_fee, size).into_val(env);
+        match env.try_invoke_contract::<(i128, i128), soroban_sdk::Error>(
+            &referral,
+            &Symbol::new(env, "record_trade"),
+            args,
+        ) {
+            Ok(Ok((discount, payout))) if discount >= 0 && payout >= 0 => {
+                let clamped = if discount > gross_fee { gross_fee } else { discount };
+                (gross_fee - clamped, payout)
+            }
+            _ => (gross_fee, 0),
+        }
     }
 
     /// Shared isolated-close settlement used by close_position and keeper
@@ -3520,9 +3736,13 @@ impl MarketContract {
             let mut target: Option<Position> = None;
             for pid in get_trader_position_ids(env, &order.trader).iter() {
                 if let Some(pos) = get_position(env, pid) {
+                    // L1-1: cross targets accepted ONLY when the order fully
+                    // covers them — cross partial settlement does not exist
+                    // (L0-6 scope), so selection guarantees the full-close
+                    // branch below by construction.
                     if pos.asset == order.asset
                         && pos.direction != order.direction
-                        && pos.margin_mode == 0
+                        && (pos.margin_mode == 0 || intended_size >= pos.size)
                         && target.as_ref().is_none_or(|t| pos.size > t.size)
                     {
                         target = Some(pos);
@@ -3541,11 +3761,20 @@ impl MarketContract {
                     let reduce_size = if intended_size < pos.size { intended_size } else { pos.size };
                     let config = get_config(env);
                     let collateral_closed = pos.collateral * reduce_size / pos.size;
-                    // Full reduce, or a residual that would breach the dust
-                    // floor → close the whole position (never trap the keeper).
-                    if reduce_size >= pos.size
+                    if pos.margin_mode == 1 {
+                        // L1-1: always a full close here (selection guarantees
+                        // intended_size >= pos.size for cross targets);
+                        // proceeds credit the shared pool, keeper fee from
+                        // this close's proceeds.
+                        Self::settle_cross_close(
+                            env, &pos, current_price, keeper_fee, Some(keeper), Some(order.id),
+                        );
+                        record_volume_only(env, &pos.trader, pos.size);
+                    } else if reduce_size >= pos.size
                         || pos.collateral - collateral_closed < config.min_collateral
                     {
+                        // Full reduce, or a residual that would breach the dust
+                        // floor → close the whole position (never trap the keeper).
                         Self::settle_isolated_close(
                             env, &pos, current_price, keeper_fee, Some(keeper), Some(order.id),
                         )?;
@@ -3607,6 +3836,9 @@ impl MarketContract {
 
         // Calculate maker fee and record volume (limit orders = maker)
         let trading_fee = calculate_fee_and_record_volume(env, &order.trader, size, true, &config);
+        // L1-18: referral discount on the maker path too.
+        let (trading_fee, referrer_payout) =
+            Self::apply_referral(env, &order.trader, trading_fee, size);
 
         // Total fees = trading fee + keeper fee
         let total_fees = trading_fee + keeper_fee;
@@ -3635,7 +3867,7 @@ impl MarketContract {
             margin_mode: 0, // Isolated
         };
 
-        Self::finalize_open(env, &position, trading_fee);
+        Self::finalize_open(env, &position, trading_fee, referrer_payout);
 
         // L0-20: stamp the created position onto the executed order row so a
         // vault_factory leader's executed limit/stop-limit order can be
@@ -3669,9 +3901,20 @@ impl MarketContract {
         let position = get_position(env, order.position_id)
             .ok_or(NoetherError::PositionNotFound)?;
 
-        Self::settle_isolated_close(
-            env, &position, current_price, keeper_fee, Some(keeper), Some(order.id),
-        )?;
+        if position.margin_mode == 1 {
+            // L1-1: cross triggers settle through the shared pool core —
+            // proceeds credit CrossMarginBalance (never the wallet), keeper
+            // fee paid from this close's proceeds. Trader-initiated → counts
+            // toward fee-tier volume (ADL path deliberately does not).
+            Self::settle_cross_close(
+                env, &position, current_price, keeper_fee, Some(keeper), Some(order.id),
+            );
+            record_volume_only(env, &position.trader, position.size);
+        } else {
+            Self::settle_isolated_close(
+                env, &position, current_price, keeper_fee, Some(keeper), Some(order.id),
+            )?;
+        }
 
         Ok(keeper_fee)
     }
@@ -3810,6 +4053,7 @@ mod tests {
         #[contracttype]
         pub enum DataKey {
             Price(Symbol),
+            Twap(Symbol),
         }
 
         #[contract]
@@ -3826,6 +4070,18 @@ mod tests {
 
             pub fn lastprice(env: Env, asset: Symbol) -> (i128, u64) {
                 env.storage().persistent().get(&DataKey::Price(asset)).unwrap()
+            }
+
+            /// L0-9 fixture: a settable smoothed mark, shim-shaped. Unset
+            /// asset → None, which is exactly the pre-ring degradation the
+            /// rest of the suite relies on (spot-only fallback).
+            pub fn set_twap(env: Env, asset: Symbol, price: i128) {
+                let ts = env.ledger().timestamp();
+                env.storage().persistent().set(&DataKey::Twap(asset), &(price, ts));
+            }
+
+            pub fn twap(env: Env, asset: Symbol, _records: u32) -> Option<(i128, u64)> {
+                env.storage().persistent().get(&DataKey::Twap(asset))
             }
         }
 
@@ -4553,7 +4809,9 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
 
     #[test]
-    fn test_cross_position_rejects_attached_orders() {
+    fn test_cross_position_accepts_attached_orders() {
+        // L1-1: the deliberate M-3 #80 ban is lifted — all three attach
+        // paths accept cross positions (execution settles via the pool).
         let test = setup();
         let trader = fund_trader(&test, 10_000 * PRECISION);
 
@@ -4566,19 +4824,548 @@ mod tests {
             &Direction::Long, &0,
         );
 
-        // All three attach paths must reject cross-margin positions (#80)
-        let sl = test.market.try_set_stop_loss(
-            &trader, &pos.id, &(55_000 * PRECISION), &500,
-        );
-        assert!(matches!(sl, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
-
-        let tp = test.market.try_set_take_profit(
-            &trader, &pos.id, &(70_000 * PRECISION), &500, &0,
-        );
-        assert!(matches!(tp, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
-
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(55_000 * PRECISION), &500);
+        assert_eq!(sl.order_type, OrderType::StopLoss);
+        let tp = test.market.set_take_profit(&trader, &pos.id, &(70_000 * PRECISION), &500, &0);
+        assert_eq!(tp.order_type, OrderType::TakeProfit);
         let ts = test.market.try_place_trailing_stop(&trader, &pos.id, &500, &500);
-        assert!(matches!(ts, Err(Ok(NoetherError::CrossMarginOrderNotSupported))));
+        assert!(ts.is_ok(), "trailing stop must attach to cross positions post-L1-1");
+    }
+
+    #[test]
+    fn test_cross_sl_executes_settles_to_pool() {
+        // L1-1 acceptance: proceeds credit the CROSS POOL (never the
+        // wallet), the keeper is paid from this close's proceeds, and the
+        // sibling TP auto-cancels.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1000), &500);
+        let tp = test.market.set_take_profit(&trader, &pos.id, &(PRECISION * 12 / 100), &500, &0);
+
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+        let wallet_before = usdc.balance(&trader);
+        let keeper_before = usdc.balance(&keeper);
+
+        // −5% on a 5x long: pnl = 1000 × (0.095 − 0.10)/0.10 = −50.
+        oracle.set_price(&xlm, &(PRECISION * 95 / 1000));
+        let reward = test.market.execute_order(&keeper, &sl.id);
+        assert!(reward > 0);
+
+        assert_eq!(usdc.balance(&trader), wallet_before, "wallet must be untouched");
+        assert_eq!(usdc.balance(&keeper) - keeper_before, reward, "keeper paid the fee");
+        // Stored collateral is NET of the open taker fee; size stays gross.
+        let expected_pool_delta = pos.collateral - 50 * PRECISION - reward;
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            expected_pool_delta,
+            "pool credit must be collateral + pnl − keeper fee",
+        );
+
+        assert_eq!(test.market.get_order(&sl.id).unwrap().status, OrderStatus::Executed);
+        assert_eq!(test.market.get_order(&tp.id).unwrap().status, OrderStatus::Cancelled);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_cross_tp_and_take_limit_execute() {
+        // A cross take-profit with a limit price (take-limit) fills and
+        // settles the winner's payout into the pool.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        // Take-limit: trigger $0.11, limit $0.105 (entry < limit < trigger).
+        let tp = test.market.set_take_profit(
+            &trader, &pos.id, &(PRECISION * 11 / 100), &500, &(PRECISION * 105 / 1000),
+        );
+
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+        let wallet_before = usdc.balance(&trader);
+
+        // +10%: pnl = 1000 × (0.11 − 0.10)/0.10 = +100 (vault-funded winner).
+        oracle.set_price(&xlm, &(PRECISION * 11 / 100));
+        let reward = test.market.execute_order(&keeper, &tp.id);
+        assert!(reward > 0);
+
+        assert_eq!(usdc.balance(&trader), wallet_before);
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            pos.collateral + 100 * PRECISION - reward,
+        );
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_cross_trailing_executes() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        // 1% trail — every oracle step must stay inside the 1% deviation
+        // band (max_oracle_deviation_bps default 100), so the trail cannot
+        // be wider than the band in a single-step fixture.
+        let ts = test.market.place_trailing_stop(&trader, &pos.id, &100, &500);
+
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+
+        // Ratchet the peak to $0.1009 (+0.9%), walk last-good down within
+        // the band, then cross peak × (1 − 1%) = $0.099891 at $0.0998.
+        oracle.set_price(&xlm, &(PRECISION * 1009 / 10_000));
+        assert!(test.market.update_trailing_peak(&ts.id));
+        oracle.set_price(&xlm, &(PRECISION / 10));
+        let _ = test.market.update_trailing_peak(&ts.id); // no-op read refreshes last-good
+        oracle.set_price(&xlm, &(PRECISION * 998 / 10_000));
+        let reward = test.market.execute_order(&keeper, &ts.id);
+        assert!(reward > 0);
+
+        // pnl = 1000 × (0.0998 − 0.10)/0.10 = −2, to the pool minus fee.
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            pos.collateral - 2 * PRECISION - reward,
+        );
+        assert!(test.market.get_position(&pos.id).is_none());
+        assert_eq!(test.market.get_order(&ts.id).unwrap().status, OrderStatus::Executed);
+    }
+
+    #[test]
+    fn test_cross_keeper_fee_capped_when_proceeds_small() {
+        // The keeper fee comes ONLY from this close's positive proceeds:
+        // a nearly-wiped close pays out its whole sliver as the fee and
+        // credits the pool nothing — never other accounts' custody funds.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1000), &500);
+
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+        let keeper_before = usdc.balance(&keeper);
+
+        // Pick the price so proceeds = collateral + pnl land at exactly
+        // 0.05 USDC — smaller than the ~0.1 USDC keeper fee (10 deci-bps
+        // of $1000). pnl = 10_000 × (price − entry) at this size/entry.
+        let proceeds: i128 = 500_000; // 0.05 USDC in 7-dec
+        let target_pnl = proceeds - pos.collateral;
+        let price = PRECISION / 10 + target_pnl / 10_000;
+        oracle.set_price(&xlm, &price);
+        let reward = test.market.execute_order(&keeper, &sl.id);
+
+        assert!(reward > proceeds, "fixture must exercise the cap (fee > proceeds)");
+        assert_eq!(usdc.balance(&keeper) - keeper_before, proceeds, "fee capped at proceeds");
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader),
+            pool_before,
+            "nothing left to credit after the capped fee",
+        );
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_reduce_only_closes_cross_via_pool() {
+        // L1-1: a keeper-executed reduce-only entry may target a cross
+        // position when it fully covers it — close settles to the pool,
+        // the order's own escrowed collateral refunds to the wallet.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        let wallet_before_place = usdc.balance(&trader);
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+
+        // Reduce-only (bit 8) short covering the whole 1000 notional,
+        // trigger at the current price (met, and zero distance so the
+        // LimitEntry slippage band cannot cancel the execution).
+        let ro = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Short, &(200 * PRECISION), &5,
+            &(PRECISION / 10), &true, &500, &0x100,
+        );
+        let reward = test.market.execute_order(&keeper, &ro.id);
+        assert!(reward > 0);
+
+        // Escrowed order collateral came back to the wallet (net 0 vs
+        // before placing); close proceeds (pnl 0 at the entry price) went
+        // to the pool minus the keeper fee.
+        assert_eq!(usdc.balance(&trader), wallet_before_place);
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            pos.collateral - reward,
+        );
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // L0-9 Smoothed-Mark Tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_liquidation_needs_smoothed_confirmation() {
+        // Spot breach + healthy TWAP → #86; TWAP breach too → liquidates.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
+        );
+
+        // 10x long at $0.10: a −9.5% wick is liquidatable on spot but the
+        // ring still says −2% — a wick, not a move.
+        oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
+        oracle.set_twap(&xlm, &(PRECISION * 98 / 1_000));
+        let blocked = test.market.try_liquidate(&keeper, &pos.id);
+        assert_eq!(blocked, Err(Ok(NoetherError::LiquidationNotConfirmed)));
+
+        // The smoothed mark catches down → confirmation passes.
+        oracle.set_twap(&xlm, &(PRECISION * 905 / 10_000));
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(reward >= 0);
+    }
+
+    #[test]
+    fn test_liquidation_bankrupt_overrides_smoothed() {
+        // Equity gone at spot → liquidate immediately, TWAP ignored.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
+        );
+
+        // −15% on 10x = deep bankruptcy; ring still perfectly healthy.
+        oracle.set_price(&xlm, &(PRECISION * 85 / 1_000));
+        oracle.set_twap(&xlm, &(PRECISION / 10));
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(reward >= 0);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_liquidation_spot_only_when_twap_missing() {
+        // No ring data (mock returns None) → exactly today's behavior.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0,
+        );
+        oracle.set_price(&xlm, &(PRECISION * 905 / 10_000));
+        let reward = test.market.liquidate(&keeper, &pos.id);
+        assert!(reward >= 0);
+    }
+
+    #[test]
+    fn test_stop_trigger_evaluates_smoothed_settles_fresh() {
+        // A spot wick through the SL trigger does NOT fire while the
+        // smoothed mark holds (#62 to the keeper); once the smoothed mark
+        // crosses, the stop fills AT THE FRESH SPOT.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1_000), &500);
+
+        // Wick: spot crosses the trigger, ring does not.
+        oracle.set_price(&xlm, &(PRECISION * 94 / 1_000));
+        oracle.set_twap(&xlm, &(PRECISION * 97 / 1_000));
+        let held = test.market.try_execute_order(&keeper, &sl.id);
+        assert_eq!(held, Err(Ok(NoetherError::OrderNotTriggered)));
+
+        // Sustained move: the smoothed mark crosses too → guaranteed fill.
+        oracle.set_twap(&xlm, &(PRECISION * 94 / 1_000));
+        let reward = test.market.execute_order(&keeper, &sl.id);
+        assert!(reward > 0);
+        assert!(test.market.get_position(&pos.id).is_none());
+        assert_eq!(test.market.get_order(&sl.id).unwrap().status, OrderStatus::Executed);
+    }
+
+    #[test]
+    fn test_cross_liquidation_needs_smoothed_confirmation() {
+        // Account-level: spot breach + healthy per-asset TWAP → #86;
+        // smoothed breach → liquidates. (Deep loss keeps equity in the
+        // (0, MM) band because the whole pool backs the account.)
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+
+        // pnl = 1000 × (0.0005 − 0.10)/0.10 = −995 → equity ≈ 4 ∈ (0, MM=10).
+        oracle.set_price(&xlm, &(PRECISION * 5 / 10_000));
+        oracle.set_twap(&xlm, &(PRECISION / 10));
+        let blocked = test.market.try_liquidate_cross_account(&keeper, &trader);
+        assert_eq!(blocked, Err(Ok(NoetherError::LiquidationNotConfirmed)));
+
+        oracle.set_twap(&xlm, &(PRECISION * 5 / 10_000));
+        let reward = test.market.liquidate_cross_account(&keeper, &trader);
+        assert!(reward >= 0);
+    }
+
+    /// L1-18 mock registry mirroring the real defaults: 4% of fee discount,
+    /// 10% of fee payout, args (referee, original_fee, volume).
+    #[contract]
+    pub struct MockReferral;
+
+    #[contractimpl]
+    impl MockReferral {
+        pub fn record_trade(
+            _env: Env,
+            _referee: Address,
+            original_fee: i128,
+            _volume: i128,
+        ) -> (i128, i128) {
+            (original_fee * 400 / 10_000, original_fee * 1_000 / 10_000)
+        }
+    }
+
+    /// L1-18 harness: wire treasury (bps), a zeroed insurance-buffer target
+    /// (so route_protocol_fee overflow lands 100% at the treasury and the
+    /// worked-vector integers assert exactly), and the mock registry.
+    fn setup_referral(test: &TestEnv, protocol_bps: u32) -> (Address, Address) {
+        let treasury = Address::generate(&test.env);
+        test.market.set_fee_split(&treasury, &protocol_bps);
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        vault_client.set_buffer_target(&0);
+        let referral = test.env.register_contract(None, MockReferral);
+        test.market.set_referral(&referral);
+        (treasury, referral)
+    }
+
+    #[test]
+    fn test_referral_discount_applied_at_open() {
+        // The spec's $10,000 tier-0 taker worked vector, exact integers.
+        let test = setup();
+        let (treasury, referral) = setup_referral(&test, 2_000);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let vault_before = usdc.balance(&test.vault_id);
+        // $1,000 collateral × 10x = $10,000 notional.
+        let pos = test.market.open_position(
+            &trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0,
+        );
+
+        // gross 50_000_000 → discount 2_000_000 → net fee 48_000_000.
+        assert_eq!(pos.collateral, 1_000 * PRECISION - 48_000_000);
+        // payout 5_000_000 ≤ cut 9_600_000 → pot to the registry, rest to
+        // treasury (buffer target zeroed), vault gets fee − cut exactly.
+        assert_eq!(usdc.balance(&referral), 5_000_000);
+        assert_eq!(usdc.balance(&treasury), 4_600_000);
+        assert_eq!(usdc.balance(&test.vault_id) - vault_before, 38_400_000);
+    }
+
+    #[test]
+    fn test_referrer_payout_capped_by_treasury_cut() {
+        // Low protocol bps: cut 2_400_000 < payout 5_000_000 → the pot is
+        // the WHOLE cut, treasury gets zero, LP share untouched.
+        let test = setup();
+        let (treasury, referral) = setup_referral(&test, 500);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let vault_before = usdc.balance(&test.vault_id);
+        test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0);
+
+        let pot = usdc.balance(&referral);
+        let to_treasury = usdc.balance(&treasury);
+        let cut = 48_000_000 * 500 / 10_000;
+        assert_eq!(pot, cut, "payout is capped at the cut");
+        assert_eq!(to_treasury, 0);
+        assert_eq!(pot + to_treasury, cut, "pot + treasury always equals the cut");
+        assert_eq!(
+            usdc.balance(&test.vault_id) - vault_before,
+            48_000_000 - cut,
+            "the LP share (fee − cut) never funds the payout",
+        );
+    }
+
+    #[test]
+    fn test_referral_lp_share_property_across_bps() {
+        // Property: for any protocol bps, the vault receives exactly
+        // net_fee − cut. bps=0 → no cut, payout accrues but pays nothing.
+        for bps in [0u32, 500, 5_000] {
+            let test = setup();
+            let (_treasury, _referral) = setup_referral(&test, bps);
+            let trader = fund_trader(&test, 10_000 * PRECISION);
+            let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+            let xlm = Symbol::new(&test.env, "XLM");
+
+            let vault_before = usdc.balance(&test.vault_id);
+            test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0);
+            let cut = 48_000_000 * (bps as i128) / 10_000;
+            assert_eq!(
+                usdc.balance(&test.vault_id) - vault_before,
+                48_000_000 - cut,
+                "bps={bps}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_referral_noop_when_unset() {
+        // No registry wired: the gross fee is charged untouched.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(
+            &trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0,
+        );
+        assert_eq!(pos.collateral, 1_000 * PRECISION - 50_000_000);
+    }
+
+    #[test]
+    fn test_referral_contract_failure_does_not_block_open() {
+        // set_referral to a contract WITHOUT record_trade (the oracle):
+        // the try-invoke fails, the open proceeds at the gross fee.
+        let test = setup();
+        test.market.set_referral(&test.oracle_id);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(
+            &trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0,
+        );
+        assert_eq!(pos.collateral, 1_000 * PRECISION - 50_000_000);
+    }
+
+    #[test]
+    fn test_limit_entry_maker_discount_path() {
+        // Maker fee 20_000_000 on $10k → discount 800_000, net 19_200_000;
+        // keeper fee rides on top; payout 2_000_000 ≤ cut 3_840_000.
+        let test = setup();
+        let (_treasury, referral) = setup_referral(&test, 2_000);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let order = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(1_000 * PRECISION), &10,
+            &(PRECISION / 10), &false, &500, &0,
+        );
+        let reward = test.market.execute_order(&keeper, &order.id);
+        assert!(reward > 0);
+
+        let position_id = test.market.get_order(&order.id).unwrap().position_id;
+        let pos = test.market.get_position(&position_id).unwrap();
+        assert_eq!(pos.collateral, 1_000 * PRECISION - 19_200_000 - reward);
+        assert_eq!(usdc.balance(&referral), 2_000_000);
+    }
+
+    #[test]
+    fn test_get_trader_fee_info_view() {
+        // C2 restore: live tier standing straight from the contract.
+        let test = setup();
+        let trader = fund_trader(&test, 100_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let info = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info.volume_14d, 0);
+        assert_eq!(info.tier, 0);
+        assert_eq!(info.taker_fee_bps, 50);
+        assert_eq!(info.next_tier_volume, 20_000 * PRECISION);
+
+        // $25K notional (5000 × 5x) crosses the $20K tier-1 threshold.
+        test.market.open_position(&trader, &xlm, &(5_000 * PRECISION), &5, &Direction::Long, &0);
+        let info = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info.volume_14d, 25_000 * PRECISION);
+        assert_eq!(info.tier, 1);
+        assert_eq!(info.maker_fee_bps, 15);
+        assert_eq!(info.next_tier_volume, 25_000 * PRECISION); // $50K − $25K
+    }
+
+    #[test]
+    fn test_cross_close_conservation_property() {
+        // MANDATORY property (the M-3 failure mode reborn otherwise): a
+        // cross trigger execution conserves total USDC across every party
+        // (trader, keeper, market custody, vault), and the pool ledger
+        // moves by exactly collateral + pnl − keeper fee.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(1_000 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(200 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 95 / 1000), &500);
+
+        let total_before = usdc.balance(&trader)
+            + usdc.balance(&keeper)
+            + usdc.balance(&test.market_id)
+            + usdc.balance(&test.vault_id);
+        let pool_before = test.market.get_cross_margin_balance(&trader);
+
+        oracle.set_price(&xlm, &(PRECISION * 95 / 1000));
+        let reward = test.market.execute_order(&keeper, &sl.id);
+
+        let total_after = usdc.balance(&trader)
+            + usdc.balance(&keeper)
+            + usdc.balance(&test.market_id)
+            + usdc.balance(&test.vault_id);
+        assert_eq!(total_after, total_before, "no USDC minted or destroyed");
+        assert_eq!(
+            test.market.get_cross_margin_balance(&trader) - pool_before,
+            pos.collateral - 50 * PRECISION - reward,
+            "pool ledger delta = collateral + pnl − keeper fee",
+        );
     }
 
     #[test]
@@ -7284,5 +8071,174 @@ mod tests {
         let reward = test.market.liquidate(&keeper, &pos.id);
         assert!(test.market.get_position(&pos.id).is_none());
         assert_eq!(reward, 0, "no equity left to reward the keeper from");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Index growth caps (M-5): positions, orders, cross-trader registry
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_position_cap_per_trader() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let first =
+            test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        for _ in 1..crate::storage::MAX_OPEN_POSITIONS_PER_TRADER {
+            test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        }
+
+        // At cap: isolated AND cross opens reject — both insert through the
+        // same TraderPositions index
+        let res =
+            test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+        let res = test
+            .market
+            .try_open_position_cross(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+
+        // Closing is never gated at cap, and frees a slot
+        test.market.close_position(&trader, &first.id, &0);
+        test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #82)")] // OpenInterestCapExceeded
+    fn test_position_cap_global() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Pre-fill the global index to the cap with synthetic ids; the next
+        // real open passes the (empty) per-trader check and must hit the
+        // AllPositions cap.
+        test.env.as_contract(&test.market_id, || {
+            let mut ids: Vec<u64> = Vec::new(&test.env);
+            for i in 0..(crate::storage::MAX_OPEN_POSITIONS_TOTAL as u64) {
+                ids.push_back(1_000_000 + i);
+            }
+            test.env
+                .storage()
+                .persistent()
+                .set(&crate::storage::DataKey::AllPositions, &ids);
+        });
+
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0,
+        );
+    }
+
+    #[test]
+    fn test_order_cap_per_trader() {
+        let test = setup();
+        let trader = fund_trader(&test, 20_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let first = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 20), &false, &100, &0,
+        );
+        for _ in 1..crate::storage::MAX_OPEN_ORDERS_PER_TRADER {
+            test.market.place_limit_order(
+                &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+                &(PRECISION / 20), &false, &100, &0,
+            );
+        }
+
+        let res = test.market.try_place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 20), &false, &100, &0,
+        );
+        assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+
+        // Cancelling frees a slot
+        test.market.cancel_order(&trader, &first.id);
+        test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 20), &false, &100, &0,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #82)")] // OpenInterestCapExceeded
+    fn test_order_cap_global() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        test.env.as_contract(&test.market_id, || {
+            let mut ids: Vec<u64> = Vec::new(&test.env);
+            for i in 0..(crate::storage::MAX_OPEN_ORDERS_TOTAL as u64) {
+                ids.push_back(1_000_000 + i);
+            }
+            test.env
+                .storage()
+                .persistent()
+                .set(&crate::storage::DataKey::AllOrders, &ids);
+        });
+
+        test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20),
+            &false,
+            &100,
+            &0,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #82)")] // OpenInterestCapExceeded
+    fn test_cross_trader_registry_cap() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        test.env.as_contract(&test.market_id, || {
+            let mut traders: Vec<Address> = Vec::new(&test.env);
+            for _ in 0..crate::storage::MAX_CROSS_MARGIN_TRADERS {
+                traders.push_back(Address::generate(&test.env));
+            }
+            test.env
+                .storage()
+                .persistent()
+                .set(&crate::storage::DataKey::AllCrossMarginTraders, &traders);
+        });
+
+        test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
+    }
+
+    #[test]
+    fn test_cross_trader_cap_dedup_and_prune() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let newcomer = fund_trader(&test, 1_000 * PRECISION);
+
+        // Registry at cap WITH the trader already registered: a repeat
+        // deposit dedups and must not reject.
+        test.env.as_contract(&test.market_id, || {
+            let mut traders: Vec<Address> = Vec::new(&test.env);
+            traders.push_back(trader.clone());
+            for _ in 1..crate::storage::MAX_CROSS_MARGIN_TRADERS {
+                traders.push_back(Address::generate(&test.env));
+            }
+            test.env
+                .storage()
+                .persistent()
+                .set(&crate::storage::DataKey::AllCrossMarginTraders, &traders);
+        });
+
+        test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
+
+        // Full withdrawal prunes the registry entry, freeing a slot
+        test.market.withdraw_cross_margin(&trader, &(100 * PRECISION));
+        test.market.deposit_cross_margin(&newcomer, &(50 * PRECISION));
     }
 }

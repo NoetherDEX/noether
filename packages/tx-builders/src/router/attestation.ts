@@ -1,32 +1,46 @@
-import type { xdr } from '@stellar/stellar-sdk';
+import { xdr } from '@stellar/stellar-sdk';
 import { toScVal, type BytesLike } from '../scval.js';
 
 /**
- * One signed Noeracle price attestation, as the `noether_router` verify-then-
- * trade entry points consume it. `pubkeys` / `sigs` are the raw fields of a
- * `Vec<BytesN<32>>` / `Vec<BytesN<64>>` — a caller with a single publisher
- * passes one-element arrays.
+ * One signed Noeracle price bundle, as the Batch-1 `noether_router`
+ * verify-then-trade entry points consume it (L0-8 quorum ABI).
+ *
+ * `prices[i]` is what `pubkeys[i]` signed with `sigs[i]` — the three arrays
+ * MUST be aligned and equal-length or the router rejects the bundle as
+ * malformed (#5). A caller with a single publisher passes one-element
+ * arrays; the on-chain MEDIAN across publishers becomes the stored price.
+ *
+ * NOTE: the pre-Batch-1 router used flattened tail args with a single
+ * price. These builders target the Batch-1 ABI only; the web app and
+ * keeper carry their own legacy path for the old deployment.
  */
 export interface PriceAttestation {
-  price: bigint;
+  /** Market asset symbol ("BTC") — the router derives the 8-byte tag. */
+  asset: string;
+  /** Per-publisher 7-decimal prices, aligned with pubkeys/sigs. */
+  prices: bigint[];
   timestamp: number | bigint;
   roundId: number | bigint;
+  /** Publisher Ed25519 keys, 32-byte hex or bytes. */
   pubkeys: BytesLike[];
+  /** Ed25519 signatures, 64-byte hex or bytes. */
   sigs: BytesLike[];
 }
 
 /**
- * The five price-related ScVal args every router entry point expects AFTER its
- * trade args: (price: i128, timestamp: u64, round_id: u64,
- * pubkeys: Vec<BytesN<32>>, sigs: Vec<BytesN<64>>). The router derives the
- * 8-byte asset tag itself, so it is not passed here.
+ * The `PriceAttestation` struct ScVal every router entry point takes as its
+ * final argument. Soroban UDT structs travel as ScMaps with entries SORTED
+ * BY KEY: asset < prices < pubkeys < round_id < sigs < timestamp.
  */
-export function attestationTailArgs(att: PriceAttestation): xdr.ScVal[] {
-  return [
-    toScVal(att.price, 'i128'),
-    toScVal(att.timestamp, 'u64'),
-    toScVal(att.roundId, 'u64'),
-    toScVal(att.pubkeys, 'bytes_vec'),
-    toScVal(att.sigs, 'bytes_vec'),
-  ];
+export function attestationStructArg(att: PriceAttestation): xdr.ScVal {
+  const entry = (key: string, val: xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+  return xdr.ScVal.scvMap([
+    entry('asset', toScVal(att.asset, 'symbol')),
+    entry('prices', xdr.ScVal.scvVec(att.prices.map((p) => toScVal(p, 'i128')))),
+    entry('pubkeys', toScVal(att.pubkeys, 'bytes_vec')),
+    entry('round_id', toScVal(att.roundId, 'u64')),
+    entry('sigs', toScVal(att.sigs, 'bytes_vec')),
+    entry('timestamp', toScVal(att.timestamp, 'u64')),
+  ]);
 }

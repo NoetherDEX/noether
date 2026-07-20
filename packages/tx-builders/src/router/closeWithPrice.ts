@@ -8,14 +8,15 @@ import {
   type TxBuildContext,
 } from '../client.js';
 import { toScVal } from '../scval.js';
-import { attestationTailArgs, type PriceAttestation } from './attestation.js';
+import { attestationStructArg, type PriceAttestation } from './attestation.js';
 
 const METHOD = 'close_with_price';
 
 export interface CloseWithPriceParams {
   trader: StellarAddress;
   positionId: number | bigint;
-  asset: string;
+  /** L0-10 worst-fill bound (7dp). 0 = unbounded. */
+  acceptablePrice: bigint;
   attestation: PriceAttestation;
 }
 
@@ -23,8 +24,8 @@ export function buildCloseWithPriceArgs(params: CloseWithPriceParams): xdr.ScVal
   return [
     toScVal(params.trader, 'address'),
     toScVal(params.positionId, 'u64'),
-    toScVal(params.asset, 'symbol'),
-    ...attestationTailArgs(params.attestation),
+    toScVal(params.acceptablePrice, 'i128'),
+    attestationStructArg(params.attestation),
   ];
 }
 

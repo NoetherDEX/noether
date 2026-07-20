@@ -81,8 +81,8 @@ async function applyEvent(
     case 'trade_recorded': {
       const inserted = await db.execute({
         sql: `
-          INSERT INTO referral_trades (referee, referrer, original_fee, discount, payout, ledger, ts, tx_hash, event_id, contract_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO referral_trades (referee, referrer, original_fee, discount, payout, volume, ledger, ts, tx_hash, event_id, contract_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (event_id) DO NOTHING
         `,
         args: [
@@ -91,6 +91,7 @@ async function applyEvent(
           event.originalFee.toString(),
           event.discount.toString(),
           event.payout.toString(),
+          event.volume == null ? null : event.volume.toString(),
           event.ledger,
           event.ledgerCloseTs,
           event.txHash,

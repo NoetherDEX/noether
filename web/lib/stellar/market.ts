@@ -1,9 +1,10 @@
 import { marketContract, routerContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
-import { fetchAttestation, priceTailArgs } from './noeracle';
+import { fetchAttestation, priceTailArgs, attestationStructArg } from './noeracle';
+import { marketHasBatch1Features } from './capabilities';
 import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, DisplayOrder, OrderType, TriggerCondition, OrderStatus } from '@/types';
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
 import { rpc, scValToNative, xdr, Horizon, Address } from '@stellar/stellar-sdk';
-import { CONTRACTS, NETWORK } from '@/lib/utils/constants';
+import { CONTRACTS, NETWORK, NULL_ACCOUNT } from '@/lib/utils/constants';
 import { debugLog } from '@/lib/utils/debug';
 
 /**
@@ -87,25 +88,40 @@ export async function openPosition(
   ];
 
   let xdrStr: string;
+  const batch1 = await marketHasBatch1Features();
   if (routerContract) {
     // Router path (Pattern B): fetch a fresh signed Noeracle price and open
     // atomically via noether_router.open_with_price, so the market reads a
     // sub-second-fresh price and can't reject with #30 PriceStale.
-    // NOTE: runtime-unverified until the router is deployed and
-    // NEXT_PUBLIC_NOETHER_ROUTER_ID is set — the wallet signs the full
-    // router -> market.open_position -> USDC transfer auth tree.
+    // Batch-1 (L0-8): struct-tail quorum bundle, asset inside the struct,
+    // plus the L0-10 acceptable_price bound (0 = unbounded until the order
+    // panel threads a bound). Legacy router: flattened single-price tail.
     const att = await fetchAttestation(params.asset);
     if (!att) throw new Error('Noeracle price unavailable — cannot open position');
     xdrStr = await buildTransaction(
       signerPublicKey,
       routerContract,
       'open_with_price',
-      [...tradeArgs, ...priceTailArgs(att)],
+      batch1
+        ? [
+            toScVal(signerPublicKey, 'address'),
+            toScVal(params.collateral, 'i128'),
+            toScVal(params.leverage, 'u32'),
+            toScVal(params.direction, 'direction'),
+            toScVal(BigInt(0), 'i128'), // acceptable_price
+            attestationStructArg(params.asset, att),
+          ]
+        : [...tradeArgs, ...priceTailArgs(att)],
     );
   } else {
-    // Direct path (default): straight to the market, which reads the cached
-    // oracle through oracle_adapter.
-    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position', tradeArgs);
+    // Direct path (default): straight to the market. Batch-1 open_position
+    // gained the acceptable_price arg.
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      marketContract,
+      'open_position',
+      batch1 ? [...tradeArgs, toScVal(BigInt(0), 'i128')] : tradeArgs,
+    );
   }
 
   const signedXdr = await signTransaction(xdrStr);
@@ -131,32 +147,46 @@ export async function closePosition(
   debugLog('[DEBUG] Closing position...');
 
   let xdrStr: string;
+  const batch1 = await marketHasBatch1Features();
   if (routerContract) {
     // Router path (Pattern B): mirror openPosition — fetch a fresh signed
     // Noeracle price and close atomically via noether_router.close_with_price,
     // so the market reads a sub-second-fresh price for `asset` and can't
     // reject with #30 PriceStale (oracle_adapter no longer exists).
-    // close_with_price(trader, position_id, asset, price, timestamp, round_id, pubkeys, sigs) -> i128 pnl
+    // Batch-1: close_with_price(trader, position_id, acceptable_price, att).
+    // Legacy: close_with_price(trader, position_id, asset, ...flattened tail).
     const att = await fetchAttestation(asset);
     if (!att) throw new Error('Noeracle price unavailable — cannot close position');
     xdrStr = await buildTransaction(
       signerPublicKey,
       routerContract,
       'close_with_price',
-      [
-        toScVal(signerPublicKey, 'address'), // trader: Address
-        toScVal(positionId, 'u64'),          // position_id: u64
-        toScVal(asset, 'symbol'),            // asset: Symbol
-        ...priceTailArgs(att),
-      ],
+      batch1
+        ? [
+            toScVal(signerPublicKey, 'address'),
+            toScVal(positionId, 'u64'),
+            toScVal(BigInt(0), 'i128'), // acceptable_price (0 = unbounded)
+            attestationStructArg(asset, att),
+          ]
+        : [
+            toScVal(signerPublicKey, 'address'), // trader: Address
+            toScVal(positionId, 'u64'),          // position_id: u64
+            toScVal(asset, 'symbol'),            // asset: Symbol
+            ...priceTailArgs(att),
+          ],
     );
   } else {
-    // Direct path (default): close_position(trader: Address, position_id: u64)
+    // Direct path (default). Batch-1 close_position gained acceptable_price.
     const args = [
       toScVal(signerPublicKey, 'address'),  // trader: Address
       toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
     ];
-    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position', args);
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      marketContract,
+      'close_position',
+      batch1 ? [...args, toScVal(BigInt(0), 'i128')] : args,
+    );
   }
 
   const signedXdr = await signTransaction(xdrStr);
@@ -177,16 +207,153 @@ export async function closePosition(
 }
 
 /**
- * Add collateral to a position.
- * NOTE: Contract function removed for WASM size. Close and reopen with more collateral.
+ * Partially close an isolated position (L0-6, Batch-1): shrinks size and
+ * collateral in place, entry price unchanged, funding settled pro-rata.
+ * closeSize is 7-decimal notional. The contract enforces the residual dust
+ * floor (#27 PositionTooSmall) — callers snap to a full close before that
+ * bites. Returns realized pnl for the closed slice.
+ */
+export async function closePositionPartial(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  positionId: number,
+  closeSize: bigint,
+  asset: string,
+): Promise<bigint> {
+  let xdrStr: string;
+  const batch1 = await marketHasBatch1Features();
+  if (routerContract) {
+    // Batch-1: close_partial_with_price(trader, position_id, close_size, att).
+    // Legacy: ...(trader, position_id, close_size, asset, flattened tail).
+    const att = await fetchAttestation(asset);
+    if (!att) throw new Error('Noeracle price unavailable — cannot close position');
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      routerContract,
+      'close_partial_with_price',
+      batch1
+        ? [
+            toScVal(signerPublicKey, 'address'),
+            toScVal(positionId, 'u64'),
+            toScVal(closeSize, 'i128'),
+            attestationStructArg(asset, att),
+          ]
+        : [
+            toScVal(signerPublicKey, 'address'), // trader: Address
+            toScVal(positionId, 'u64'),          // position_id: u64
+            toScVal(closeSize, 'i128'),          // close_size: i128
+            toScVal(asset, 'symbol'),            // asset: Symbol
+            ...priceTailArgs(att),
+          ],
+    );
+  } else {
+    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_partial', [
+      toScVal(signerPublicKey, 'address'),
+      toScVal(positionId, 'u64'),
+      toScVal(closeSize, 'i128'),
+    ]);
+  }
+
+  const signedXdr = await signTransaction(xdrStr);
+  const result = await submitTransaction(signedXdr);
+  if (result.status === 'SUCCESS' && result.returnValue) {
+    return scValToNative(result.returnValue) as bigint;
+  }
+  throw new Error('Failed to partially close position');
+}
+
+/**
+ * Add collateral to an isolated position (L0-6, Batch-1 — replaces the old
+ * removed-for-WASM stub). amount is 7-decimal USDC.
  */
 export async function addCollateral(
-  _signerPublicKey: string,
-  _signTransaction: (xdr: string) => Promise<string>,
-  _positionId: number,
-  _amount: bigint
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  positionId: number,
+  amount: bigint,
 ): Promise<void> {
-  throw new Error('Add collateral is not available. Close the position and reopen with more collateral.');
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(positionId, 'u64'),
+    toScVal(amount, 'i128'),
+  ];
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'add_collateral', args);
+  const result = await submitTransaction(await signTransaction(xdrStr));
+  if (result.status !== 'SUCCESS') throw new Error('Failed to add collateral');
+}
+
+/**
+ * Remove collateral from an isolated position (L0-6, Batch-1). The contract
+ * enforces the initial-margin floor (size / max leverage) and a strict-price
+ * maintenance check — previews mirror the floor client-side.
+ */
+export async function removeCollateral(
+  signerPublicKey: string,
+  signTransaction: (xdr: string) => Promise<string>,
+  positionId: number,
+  amount: bigint,
+): Promise<void> {
+  const args = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(positionId, 'u64'),
+    toScVal(amount, 'i128'),
+  ];
+  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'remove_collateral', args);
+  const result = await submitTransaction(await signTransaction(xdrStr));
+  if (result.status !== 'SUCCESS') throw new Error('Failed to remove collateral');
+}
+
+/**
+ * L0-12 (Batch-1): per-asset leverage cap from the risk ladder, cached per
+ * asset for the session. null = no ladder for this asset (legacy global cap
+ * applies), a pre-L0-12 market, or a failed read — callers fall back to
+ * TRADING.MAX_LEVERAGE. Nulls are not pinned, so a transient failure
+ * re-probes on the next asset switch.
+ */
+const assetMaxLeverageCache = new Map<string, Promise<number | null>>();
+export function getAssetMaxLeverage(asset: string): Promise<number | null> {
+  let cached = assetMaxLeverageCache.get(asset);
+  if (!cached) {
+    cached = (async (): Promise<number | null> => {
+      try {
+        const tx = await buildSimulateTransaction(NULL_ACCOUNT, 'get_asset_risk', [
+          toScVal(asset, 'symbol'),
+        ]);
+        const sim = await sorobanRpc.simulateTransaction(tx);
+        if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) return null;
+        const native = scValToNative(sim.result.retval) as
+          | { max_leverage?: number | bigint }
+          | null;
+        if (native == null || native.max_leverage == null) return null;
+        const cap = Number(native.max_leverage);
+        return Number.isFinite(cap) && cap > 0 ? cap : null;
+      } catch {
+        return null;
+      }
+    })();
+    cached.then((value) => {
+      if (value === null) assetMaxLeverageCache.delete(asset);
+    });
+    assetMaxLeverageCache.set(asset, cached);
+  }
+  return cached;
+}
+
+/**
+ * L0-15 two-tier pause state: mode 0 live / 1 halt-open (exit-only) /
+ * 2 full-freeze. null = the deployed market predates Batch-1 (no view) or
+ * the read failed — callers treat null as "no banner, no Batch-1 UI".
+ */
+export async function getPauseState(): Promise<{ mode: number; since: number } | null> {
+  try {
+    const tx = await buildSimulateTransaction(NULL_ACCOUNT, 'get_pause_state', []);
+    const sim = await sorobanRpc.simulateTransaction(tx);
+    if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) return null;
+    const native = scValToNative(sim.result.retval) as [number | bigint, number | bigint];
+    return { mode: Number(native[0]), since: Number(native[1]) };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1336,6 +1503,8 @@ export async function openPositionCross(
     toScVal(params.direction, 'direction'),
   ];
 
+  // Batch-1 open_position_cross gained the L0-10 acceptable_price arg.
+  if (await marketHasBatch1Features()) args.push(toScVal(BigInt(0), 'i128'));
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position_cross', args);
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
@@ -1359,6 +1528,8 @@ export async function closePositionCross(
     toScVal(positionId, 'u64'),
   ];
 
+  // Batch-1 close_position_cross gained the L0-10 acceptable_price arg.
+  if (await marketHasBatch1Features()) args.push(toScVal(BigInt(0), 'i128'));
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_cross', args);
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
@@ -1488,12 +1659,12 @@ export async function placeTrailingStop(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Get trader's fee tier info by reading volume record from contract storage.
- * Calculates tier client-side using the known tier thresholds.
- * Returns null when the volume cannot be read (get_trader_volume was removed
- * from the deployed WASM for size) — callers must treat the tier as UNKNOWN
- * and hide tier UI rather than asserting "Base". The real fix is the
- * indexer-backed per-trader volume endpoint (roadmap B5).
+ * Trader's live fee-tier standing from the restored get_trader_fee_info
+ * view (C2, Batch-1) — the contract's own rolling volume, tier and rates,
+ * exactly what it will charge. Returns null when the view is unavailable
+ * (the currently-deployed market predates the restore) or the read fails —
+ * callers treat the tier as UNKNOWN and fall back to the gateway estimate,
+ * never asserting "Base".
  */
 export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
   volume14d: bigint;
@@ -1505,54 +1676,34 @@ export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
   nextTierName: string;
 } | null> {
   const { FEE_TIERS } = await import('@/lib/utils/constants');
-  const PRECISION_VAL = BigInt(10_000_000);
-
-  let volume14d = BigInt(0);
 
   try {
-    // Try reading trader volume from contract via get_trader_volume view
-    const args = [toScVal(traderPublicKey, 'address')];
-    const xdrStr = await buildTransaction(traderPublicKey, marketContract, 'get_trader_volume', args);
-    // Simulate only (read-only call)
-    const server = new rpc.Server(NETWORK.RPC_URL);
-    const tx = new (await import('@stellar/stellar-sdk')).Transaction(xdrStr, NETWORK.PASSPHRASE);
-    const simResult = await server.simulateTransaction(tx);
-    if ('result' in simResult && simResult.result) {
-      const rawVolume = scValToNative((simResult.result as any).retval);
-      volume14d = BigInt(rawVolume);
-    } else {
-      return null;
-    }
+    const tx = await buildSimulateTransaction(traderPublicKey, 'get_trader_fee_info', [
+      toScVal(traderPublicKey, 'address'),
+    ]);
+    const sim = await sorobanRpc.simulateTransaction(tx);
+    if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) return null;
+    const raw = scValToNative(sim.result.retval) as {
+      volume_14d: bigint;
+      tier: number | bigint;
+      maker_fee_bps: number | bigint;
+      taker_fee_bps: number | bigint;
+      next_tier_volume: bigint;
+    };
+    const tier = Number(raw.tier);
+    const hasNext = tier < FEE_TIERS.length - 1;
+    return {
+      volume14d: BigInt(raw.volume_14d),
+      tier,
+      tierName: FEE_TIERS[tier]?.name ?? `Tier ${tier}`,
+      makerFeeBps: Number(raw.maker_fee_bps),
+      takerFeeBps: Number(raw.taker_fee_bps),
+      nextTierVolume: BigInt(raw.next_tier_volume),
+      nextTierName: hasNext ? FEE_TIERS[tier + 1].name : 'Max',
+    };
   } catch {
-    // Volume unknown (view removed for WASM size / RPC failure) — never
-    // report a fabricated tier-0 record.
     return null;
   }
-
-  // Convert volume from precision to USD
-  const volumeUsd = Number(volume14d) / Number(PRECISION_VAL);
-
-  // Determine tier
-  let tierIndex = 0;
-  for (let i = FEE_TIERS.length - 1; i >= 0; i--) {
-    if (volumeUsd >= FEE_TIERS[i].minVolume) {
-      tierIndex = i;
-      break;
-    }
-  }
-
-  const currentTier = FEE_TIERS[tierIndex];
-  const nextTier = tierIndex < FEE_TIERS.length - 1 ? FEE_TIERS[tierIndex + 1] : null;
-
-  return {
-    volume14d,
-    tier: tierIndex,
-    tierName: currentTier.name,
-    makerFeeBps: currentTier.makerBps,
-    takerFeeBps: currentTier.takerBps,
-    nextTierVolume: nextTier ? BigInt(Math.round(nextTier.minVolume * Number(PRECISION_VAL))) : BigInt(0),
-    nextTierName: nextTier ? nextTier.name : 'Max',
-  };
 }
 
 /**

@@ -295,13 +295,14 @@ describe('referral handler', () => {
     await router.dispatch(referralEvent('evt-r1', 'code_created', { referrer: FAKE_TRADER, code: 'EMMY' }), ctx);
     await router.dispatch(referralEvent('evt-r2', 'referrer_set', { referee: REFEREE, referrer: FAKE_TRADER, code: 'EMMY' }), ctx);
     await router.dispatch(referralEvent('evt-r3', 'trade_recorded', {
-      referee: REFEREE, referrer: FAKE_TRADER, originalFee: 1000n, discount: 40n, payout: 100n,
+      // L1-18 six-field payload (volume = referred notional).
+      referee: REFEREE, referrer: FAKE_TRADER, originalFee: 1000n, discount: 40n, payout: 100n, volume: 200_000n,
     }), ctx);
 
     // Exact redelivery (same event ids) must be a no-op.
     await router.dispatch(referralEvent('evt-r2', 'referrer_set', { referee: REFEREE, referrer: FAKE_TRADER, code: 'EMMY' }), ctx);
     await router.dispatch(referralEvent('evt-r3', 'trade_recorded', {
-      referee: REFEREE, referrer: FAKE_TRADER, originalFee: 1000n, discount: 40n, payout: 100n,
+      referee: REFEREE, referrer: FAKE_TRADER, originalFee: 1000n, discount: 40n, payout: 100n, volume: 200_000n,
     }), ctx);
 
     const referrer = await db.execute({
@@ -314,7 +315,19 @@ describe('referral handler', () => {
 
     const trades = await db.execute('SELECT COUNT(*) AS n FROM referral_trades');
     expect(Number(trades.rows[0]!.n)).toBe(1);
+    const volCol = await db.execute('SELECT volume FROM referral_trades');
+    expect(String(volCol.rows[0]!.volume)).toBe('200000');
     expect(seenEvent).toHaveBeenCalledTimes(3);
+
+    // Pre-Batch-1 five-field payload (no volume) still projects — NULL column.
+    await router.dispatch(referralEvent('evt-r3b', 'trade_recorded', {
+      referee: REFEREE, referrer: FAKE_TRADER, originalFee: 500n, discount: 20n, payout: 50n, volume: null,
+    }), ctx);
+    const legacy = await db.execute({
+      sql: 'SELECT volume FROM referral_trades WHERE event_id = ?',
+      args: ['evt-r3b'],
+    });
+    expect(legacy.rows[0]!.volume).toBeNull();
 
     // A re-applied code_created (fresh event id) must preserve lifetime counters.
     await router.dispatch(referralEvent('evt-r4', 'code_created', { referrer: FAKE_TRADER, code: 'EMMY' }), ctx);
@@ -326,8 +339,9 @@ describe('referral handler', () => {
     expect(after.rows).toHaveLength(1);
     expect(after.rows[0]!.code).toBe('EMMY');
     expect(Number(after.rows[0]!.referred_count)).toBe(1);
-    expect(Number(after.rows[0]!.total_earned)).toBe(100);
-    expect(Number(after.rows[0]!.claimable)).toBe(100);
+    // 100 from evt-r3 + 50 from the legacy-payload evt-r3b above.
+    expect(Number(after.rows[0]!.total_earned)).toBe(150);
+    expect(Number(after.rows[0]!.claimable)).toBe(150);
 
     await db.close();
   });

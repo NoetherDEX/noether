@@ -35,6 +35,9 @@ import {
   toDisplayPosition,
   closePosition,
   closePositionCross,
+  closePositionPartial,
+  addCollateral,
+  removeCollateral,
   getOrders,
   getOrdersByIds,
   toDisplayOrder,
@@ -45,6 +48,8 @@ import {
   getCumulativeFundingRate,
   getRecentLiquidations,
 } from '@/lib/stellar/market';
+import { marketHasBatch1Features } from '@/lib/stellar/capabilities';
+import { useNotificationStore } from '@/lib/store/notificationStore';
 import { listOpenPositions } from '@/lib/api/positions';
 import { listOrderHints } from '@/lib/api/orders';
 import { gatewayServesThisMarket } from '@/lib/api/gateway';
@@ -178,14 +183,32 @@ function TradePage() {
       for (const id of vanished) {
         const hit = isolated.get(id);
         if (hit) {
-          toast.error(`Position #${id} liquidated at ${formatUSD(hit.price)}`, {
-            duration: 12000,
-          });
+          // L1-10: the store dedupes (poll-diff + future WS share the key)
+          // and keeps the record — toast only when the entry is fresh.
+          if (
+            pushNotification({
+              dedupeKey: `liq-${id}`,
+              type: 'liquidation',
+              title: `Position #${id} liquidated at ${formatUSD(hit.price)}`,
+            })
+          ) {
+            toast.error(`Position #${id} liquidated at ${formatUSD(hit.price)}`, {
+              duration: 12000,
+            });
+          }
         } else if (crossLiq && prev.get(id) === true && !crossToasted) {
           crossToasted = true;
           const pnlText =
             crossLiq.totalPnl != null ? ` — total PnL ${formatUSD(crossLiq.totalPnl)}` : '';
-          toast.error(`Cross-margin account liquidated${pnlText}`, { duration: 12000 });
+          if (
+            pushNotification({
+              dedupeKey: `cross-liq-${id}`,
+              type: 'cross_liquidation',
+              title: `Cross-margin account liquidated${pnlText}`,
+            })
+          ) {
+            toast.error(`Cross-margin account liquidated${pnlText}`, { duration: 12000 });
+          }
         }
       }
     } catch {
@@ -264,6 +287,15 @@ function TradePage() {
         let apiPositions: Awaited<ReturnType<typeof getPositionsByIds>> | null = null;
         try {
           const open = await listOpenPositions(publicKey);
+          // L0-1: advisory ADL quintiles ride the same gateway rows —
+          // best-effort display data, absent on an old gateway.
+          setAdlQuintiles(
+            new Map(
+              open
+                .filter((p) => p.adlQuintile != null)
+                .map((p) => [p.positionId, p.adlQuintile as number]),
+            ),
+          );
           if (open.length === 0) {
             apiPositions = (await gatewayServesThisMarket()) ? [] : null;
           } else {
@@ -394,21 +426,54 @@ function TradePage() {
           if (prevStatus === 'Pending' && order.status !== 'Pending') {
             const label = `${order.asset} ${order.direction}`;
             if (order.status === 'Executed') {
-              toast.success(`${label} order filled`);
+              if (
+                pushNotification({
+                  dedupeKey: `order-${order.id}-executed`,
+                  type: 'fill',
+                  title: `${label} order filled`,
+                })
+              ) {
+                toast.success(`${label} order filled`);
+              }
               fetchPositions(false);
               refreshBalances();
             } else if (order.status === 'CancelledSlippage') {
-              toast(`${label} order cancelled — slippage exceeded`, { icon: '⚠️' });
+              if (
+                pushNotification({
+                  dedupeKey: `order-${order.id}-slippage`,
+                  type: 'slippage_cancel',
+                  title: `${label} order cancelled — slippage exceeded`,
+                  body: 'If this was a protective order, the position is now unprotected — re-place it.',
+                })
+              ) {
+                toast(`${label} order cancelled — slippage exceeded`, { icon: '⚠️' });
+              }
               refreshBalances();
             } else if (order.status === 'Cancelled') {
-              toast(`${label} order cancelled`, { icon: '🔴' });
+              if (
+                pushNotification({
+                  dedupeKey: `order-${order.id}-cancelled`,
+                  type: 'cancel',
+                  title: `${label} order cancelled`,
+                })
+              ) {
+                toast(`${label} order cancelled`, { icon: '🔴' });
+              }
             }
           }
         }
         // Also detect orders that disappeared entirely (deleted from contract)
         for (const [id, status] of Array.from(prev.entries())) {
           if (status === 'Pending' && !displayOrders.find(o => o.id === id)) {
-            toast('Order executed or removed', { icon: '⚡' });
+            if (
+              pushNotification({
+                dedupeKey: `order-${id}-gone`,
+                type: 'fill',
+                title: `Order #${id} executed or removed`,
+              })
+            ) {
+              toast('Order executed or removed', { icon: '⚡' });
+            }
             fetchPositions(false);
             refreshBalances();
             break;
@@ -550,6 +615,29 @@ function TradePage() {
     };
   }, [publicKey, positionAssetKey]);
 
+  // L1-10: persistent account-event inbox — push() dedupes and returns
+  // true only for fresh entries, which is also the double-toast guard.
+  const pushNotification = useNotificationStore((s) => s.push);
+
+  // L0-1: advisory ADL quintile per position id (from the gateway rows).
+  const [adlQuintiles, setAdlQuintiles] = useState<Map<number, number>>(new Map());
+
+  // L0-6/L0-15: does the deployed market expose the Batch-1 entry points
+  // (partial close, margin edit, pause state)? Probe-once; false = the new
+  // affordances stay hidden, exactly today's UI.
+  const [batch1Features, setBatch1Features] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    marketHasBatch1Features()
+      .then((ok) => {
+        if (!cancelled) setBatch1Features(ok);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // A10: closing — the risk-off action — gets the same toast.promise
   // lifecycle as open/SL/TP: loading state, PnL on success, decoded errors,
   // and wallet rejection made distinct from a contract revert.
@@ -603,15 +691,80 @@ function TradePage() {
     await closePromise;
   };
 
+  // L0-6 (Batch-1): partial close — same lifecycle; the position shrinks in
+  // place, so no vanish-suppression bookkeeping is needed.
+  const handleClosePartial = async (positionId: number, closeSize: bigint): Promise<void> => {
+    if (!publicKey) throw new Error('Wallet not connected');
+    const pos = positions.find(p => p.id === positionId);
+    const label = pos ? `${pos.asset} ${pos.direction}` : `position #${positionId}`;
+    const pct = pos && pos.size > 0 ? `${Math.round((fromPrecision(closeSize) / pos.size) * 100)}%` : 'part';
+
+    const promise = closePositionPartial(publicKey, sign, positionId, closeSize, pos?.asset ?? selectedAsset);
+    toast.promise(promise, {
+      loading: `Closing ${pct} of ${label}…`,
+      success: (pnl) => {
+        refreshPositionsAfterTrade();
+        refreshBalances();
+        const pnlUsd = fromPrecision(pnl);
+        return `Closed ${pct} of ${label} — PnL ${pnlUsd >= 0 ? '+' : ''}${formatUSD(pnlUsd)}`;
+      },
+      error: (err) => {
+        const msg = err instanceof Error ? err.message : String(err ?? '');
+        if (/reject|declin|denied|cancel/i.test(msg)) return 'Transaction rejected in wallet';
+        return decodeContractError(err) || 'Failed to partially close position';
+      },
+    });
+    await promise;
+  };
+
+  // L0-6 (Batch-1): margin management on isolated positions.
+  const handleAddCollateral = async (positionId: number, amount: bigint): Promise<void> => {
+    if (!publicKey) throw new Error('Wallet not connected');
+    const promise = addCollateral(publicKey, sign, positionId, amount);
+    toast.promise(promise, {
+      loading: 'Adding margin…',
+      success: () => {
+        refreshPositionsAfterTrade();
+        refreshBalances();
+        return `Margin added — position #${positionId} liquidation price improved`;
+      },
+      error: (err) => {
+        const msg = err instanceof Error ? err.message : String(err ?? '');
+        if (/reject|declin|denied|cancel/i.test(msg)) return 'Transaction rejected in wallet';
+        return decodeContractError(err) || 'Failed to add margin';
+      },
+    });
+    await promise;
+  };
+
+  const handleRemoveCollateral = async (positionId: number, amount: bigint): Promise<void> => {
+    if (!publicKey) throw new Error('Wallet not connected');
+    const promise = removeCollateral(publicKey, sign, positionId, amount);
+    toast.promise(promise, {
+      loading: 'Removing margin…',
+      success: () => {
+        refreshPositionsAfterTrade();
+        refreshBalances();
+        return `Margin removed from position #${positionId}`;
+      },
+      error: (err) => {
+        const msg = err instanceof Error ? err.message : String(err ?? '');
+        if (/reject|declin|denied|cancel/i.test(msg)) return 'Transaction rejected in wallet';
+        return decodeContractError(err) || 'Failed to remove margin';
+      },
+    });
+    await promise;
+  };
+
   const handleSetStopLoss = async (positionId: number, triggerPrice: number, slippageBps: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
 
-    // M-3 interim guard: SL orders attached to cross positions execute via
-    // the isolated close path on-chain, corrupting the shared pool. Refuse
-    // until the contract fix deploys.
+    // Pre-Batch-1 guard: the old market executes attached orders via the
+    // isolated path (M-3 pool escape). The L1-1 market settles cross
+    // triggers through the pool — ungated by the capability probe.
     const targetPosition = positions.find(p => p.id === positionId);
-    if (targetPosition?.marginMode === 'Cross') {
-      toast.error('Unavailable for cross-margin positions (contract fix pending)');
+    if (!batch1Features && targetPosition?.marginMode === 'Cross') {
+      toast.error('Not yet available for cross-margin positions');
       return;
     }
 
@@ -639,10 +792,10 @@ function TradePage() {
   const handleSetTakeProfit = async (positionId: number, triggerPrice: number, slippageBps: number, limitPrice?: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
 
-    // M-3 interim guard — see handleSetStopLoss.
+    // Pre-Batch-1 guard — see handleSetStopLoss.
     const targetPosition = positions.find(p => p.id === positionId);
-    if (targetPosition?.marginMode === 'Cross') {
-      toast.error('Unavailable for cross-margin positions (contract fix pending)');
+    if (!batch1Features && targetPosition?.marginMode === 'Cross') {
+      toast.error('Not yet available for cross-margin positions');
       return;
     }
 
@@ -773,6 +926,13 @@ function TradePage() {
             isLoading={isLoadingPositions}
             isRefreshing={isRefreshing}
             onClosePosition={handleClosePosition}
+            // L0-6 (Batch-1): direct market calls — hidden in leader mode
+            // (no vault_factory proxies) and inert until the probe passes.
+            onClosePartial={leaderVault ? undefined : handleClosePartial}
+            onAddCollateral={leaderVault ? undefined : handleAddCollateral}
+            onRemoveCollateral={leaderVault ? undefined : handleRemoveCollateral}
+            batch1Features={batch1Features}
+            adlQuintiles={adlQuintiles}
             // Stop-loss / take-profit are wallet-signed market calls
             // that don't exist as vault_factory proxies. Hide them in
             // leader mode rather than render buttons that always fail.

@@ -75,6 +75,8 @@ import { FeedbackButton } from '@/components/feedback/FeedbackButton'
 import { ReferralBanner } from '@/components/referral/ReferralBanner'
 import { AppFooter } from '@/components/layout/AppFooter'
 import { TestnetRibbon } from '@/components/TestnetRibbon'
+import { PauseBanner } from '@/components/PauseBanner'
+import { NotificationBell } from '@/components/NotificationBell'
 
 export default function RootLayout({
   children,
@@ -92,12 +94,14 @@ export default function RootLayout({
           Skip to content
         </a>
         <TestnetRibbon />
+        <PauseBanner />
         <Providers>
           <ReferralBanner />
           {children}
           <AppFooter />
         </Providers>
         <FeedbackButton />
+        <NotificationBell />
         <Toaster
           position="bottom-center"
           toastOptions={{

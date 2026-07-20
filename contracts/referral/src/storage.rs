@@ -86,6 +86,50 @@ pub fn get_referrer_share_bps(env: &Env) -> u32 {
         .unwrap_or(0)
 }
 
+pub fn set_usdc_token(env: &Env, addr: &Address) {
+    env.storage().instance().set(&StorageKey::UsdcToken, addr);
+}
+
+pub fn get_usdc_token(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&StorageKey::UsdcToken)
+}
+
+pub fn set_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&StorageKey::Paused, &paused);
+}
+
+pub fn is_paused(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&StorageKey::Paused)
+        .unwrap_or(false)
+}
+
+pub fn set_revoked(env: &Env, referrer: &Address, revoked: bool) {
+    let key = StorageKey::Revoked(referrer.clone());
+    if revoked {
+        env.storage().persistent().set(&key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+pub fn is_revoked(env: &Env, referrer: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&StorageKey::Revoked(referrer.clone()))
+        .unwrap_or(false)
+}
+
+pub fn remove_referrer_of(env: &Env, referee: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&StorageKey::RefereeOf(referee.clone()));
+}
+
 pub fn set_min_code_volume(env: &Env, volume: i128) {
     env.storage().instance().set(&StorageKey::MinCodeVolume, &volume);
 }

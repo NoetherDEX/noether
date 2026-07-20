@@ -57,6 +57,14 @@ pub enum StorageKey {
     RefereeOf(Address),
     /// Whether `initialize` has been called.
     Initialized,
+    /// Singleton — USDC token the funded claim pays out in (L1-18).
+    UsdcToken,
+    /// Singleton — registry pause switch (L1-18/R-5): record_trade becomes
+    /// a (0,0) no-op, state-changing calls reject with RegistryPaused.
+    Paused,
+    /// Referrer -> revoked flag (L1-18/R-5): a revoked referrer accrues
+    /// nothing and their code cannot take new bindings.
+    Revoked(Address),
 }
 
 #[contracterror]
@@ -78,4 +86,12 @@ pub enum ReferralError {
     InsufficientVolume = 13,
     NothingToClaim = 14,
     Overflow = 15,
+    /// The contract's USDC balance cannot cover the claim — claimable is
+    /// PRESERVED (never burn an earned balance); retry once the market's
+    /// per-trade pot transfers refill the pool (L1-18).
+    ClaimUnfunded = 16,
+    /// Registry paused by admin — state-changing calls reject (L1-18/R-5).
+    RegistryPaused = 17,
+    /// The code's referrer has been revoked (L1-18/R-5).
+    RevokedCode = 18,
 }

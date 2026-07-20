@@ -71,6 +71,11 @@ pub enum DataKey {
     /// table for one asset — a new pair needs no router redeploy, only a
     /// set_price_band + the shim upgrade() for its tag.
     PriceBand(Symbol),
+    /// L0-8 leg (a3): assets whose opens/entry-executions REQUIRE fresh
+    /// Stork data (fail-closed #30) even when global require_fresh is off.
+    StorkStrictAssets,
+    /// L0-8 leg (c): Reflector/SEP-40 divergence-check configuration.
+    Reflector,
 }
 
 /// Stork second-source configuration (T3-D1). The feature is inert until an
@@ -119,17 +124,63 @@ const STORK_SCALE_DIVISOR: i128 = 100_000_000_000;
 const STORK_TTL_THRESHOLD: u32 = 60;
 const STORK_TTL_EXTEND: u32 = 240;
 
-/// One signed Noeracle price attestation (used by the multi-asset
-/// cross-liquidation entry point).
+/// One signed Noeracle round for a single asset (L0-8): `prices[i]` is
+/// what `pubkeys[i]` signed with `sigs[i]` over the shared
+/// (timestamp, round_id) — publishers sign THEIR OWN price and the
+/// on-chain median forms at the Noeracle. A single-publisher deployment
+/// carries one-element vectors; the shape is quorum-ready without any
+/// further ABI change.
 #[contracttype]
 #[derive(Clone)]
 pub struct PriceAttestation {
     pub asset: Symbol,
-    pub price: i128,
+    pub prices: Vec<i128>,
     pub timestamp: u64,
     pub round_id: u64,
     pub pubkeys: Vec<BytesN<32>>,
     pub sigs: Vec<BytesN<64>>,
+}
+
+/// Mirror of the Noeracle quorum entrypoint's PublisherRound (field names
+/// must match — UDT map encoding): one publisher's aligned contribution.
+#[contracttype]
+#[derive(Clone)]
+pub struct PublisherRound {
+    pub pubkey: BytesN<32>,
+    pub prices: Vec<i128>,
+    pub sigs: Vec<BytesN<64>>,
+}
+
+/// L0-8 leg (c): Reflector (or any SEP-40 feed) as a live divergence
+/// check on risk-increasing paths. Inert when absent/disabled.
+#[contracttype]
+#[derive(Clone)]
+pub struct ReflectorConfig {
+    pub enabled: bool,
+    pub oracle: Address,
+    /// The vendor feed's decimals (rescaled to Noether's 7).
+    pub decimals: u32,
+    /// Ignore vendor prices older than this (Reflector cadence ~5min).
+    pub max_age_secs: u64,
+    /// Halt opens when |noeracle − vendor| exceeds this many bps.
+    pub max_dev_bps: u32,
+}
+
+/// SEP-40 call shapes for the divergence leg (field/variant names match
+/// the standard so cross-contract decoding works without importing the
+/// vendor crate).
+#[contracttype]
+#[derive(Clone)]
+pub enum Sep40Asset {
+    Stellar(Address),
+    Other(Symbol),
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct Sep40PriceData {
+    pub price: i128,
+    pub timestamp: u64,
 }
 
 #[contract]
@@ -176,26 +227,33 @@ impl NoetherRouterContract {
     pub fn open_with_price(
         env: Env,
         trader: Address,
-        asset: Symbol,
         collateral: i128,
         leverage: u32,
         direction: Direction,
-        price: i128,
-        timestamp: u64,
-        round_id: u64,
-        pubkeys: Vec<BytesN<32>>,
-        sigs: Vec<BytesN<64>>,
+        acceptable_price: i128,
+        att: PriceAttestation,
     ) -> Result<Position, NoetherError> {
         Self::require_initialized(&env)?;
         trader.require_auth();
 
-        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
-        // Stork second-source cross-check (T3-D1) — risk-increasing paths
-        // only; closes and liquidations are never gated on Stork.
-        Self::stork_guard(&env, &asset, price)?;
+        Self::refresh_price(&env, &att)?;
+        // Second-source cross-checks (Stork + SEP-40/Reflector) against the
+        // bundle's median — risk-increasing paths only; closes and
+        // liquidations are never gated on either guard.
+        let guard_price = Self::median_of(&env, &att.prices);
+        Self::stork_guard(&env, &att.asset, guard_price)?;
+        Self::sep40_guard(&env, &att.asset, guard_price)?;
 
         let market = Self::market_addr(&env)?;
-        let open_args: Vec<Val> = (trader, asset, collateral, leverage, direction).into_val(&env);
+        let open_args: Vec<Val> = (
+            trader,
+            att.asset.clone(),
+            collateral,
+            leverage,
+            direction,
+            acceptable_price,
+        )
+            .into_val(&env);
         let position: Position =
             env.invoke_contract(&market, &Symbol::new(&env, "open_position"), open_args);
         Ok(position)
@@ -209,20 +267,16 @@ impl NoetherRouterContract {
         env: Env,
         trader: Address,
         position_id: u64,
-        asset: Symbol,
-        price: i128,
-        timestamp: u64,
-        round_id: u64,
-        pubkeys: Vec<BytesN<32>>,
-        sigs: Vec<BytesN<64>>,
+        acceptable_price: i128,
+        att: PriceAttestation,
     ) -> Result<i128, NoetherError> {
         Self::require_initialized(&env)?;
         trader.require_auth();
 
-        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+        Self::refresh_price(&env, &att)?;
 
         let market = Self::market_addr(&env)?;
-        let close_args: Vec<Val> = (trader, position_id).into_val(&env);
+        let close_args: Vec<Val> = (trader, position_id, acceptable_price).into_val(&env);
         let pnl: i128 =
             env.invoke_contract(&market, &Symbol::new(&env, "close_position"), close_args);
         Ok(pnl)
@@ -236,17 +290,12 @@ impl NoetherRouterContract {
         trader: Address,
         position_id: u64,
         close_size: i128,
-        asset: Symbol,
-        price: i128,
-        timestamp: u64,
-        round_id: u64,
-        pubkeys: Vec<BytesN<32>>,
-        sigs: Vec<BytesN<64>>,
+        att: PriceAttestation,
     ) -> Result<i128, NoetherError> {
         Self::require_initialized(&env)?;
         trader.require_auth();
 
-        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+        Self::refresh_price(&env, &att)?;
 
         let market = Self::market_addr(&env)?;
         let args: Vec<Val> = (trader, position_id, close_size).into_val(&env);
@@ -263,17 +312,12 @@ impl NoetherRouterContract {
         env: Env,
         keeper: Address,
         position_id: u64,
-        asset: Symbol,
-        price: i128,
-        timestamp: u64,
-        round_id: u64,
-        pubkeys: Vec<BytesN<32>>,
-        sigs: Vec<BytesN<64>>,
+        att: PriceAttestation,
     ) -> Result<i128, NoetherError> {
         Self::require_initialized(&env)?;
         keeper.require_auth();
 
-        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+        Self::refresh_price(&env, &att)?;
 
         let market = Self::market_addr(&env)?;
         let args: Vec<Val> = (keeper, position_id).into_val(&env);
@@ -289,17 +333,12 @@ impl NoetherRouterContract {
         env: Env,
         caller: Address,
         position_id: u64,
-        asset: Symbol,
-        price: i128,
-        timestamp: u64,
-        round_id: u64,
-        pubkeys: Vec<BytesN<32>>,
-        sigs: Vec<BytesN<64>>,
+        att: PriceAttestation,
     ) -> Result<i128, NoetherError> {
         Self::require_initialized(&env)?;
         caller.require_auth();
 
-        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+        Self::refresh_price(&env, &att)?;
 
         let market = Self::market_addr(&env)?;
         let args: Vec<Val> = (caller, position_id).into_val(&env);
@@ -314,20 +353,17 @@ impl NoetherRouterContract {
         env: Env,
         keeper: Address,
         order_id: u64,
-        asset: Symbol,
-        price: i128,
-        timestamp: u64,
-        round_id: u64,
-        pubkeys: Vec<BytesN<32>>,
-        sigs: Vec<BytesN<64>>,
+        att: PriceAttestation,
     ) -> Result<i128, NoetherError> {
         Self::require_initialized(&env)?;
         keeper.require_auth();
 
-        Self::refresh_price(&env, &asset, price, timestamp, round_id, pubkeys, sigs)?;
+        Self::refresh_price(&env, &att)?;
         // Order execution can open/extend exposure, so it gets the same
-        // Stork cross-check as opens (closes/liquidations are never gated).
-        Self::stork_guard(&env, &asset, price)?;
+        // cross-checks as opens (closes/liquidations are never gated).
+        let guard_price = Self::median_of(&env, &att.prices);
+        Self::stork_guard(&env, &att.asset, guard_price)?;
+        Self::sep40_guard(&env, &att.asset, guard_price)?;
 
         let market = Self::market_addr(&env)?;
         let args: Vec<Val> = (keeper, order_id).into_val(&env);
@@ -348,10 +384,7 @@ impl NoetherRouterContract {
         keeper.require_auth();
 
         for att in attestations.iter() {
-            Self::refresh_price(
-                &env, &att.asset, att.price, att.timestamp, att.round_id,
-                att.pubkeys.clone(), att.sigs.clone(),
-            )?;
+            Self::refresh_price(&env, &att)?;
         }
 
         let market = Self::market_addr(&env)?;
@@ -504,6 +537,38 @@ impl NoetherRouterContract {
         Ok(())
     }
 
+    /// L0-8: per-asset strict list — assets named here refuse risk-increasing
+    /// trades whenever the Stork cross-check cannot run (missing/stale/
+    /// unreadable), even if the global `require_fresh` is off. Full replace;
+    /// an empty vec clears the list. Admin-authenticated.
+    pub fn set_stork_strict_assets(
+        env: Env,
+        assets: Vec<Symbol>,
+    ) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::StorkStrictAssets, &assets);
+        Ok(())
+    }
+
+    /// L0-8: store the SEP-40/Reflector third-source configuration.
+    /// `enabled = false` (or never calling this) keeps the guard inert.
+    /// Admin-authenticated.
+    pub fn set_reflector_config(
+        env: Env,
+        config: ReflectorConfig,
+    ) -> Result<(), NoetherError> {
+        Self::require_admin(&env)?;
+        if config.enabled
+            && (config.max_age_secs == 0 || config.max_dev_bps == 0 || config.decimals > 18)
+        {
+            return Err(NoetherError::InvalidParameter);
+        }
+        env.storage().instance().set(&DataKey::Reflector, &config);
+        Ok(())
+    }
+
     /// Replace the allowed publisher key set. Admin-authenticated.
     pub fn set_publishers(
         env: Env,
@@ -586,6 +651,14 @@ impl NoetherRouterContract {
         env.storage().instance().get(&DataKey::Stork)
     }
 
+    pub fn get_stork_strict_assets(env: Env) -> Option<Vec<Symbol>> {
+        env.storage().instance().get(&DataKey::StorkStrictAssets)
+    }
+
+    pub fn get_reflector_config(env: Env) -> Option<ReflectorConfig> {
+        env.storage().instance().get(&DataKey::Reflector)
+    }
+
     /// Last verified Stork price for a market asset symbol (7-decimal fixed
     /// point + signing time in ns), or None when never relayed / expired.
     /// Consumed by the oracle health surface.
@@ -603,54 +676,60 @@ impl NoetherRouterContract {
     /// `noeracle_shim` will read on the market's behalf. If the derived tag
     /// doesn't match the signed message, Noeracle's signature check fails and
     /// the whole transaction reverts (a safe failure).
-    fn refresh_price(
-        env: &Env,
-        asset: &Symbol,
-        price: i128,
-        timestamp: u64,
-        round_id: u64,
-        pubkeys: Vec<BytesN<32>>,
-        sigs: Vec<BytesN<64>>,
-    ) -> Result<(), NoetherError> {
+    fn refresh_price(env: &Env, att: &PriceAttestation) -> Result<(), NoetherError> {
+        // Bundle alignment: prices[i] is what pubkeys[i] signed with
+        // sigs[i]. A misaligned bundle is malformed, never relayable.
+        let n = att.pubkeys.len();
+        if n == 0 || att.sigs.len() != n || att.prices.len() != n {
+            return Err(NoetherError::InvalidParameter);
+        }
+
         // Publisher allowlist (O-2): every supplied key must be
-        // registered, and at least one must be present — the router
-        // never relays a self-signed price. Defense-in-depth: O-1
-        // hardening in Noeracle itself remains the primary gate.
+        // registered — the router never relays a self-signed price.
+        // Defense-in-depth: O-1 hardening in Noeracle itself remains the
+        // primary gate.
         let allowed: Vec<BytesN<32>> = env
             .storage()
             .instance()
             .get(&DataKey::Publishers)
             .ok_or(NoetherError::NotInitialized)?;
-        if pubkeys.is_empty() {
-            return Err(NoetherError::Unauthorized);
-        }
-        for pk in pubkeys.iter() {
+        for pk in att.pubkeys.iter() {
             if !allowed.contains(&pk) {
                 return Err(NoetherError::Unauthorized);
             }
         }
 
-        // Coarse sanity bounds (O-7 backstop): a price outside these is
-        // garbage regardless of signatures
-        let (lo, hi) = price_bounds(env, asset)?;
-        if price < lo || price > hi {
-            return Err(NoetherError::InvalidPrice);
+        // Coarse sanity bounds (O-7 backstop) on EVERY submitted price —
+        // one garbage publisher price rejects the whole relay.
+        let (lo, hi) = price_bounds(env, &att.asset)?;
+        for p in att.prices.iter() {
+            if p < lo || p > hi {
+                return Err(NoetherError::InvalidPrice);
+            }
         }
 
         let noeracle = Self::noeracle_addr(env)?;
-        let tag = symbol_to_tag(env, asset)?;
-        // Hardened batch entrypoint: one registered publisher key signs the
-        // whole batch (here a single asset). Noeracle re-checks the publisher
-        // gate, staleness, and round monotonicity on-chain; an Err there
-        // traps and reverts the whole trade (fail-closed).
+        let tag = symbol_to_tag(env, &att.asset)?;
+        // L0-8: forward per-publisher rounds to the QUORUM entrypoint —
+        // the on-chain MEDIAN becomes the stored price. Noeracle re-checks
+        // publisher registration, staleness, quorum count and per-publisher
+        // round monotonicity; any failure traps and reverts the whole
+        // trade (fail-closed). A single-publisher bundle passes at
+        // quorum=1 (the staged-rollout setting).
         let assets: Vec<BytesN<8>> = soroban_sdk::vec![env, tag];
-        let prices: Vec<i128> = soroban_sdk::vec![env, price];
-        let pubkey = pubkeys.get_unchecked(0);
+        let mut rounds: Vec<PublisherRound> = Vec::new(env);
+        for i in 0..n {
+            rounds.push_back(PublisherRound {
+                pubkey: att.pubkeys.get_unchecked(i),
+                prices: soroban_sdk::vec![env, att.prices.get_unchecked(i)],
+                sigs: soroban_sdk::vec![env, att.sigs.get_unchecked(i)],
+            });
+        }
         let update_args: Vec<Val> =
-            (assets, prices, timestamp, round_id, pubkey, sigs).into_val(env);
+            (assets, att.timestamp, att.round_id, rounds).into_val(env);
         env.invoke_contract::<()>(
             &noeracle,
-            &Symbol::new(env, "update_batch_ed25519_persistent"),
+            &Symbol::new(env, "update_quorum_ed25519_persistent"),
             update_args,
         );
         Ok(())
@@ -680,7 +759,14 @@ impl NoetherRouterContract {
             .map(|e| now.saturating_sub(e.timestamp_ns / 1_000_000_000) <= cfg.max_age_secs)
             .unwrap_or(false);
         if !fresh {
-            return if cfg.require_fresh {
+            // L0-8 leg (a3): per-asset strictness — majors can be armed
+            // fail-closed while unmapped pairs stay fail-open.
+            let strict = cfg.require_fresh || {
+                let strict_assets: Option<Vec<Symbol>> =
+                    env.storage().instance().get(&DataKey::StorkStrictAssets);
+                strict_assets.map(|list| list.contains(asset)).unwrap_or(false)
+            };
+            return if strict {
                 Err(NoetherError::PriceStale)
             } else {
                 Ok(())
@@ -693,6 +779,80 @@ impl NoetherRouterContract {
             return Err(NoetherError::PriceDeviationTooHigh);
         }
         Ok(())
+    }
+
+    /// L0-8 leg (c): SEP-40 (Reflector) divergence check — same policy as
+    /// stork_guard: FAIL-OPEN on unconfigured/disabled/read-failure/stale
+    /// data, FAIL-CLOSED (#81) on a live divergence beyond max_dev_bps.
+    /// Risk-increasing paths only; closes/liquidations never call this.
+    fn sep40_guard(env: &Env, asset: &Symbol, noeracle_price: i128) -> Result<(), NoetherError> {
+        let cfg_opt: Option<ReflectorConfig> = env.storage().instance().get(&DataKey::Reflector);
+        let Some(cfg) = cfg_opt else { return Ok(()) };
+        if !cfg.enabled {
+            return Ok(());
+        }
+
+        let args: Vec<Val> = (Sep40Asset::Other(asset.clone()),).into_val(env);
+        let data = match env.try_invoke_contract::<Option<Sep40PriceData>, soroban_sdk::Error>(
+            &cfg.oracle,
+            &Symbol::new(env, "lastprice"),
+            args,
+        ) {
+            Ok(Ok(Some(d))) => d,
+            _ => return Ok(()), // fail-open: vendor unreadable/absent
+        };
+        let now = env.ledger().timestamp();
+        if now.saturating_sub(data.timestamp) > cfg.max_age_secs {
+            return Ok(());
+        }
+
+        // Rescale vendor decimals → Noether's 7dp.
+        let mut vendor = data.price;
+        if cfg.decimals > 7 {
+            let mut d = cfg.decimals - 7;
+            while d > 0 {
+                vendor /= 10;
+                d -= 1;
+            }
+        } else if cfg.decimals < 7 {
+            let mut d = 7 - cfg.decimals;
+            while d > 0 {
+                vendor = vendor.saturating_mul(10);
+                d -= 1;
+            }
+        }
+        if vendor <= 0 {
+            return Ok(());
+        }
+
+        let dev_bps = (noeracle_price - vendor).abs() * 10_000 / vendor;
+        if dev_bps > cfg.max_dev_bps as i128 {
+            return Err(NoetherError::PriceDeviationTooHigh);
+        }
+        Ok(())
+    }
+
+    /// Median of a non-empty price bundle (even count → mean of middles) —
+    /// the router-side mirror of the value the Noeracle stores, used as the
+    /// reference for the divergence guards.
+    fn median_of(env: &Env, prices: &Vec<i128>) -> i128 {
+        let mut sorted: Vec<i128> = Vec::new(env);
+        for p in prices.iter() {
+            let mut idx = sorted.len();
+            for i in 0..sorted.len() {
+                if p < sorted.get_unchecked(i) {
+                    idx = i;
+                    break;
+                }
+            }
+            sorted.insert(idx, p);
+        }
+        let n = sorted.len();
+        if n % 2 == 1 {
+            sorted.get_unchecked(n / 2)
+        } else {
+            (sorted.get_unchecked(n / 2 - 1) + sorted.get_unchecked(n / 2)) / 2
+        }
     }
 
     fn market_addr(env: &Env) -> Result<Address, NoetherError> {
@@ -782,31 +942,46 @@ mod tests {
     // assert the router relayed the right values. Accepts any signature (real
     // verification is the live contract's job; we test the router's plumbing).
     mod mock_noeracle {
-        use soroban_sdk::{contract, contractimpl, symbol_short, BytesN, Env, Vec};
+        use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, BytesN, Env, Vec};
+
+        /// Mirror of the upstream quorum round struct — field names must
+        /// match the router's `PublisherRound` for cross-contract UDT decode.
+        #[contracttype]
+        #[derive(Clone)]
+        pub struct PublisherRound {
+            pub pubkey: BytesN<32>,
+            pub prices: Vec<i128>,
+            pub sigs: Vec<BytesN<64>>,
+        }
 
         #[contract]
         pub struct MockNoeracle;
 
         #[contractimpl]
         impl MockNoeracle {
-            pub fn update_batch_ed25519_persistent(
+            pub fn update_quorum_ed25519_persistent(
                 env: Env,
                 assets: Vec<BytesN<8>>,
-                prices: Vec<i128>,
                 timestamp: u64,
                 round_id: u64,
-                pubkey: BytesN<32>,
-                sigs: Vec<BytesN<64>>,
+                rounds: Vec<PublisherRound>,
             ) {
+                // Median forming is Noeracle's job — the mock just records
+                // the first round's prices and the round count so tests can
+                // assert the router forwarded the full bundle.
+                let first = rounds.get_unchecked(0);
                 for i in 0..assets.len() {
                     let asset = assets.get_unchecked(i);
-                    let price = prices.get_unchecked(i);
+                    let price = first.prices.get_unchecked(i);
                     env.storage().instance().set(&symbol_short!("PRICE"), &price);
                     env.storage().instance().set(&symbol_short!("TAG"), &asset);
                     // per-tag map for multi-asset tests
                     env.storage().instance().set(&asset, &price);
                 }
-                let _ = (timestamp, round_id, pubkey, sigs);
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("NROUNDS"), &rounds.len());
+                let _ = (timestamp, round_id);
             }
 
             pub fn recorded_price(env: Env) -> i128 {
@@ -820,6 +995,10 @@ mod tests {
             pub fn price_for(env: Env, tag: BytesN<8>) -> i128 {
                 env.storage().instance().get(&tag).unwrap_or(0)
             }
+
+            pub fn recorded_rounds(env: Env) -> u32 {
+                env.storage().instance().get(&symbol_short!("NROUNDS")).unwrap_or(0)
+            }
         }
     }
 
@@ -827,7 +1006,7 @@ mod tests {
     // the router forwarded the trade args and returned the market's result.
     mod mock_market {
         use noether_common::{Direction, Position};
-        use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+        use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol};
 
         #[contract]
         pub struct MockMarket;
@@ -835,13 +1014,17 @@ mod tests {
         #[contractimpl]
         impl MockMarket {
             pub fn open_position(
-                _env: Env,
+                env: Env,
                 trader: Address,
                 asset: Symbol,
                 collateral: i128,
                 leverage: u32,
                 direction: Direction,
+                acceptable_price: i128,
             ) -> Position {
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("ACCEPT"), &acceptable_price);
                 Position {
                     id: 777,
                     trader,
@@ -858,8 +1041,20 @@ mod tests {
                 }
             }
 
-            pub fn close_position(_env: Env, _trader: Address, _position_id: u64) -> i128 {
+            pub fn close_position(
+                env: Env,
+                _trader: Address,
+                _position_id: u64,
+                acceptable_price: i128,
+            ) -> i128 {
+                env.storage()
+                    .instance()
+                    .set(&symbol_short!("ACCEPT"), &acceptable_price);
                 4_321
+            }
+
+            pub fn last_acceptable(env: Env) -> i128 {
+                env.storage().instance().get(&symbol_short!("ACCEPT")).unwrap_or(-1)
             }
 
             pub fn close_position_partial(
@@ -882,12 +1077,62 @@ mod tests {
         }
     }
 
+    // Mock SEP-40 vendor (Reflector stand-in) for the third-source guard.
+    // Variant/field names mirror the router's Sep40Asset/Sep40PriceData so
+    // the cross-contract UDT decode round-trips.
+    mod mock_sep40 {
+        use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
+
+        #[contracttype]
+        #[derive(Clone)]
+        pub enum Asset {
+            Stellar(Address),
+            Other(Symbol),
+        }
+
+        #[contracttype]
+        #[derive(Clone)]
+        pub struct PriceData {
+            pub price: i128,
+            pub timestamp: u64,
+        }
+
+        #[contract]
+        pub struct MockSep40;
+
+        #[contractimpl]
+        impl MockSep40 {
+            pub fn set(env: Env, asset: Symbol, price: i128, timestamp: u64) {
+                env.storage().instance().set(&asset, &PriceData { price, timestamp });
+            }
+
+            pub fn lastprice(env: Env, asset: Asset) -> Option<PriceData> {
+                match asset {
+                    Asset::Other(sym) => env.storage().instance().get(&sym),
+                    _ => None,
+                }
+            }
+        }
+    }
+
     fn pubkeys(env: &Env) -> Vec<BytesN<32>> {
         soroban_sdk::vec![env, BytesN::from_array(env, &[7u8; 32])]
     }
 
     fn sigs(env: &Env) -> Vec<BytesN<64>> {
         soroban_sdk::vec![env, BytesN::from_array(env, &[9u8; 64])]
+    }
+
+    /// Single-publisher attestation bundle for the default fixture key.
+    fn att(env: &Env, asset: &str, price: i128, timestamp: u64, round_id: u64) -> PriceAttestation {
+        PriceAttestation {
+            asset: Symbol::new(env, asset),
+            prices: soroban_sdk::vec![env, price],
+            timestamp,
+            round_id,
+            pubkeys: pubkeys(env),
+            sigs: sigs(env),
+        }
     }
 
     struct Fixture {
@@ -951,17 +1196,14 @@ mod tests {
     fn open_with_price_stores_then_opens() {
         let f = setup();
         let price = 70_000 * PRECISION;
+        let acceptable = 71_000 * PRECISION;
         let pos = f.client.open_with_price(
             &Address::generate(&f.env),
-            &Symbol::new(&f.env, "BTC"),
             &(100 * PRECISION),
             &5,
             &Direction::Long,
-            &price,
-            &1_700_000_000u64,
-            &42u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &acceptable,
+            &att(&f.env, "BTC", price, 1_700_000_000, 42),
         );
 
         // Market result is forwarded through unchanged.
@@ -977,21 +1219,22 @@ mod tests {
             noeracle.recorded_tag(),
             BytesN::from_array(&f.env, &[b'B', b'T', b'C', b'U', b'S', b'D', 0, 0])
         );
+
+        // L0-10: the trader's acceptable_price bound reached the market.
+        let market = mock_market::MockMarketClient::new(&f.env, &f.market_id);
+        assert_eq!(market.last_acceptable(), acceptable);
     }
 
     #[test]
     fn close_with_price_stores_then_closes() {
         let f = setup();
         let price = 350_000_000_000i128;
+        let acceptable = 340_000_000_000i128;
         let pnl = f.client.close_with_price(
             &Address::generate(&f.env),
             &99u64,
-            &Symbol::new(&f.env, "ETH"),
-            &price,
-            &1_700_000_000u64,
-            &7u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &acceptable,
+            &att(&f.env, "ETH", price, 1_700_000_000, 7),
         );
 
         assert_eq!(pnl, 4_321);
@@ -1002,6 +1245,10 @@ mod tests {
             noeracle.recorded_tag(),
             BytesN::from_array(&f.env, &[b'E', b'T', b'H', b'U', b'S', b'D', 0, 0])
         );
+
+        // L0-10: the close bound reached the market too.
+        let market = mock_market::MockMarketClient::new(&f.env, &f.market_id);
+        assert_eq!(market.last_acceptable(), acceptable);
     }
 
     #[test]
@@ -1012,12 +1259,7 @@ mod tests {
             &Address::generate(&f.env),
             &99u64,
             &(500_0000000i128), // close_size
-            &Symbol::new(&f.env, "ETH"),
-            &price,
-            &1_700_000_000u64,
-            &7u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &att(&f.env, "ETH", price, 1_700_000_000, 7),
         );
         assert_eq!(pnl, 2_100); // mock partial-close return
         let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
@@ -1030,15 +1272,11 @@ mod tests {
         let f = setup();
         let _ = f.client.open_with_price(
             &Address::generate(&f.env),
-            &Symbol::new(&f.env, "PEPE"),
             &(100 * PRECISION),
             &5,
             &Direction::Long,
-            &1i128,
-            &1_700_000_000u64,
-            &1u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &0i128,
+            &att(&f.env, "PEPE", 1i128, 1_700_000_000, 1),
         );
     }
 
@@ -1069,37 +1307,33 @@ mod tests {
     #[should_panic(expected = "Error(Contract, #3)")] // Unauthorized
     fn foreign_publisher_key_rejected() {
         let f = setup();
-        let foreign = soroban_sdk::vec![&f.env, BytesN::from_array(&f.env, &[42u8; 32])];
+        let mut a = att(&f.env, "BTC", 70_000 * PRECISION, 1_700_000_000, 1);
+        a.pubkeys = soroban_sdk::vec![&f.env, BytesN::from_array(&f.env, &[42u8; 32])];
         let _ = f.client.open_with_price(
             &Address::generate(&f.env),
-            &Symbol::new(&f.env, "BTC"),
             &(100 * PRECISION),
             &5,
             &Direction::Long,
-            &(70_000 * PRECISION),
-            &1_700_000_000u64,
-            &1u64,
-            &foreign,
-            &sigs(&f.env),
+            &0i128,
+            &a,
         );
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #3)")] // Unauthorized
+    #[should_panic(expected = "Error(Contract, #5)")] // InvalidParameter (malformed bundle)
     fn empty_publisher_set_rejected() {
         let f = setup();
-        let none: Vec<BytesN<32>> = soroban_sdk::vec![&f.env];
+        let mut a = att(&f.env, "BTC", 70_000 * PRECISION, 1_700_000_000, 1);
+        a.pubkeys = soroban_sdk::vec![&f.env];
+        // An empty bundle now fails the alignment check (n == 0) before the
+        // allowlist is even consulted — malformed, not merely unauthorized.
         let _ = f.client.open_with_price(
             &Address::generate(&f.env),
-            &Symbol::new(&f.env, "BTC"),
             &(100 * PRECISION),
             &5,
             &Direction::Long,
-            &(70_000 * PRECISION),
-            &1_700_000_000u64,
-            &1u64,
-            &none,
-            &sigs(&f.env),
+            &0i128,
+            &a,
         );
     }
 
@@ -1111,15 +1345,11 @@ mod tests {
         // Old key now rejected
         let res = f.client.try_open_with_price(
             &Address::generate(&f.env),
-            &Symbol::new(&f.env, "BTC"),
             &(100 * PRECISION),
             &5,
             &Direction::Long,
-            &(70_000 * PRECISION),
-            &1_700_000_000u64,
-            &1u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &0i128,
+            &att(&f.env, "BTC", 70_000 * PRECISION, 1_700_000_000, 1),
         );
         assert!(res.is_err());
     }
@@ -1135,12 +1365,7 @@ mod tests {
         let reward = f.client.liquidate_with_price(
             &Address::generate(&f.env),
             &7u64,
-            &Symbol::new(&f.env, "BTC"),
-            &price,
-            &1_700_000_000u64,
-            &3u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &att(&f.env, "BTC", price, 1_700_000_000, 3),
         );
         assert_eq!(reward, 55);
         let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
@@ -1153,12 +1378,7 @@ mod tests {
         let fee = f.client.execute_with_price(
             &Address::generate(&f.env),
             &12u64,
-            &Symbol::new(&f.env, "ETH"),
-            &(3_000 * PRECISION),
-            &1_700_000_000u64,
-            &4u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &att(&f.env, "ETH", 3_000 * PRECISION, 1_700_000_000, 4),
         );
         assert_eq!(fee, 66);
     }
@@ -1168,22 +1388,8 @@ mod tests {
         let f = setup();
         let atts = soroban_sdk::vec![
             &f.env,
-            PriceAttestation {
-                asset: Symbol::new(&f.env, "BTC"),
-                price: 64_000 * PRECISION,
-                timestamp: 1_700_000_000,
-                round_id: 5,
-                pubkeys: pubkeys(&f.env),
-                sigs: sigs(&f.env),
-            },
-            PriceAttestation {
-                asset: Symbol::new(&f.env, "XLM"),
-                price: PRECISION / 10,
-                timestamp: 1_700_000_000,
-                round_id: 5,
-                pubkeys: pubkeys(&f.env),
-                sigs: sigs(&f.env),
-            },
+            att(&f.env, "BTC", 64_000 * PRECISION, 1_700_000_000, 5),
+            att(&f.env, "XLM", PRECISION / 10, 1_700_000_000, 5),
         ];
         let reward = f.client.liquidate_cross_with_prices(
             &Address::generate(&f.env),
@@ -1209,15 +1415,12 @@ mod tests {
         let f = setup();
         let _ = f.client.open_with_price(
             &Address::generate(&f.env),
-            &Symbol::new(&f.env, "BTC"),
             &(100 * PRECISION),
             &5,
             &Direction::Long,
-            &PRECISION, // BTC at $1 — below the 1k floor
-            &1_700_000_000u64,
-            &1u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &0i128,
+            // BTC at $1 — below the 1k floor
+            &att(&f.env, "BTC", PRECISION, 1_700_000_000, 1),
         );
     }
 
@@ -1304,15 +1507,11 @@ mod tests {
         f.client
             .try_open_with_price(
                 &Address::generate(&f.env),
-                &Symbol::new(&f.env, "BTC"),
                 &(100 * PRECISION),
                 &5,
                 &Direction::Long,
-                &noeracle_price,
-                &STORK_TS,
-                &1u64,
-                &pubkeys(&f.env),
-                &sigs(&f.env),
+                &0i128,
+                &att(&f.env, "BTC", noeracle_price, STORK_TS, 1),
             )
             .map_err(|e| e.unwrap())
             .map(|r| r.unwrap())
@@ -1540,13 +1739,268 @@ mod tests {
         let pnl = f.client.close_with_price(
             &Address::generate(&f.env),
             &99u64,
-            &Symbol::new(&f.env, "ETH"),
-            &(3_000 * PRECISION),
-            &STORK_TS,
-            &7u64,
-            &pubkeys(&f.env),
-            &sigs(&f.env),
+            &0i128,
+            &att(&f.env, "ETH", 3_000 * PRECISION, STORK_TS, 7),
         );
         assert_eq!(pnl, 4_321);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // L0-8: quorum bundles (multi-publisher attestations)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Two-publisher bundle for BTC: registers both keys, then builds an
+    /// aligned (prices, pubkeys, sigs) attestation.
+    fn quorum_att_btc(f: &Fixture, p1: i128, p2: i128) -> PriceAttestation {
+        let k1 = BytesN::from_array(&f.env, &[7u8; 32]);
+        let k2 = BytesN::from_array(&f.env, &[8u8; 32]);
+        f.client
+            .set_publishers(&soroban_sdk::vec![&f.env, k1.clone(), k2.clone()]);
+        PriceAttestation {
+            asset: Symbol::new(&f.env, "BTC"),
+            prices: soroban_sdk::vec![&f.env, p1, p2],
+            timestamp: STORK_TS,
+            round_id: 42,
+            pubkeys: soroban_sdk::vec![&f.env, k1, k2],
+            sigs: soroban_sdk::vec![
+                &f.env,
+                BytesN::from_array(&f.env, &[9u8; 64]),
+                BytesN::from_array(&f.env, &[10u8; 64]),
+            ],
+        }
+    }
+
+    #[test]
+    fn multi_publisher_bundle_forwards_all_rounds() {
+        let f = setup();
+        let a = quorum_att_btc(&f, 70_000 * PRECISION, 70_200 * PRECISION);
+        let pos = f.client.open_with_price(
+            &Address::generate(&f.env),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0i128,
+            &a,
+        );
+        assert_eq!(pos.id, 777);
+
+        // One PublisherRound per publisher reached Noeracle's quorum
+        // entrypoint — the median forms there, not in the router.
+        let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
+        assert_eq!(noeracle.recorded_rounds(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #5)")] // InvalidParameter
+    fn misaligned_bundle_rejected() {
+        let f = setup();
+        let mut a = att(&f.env, "BTC", 70_000 * PRECISION, 1_700_000_000, 1);
+        // Two prices signed by one key: malformed, never relayable.
+        a.prices = soroban_sdk::vec![&f.env, 70_000 * PRECISION, 70_100 * PRECISION];
+        let _ = f.client.open_with_price(
+            &Address::generate(&f.env),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0i128,
+            &a,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #31)")] // InvalidPrice
+    fn one_out_of_band_price_rejects_whole_bundle() {
+        let f = setup();
+        // Second publisher claims BTC at $1 — the whole relay dies, even
+        // though the first price is sane.
+        let a = quorum_att_btc(&f, 70_000 * PRECISION, PRECISION);
+        let _ = f.client.open_with_price(
+            &Address::generate(&f.env),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0i128,
+            &a,
+        );
+    }
+
+    #[test]
+    fn stork_guard_checks_bundle_median() {
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+        let raw = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            STORK_TS * NS,
+            &[(0, 70_000 * E18)],
+        );
+        f.client.relay_stork(&Bytes::from_slice(&f.env, &raw));
+
+        // Prices [70_000, 74_200]: median 72_100 is 3% over Stork's 70_000
+        // (1% band) — the guard must judge the MEDIAN, not the first price.
+        let a = quorum_att_btc(&f, 70_000 * PRECISION, 74_200 * PRECISION);
+        let res = f.client.try_open_with_price(
+            &Address::generate(&f.env),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0i128,
+            &a,
+        );
+        assert!(matches!(res, Err(Ok(NoetherError::PriceDeviationTooHigh))));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // L0-8: per-asset Stork strictness
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn strict_asset_blocks_open_when_stork_dark_but_others_pass() {
+        let f = setup();
+        let _ = enable_stork(&f, false); // globally fail-open
+        f.client
+            .set_stork_strict_assets(&soroban_sdk::vec![&f.env, Symbol::new(&f.env, "BTC")]);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        // BTC is strict: no Stork data → risk-increasing open blocked.
+        let res = open_btc_at(&f, 70_000 * PRECISION);
+        assert!(matches!(res, Err(NoetherError::PriceStale)));
+
+        // ETH is not on the strict list: same darkness, open passes.
+        let pos = f.client.open_with_price(
+            &Address::generate(&f.env),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0i128,
+            &att(&f.env, "ETH", 3_000 * PRECISION, STORK_TS, 1),
+        );
+        assert_eq!(pos.id, 777);
+
+        // Clearing the list restores fail-open for BTC.
+        f.client.set_stork_strict_assets(&soroban_sdk::vec![&f.env]);
+        let pos = open_btc_at(&f, 70_000 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+    }
+
+    #[test]
+    fn strict_asset_never_gates_closes() {
+        let f = setup();
+        let _ = enable_stork(&f, false);
+        f.client
+            .set_stork_strict_assets(&soroban_sdk::vec![&f.env, Symbol::new(&f.env, "BTC")]);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        let pnl = f.client.close_with_price(
+            &Address::generate(&f.env),
+            &99u64,
+            &0i128,
+            &att(&f.env, "BTC", 70_000 * PRECISION, STORK_TS, 7),
+        );
+        assert_eq!(pnl, 4_321);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // L0-8: SEP-40 (Reflector) third source
+    // ═══════════════════════════════════════════════════════════════════
+
+    const E14: i128 = 100_000_000_000_000; // Reflector testnet ships 14dp
+
+    fn enable_reflector(f: &Fixture, decimals: u32) -> Address {
+        let oracle = f.env.register_contract(None, mock_sep40::MockSep40);
+        f.client.set_reflector_config(&ReflectorConfig {
+            enabled: true,
+            oracle: oracle.clone(),
+            decimals,
+            max_age_secs: 300,
+            max_dev_bps: 100, // 1%
+        });
+        oracle
+    }
+
+    #[test]
+    fn reflector_divergence_blocks_open_within_band_passes() {
+        let f = setup();
+        let oracle = enable_reflector(&f, 14);
+        f.env.ledger().set_timestamp(STORK_TS);
+        let sep = mock_sep40::MockSep40Client::new(&f.env, &oracle);
+        sep.set(&Symbol::new(&f.env, "BTC"), &(70_000 * E14), &STORK_TS);
+
+        // 3% over the vendor price — blocked (#81) despite valid sigs.
+        let res = open_btc_at(&f, 72_100 * PRECISION);
+        assert!(matches!(res, Err(NoetherError::PriceDeviationTooHigh)));
+
+        // 0.5% divergence — inside the 1% band, passes (also proves the
+        // 14dp → 7dp rescale is right; a decimals bug would be ~10^7 off).
+        let pos = open_btc_at(&f, 70_350 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+    }
+
+    #[test]
+    fn reflector_fails_open_on_missing_stale_or_disabled() {
+        let f = setup();
+        let oracle = enable_reflector(&f, 14);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        // (a) vendor has no data at all → open passes.
+        let pos = open_btc_at(&f, 70_000 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+
+        // (b) vendor data stale (10 min old vs 300s max) → a divergent
+        // open must NOT be vetoed by expired data.
+        let sep = mock_sep40::MockSep40Client::new(&f.env, &oracle);
+        sep.set(&Symbol::new(&f.env, "BTC"), &(60_000 * E14), &(STORK_TS - 600));
+        let pos = open_btc_at(&f, 70_000 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+
+        // (c) fresh divergent data but the guard is disabled → ignored.
+        sep.set(&Symbol::new(&f.env, "BTC"), &(60_000 * E14), &STORK_TS);
+        f.client.set_reflector_config(&ReflectorConfig {
+            enabled: false,
+            oracle: oracle.clone(),
+            decimals: 14,
+            max_age_secs: 300,
+            max_dev_bps: 100,
+        });
+        let pos = open_btc_at(&f, 70_000 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+    }
+
+    #[test]
+    fn reflector_config_validation() {
+        let f = setup();
+        let oracle = Address::generate(&f.env);
+        // Enabled with a zero freshness window: rejected.
+        assert!(f
+            .client
+            .try_set_reflector_config(&ReflectorConfig {
+                enabled: true,
+                oracle: oracle.clone(),
+                decimals: 14,
+                max_age_secs: 0,
+                max_dev_bps: 100,
+            })
+            .is_err());
+        // Absurd decimals: rejected.
+        assert!(f
+            .client
+            .try_set_reflector_config(&ReflectorConfig {
+                enabled: true,
+                oracle: oracle.clone(),
+                decimals: 19,
+                max_age_secs: 300,
+                max_dev_bps: 100,
+            })
+            .is_err());
+        // Disabled config stores without validation of the live fields.
+        f.client.set_reflector_config(&ReflectorConfig {
+            enabled: false,
+            oracle,
+            decimals: 0,
+            max_age_secs: 0,
+            max_dev_bps: 0,
+        });
+        assert!(!f.client.get_reflector_config().unwrap().enabled);
     }
 }

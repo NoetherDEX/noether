@@ -63,9 +63,15 @@ const READ_FEE = '100';
  * 60 OrderNotFound, 61 OrderNotPending, 62 OrderNotTriggered,
  * 63 SlippageExceeded, 78 CrossMarginNotLiquidatable,
  * 80 CrossMarginOrderNotSupported, 81 PriceDeviationTooHigh,
- * 82 OpenInterestCapExceeded.
+ * 82 OpenInterestCapExceeded, 83 staged-liq grace,
+ * 84 AdlNotActive, 85 AdlNotEligible (L0-1),
+ * 86 LiquidationNotConfirmed (L0-9), 87 AcceptablePriceExceeded (L0-10),
+ * 89 SkewCapExceeded (L0-14), 90 Frozen (L0-15), 91 NetsToZero (L1-3),
+ * 92 AssetHalted (L1-24).
  */
-const NON_RETRYABLE_CODES = new Set([20, 50, 55, 60, 61, 62, 63, 78, 80, 81, 82, 83]);
+const NON_RETRYABLE_CODES = new Set([
+  20, 50, 55, 60, 61, 62, 63, 78, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92,
+]);
 
 const NON_RETRYABLE_NAMES = [
   'SlippageExceeded',
@@ -86,6 +92,119 @@ export function extractContractErrorCode(message: string): number | null {
   const match = message.match(/Error\(Contract, #(\d+)\)/);
   return match ? parseInt(match[1], 10) : null;
 }
+
+/**
+ * True when a simulation/read failure means the ENTRY POINT does not exist
+ * on the deployed contract (a pre-upgrade chain) rather than a transient
+ * fault — the Wasm VM reports a missing export as MissingValue / "invoking
+ * unknown export". Callers use this to disable phases that target entry
+ * points newer than the deployed market (e.g. ADL before Batch-1).
+ */
+export function isMissingContractFunction(message: string): boolean {
+  return /MissingValue|unknown export|invoking unknown/i.test(message);
+}
+
+/**
+ * One signed Noeracle round for a single asset — the subset of the SDK's
+ * Attestation the router's *_with_price entry points consume. price is the
+ * 7-decimal scaled integer; publisher/signature are hex (32/64 bytes).
+ */
+export interface RouterRound {
+  price: string | number | bigint;
+  timestamp: string | number | bigint;
+  round_id: string | number | bigint;
+  publisher: string;
+  signature: string;
+}
+
+/**
+ * LEGACY (pre-Batch-1 deployed router): args for router execute_with_price
+ * / liquidate_with_price / adl_with_price — all three share the exact
+ * signature (actor: Address, id: u64, asset: Symbol, price: i128,
+ * timestamp: u64, round_id: u64, pubkeys: Vec<BytesN<32>>,
+ * sigs: Vec<BytesN<64>>). The Batch-1 router uses buildRouterCallArgsV2;
+ * StellarClient.routerAbiV2() picks per deployment. Pure and exported so
+ * the smoke suite pins the arg order/types offline (the G-6 arity-drift
+ * class).
+ */
+export function buildRouterCallArgs(
+  actor: string,
+  id: bigint,
+  asset: string,
+  round: RouterRound,
+): xdr.ScVal[] {
+  return [
+    new Address(actor).toScVal(),
+    nativeToScVal(id, { type: 'u64' }),
+    nativeToScVal(asset, { type: 'symbol' }),
+    nativeToScVal(BigInt(round.price), { type: 'i128' }),
+    nativeToScVal(BigInt(round.timestamp), { type: 'u64' }),
+    nativeToScVal(BigInt(round.round_id), { type: 'u64' }),
+    xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.publisher, 'hex'))]),
+    xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.signature, 'hex'))]),
+  ];
+}
+
+/**
+ * LEGACY (pre-Batch-1) PriceAttestation struct ScVal for
+ * liquidate_cross_with_prices. Soroban UDT structs decode from an ScMap
+ * whose entries are SORTED BY KEY — for this struct: asset < price <
+ * pubkeys < round_id < sigs < timestamp. The Batch-1 struct replaces
+ * `price` with the `prices` vec (buildPriceAttestationScValV2). Pure and
+ * exported for the smoke suite.
+ */
+export function buildPriceAttestationScVal(asset: string, round: RouterRound): xdr.ScVal {
+  const entry = (key: string, val: xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+  return xdr.ScVal.scvMap([
+    entry('asset', nativeToScVal(asset, { type: 'symbol' })),
+    entry('price', nativeToScVal(BigInt(round.price), { type: 'i128' })),
+    entry('pubkeys', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.publisher, 'hex'))])),
+    entry('round_id', nativeToScVal(BigInt(round.round_id), { type: 'u64' })),
+    entry('sigs', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.signature, 'hex'))])),
+    entry('timestamp', nativeToScVal(BigInt(round.timestamp), { type: 'u64' })),
+  ]);
+}
+
+/**
+ * L0-8 (Batch-1 quorum ABI): (actor: Address, id: u64, att: PriceAttestation)
+ * — the flattened tail collapsed into ONE struct arg and the asset moved
+ * inside it. Pure and exported for the smoke suite.
+ */
+export function buildRouterCallArgsV2(
+  actor: string,
+  id: bigint,
+  asset: string,
+  round: RouterRound,
+): xdr.ScVal[] {
+  return [
+    new Address(actor).toScVal(),
+    nativeToScVal(id, { type: 'u64' }),
+    buildPriceAttestationScValV2(asset, round),
+  ];
+}
+
+/**
+ * L0-8 PriceAttestation struct (Batch-1): `price` became the per-publisher
+ * `prices` vec, aligned with pubkeys/sigs. Key-sorted for UDT decode:
+ * asset < prices < pubkeys < round_id < sigs < timestamp. Single-publisher
+ * bundle — the attestation service returns one signer per round.
+ */
+export function buildPriceAttestationScValV2(asset: string, round: RouterRound): xdr.ScVal {
+  const entry = (key: string, val: xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+  return xdr.ScVal.scvMap([
+    entry('asset', nativeToScVal(asset, { type: 'symbol' })),
+    entry('prices', xdr.ScVal.scvVec([nativeToScVal(BigInt(round.price), { type: 'i128' })])),
+    entry('pubkeys', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.publisher, 'hex'))])),
+    entry('round_id', nativeToScVal(BigInt(round.round_id), { type: 'u64' })),
+    entry('sigs', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.signature, 'hex'))])),
+    entry('timestamp', nativeToScVal(BigInt(round.timestamp), { type: 'u64' })),
+  ]);
+}
+
+/** Router entry points the keeper can route executions through (L0-19). */
+export type RouterPriceFn = 'execute_with_price' | 'liquidate_with_price' | 'adl_with_price';
 
 function isNonRetryableContractError(message: string): boolean {
   const code = extractContractErrorCode(message);
@@ -139,6 +258,12 @@ export class StellarClient {
   private networkPassphrase: string;
   private marketContract: Contract;
   private noeracleContract: Contract;
+  /** Vault contract — ADL coverage reads (L0-1). Null when unconfigured. */
+  private vaultContract: Contract | null;
+  /** Vault factory — order reconcile duty (L0-20). Null when unconfigured. */
+  private factoryContract: Contract | null;
+  /** Router — verify-then-trade execution path (L0-19). Null when unconfigured. */
+  private routerContract: Contract | null;
 
   constructor(private config: KeeperConfig) {
     this.servers = config.rpcUrls.map(
@@ -152,6 +277,11 @@ export class StellarClient {
     this.networkPassphrase = config.networkPassphrase;
     this.marketContract = new Contract(config.marketContractId);
     this.noeracleContract = new Contract(config.noeracleContractId);
+    this.vaultContract = config.vaultContractId ? new Contract(config.vaultContractId) : null;
+    this.factoryContract = config.vaultFactoryContractId
+      ? new Contract(config.vaultFactoryContractId)
+      : null;
+    this.routerContract = config.routerContractId ? new Contract(config.routerContractId) : null;
   }
 
   get publicKey(): string {
@@ -509,6 +639,259 @@ export class StellarClient {
       [new Address(trader).toScVal()],
     );
     return BigInt(result ?? 0);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ADL Functions (L0-1)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Read the on-chain ADL flag for an asset. THROWS on read failure —
+   * including "unknown export" against a pre-L0-1 market (callers detect
+   * that with isMissingContractFunction and disable the phase).
+   */
+  async isAdlActive(asset: string): Promise<boolean> {
+    const result = await this.invokeContractRead<boolean>(
+      this.marketContract,
+      'is_adl_active',
+      [nativeToScVal(asset, { type: 'symbol' })],
+    );
+    return result === true;
+  }
+
+  /**
+   * Preview the permissionless trigger check: the simulated retval is the
+   * flag AS IT WOULD BE after the call runs (trigger/clear hysteresis
+   * applied on-chain against live vault coverage).
+   */
+  async simulateCheckAdlTrigger(asset: string): Promise<SimulationOutcome> {
+    return this.simulateCall(this.marketContract, 'check_adl_trigger', [
+      nativeToScVal(asset, { type: 'symbol' }),
+    ]);
+  }
+
+  /** Submit check_adl_trigger — flips/clears AdlActive(asset) on-chain. */
+  async checkAdlTrigger(asset: string): Promise<ExecutionResult> {
+    return this.invokeContractWriteWithRetry(this.marketContract, 'check_adl_trigger', [
+      nativeToScVal(asset, { type: 'symbol' }),
+    ]);
+  }
+
+  /**
+   * Auto-deleverage one ranked winner (L0-1). Permissionless; the built-in
+   * pre-submit simulation rejects #84 (flag off) / #85 (not a net winner) /
+   * #20 (gone) before any fee is spent. Fee-escalates like liquidate —
+   * ADL runs during solvency stress, exactly when fees spike.
+   */
+  async adlClose(positionId: bigint): Promise<ExecutionResult> {
+    return this.invokeContractWriteWithRetry(
+      this.marketContract,
+      'adl_close',
+      [new Address(this.publicKey).toScVal(), nativeToScVal(positionId, { type: 'u64' })],
+      {
+        escalateFees: true,
+        recheck: async () => (await this.getPosition(positionId)) !== null,
+      },
+    );
+  }
+
+  /**
+   * Pool coverage for the local ADL mirror: vault buffer + LP USDC — the
+   * same two views check_adl_trigger sums on-chain. THROWS on read failure
+   * or when no vault contract id is configured.
+   */
+  async getVaultCoverage(): Promise<bigint> {
+    if (!this.vaultContract) throw new Error('vault contract id not configured');
+    const [buffer, totalUsdc] = await Promise.all([
+      this.invokeContractRead<bigint | number>(this.vaultContract, 'get_buffer_balance', []),
+      this.invokeContractRead<bigint | number>(this.vaultContract, 'get_total_usdc', []),
+    ]);
+    return BigInt(buffer ?? 0) + BigInt(totalUsdc ?? 0);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Router Verify-Then-Trade Functions (L0-19)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /** Memoized Batch-1 router detection — see routerAbiV2(). */
+  private routerAbiV2Memo: boolean | undefined;
+
+  /**
+   * Router generation probe (L0-8): the Batch-1 quorum-ABI router exports
+   * `get_reflector_config`; the deployed v1 router does not. Same entry
+   * point names, different arg shapes — missing-export detection on the
+   * calls themselves can't tell the generations apart, so this one view
+   * probe decides which arg builder every router call uses. Probe-once,
+   * memoized; a transport failure resolves v1 WITHOUT memoizing so a later
+   * call re-probes (the keeper must keep serving the deployed chain).
+   */
+  private async routerAbiV2(): Promise<boolean> {
+    if (this.routerAbiV2Memo !== undefined) return this.routerAbiV2Memo;
+    if (!this.routerContract) return false;
+    try {
+      await this.invokeContractRead(this.routerContract, 'get_reflector_config', []);
+      this.routerAbiV2Memo = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isMissingContractFunction(message)) return false; // transient — re-probe later
+      this.routerAbiV2Memo = false;
+    }
+    console.log(
+      `   Router ABI: ${this.routerAbiV2Memo ? 'v2 (Batch-1 quorum struct)' : 'v1 (legacy flattened)'}`,
+    );
+    return this.routerAbiV2Memo;
+  }
+
+  private async routerCallArgs(id: bigint, asset: string, round: RouterRound): Promise<xdr.ScVal[]> {
+    return (await this.routerAbiV2())
+      ? buildRouterCallArgsV2(this.publicKey, id, asset, round)
+      : buildRouterCallArgs(this.publicKey, id, asset, round);
+  }
+
+  /**
+   * Preview a router *_with_price call — relays the signed round and runs
+   * the market op in one simulated tx. Market business codes (#62/#50/#78/
+   * #20/#83…) surface through the router hop's diagnostics, so callers
+   * classify with extractContractErrorCode exactly as on direct calls.
+   */
+  async simulateRouterCall(
+    fn: RouterPriceFn,
+    id: bigint,
+    asset: string,
+    round: RouterRound,
+  ): Promise<SimulationOutcome> {
+    if (!this.routerContract) return { ok: false, error: 'router contract id not configured' };
+    return this.simulateCall(this.routerContract, fn, await this.routerCallArgs(id, asset, round));
+  }
+
+  /** Execute a triggered order via router execute_with_price (fresh mark). */
+  async executeOrderViaRouter(orderId: bigint, asset: string, round: RouterRound): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    return this.invokeContractWriteWithRetry(
+      this.routerContract,
+      'execute_with_price',
+      await this.routerCallArgs(orderId, asset, round),
+      {
+        recheck: async () => {
+          const order = await this.getOrder(orderId);
+          return order !== null && order.status === 'Pending';
+        },
+      },
+    );
+  }
+
+  /** Liquidate via router liquidate_with_price (settles on the relayed mark). */
+  async liquidateViaRouter(positionId: bigint, asset: string, round: RouterRound): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    return this.invokeContractWriteWithRetry(
+      this.routerContract,
+      'liquidate_with_price',
+      await this.routerCallArgs(positionId, asset, round),
+      {
+        escalateFees: true,
+        recheck: async () => (await this.getPosition(positionId)) !== null,
+      },
+    );
+  }
+
+  /** ADL-close via router adl_with_price (forced realization on a fresh mark). */
+  async adlCloseViaRouter(positionId: bigint, asset: string, round: RouterRound): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    return this.invokeContractWriteWithRetry(
+      this.routerContract,
+      'adl_with_price',
+      await this.routerCallArgs(positionId, asset, round),
+      {
+        escalateFees: true,
+        recheck: async () => (await this.getPosition(positionId)) !== null,
+      },
+    );
+  }
+
+  /**
+   * Cross liquidation via router liquidate_cross_with_prices: one signed
+   * round per distinct asset the account holds, as Vec<PriceAttestation>.
+   */
+  async liquidateCrossViaRouter(
+    trader: string,
+    rounds: Array<{ asset: string; round: RouterRound }>,
+  ): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    const v2 = await this.routerAbiV2();
+    return this.invokeContractWriteWithRetry(
+      this.routerContract,
+      'liquidate_cross_with_prices',
+      [
+        new Address(this.publicKey).toScVal(),
+        new Address(trader).toScVal(),
+        xdr.ScVal.scvVec(
+          rounds.map((r) =>
+            v2
+              ? buildPriceAttestationScValV2(r.asset, r.round)
+              : buildPriceAttestationScVal(r.asset, r.round),
+          ),
+        ),
+      ],
+      {
+        escalateFees: true,
+        recheck: async () => (await this.getCrossMarginPositions(trader)).length > 0,
+      },
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Risk Ladder Functions (L0-12)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Per-asset risk params (L0-12 ladder). Returns null when the asset has
+   * no params configured; THROWS on transport failure and on a pre-L0-12
+   * market (missing export — callers detect with isMissingContractFunction).
+   */
+  async getAssetRiskMmBps(asset: string): Promise<number | null> {
+    const result = await this.invokeContractRead<{ mm_bps?: number | bigint } | null>(
+      this.marketContract,
+      'get_asset_risk',
+      [nativeToScVal(asset, { type: 'symbol' })],
+    );
+    if (result == null || result.mm_bps == null) return null;
+    return Number(result.mm_bps);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Vault Factory Functions (L0-20)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Which factory vault (if any) owns an order. Returns null for
+   * non-factory orders or when no factory is configured. THROWS on
+   * transport failure and on a pre-L0-20 factory (missing export) —
+   * callers detect the latter with isMissingContractFunction.
+   */
+  async getOrderVault(orderId: bigint): Promise<number | null> {
+    if (!this.factoryContract) return null;
+    const result = await this.invokeContractRead<number | bigint | null>(
+      this.factoryContract,
+      'get_order_vault',
+      [nativeToScVal(orderId, { type: 'u64' })],
+    );
+    return result == null ? null : Number(result);
+  }
+
+  /**
+   * Permissionless L0-20 reconcile: binds an executed factory-vault order
+   * to its created position (or credits a cancel refund) so the vault's
+   * full-NAV stops under-counting. InvalidParameter (#3) = order still
+   * Pending (e.g. stop→limit phase transition) — callers skip quietly.
+   */
+  async reconcileOrder(vaultId: number, orderId: bigint): Promise<ExecutionResult> {
+    if (!this.factoryContract) {
+      return { success: false, error: 'vault factory contract id not configured' };
+    }
+    return this.invokeContractWriteWithRetry(this.factoryContract, 'reconcile_order', [
+      nativeToScVal(vaultId, { type: 'u32' }),
+      nativeToScVal(orderId, { type: 'u64' }),
+    ]);
   }
 
   // ═══════════════════════════════════════════════════════════════════════

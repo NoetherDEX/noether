@@ -50,6 +50,9 @@ export interface ReferralTradeRecordedEvent extends ReferralEventEnvelope {
   originalFee: bigint;
   discount: bigint;
   payout: bigint;
+  /** L1-18: referred trade's notional (7-dec). null on pre-Batch-1 events
+   *  (the old 5-field payload). */
+  volume: bigint | null;
 }
 
 export interface ReferralClaimedEvent extends ReferralEventEnvelope {

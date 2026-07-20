@@ -135,7 +135,7 @@ export function isCrossLiquidationCandidate(
   poolBalance: bigint,
   positions: HealthPosition[],
   prices: Map<string, bigint>,
-  maintenanceMarginBps: bigint = DEFAULT_MAINTENANCE_MARGIN_BPS,
+  maintenanceMarginBps: bigint | ((position: HealthPosition) => bigint) = DEFAULT_MAINTENANCE_MARGIN_BPS,
   buffer: bigint = CANDIDATE_BUFFER,
 ): boolean {
   if (positions.length === 0) return false;
@@ -147,10 +147,37 @@ export function isCrossLiquidationCandidate(
     const price = prices.get(position.asset);
     if (price === undefined || price <= 0n) return true;
     equity += position.collateral + calculatePnl(position, price);
-    totalMaintenance += maintenanceMargin(position.size, maintenanceMarginBps);
+    // L0-12: mm may vary per asset — accept a per-position resolver, so
+    // the cross sum mirrors the contract's per-leg mm_bps_for.
+    const mmBps =
+      typeof maintenanceMarginBps === 'function'
+        ? maintenanceMarginBps(position)
+        : maintenanceMarginBps;
+    totalMaintenance += maintenanceMargin(position.size, mmBps);
   }
 
   return equity < totalMaintenance * buffer;
+}
+
+/**
+ * Cross-account equity at the keeper's local prices (L0-9 interim):
+ * pool_balance + Σ collateral + Σ pnl. Returns null when any leg's price
+ * is missing — bankruptcy can't be judged, so callers must NOT treat the
+ * account as bankrupt. Used only for the two-strike bankruptcy override;
+ * the on-chain preflight stays the liquidation truth.
+ */
+export function crossEquity(
+  poolBalance: bigint,
+  positions: HealthPosition[],
+  prices: Map<string, bigint>,
+): bigint | null {
+  let equity = poolBalance;
+  for (const position of positions) {
+    const price = prices.get(position.asset);
+    if (price === undefined || price <= 0n) return null;
+    equity += position.collateral + calculatePnl(position, price);
+  }
+  return equity;
 }
 
 /**
@@ -166,4 +193,93 @@ export function isCrossLiquidationCandidate(
 export function adlRank(pnl: bigint, collateral: bigint, leverage: bigint): bigint {
   if (pnl <= 0n || collateral <= 0n) return 0n;
   return ((pnl * BASIS_POINTS) / collateral) * leverage;
+}
+
+/** Position shape for ADL candidate math (structural subset of Position). */
+export interface AdlPosition extends HealthPosition {
+  id: bigint;
+  leverage: number;
+}
+
+/**
+ * Mirror of check_adl_trigger's payable-uPnL aggregation (L0-1): per-side
+ * exposure tuples with per-position truncation, exactly like the
+ * contract's adjust_oi bookkeeping —
+ *   lk += size × PRECISION / entry (long qty), ls += size (long notional)
+ *   long_upnl  = price × lk / PRECISION − ls
+ *   short_upnl = ss − price × sk / PRECISION
+ *   payable    = max(long_upnl, 0) + max(short_upnl, 0)
+ * The per-side clamp understates mixed-side winner totals — accepted, same
+ * as on-chain (the shortfall auto-flip backstops it).
+ */
+export function assetPayableUpnl(positions: HealthPosition[], price: bigint): bigint {
+  if (price <= 0n) return 0n;
+  let lk = 0n;
+  let ls = 0n;
+  let sk = 0n;
+  let ss = 0n;
+  for (const position of positions) {
+    if (position.entry_price <= 0n) continue;
+    const qty = (position.size * PRECISION) / position.entry_price;
+    if (position.direction === 'Long') {
+      lk += qty;
+      ls += position.size;
+    } else {
+      sk += qty;
+      ss += position.size;
+    }
+  }
+  const longUpnl = (price * lk) / PRECISION - ls;
+  const shortUpnl = ss - (price * sk) / PRECISION;
+  return (longUpnl > 0n ? longUpnl : 0n) + (shortUpnl > 0n ? shortUpnl : 0n);
+}
+
+export type AdlFlagDecision = 'activate' | 'clear' | 'hold';
+
+/**
+ * Local mirror of the trigger/clear hysteresis (L0-1):
+ *   activate (flag off): payable > 0 and coverage × 10_000 < payable × trigger_bps
+ *   clear (flag on):     payable == 0 or coverage × 10_000 ≥ payable × clear_bps
+ * Decides when a check_adl_trigger simulation is WORTH SPENDING — the
+ * simulation against live on-chain coverage is always the truth.
+ */
+export function adlFlagDecision(
+  payable: bigint,
+  coverage: bigint,
+  active: boolean,
+  triggerBps: bigint,
+  clearBps: bigint,
+): AdlFlagDecision {
+  if (!active) {
+    if (payable > 0n && coverage * BASIS_POINTS < payable * triggerBps) return 'activate';
+    return 'hold';
+  }
+  if (payable === 0n || coverage * BASIS_POINTS >= payable * clearBps) return 'clear';
+  return 'hold';
+}
+
+/**
+ * Advisory ADL walk order (L0-1): positive-pnl positions on one asset,
+ * highest adlRank first, ties broken by lower id (deterministic). The
+ * on-chain #84/#85 gates are the consensus; this only orders submissions.
+ */
+export function rankAdlCandidates<T extends AdlPosition>(
+  positions: T[],
+  price: bigint,
+): Array<{ position: T; pnl: bigint; score: bigint }> {
+  const ranked: Array<{ position: T; pnl: bigint; score: bigint }> = [];
+  for (const position of positions) {
+    const pnl = calculatePnl(position, price);
+    if (pnl <= 0n) continue;
+    ranked.push({
+      position,
+      pnl,
+      score: adlRank(pnl, position.collateral, BigInt(position.leverage)),
+    });
+  }
+  ranked.sort((a, b) => {
+    if (a.score !== b.score) return b.score > a.score ? 1 : -1;
+    return a.position.id < b.position.id ? -1 : 1;
+  });
+  return ranked;
 }

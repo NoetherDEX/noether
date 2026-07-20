@@ -8,14 +8,13 @@ import {
   type TxBuildContext,
 } from '../client.js';
 import { toScVal } from '../scval.js';
-import { attestationTailArgs, type PriceAttestation } from './attestation.js';
+import { attestationStructArg, type PriceAttestation } from './attestation.js';
 
 const METHOD = 'liquidate_with_price';
 
 export interface LiquidateWithPriceParams {
   keeper: StellarAddress;
   positionId: number | bigint;
-  asset: string;
   attestation: PriceAttestation;
 }
 
@@ -23,8 +22,7 @@ export function buildLiquidateWithPriceArgs(params: LiquidateWithPriceParams): x
   return [
     toScVal(params.keeper, 'address'),
     toScVal(params.positionId, 'u64'),
-    toScVal(params.asset, 'symbol'),
-    ...attestationTailArgs(params.attestation),
+    attestationStructArg(params.attestation),
   ];
 }
 

@@ -176,6 +176,12 @@ pub struct MarketConfig {
     pub max_price_staleness: u64,
     /// Maximum allowed oracle deviation in basis points
     pub max_oracle_deviation_bps: u32,
+    /// L0-9: ring entries in the smoothed liquidation/trigger mark.
+    /// 0 disables the smoothed leg entirely — the launch-safe kill switch.
+    pub twap_records: u32,
+    /// L0-9: reject the smoothed mark when the ring's newest entry is older
+    /// than this many seconds (degrades to spot-only, never blocks).
+    pub twap_max_age_secs: u64,
     /// Base maker fee in basis points (e.g., 2 = 0.02%)
     /// Maker = limit orders resting on the order book
     pub base_maker_fee_bps: u32,
@@ -286,6 +292,8 @@ impl Default for MarketConfig {
             max_position_size: 100_000 * PRECISION,  // 100,000 USDC max position
             max_price_staleness: 60,                  // 60 seconds max staleness
             max_oracle_deviation_bps: 100,            // 1% max oracle deviation
+            twap_records: 4,                          // L0-9: ~90-120s window at 30s cadence
+            twap_max_age_secs: 300,                   // L0-9: stale ring → spot-only
             base_maker_fee_bps: 2,                    // 0.02% maker fee
             base_taker_fee_bps: 5,                    // 0.05% taker fee
             partial_liq_min_notional: 1_000 * PRECISION, // partial-liq above $1,000 notional

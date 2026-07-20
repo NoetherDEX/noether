@@ -15,6 +15,9 @@ export interface OpenPositionRow {
   entryPrice: string;
   openedAt: number;
   openedTxHash: string;
+  /** L0-1 advisory ADL quintile (1 = first deleveraged); null/absent when
+   *  not in the queue or the gateway predates the field. */
+  adlQuintile?: number | null;
 }
 
 export async function listOpenPositions(trader: string): Promise<OpenPositionRow[]> {
