@@ -7285,4 +7285,173 @@ mod tests {
         assert!(test.market.get_position(&pos.id).is_none());
         assert_eq!(reward, 0, "no equity left to reward the keeper from");
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Index growth caps (M-5): positions, orders, cross-trader registry
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_position_cap_per_trader() {
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let first =
+            test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        for _ in 1..crate::storage::MAX_OPEN_POSITIONS_PER_TRADER {
+            test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        }
+
+        // At cap: isolated AND cross opens reject — both insert through the
+        // same TraderPositions index
+        let res =
+            test.market.try_open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+        let res = test
+            .market
+            .try_open_position_cross(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+
+        // Closing is never gated at cap, and frees a slot
+        test.market.close_position(&trader, &first.id, &0);
+        test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #82)")] // OpenInterestCapExceeded
+    fn test_position_cap_global() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Pre-fill the global index to the cap with synthetic ids; the next
+        // real open passes the (empty) per-trader check and must hit the
+        // AllPositions cap.
+        test.env.as_contract(&test.market_id, || {
+            let mut ids: Vec<u64> = Vec::new(&test.env);
+            for i in 0..(crate::storage::MAX_OPEN_POSITIONS_TOTAL as u64) {
+                ids.push_back(1_000_000 + i);
+            }
+            test.env
+                .storage()
+                .persistent()
+                .set(&crate::storage::DataKey::AllPositions, &ids);
+        });
+
+        test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0,
+        );
+    }
+
+    #[test]
+    fn test_order_cap_per_trader() {
+        let test = setup();
+        let trader = fund_trader(&test, 20_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let first = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 20), &false, &100, &0,
+        );
+        for _ in 1..crate::storage::MAX_OPEN_ORDERS_PER_TRADER {
+            test.market.place_limit_order(
+                &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+                &(PRECISION / 20), &false, &100, &0,
+            );
+        }
+
+        let res = test.market.try_place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 20), &false, &100, &0,
+        );
+        assert!(matches!(res, Err(Ok(NoetherError::OpenInterestCapExceeded))));
+
+        // Cancelling frees a slot
+        test.market.cancel_order(&trader, &first.id);
+        test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 20), &false, &100, &0,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #82)")] // OpenInterestCapExceeded
+    fn test_order_cap_global() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        test.env.as_contract(&test.market_id, || {
+            let mut ids: Vec<u64> = Vec::new(&test.env);
+            for i in 0..(crate::storage::MAX_OPEN_ORDERS_TOTAL as u64) {
+                ids.push_back(1_000_000 + i);
+            }
+            test.env
+                .storage()
+                .persistent()
+                .set(&crate::storage::DataKey::AllOrders, &ids);
+        });
+
+        test.market.place_limit_order(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20),
+            &false,
+            &100,
+            &0,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #82)")] // OpenInterestCapExceeded
+    fn test_cross_trader_registry_cap() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        test.env.as_contract(&test.market_id, || {
+            let mut traders: Vec<Address> = Vec::new(&test.env);
+            for _ in 0..crate::storage::MAX_CROSS_MARGIN_TRADERS {
+                traders.push_back(Address::generate(&test.env));
+            }
+            test.env
+                .storage()
+                .persistent()
+                .set(&crate::storage::DataKey::AllCrossMarginTraders, &traders);
+        });
+
+        test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
+    }
+
+    #[test]
+    fn test_cross_trader_cap_dedup_and_prune() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let newcomer = fund_trader(&test, 1_000 * PRECISION);
+
+        // Registry at cap WITH the trader already registered: a repeat
+        // deposit dedups and must not reject.
+        test.env.as_contract(&test.market_id, || {
+            let mut traders: Vec<Address> = Vec::new(&test.env);
+            traders.push_back(trader.clone());
+            for _ in 1..crate::storage::MAX_CROSS_MARGIN_TRADERS {
+                traders.push_back(Address::generate(&test.env));
+            }
+            test.env
+                .storage()
+                .persistent()
+                .set(&crate::storage::DataKey::AllCrossMarginTraders, &traders);
+        });
+
+        test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
+
+        // Full withdrawal prunes the registry entry, freeing a slot
+        test.market.withdraw_cross_margin(&trader, &(100 * PRECISION));
+        test.market.deposit_cross_margin(&newcomer, &(50 * PRECISION));
+    }
 }

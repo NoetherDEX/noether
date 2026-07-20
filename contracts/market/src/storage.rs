@@ -2,7 +2,7 @@
 //!
 //! Storage keys and helpers for the Market contract.
 
-use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, Symbol, Vec};
 use noether_common::{NoetherError, Position, MarketConfig, AssetRiskParams, Order, OrderStatus, FeeTier, VolumeRecord};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -335,6 +335,33 @@ pub fn set_cumulative_funding_rate(env: &Env, rate: i128) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Index growth caps (M-5)
+// ═══════════════════════════════════════════════════════════════════════════
+// The Vec-based indexes are rewritten in full on every insert/delete, so
+// their length bounds the cost of every open, close and liquidation that
+// touches them — and a ledger entry has a hard size ceiling. These caps turn
+// unbounded growth into a graceful "market at capacity" rejection until
+// paginated buckets replace the Vecs (planned post-launch). Deletes and
+// in-place updates are never gated: closing and liquidating always work at
+// cap. All sites reuse NoetherError::OpenInterestCapExceeded (#82) — the
+// error enum is at its 50-variant budget, and "at capacity" is the message.
+
+/// Max open positions market-wide (AllPositions).
+pub const MAX_OPEN_POSITIONS_TOTAL: u32 = 1000;
+/// Max open positions per trader, isolated + cross combined (TraderPositions).
+/// Transitively bounds CrossMarginPositions — a subset filled on the same
+/// insert path — and with it the staged cross-liquidation loop.
+pub const MAX_OPEN_POSITIONS_PER_TRADER: u32 = 32;
+/// Max pending orders market-wide (AllOrders).
+pub const MAX_OPEN_ORDERS_TOTAL: u32 = 2000;
+/// Max pending orders per trader (TraderOrders): 32 positions × 3 protective
+/// orders (SL/TP/trailing) leaves 32 slots for resting entries.
+pub const MAX_OPEN_ORDERS_PER_TRADER: u32 = 128;
+/// Max distinct ACTIVE cross-margin accounts (AllCrossMarginTraders — the
+/// entry is pruned when an account's balance and positions reach zero).
+pub const MAX_CROSS_MARGIN_TRADERS: u32 = 512;
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Position Storage
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -363,6 +390,9 @@ pub fn save_position(env: &Env, position: &Position) {
         }
     }
     if !found {
+        if trader_positions.len() >= MAX_OPEN_POSITIONS_PER_TRADER {
+            panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
+        }
         trader_positions.push_back(position.id);
         env.storage().persistent().set(&trader_key, &trader_positions);
         extend_persistent_ttl(env, &trader_key);
@@ -378,6 +408,9 @@ pub fn save_position(env: &Env, position: &Position) {
         }
     }
     if !found_global {
+        if all_positions.len() >= MAX_OPEN_POSITIONS_TOTAL {
+            panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
+        }
         all_positions.push_back(position.id);
         env.storage().persistent().set(&DataKey::AllPositions, &all_positions);
         extend_persistent_ttl(env, &DataKey::AllPositions);
@@ -596,6 +629,9 @@ pub fn save_order(env: &Env, order: &Order) {
             }
         }
         if !found {
+            if trader_orders.len() >= MAX_OPEN_ORDERS_PER_TRADER {
+                panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
+            }
             trader_orders.push_back(order.id);
             env.storage().persistent().set(&trader_key, &trader_orders);
             extend_persistent_ttl(env, &trader_key);
@@ -611,6 +647,9 @@ pub fn save_order(env: &Env, order: &Order) {
             }
         }
         if !found_global {
+            if all_orders.len() >= MAX_OPEN_ORDERS_TOTAL {
+                panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
+            }
             all_orders.push_back(order.id);
             env.storage().persistent().set(&DataKey::AllOrders, &all_orders);
             extend_persistent_ttl(env, &DataKey::AllOrders);
@@ -865,6 +904,9 @@ pub fn add_cross_margin_trader(env: &Env, trader: &Address) {
         }
     }
     if !found {
+        if traders.len() >= MAX_CROSS_MARGIN_TRADERS {
+            panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
+        }
         traders.push_back(trader.clone());
         env.storage().persistent().set(&DataKey::AllCrossMarginTraders, &traders);
         extend_persistent_ttl(env, &DataKey::AllCrossMarginTraders);
