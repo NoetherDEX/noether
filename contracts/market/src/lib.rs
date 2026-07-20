@@ -41,7 +41,7 @@ use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, V
 use noether_common::{
     NoetherError, Position, Direction, MarketConfig, AssetRiskParams,
     Order, OrderType, OrderStatus, TriggerCondition, FEE_PRECISION,
-    VolumeRecord, BASIS_POINTS, PRECISION,
+    TraderFeeInfo, VolumeRecord, BASIS_POINTS, PRECISION,
     calculate_position_size, calculate_liquidation_price, calculate_pnl,
     calculate_trading_fee, calculate_cumulative_funding, funding_velocity,
     should_liquidate,
@@ -1405,7 +1405,54 @@ impl MarketContract {
     // set_fee_tiers_config, get_fee_tiers_config removed for WASM size
     // Fee tiers are set at initialization. Redeploy to change.
 
-    // get_trader_fee_info removed for WASM size - frontend computes from on-chain volume data
+    /// Trader's live fee-tier standing (C2 restore — the 128 KB WASM limit
+    /// gives the view room again; the OrderPanel fee preview reads it
+    /// directly instead of estimating from the gateway). Read-only: the
+    /// rolling window rotates on a LOCAL copy, nothing is persisted.
+    pub fn get_trader_fee_info(env: Env, trader: Address) -> TraderFeeInfo {
+        let tiers = get_fee_tiers(&env);
+        let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+        let volume_14d = match get_trader_volume(&env, &trader) {
+            Some(mut record) => {
+                trading::rotate_volume_window(&env, &mut record, current_day);
+                trading::sum_rolling_volume(&record)
+            }
+            None => 0,
+        };
+
+        if tiers.is_empty() {
+            // Legacy flat-fee deployment (no tiers configured): report the
+            // flat rate for both sides, bps → deci-bps.
+            let config = get_config(&env);
+            return TraderFeeInfo {
+                volume_14d,
+                tier: 0,
+                maker_fee_bps: config.trading_fee_bps * 10,
+                taker_fee_bps: config.trading_fee_bps * 10,
+                next_tier_volume: 0,
+            };
+        }
+
+        let mut tier_idx: u32 = 0;
+        let mut current = tiers.get(0).unwrap();
+        let mut next_tier_volume: i128 = 0;
+        for (i, tier) in tiers.iter().enumerate() {
+            if volume_14d >= tier.min_volume {
+                tier_idx = i as u32;
+                current = tier;
+            } else if next_tier_volume == 0 {
+                next_tier_volume = tier.min_volume - volume_14d;
+            }
+        }
+
+        TraderFeeInfo {
+            volume_14d,
+            tier: tier_idx,
+            maker_fee_bps: current.maker_fee_bps,
+            taker_fee_bps: current.taker_fee_bps,
+            next_tier_volume,
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // Cross-Margin Functions
@@ -4818,6 +4865,28 @@ mod tests {
             pos.collateral - reward,
         );
         assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    #[test]
+    fn test_get_trader_fee_info_view() {
+        // C2 restore: live tier standing straight from the contract.
+        let test = setup();
+        let trader = fund_trader(&test, 100_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let info = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info.volume_14d, 0);
+        assert_eq!(info.tier, 0);
+        assert_eq!(info.taker_fee_bps, 50);
+        assert_eq!(info.next_tier_volume, 20_000 * PRECISION);
+
+        // $25K notional (5000 × 5x) crosses the $20K tier-1 threshold.
+        test.market.open_position(&trader, &xlm, &(5_000 * PRECISION), &5, &Direction::Long, &0);
+        let info = test.market.get_trader_fee_info(&trader);
+        assert_eq!(info.volume_14d, 25_000 * PRECISION);
+        assert_eq!(info.tier, 1);
+        assert_eq!(info.maker_fee_bps, 15);
+        assert_eq!(info.next_tier_volume, 25_000 * PRECISION); // $50K − $25K
     }
 
     #[test]

@@ -1611,12 +1611,12 @@ export async function placeTrailingStop(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Get trader's fee tier info by reading volume record from contract storage.
- * Calculates tier client-side using the known tier thresholds.
- * Returns null when the volume cannot be read (get_trader_volume was removed
- * from the deployed WASM for size) — callers must treat the tier as UNKNOWN
- * and hide tier UI rather than asserting "Base". The real fix is the
- * indexer-backed per-trader volume endpoint (roadmap B5).
+ * Trader's live fee-tier standing from the restored get_trader_fee_info
+ * view (C2, Batch-1) — the contract's own rolling volume, tier and rates,
+ * exactly what it will charge. Returns null when the view is unavailable
+ * (the currently-deployed market predates the restore) or the read fails —
+ * callers treat the tier as UNKNOWN and fall back to the gateway estimate,
+ * never asserting "Base".
  */
 export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
   volume14d: bigint;
@@ -1628,54 +1628,34 @@ export async function getTraderFeeInfo(traderPublicKey: string): Promise<{
   nextTierName: string;
 } | null> {
   const { FEE_TIERS } = await import('@/lib/utils/constants');
-  const PRECISION_VAL = BigInt(10_000_000);
-
-  let volume14d = BigInt(0);
 
   try {
-    // Try reading trader volume from contract via get_trader_volume view
-    const args = [toScVal(traderPublicKey, 'address')];
-    const xdrStr = await buildTransaction(traderPublicKey, marketContract, 'get_trader_volume', args);
-    // Simulate only (read-only call)
-    const server = new rpc.Server(NETWORK.RPC_URL);
-    const tx = new (await import('@stellar/stellar-sdk')).Transaction(xdrStr, NETWORK.PASSPHRASE);
-    const simResult = await server.simulateTransaction(tx);
-    if ('result' in simResult && simResult.result) {
-      const rawVolume = scValToNative((simResult.result as any).retval);
-      volume14d = BigInt(rawVolume);
-    } else {
-      return null;
-    }
+    const tx = await buildSimulateTransaction(traderPublicKey, 'get_trader_fee_info', [
+      toScVal(traderPublicKey, 'address'),
+    ]);
+    const sim = await sorobanRpc.simulateTransaction(tx);
+    if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) return null;
+    const raw = scValToNative(sim.result.retval) as {
+      volume_14d: bigint;
+      tier: number | bigint;
+      maker_fee_bps: number | bigint;
+      taker_fee_bps: number | bigint;
+      next_tier_volume: bigint;
+    };
+    const tier = Number(raw.tier);
+    const hasNext = tier < FEE_TIERS.length - 1;
+    return {
+      volume14d: BigInt(raw.volume_14d),
+      tier,
+      tierName: FEE_TIERS[tier]?.name ?? `Tier ${tier}`,
+      makerFeeBps: Number(raw.maker_fee_bps),
+      takerFeeBps: Number(raw.taker_fee_bps),
+      nextTierVolume: BigInt(raw.next_tier_volume),
+      nextTierName: hasNext ? FEE_TIERS[tier + 1].name : 'Max',
+    };
   } catch {
-    // Volume unknown (view removed for WASM size / RPC failure) — never
-    // report a fabricated tier-0 record.
     return null;
   }
-
-  // Convert volume from precision to USD
-  const volumeUsd = Number(volume14d) / Number(PRECISION_VAL);
-
-  // Determine tier
-  let tierIndex = 0;
-  for (let i = FEE_TIERS.length - 1; i >= 0; i--) {
-    if (volumeUsd >= FEE_TIERS[i].minVolume) {
-      tierIndex = i;
-      break;
-    }
-  }
-
-  const currentTier = FEE_TIERS[tierIndex];
-  const nextTier = tierIndex < FEE_TIERS.length - 1 ? FEE_TIERS[tierIndex + 1] : null;
-
-  return {
-    volume14d,
-    tier: tierIndex,
-    tierName: currentTier.name,
-    makerFeeBps: currentTier.makerBps,
-    takerFeeBps: currentTier.takerBps,
-    nextTierVolume: nextTier ? BigInt(Math.round(nextTier.minVolume * Number(PRECISION_VAL))) : BigInt(0),
-    nextTierName: nextTier ? nextTier.name : 'Max',
-  };
 }
 
 /**
