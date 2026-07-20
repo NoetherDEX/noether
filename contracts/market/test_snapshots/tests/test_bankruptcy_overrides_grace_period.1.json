@@ -424,6 +424,22 @@
                       "val": {
                         "u32": 10
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "twap_max_age_secs"
+                      },
+                      "val": {
+                        "u64": 300
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "twap_records"
+                      },
+                      "val": {
+                        "u32": 4
+                      }
                     }
                   ]
                 }
@@ -2283,6 +2299,22 @@
                               },
                               "val": {
                                 "u32": 10
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "twap_max_age_secs"
+                              },
+                              "val": {
+                                "u64": 300
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "twap_records"
+                              },
+                              "val": {
+                                "u32": 4
                               }
                             }
                           ]
@@ -5191,6 +5223,22 @@
                       "val": {
                         "u32": 10
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "twap_max_age_secs"
+                      },
+                      "val": {
+                        "u64": 300
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "twap_records"
+                      },
+                      "val": {
+                        "u32": 4
+                      }
                     }
                   ]
                 }
@@ -6357,6 +6405,60 @@
                 }
               ]
             }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000006",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000003"
+              },
+              {
+                "symbol": "twap"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "symbol": "BTC"
+                },
+                {
+                  "u32": 4
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "twap"
+              }
+            ],
+            "data": "void"
           }
         }
       },

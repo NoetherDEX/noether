@@ -424,6 +424,22 @@
                       "val": {
                         "u32": 10
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "twap_max_age_secs"
+                      },
+                      "val": {
+                        "u64": 300
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "twap_records"
+                      },
+                      "val": {
+                        "u32": 4
+                      }
                     }
                   ]
                 }
@@ -2709,6 +2725,22 @@
                               },
                               "val": {
                                 "u32": 10
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "twap_max_age_secs"
+                              },
+                              "val": {
+                                "u64": 300
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "twap_records"
+                              },
+                              "val": {
+                                "u32": 4
                               }
                             }
                           ]
@@ -5498,6 +5530,22 @@
                       },
                       "val": {
                         "u32": 10
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "twap_max_age_secs"
+                      },
+                      "val": {
+                        "u64": 300
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "twap_records"
+                      },
+                      "val": {
+                        "u32": 4
                       }
                     }
                   ]
