@@ -56,7 +56,8 @@ export async function fetchAttestation(asset: string): Promise<Attestation | nul
 }
 
 /**
- * The five price-related ScVal args the router expects AFTER the trade args:
+ * LEGACY (pre-Batch-1 router): the five price-related ScVal args the deployed
+ * v1 router expects AFTER the trade args:
  * (price: i128, timestamp: u64, round_id: u64, pubkeys: Vec<BytesN<32>>, sigs: Vec<BytesN<64>>).
  * The router derives the 8-byte asset tag itself, so it is not passed here.
  */
@@ -68,6 +69,27 @@ export function priceTailArgs(att: Attestation): xdr.ScVal[] {
     xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(att.publisherHex, 'hex'))]),
     xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(att.signatureHex, 'hex'))]),
   ];
+}
+
+/**
+ * Batch-1 router (L0-8 quorum ABI): every *_with_price entry point ends in
+ * ONE `PriceAttestation` struct — the asset rides inside, and prices/pubkeys/
+ * sigs are aligned per-publisher arrays (single-publisher here; the service
+ * returns one signer per round). Soroban UDT structs travel as ScMaps with
+ * entries SORTED BY KEY: asset < prices < pubkeys < round_id < sigs < timestamp
+ * — a wrong order fails the on-chain decode.
+ */
+export function attestationStructArg(asset: string, att: Attestation): xdr.ScVal {
+  const entry = (key: string, val: xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+  return xdr.ScVal.scvMap([
+    entry('asset', nativeToScVal(asset, { type: 'symbol' })),
+    entry('prices', xdr.ScVal.scvVec([nativeToScVal(att.price, { type: 'i128' })])),
+    entry('pubkeys', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(att.publisherHex, 'hex'))])),
+    entry('round_id', nativeToScVal(BigInt(att.roundId), { type: 'u64' })),
+    entry('sigs', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(att.signatureHex, 'hex'))])),
+    entry('timestamp', nativeToScVal(BigInt(att.timestamp), { type: 'u64' })),
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

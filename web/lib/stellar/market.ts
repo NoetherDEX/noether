@@ -1,5 +1,6 @@
 import { marketContract, routerContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
-import { fetchAttestation, priceTailArgs } from './noeracle';
+import { fetchAttestation, priceTailArgs, attestationStructArg } from './noeracle';
+import { marketHasBatch1Features } from './capabilities';
 import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, DisplayOrder, OrderType, TriggerCondition, OrderStatus } from '@/types';
 import { fromPrecision, calculatePnL } from '@/lib/utils/format';
 import { rpc, scValToNative, xdr, Horizon, Address } from '@stellar/stellar-sdk';
@@ -87,25 +88,40 @@ export async function openPosition(
   ];
 
   let xdrStr: string;
+  const batch1 = await marketHasBatch1Features();
   if (routerContract) {
     // Router path (Pattern B): fetch a fresh signed Noeracle price and open
     // atomically via noether_router.open_with_price, so the market reads a
     // sub-second-fresh price and can't reject with #30 PriceStale.
-    // NOTE: runtime-unverified until the router is deployed and
-    // NEXT_PUBLIC_NOETHER_ROUTER_ID is set — the wallet signs the full
-    // router -> market.open_position -> USDC transfer auth tree.
+    // Batch-1 (L0-8): struct-tail quorum bundle, asset inside the struct,
+    // plus the L0-10 acceptable_price bound (0 = unbounded until the order
+    // panel threads a bound). Legacy router: flattened single-price tail.
     const att = await fetchAttestation(params.asset);
     if (!att) throw new Error('Noeracle price unavailable — cannot open position');
     xdrStr = await buildTransaction(
       signerPublicKey,
       routerContract,
       'open_with_price',
-      [...tradeArgs, ...priceTailArgs(att)],
+      batch1
+        ? [
+            toScVal(signerPublicKey, 'address'),
+            toScVal(params.collateral, 'i128'),
+            toScVal(params.leverage, 'u32'),
+            toScVal(params.direction, 'direction'),
+            toScVal(BigInt(0), 'i128'), // acceptable_price
+            attestationStructArg(params.asset, att),
+          ]
+        : [...tradeArgs, ...priceTailArgs(att)],
     );
   } else {
-    // Direct path (default): straight to the market, which reads the cached
-    // oracle through oracle_adapter.
-    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position', tradeArgs);
+    // Direct path (default): straight to the market. Batch-1 open_position
+    // gained the acceptable_price arg.
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      marketContract,
+      'open_position',
+      batch1 ? [...tradeArgs, toScVal(BigInt(0), 'i128')] : tradeArgs,
+    );
   }
 
   const signedXdr = await signTransaction(xdrStr);
@@ -131,32 +147,46 @@ export async function closePosition(
   debugLog('[DEBUG] Closing position...');
 
   let xdrStr: string;
+  const batch1 = await marketHasBatch1Features();
   if (routerContract) {
     // Router path (Pattern B): mirror openPosition — fetch a fresh signed
     // Noeracle price and close atomically via noether_router.close_with_price,
     // so the market reads a sub-second-fresh price for `asset` and can't
     // reject with #30 PriceStale (oracle_adapter no longer exists).
-    // close_with_price(trader, position_id, asset, price, timestamp, round_id, pubkeys, sigs) -> i128 pnl
+    // Batch-1: close_with_price(trader, position_id, acceptable_price, att).
+    // Legacy: close_with_price(trader, position_id, asset, ...flattened tail).
     const att = await fetchAttestation(asset);
     if (!att) throw new Error('Noeracle price unavailable — cannot close position');
     xdrStr = await buildTransaction(
       signerPublicKey,
       routerContract,
       'close_with_price',
-      [
-        toScVal(signerPublicKey, 'address'), // trader: Address
-        toScVal(positionId, 'u64'),          // position_id: u64
-        toScVal(asset, 'symbol'),            // asset: Symbol
-        ...priceTailArgs(att),
-      ],
+      batch1
+        ? [
+            toScVal(signerPublicKey, 'address'),
+            toScVal(positionId, 'u64'),
+            toScVal(BigInt(0), 'i128'), // acceptable_price (0 = unbounded)
+            attestationStructArg(asset, att),
+          ]
+        : [
+            toScVal(signerPublicKey, 'address'), // trader: Address
+            toScVal(positionId, 'u64'),          // position_id: u64
+            toScVal(asset, 'symbol'),            // asset: Symbol
+            ...priceTailArgs(att),
+          ],
     );
   } else {
-    // Direct path (default): close_position(trader: Address, position_id: u64)
+    // Direct path (default). Batch-1 close_position gained acceptable_price.
     const args = [
       toScVal(signerPublicKey, 'address'),  // trader: Address
       toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
     ];
-    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position', args);
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      marketContract,
+      'close_position',
+      batch1 ? [...args, toScVal(BigInt(0), 'i128')] : args,
+    );
   }
 
   const signedXdr = await signTransaction(xdrStr);
@@ -191,17 +221,31 @@ export async function closePositionPartial(
   asset: string,
 ): Promise<bigint> {
   let xdrStr: string;
+  const batch1 = await marketHasBatch1Features();
   if (routerContract) {
-    // close_partial_with_price(trader, position_id, close_size, asset, price, timestamp, round_id, pubkeys, sigs) -> i128 pnl
+    // Batch-1: close_partial_with_price(trader, position_id, close_size, att).
+    // Legacy: ...(trader, position_id, close_size, asset, flattened tail).
     const att = await fetchAttestation(asset);
     if (!att) throw new Error('Noeracle price unavailable — cannot close position');
-    xdrStr = await buildTransaction(signerPublicKey, routerContract, 'close_partial_with_price', [
-      toScVal(signerPublicKey, 'address'), // trader: Address
-      toScVal(positionId, 'u64'),          // position_id: u64
-      toScVal(closeSize, 'i128'),          // close_size: i128
-      toScVal(asset, 'symbol'),            // asset: Symbol
-      ...priceTailArgs(att),
-    ]);
+    xdrStr = await buildTransaction(
+      signerPublicKey,
+      routerContract,
+      'close_partial_with_price',
+      batch1
+        ? [
+            toScVal(signerPublicKey, 'address'),
+            toScVal(positionId, 'u64'),
+            toScVal(closeSize, 'i128'),
+            attestationStructArg(asset, att),
+          ]
+        : [
+            toScVal(signerPublicKey, 'address'), // trader: Address
+            toScVal(positionId, 'u64'),          // position_id: u64
+            toScVal(closeSize, 'i128'),          // close_size: i128
+            toScVal(asset, 'symbol'),            // asset: Symbol
+            ...priceTailArgs(att),
+          ],
+    );
   } else {
     xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_partial', [
       toScVal(signerPublicKey, 'address'),
@@ -1459,6 +1503,8 @@ export async function openPositionCross(
     toScVal(params.direction, 'direction'),
   ];
 
+  // Batch-1 open_position_cross gained the L0-10 acceptable_price arg.
+  if (await marketHasBatch1Features()) args.push(toScVal(BigInt(0), 'i128'));
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position_cross', args);
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
@@ -1482,6 +1528,8 @@ export async function closePositionCross(
     toScVal(positionId, 'u64'),
   ];
 
+  // Batch-1 close_position_cross gained the L0-10 acceptable_price arg.
+  if (await marketHasBatch1Features()) args.push(toScVal(BigInt(0), 'i128'));
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_cross', args);
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
