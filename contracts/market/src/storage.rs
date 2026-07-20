@@ -87,6 +87,8 @@ pub enum DataKey {
     LastGoodPrice(Symbol),
     /// Treasury address receiving the protocol's share of trading fees
     Treasury,
+    /// L1-18: the referral registry the fee path try-invokes. Unset = no-op.
+    Referral,
     /// Protocol share of trading fees in bps (default 2000 = 20%)
     ProtocolFeeBps,
     /// Per-asset aggregate exposure (long_k, long_size, short_k, short_size)
@@ -288,6 +290,14 @@ pub fn set_last_funding_time(env: &Env, time: u64) {
 
 pub fn get_treasury(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::Treasury)
+}
+
+pub fn get_referral(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Referral)
+}
+
+pub fn set_referral_addr(env: &Env, referral: &Address) {
+    env.storage().instance().set(&DataKey::Referral, referral);
 }
 
 pub fn set_treasury(env: &Env, treasury: &Address) {

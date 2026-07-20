@@ -245,6 +245,16 @@ impl MarketContract {
         Ok(())
     }
 
+    /// L1-18: wire the referral registry. Every fee-bearing open then
+    /// try-invokes referral.record_trade for the discount/payout split;
+    /// unset (or a broken registry) is a silent no-op — fail-open, trading
+    /// never blocks on referrals.
+    pub fn set_referral(env: Env, referral: Address) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        set_referral_addr(&env, &referral);
+        Ok(())
+    }
+
     /// Swap the running WASM in place; all storage (positions, orders,
     /// cross balances) is preserved across the upgrade.
     ///
@@ -545,6 +555,10 @@ impl MarketContract {
         // Taker fee + volume — on the remainder only (closes charge no trading
         // fee, so this matches a manual close-then-open on the net new size).
         let fee = calculate_fee_and_record_volume(&env, &trader, size, false, &config);
+        // L1-18: the referral discount comes off the fee BEFORE net
+        // collateral; the referrer payout rides to finalize_open (paid
+        // from the protocol cut, never the LP share).
+        let (fee, referrer_payout) = Self::apply_referral(&env, &trader, fee, size);
         let net_collateral = collateral - fee;
         if net_collateral <= 0 {
             return Err(NoetherError::InsufficientCollateral);
@@ -585,7 +599,7 @@ impl MarketContract {
             margin_mode: if cross { 1 } else { 0 },
         };
 
-        Self::finalize_open(&env, &position, fee);
+        Self::finalize_open(&env, &position, fee, referrer_payout);
         extend_instance_ttl(&env);
 
         Ok(position)
@@ -1404,6 +1418,20 @@ impl MarketContract {
 
     // set_fee_tiers_config, get_fee_tiers_config removed for WASM size
     // Fee tiers are set at initialization. Redeploy to change.
+
+    /// L1-18: rolling 14-day traded volume for a trader — the referral
+    /// registry's create_code gate cross-reads this (min_code_volume).
+    /// Read-only local window rotation, nothing persisted.
+    pub fn get_trader_volume(env: Env, trader: Address) -> i128 {
+        let current_day = trading::timestamp_to_day(env.ledger().timestamp());
+        match get_trader_volume(&env, &trader) {
+            Some(mut record) => {
+                trading::rotate_volume_window(&env, &mut record, current_day);
+                trading::sum_rolling_volume(&record)
+            }
+            None => 0,
+        }
+    }
 
     /// Trader's live fee-tier standing (C2 restore — the 128 KB WASM limit
     /// gives the view room again; the OrderPanel fee preview reads it
@@ -3149,7 +3177,7 @@ impl MarketContract {
     /// Shared open finalisation: persist the position (indexing it under
     /// the cross account when applicable), update OI/exposure aggregates,
     /// move the trading fee to the vault and emit position_opened.
-    fn finalize_open(env: &Env, position: &Position, fee: i128) {
+    fn finalize_open(env: &Env, position: &Position, fee: i128, referrer_payout: i128) {
         save_position(env, position);
         if position.margin_mode == 1 {
             add_cross_margin_position(env, &position.trader, position.id);
@@ -3175,8 +3203,27 @@ impl MarketContract {
             let mut cut = fee * (get_protocol_fee_bps(env) as i128) / (BASIS_POINTS as i128);
             match get_treasury(env) {
                 Some(t) if cut > 0 => {
-                    client.transfer(&env.current_contract_address(), &vault, &cut);
-                    Self::route_protocol_fee_to_vault(env, &vault, cut, &t);
+                    // L1-18: the referrer's share is carved FROM THE CUT —
+                    // min(payout, cut) — so the LP share (fee − cut) is
+                    // structurally never reduced by referral economics. The
+                    // pot funds the referral contract's claim pool push-style.
+                    let mut pot = if referrer_payout < cut { referrer_payout } else { cut };
+                    if pot < 0 {
+                        pot = 0;
+                    }
+                    if pot > 0 {
+                        match get_referral(env) {
+                            Some(referral) => {
+                                client.transfer(&env.current_contract_address(), &referral, &pot);
+                            }
+                            None => pot = 0,
+                        }
+                    }
+                    let rest = cut - pot;
+                    if rest > 0 {
+                        client.transfer(&env.current_contract_address(), &vault, &rest);
+                        Self::route_protocol_fee_to_vault(env, &vault, rest, &t);
+                    }
                 }
                 _ => cut = 0,
             }
@@ -3197,6 +3244,33 @@ impl MarketContract {
                 position.entry_price,
             ),
         );
+    }
+
+    /// L1-18: referral hook — try-invoke record_trade(trader, gross_fee,
+    /// size) on the wired registry. Returns (net_fee, referrer_payout).
+    /// Fail-open to (gross_fee, 0): an unset, broken, revoked or paused
+    /// registry must never block trading; the discount can never exceed
+    /// the fee.
+    fn apply_referral(env: &Env, trader: &Address, gross_fee: i128, size: i128) -> (i128, i128) {
+        if gross_fee <= 0 {
+            return (gross_fee, 0);
+        }
+        let referral = match get_referral(env) {
+            Some(addr) => addr,
+            None => return (gross_fee, 0),
+        };
+        let args: Vec<soroban_sdk::Val> = (trader.clone(), gross_fee, size).into_val(env);
+        match env.try_invoke_contract::<(i128, i128), soroban_sdk::Error>(
+            &referral,
+            &Symbol::new(env, "record_trade"),
+            args,
+        ) {
+            Ok(Ok((discount, payout))) if discount >= 0 && payout >= 0 => {
+                let clamped = if discount > gross_fee { gross_fee } else { discount };
+                (gross_fee - clamped, payout)
+            }
+            _ => (gross_fee, 0),
+        }
     }
 
     /// Shared isolated-close settlement used by close_position and keeper
@@ -3690,6 +3764,9 @@ impl MarketContract {
 
         // Calculate maker fee and record volume (limit orders = maker)
         let trading_fee = calculate_fee_and_record_volume(env, &order.trader, size, true, &config);
+        // L1-18: referral discount on the maker path too.
+        let (trading_fee, referrer_payout) =
+            Self::apply_referral(env, &order.trader, trading_fee, size);
 
         // Total fees = trading fee + keeper fee
         let total_fees = trading_fee + keeper_fee;
@@ -3718,7 +3795,7 @@ impl MarketContract {
             margin_mode: 0, // Isolated
         };
 
-        Self::finalize_open(env, &position, trading_fee);
+        Self::finalize_open(env, &position, trading_fee, referrer_payout);
 
         // L0-20: stamp the created position onto the executed order row so a
         // vault_factory leader's executed limit/stop-limit order can be
@@ -4865,6 +4942,158 @@ mod tests {
             pos.collateral - reward,
         );
         assert!(test.market.get_position(&pos.id).is_none());
+    }
+
+    /// L1-18 mock registry mirroring the real defaults: 4% of fee discount,
+    /// 10% of fee payout, args (referee, original_fee, volume).
+    #[contract]
+    pub struct MockReferral;
+
+    #[contractimpl]
+    impl MockReferral {
+        pub fn record_trade(
+            _env: Env,
+            _referee: Address,
+            original_fee: i128,
+            _volume: i128,
+        ) -> (i128, i128) {
+            (original_fee * 400 / 10_000, original_fee * 1_000 / 10_000)
+        }
+    }
+
+    /// L1-18 harness: wire treasury (bps), a zeroed insurance-buffer target
+    /// (so route_protocol_fee overflow lands 100% at the treasury and the
+    /// worked-vector integers assert exactly), and the mock registry.
+    fn setup_referral(test: &TestEnv, protocol_bps: u32) -> (Address, Address) {
+        let treasury = Address::generate(&test.env);
+        test.market.set_fee_split(&treasury, &protocol_bps);
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        vault_client.set_buffer_target(&0);
+        let referral = test.env.register_contract(None, MockReferral);
+        test.market.set_referral(&referral);
+        (treasury, referral)
+    }
+
+    #[test]
+    fn test_referral_discount_applied_at_open() {
+        // The spec's $10,000 tier-0 taker worked vector, exact integers.
+        let test = setup();
+        let (treasury, referral) = setup_referral(&test, 2_000);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let vault_before = usdc.balance(&test.vault_id);
+        // $1,000 collateral × 10x = $10,000 notional.
+        let pos = test.market.open_position(
+            &trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0,
+        );
+
+        // gross 50_000_000 → discount 2_000_000 → net fee 48_000_000.
+        assert_eq!(pos.collateral, 1_000 * PRECISION - 48_000_000);
+        // payout 5_000_000 ≤ cut 9_600_000 → pot to the registry, rest to
+        // treasury (buffer target zeroed), vault gets fee − cut exactly.
+        assert_eq!(usdc.balance(&referral), 5_000_000);
+        assert_eq!(usdc.balance(&treasury), 4_600_000);
+        assert_eq!(usdc.balance(&test.vault_id) - vault_before, 38_400_000);
+    }
+
+    #[test]
+    fn test_referrer_payout_capped_by_treasury_cut() {
+        // Low protocol bps: cut 2_400_000 < payout 5_000_000 → the pot is
+        // the WHOLE cut, treasury gets zero, LP share untouched.
+        let test = setup();
+        let (treasury, referral) = setup_referral(&test, 500);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let vault_before = usdc.balance(&test.vault_id);
+        test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0);
+
+        let pot = usdc.balance(&referral);
+        let to_treasury = usdc.balance(&treasury);
+        let cut = 48_000_000 * 500 / 10_000;
+        assert_eq!(pot, cut, "payout is capped at the cut");
+        assert_eq!(to_treasury, 0);
+        assert_eq!(pot + to_treasury, cut, "pot + treasury always equals the cut");
+        assert_eq!(
+            usdc.balance(&test.vault_id) - vault_before,
+            48_000_000 - cut,
+            "the LP share (fee − cut) never funds the payout",
+        );
+    }
+
+    #[test]
+    fn test_referral_lp_share_property_across_bps() {
+        // Property: for any protocol bps, the vault receives exactly
+        // net_fee − cut. bps=0 → no cut, payout accrues but pays nothing.
+        for bps in [0u32, 500, 5_000] {
+            let test = setup();
+            let (_treasury, _referral) = setup_referral(&test, bps);
+            let trader = fund_trader(&test, 10_000 * PRECISION);
+            let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+            let xlm = Symbol::new(&test.env, "XLM");
+
+            let vault_before = usdc.balance(&test.vault_id);
+            test.market.open_position(&trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0);
+            let cut = 48_000_000 * (bps as i128) / 10_000;
+            assert_eq!(
+                usdc.balance(&test.vault_id) - vault_before,
+                48_000_000 - cut,
+                "bps={bps}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_referral_noop_when_unset() {
+        // No registry wired: the gross fee is charged untouched.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(
+            &trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0,
+        );
+        assert_eq!(pos.collateral, 1_000 * PRECISION - 50_000_000);
+    }
+
+    #[test]
+    fn test_referral_contract_failure_does_not_block_open() {
+        // set_referral to a contract WITHOUT record_trade (the oracle):
+        // the try-invoke fails, the open proceeds at the gross fee.
+        let test = setup();
+        test.market.set_referral(&test.oracle_id);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(
+            &trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0,
+        );
+        assert_eq!(pos.collateral, 1_000 * PRECISION - 50_000_000);
+    }
+
+    #[test]
+    fn test_limit_entry_maker_discount_path() {
+        // Maker fee 20_000_000 on $10k → discount 800_000, net 19_200_000;
+        // keeper fee rides on top; payout 2_000_000 ≤ cut 3_840_000.
+        let test = setup();
+        let (_treasury, referral) = setup_referral(&test, 2_000);
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        let order = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(1_000 * PRECISION), &10,
+            &(PRECISION / 10), &false, &500, &0,
+        );
+        let reward = test.market.execute_order(&keeper, &order.id);
+        assert!(reward > 0);
+
+        let position_id = test.market.get_order(&order.id).unwrap().position_id;
+        let pos = test.market.get_position(&position_id).unwrap();
+        assert_eq!(pos.collateral, 1_000 * PRECISION - 19_200_000 - reward);
+        assert_eq!(usdc.balance(&referral), 2_000_000);
     }
 
     #[test]

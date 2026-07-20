@@ -19,7 +19,9 @@
 // Amounts use the <units>_<7 decimals> grouping (10_000_0000000 = 10k USDC)
 #![allow(clippy::inconsistent_digit_grouping)]
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol};
+use soroban_sdk::{
+    contract, contractimpl, token, Address, BytesN, Env, IntoVal, String, Symbol, Val, Vec,
+};
 
 mod storage;
 mod types;
@@ -35,17 +37,19 @@ pub struct ReferralContract;
 #[contractimpl]
 impl ReferralContract {
     pub fn version(env: Env) -> Symbol {
-        Symbol::new(&env, "referral_v0")
+        Symbol::new(&env, "referral_v1")
     }
 
     /// One-shot initialisation. The market contract address is the only
-    /// principal allowed to call `record_trade`. Discount and share are
-    /// in basis points; min_code_volume is the 14-day rolling volume
-    /// floor needed to mint a code.
+    /// principal allowed to call `record_trade`; usdc_token is what the
+    /// funded `claim` pays out in (L1-18). Discount and share are in basis
+    /// points; min_code_volume is the 14-day rolling volume floor needed
+    /// to mint a code (cross-read from the market at create_code).
     pub fn initialize(
         env: Env,
         admin: Address,
         market: Address,
+        usdc_token: Address,
     ) -> Result<(), ReferralError> {
         if storage::is_initialized(&env) {
             return Err(ReferralError::AlreadyInitialized);
@@ -53,6 +57,7 @@ impl ReferralContract {
         admin.require_auth();
         storage::set_admin(&env, &admin);
         storage::set_market(&env, &market);
+        storage::set_usdc_token(&env, &usdc_token);
         storage::set_discount_bps(&env, DEFAULT_DISCOUNT_BPS);
         storage::set_referrer_share_bps(&env, DEFAULT_REFERRER_SHARE_BPS);
         storage::set_min_code_volume(&env, DEFAULT_MIN_CODE_VOLUME);
@@ -66,11 +71,10 @@ impl ReferralContract {
     /// Mint a unique referral code for `referrer`. Each address can hold
     /// at most one code; codes are case-sensitive 3..=16 char strings.
     ///
-    /// Volume gating: in v0 the API gateway enforces the 14-day volume
-    /// floor before exposing this endpoint. The on-chain check is a
-    /// hard cap (`MinCodeVolume`) read from storage; admin can lower
-    /// it to 0 to disable. Future versions may delegate to a
-    /// market-provided volume view.
+    /// Volume gating (L1-18/R-3): the referrer's 14-day rolling volume is
+    /// cross-read from market.get_trader_volume and must be at least
+    /// MinCodeVolume. Fail-closed: an unreadable market counts as zero
+    /// volume (admin can set the floor to 0 to disable the gate).
     pub fn create_code(
         env: Env,
         referrer: Address,
@@ -78,6 +82,17 @@ impl ReferralContract {
     ) -> Result<(), ReferralError> {
         storage::require_initialized(&env)?;
         referrer.require_auth();
+        if storage::is_paused(&env) {
+            return Err(ReferralError::RegistryPaused);
+        }
+
+        let min_volume = storage::get_min_code_volume(&env);
+        if min_volume > 0 {
+            let market = storage::get_market(&env);
+            if Self::trader_volume_at_market(&env, &market, &referrer) < min_volume {
+                return Err(ReferralError::InsufficientVolume);
+            }
+        }
 
         let len = code.len();
         if len < CODE_MIN_LEN {
@@ -123,12 +138,18 @@ impl ReferralContract {
     ) -> Result<(), ReferralError> {
         storage::require_initialized(&env)?;
         referee.require_auth();
+        if storage::is_paused(&env) {
+            return Err(ReferralError::RegistryPaused);
+        }
         if storage::referrer_of(&env, &referee).is_some() {
             return Err(ReferralError::AlreadyHasReferrer);
         }
         let referrer = storage::lookup_code(&env, &code).ok_or(ReferralError::UnknownCode)?;
         if referrer == referee {
             return Err(ReferralError::SelfReferral);
+        }
+        if storage::is_revoked(&env, &referrer) {
+            return Err(ReferralError::RevokedCode);
         }
         storage::set_referrer_of(&env, &referee, &referrer);
         let mut info = storage::load_info(&env, &referrer).ok_or(ReferralError::UnknownCode)?;
@@ -153,15 +174,21 @@ impl ReferralContract {
         env: Env,
         referee: Address,
         original_fee: i128,
+        volume: i128,
     ) -> Result<(i128, i128), ReferralError> {
         storage::require_market(&env)?;
-        if original_fee <= 0 {
+        if original_fee <= 0 || storage::is_paused(&env) {
             return Ok((0, 0));
         }
         let referrer = match storage::referrer_of(&env, &referee) {
             Some(addr) => addr,
             None => return Ok((0, 0)),
         };
+        // A revoked referrer accrues nothing — the market charges the
+        // full fee (L1-18/R-5).
+        if storage::is_revoked(&env, &referrer) {
+            return Ok((0, 0));
+        }
 
         let discount_bps = storage::get_discount_bps(&env);
         let share_bps = storage::get_referrer_share_bps(&env);
@@ -175,9 +202,10 @@ impl ReferralContract {
             / 10_000;
 
         let mut info = storage::load_info(&env, &referrer).ok_or(ReferralError::UnknownCode)?;
+        // R-8 fix: this stat is VOLUME generated, not fees generated.
         info.total_volume_generated = info
             .total_volume_generated
-            .checked_add(original_fee)
+            .checked_add(if volume > 0 { volume } else { 0 })
             .ok_or(ReferralError::Overflow)?;
         info.total_earned = info
             .total_earned
@@ -191,15 +219,17 @@ impl ReferralContract {
 
         env.events().publish(
             (Symbol::new(&env, "trade_recorded"),),
-            (referee, referrer, original_fee, discount, payout),
+            (referee, referrer, original_fee, discount, payout, volume),
         );
         Ok((discount, payout))
     }
 
-    /// Referrer drains their claimable balance. Returns the amount
-    /// claimed; emits a "claimed" event. The actual USDC transfer is
-    /// done by the market contract (which holds the funds) on receipt
-    /// of the event — phase 11.x adds a direct cross-contract pay.
+    /// Funded claim (L1-18): transfers the claimable balance from THIS
+    /// contract's own USDC (push-funded by the market's per-trade pot
+    /// transfers) to the referrer. If the balance cannot cover it, the
+    /// claim rejects with ClaimUnfunded and claimable is PRESERVED —
+    /// an earned balance is never burned. Deliberately not pause-gated
+    /// (claims are exits).
     pub fn claim(env: Env, referrer: Address) -> Result<i128, ReferralError> {
         storage::require_initialized(&env)?;
         referrer.require_auth();
@@ -208,6 +238,15 @@ impl ReferralContract {
         if amount <= 0 {
             return Err(ReferralError::NothingToClaim);
         }
+
+        let usdc = storage::get_usdc_token(&env).ok_or(ReferralError::ClaimUnfunded)?;
+        let client = token::Client::new(&env, &usdc);
+        let this = env.current_contract_address();
+        if client.balance(&this) < amount {
+            return Err(ReferralError::ClaimUnfunded);
+        }
+        client.transfer(&this, &referrer, &amount);
+
         info.claimable = 0;
         storage::save_info(&env, &info);
         env.events()
@@ -282,22 +321,125 @@ impl ReferralContract {
         storage::set_min_code_volume(&env, volume);
         Ok(())
     }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Admin controls (L1-18 / R-5)
+    // ───────────────────────────────────────────────────────────────────
+
+    /// Revoke a code's referrer: record_trade accrues (0,0) for them and
+    /// the code takes no new bindings. Reversible via unrevoke.
+    pub fn revoke_code(env: Env, code: String) -> Result<(), ReferralError> {
+        storage::require_admin(&env)?;
+        let referrer = storage::lookup_code(&env, &code).ok_or(ReferralError::UnknownCode)?;
+        storage::set_revoked(&env, &referrer, true);
+        env.events()
+            .publish((Symbol::new(&env, "code_revoked"),), (referrer, code));
+        Ok(())
+    }
+
+    pub fn unrevoke_code(env: Env, code: String) -> Result<(), ReferralError> {
+        storage::require_admin(&env)?;
+        let referrer = storage::lookup_code(&env, &code).ok_or(ReferralError::UnknownCode)?;
+        storage::set_revoked(&env, &referrer, false);
+        env.events()
+            .publish((Symbol::new(&env, "code_unrevoked"),), (referrer, code));
+        Ok(())
+    }
+
+    /// Delete a referee's binding — future trades accrue nothing to the
+    /// old referrer (self-referral cluster backstop).
+    pub fn unbind(env: Env, referee: Address) -> Result<(), ReferralError> {
+        storage::require_admin(&env)?;
+        storage::remove_referrer_of(&env, &referee);
+        env.events()
+            .publish((Symbol::new(&env, "unbound"),), referee);
+        Ok(())
+    }
+
+    /// Pause the registry: record_trade becomes a (0,0) no-op, new codes
+    /// and bindings reject. Claims stay open (exits are never gated).
+    pub fn set_paused(env: Env, paused: bool) -> Result<(), ReferralError> {
+        storage::require_admin(&env)?;
+        storage::set_paused(&env, paused);
+        env.events()
+            .publish((Symbol::new(&env, "registry_paused"),), paused);
+        Ok(())
+    }
+
+    /// Re-point at a redeployed market without losing code/referrer state.
+    pub fn set_market(env: Env, market: Address) -> Result<(), ReferralError> {
+        storage::require_admin(&env)?;
+        storage::set_market(&env, &market);
+        Ok(())
+    }
+
+    pub fn set_usdc_token(env: Env, usdc: Address) -> Result<(), ReferralError> {
+        storage::require_admin(&env)?;
+        storage::set_usdc_token(&env, &usdc);
+        Ok(())
+    }
+
+    /// Swap the running WASM in place; codes, bindings and balances are
+    /// preserved (mirrors the market/vault/router upgrade pattern).
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ReferralError> {
+        storage::require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
+    /// L1-18/R-3: the referrer's rolling 14-day volume from the market's
+    /// get_trader_volume view. Fail-closed to 0 — an unreadable market
+    /// means the volume gate cannot be satisfied (admin may set the floor
+    /// to 0 to disable gating instead).
+    fn trader_volume_at_market(env: &Env, market: &Address, referrer: &Address) -> i128 {
+        let args: Vec<Val> = (referrer.clone(),).into_val(env);
+        match env.try_invoke_contract::<i128, soroban_sdk::Error>(
+            market,
+            &Symbol::new(env, "get_trader_volume"),
+            args,
+        ) {
+            Ok(Ok(volume)) if volume > 0 => volume,
+            _ => 0,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::token::StellarAssetClient;
     use soroban_sdk::{Env, String};
 
-    fn setup() -> (Env, Address, Address, soroban_sdk::Address) {
+    /// Mock market exposing the L1-18 get_trader_volume view (fixed $5k).
+    #[contract]
+    pub struct MockMarket;
+
+    #[contractimpl]
+    impl MockMarket {
+        pub fn get_trader_volume(_env: Env, _trader: Address) -> i128 {
+            5_000_0000000
+        }
+    }
+
+    fn setup_full() -> (Env, Address, Address, soroban_sdk::Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
         let id = env.register_contract(None, ReferralContract);
         let admin = Address::generate(&env);
         let market = Address::generate(&env);
+        let usdc = env.register_stellar_asset_contract_v2(admin.clone()).address();
         let client = ReferralContractClient::new(&env, &id);
-        client.initialize(&admin, &market);
+        client.initialize(&admin, &market, &usdc);
+        // Legacy fixtures predate the R-3 gate (market here is a plain
+        // address, so the cross-read fails-closed to 0) — disable the
+        // floor; the dedicated gate test re-enables it with MockMarket.
+        client.set_min_code_volume(&0);
+        (env, admin, market, id, usdc)
+    }
+
+    fn setup() -> (Env, Address, Address, soroban_sdk::Address) {
+        let (env, admin, market, id, _usdc) = setup_full();
         (env, admin, market, id)
     }
 
@@ -306,13 +448,20 @@ mod tests {
         let env = Env::default();
         let id = env.register_contract(None, ReferralContract);
         let client = ReferralContractClient::new(&env, &id);
-        assert_eq!(client.version(), Symbol::new(&env, "referral_v0"));
+        assert_eq!(client.version(), Symbol::new(&env, "referral_v1"));
     }
 
     #[test]
     fn initialize_pins_admin_market_and_defaults() {
-        let (env, admin, market, id) = setup();
+        // Raw init (no harness overrides) so the TRUE defaults are pinned.
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, ReferralContract);
+        let admin = Address::generate(&env);
+        let market = Address::generate(&env);
+        let usdc = env.register_stellar_asset_contract_v2(admin.clone()).address();
         let client = ReferralContractClient::new(&env, &id);
+        client.initialize(&admin, &market, &usdc);
         assert_eq!(client.get_admin(), admin);
         assert_eq!(client.get_market(), market);
         let (discount, share, vol) = client.get_config();
@@ -430,8 +579,8 @@ mod tests {
         client.create_code(&referrer, &String::from_str(&env, "alice42"));
         client.set_referrer(&referee, &String::from_str(&env, "alice42"));
 
-        // Original fee = 1000 USDC * 10^7 = 10_000_000_000
-        let (discount, payout) = client.record_trade(&referee, &10_000_000_000);
+        // Original fee = 1000 USDC * 10^7 = 10_000_000_000; volume $200k.
+        let (discount, payout) = client.record_trade(&referee, &10_000_000_000, &200_000_0000000);
         // discount = 10_000_000_000 * 400 / 10_000 = 400_000_000
         assert_eq!(discount, 400_000_000);
         // payout = 10_000_000_000 * 1000 / 10_000 = 1_000_000_000
@@ -440,7 +589,8 @@ mod tests {
         let info = client.get_info(&referrer);
         assert_eq!(info.total_earned, 1_000_000_000);
         assert_eq!(info.claimable, 1_000_000_000);
-        assert_eq!(info.total_volume_generated, 10_000_000_000);
+        // R-8 fix: the stat is VOLUME generated, not fees generated.
+        assert_eq!(info.total_volume_generated, 200_000_0000000);
     }
 
     #[test]
@@ -448,28 +598,144 @@ mod tests {
         let (env, _admin, _market, id) = setup();
         let client = ReferralContractClient::new(&env, &id);
         let stranger = Address::generate(&env);
-        let (d, p) = client.record_trade(&stranger, &10_000_000_000);
+        let (d, p) = client.record_trade(&stranger, &10_000_000_000, &0);
         assert_eq!(d, 0);
         assert_eq!(p, 0);
     }
 
+    fn bind_and_accrue(
+        env: &Env,
+        client: &ReferralContractClient,
+    ) -> (Address, Address) {
+        let referrer = Address::generate(env);
+        let referee = Address::generate(env);
+        client.create_code(&referrer, &String::from_str(env, "alice42"));
+        client.set_referrer(&referee, &String::from_str(env, "alice42"));
+        client.record_trade(&referee, &10_000_000_000, &100_000_0000000);
+        (referrer, referee)
+    }
+
     #[test]
-    fn claim_drains_claimable_and_blocks_re_claim() {
-        let (env, _admin, _market, id) = setup();
+    fn claim_transfers_usdc_and_blocks_re_claim() {
+        let (env, _admin, _market, id, usdc) = setup_full();
         let client = ReferralContractClient::new(&env, &id);
-        let referrer = Address::generate(&env);
-        let referee = Address::generate(&env);
-        client.create_code(&referrer, &String::from_str(&env, "alice42"));
-        client.set_referrer(&referee, &String::from_str(&env, "alice42"));
-        client.record_trade(&referee, &10_000_000_000);
+        let (referrer, _referee) = bind_and_accrue(&env, &client);
+
+        // Fund the pool the way the market does (push-style pot transfer).
+        StellarAssetClient::new(&env, &usdc).mint(&id, &1_000_000_000);
+        let usdc_client = token::Client::new(&env, &usdc);
+        assert_eq!(usdc_client.balance(&referrer), 0);
 
         let claimed = client.claim(&referrer);
         assert_eq!(claimed, 1_000_000_000);
+        assert_eq!(usdc_client.balance(&referrer), 1_000_000_000);
+        assert_eq!(usdc_client.balance(&id), 0);
         let info = client.get_info(&referrer);
         assert_eq!(info.claimable, 0);
         assert_eq!(info.total_earned, 1_000_000_000); // lifetime preserved
 
         let again = client.try_claim(&referrer);
         assert_eq!(again, Err(Ok(ReferralError::NothingToClaim)));
+    }
+
+    #[test]
+    fn claim_unfunded_preserves_claimable() {
+        let (env, _admin, _market, id, usdc) = setup_full();
+        let client = ReferralContractClient::new(&env, &id);
+        let (referrer, _referee) = bind_and_accrue(&env, &client);
+
+        // No funding: claim must reject WITHOUT burning the balance.
+        let res = client.try_claim(&referrer);
+        assert_eq!(res, Err(Ok(ReferralError::ClaimUnfunded)));
+        assert_eq!(client.get_info(&referrer).claimable, 1_000_000_000);
+
+        // Partially funded is still unfunded for the full amount.
+        StellarAssetClient::new(&env, &usdc).mint(&id, &400_000_000);
+        let res = client.try_claim(&referrer);
+        assert_eq!(res, Err(Ok(ReferralError::ClaimUnfunded)));
+        assert_eq!(client.get_info(&referrer).claimable, 1_000_000_000);
+    }
+
+    #[test]
+    fn min_code_volume_gate_cross_reads_market() {
+        let (env, _admin, _market, id, _usdc) = setup_full();
+        let client = ReferralContractClient::new(&env, &id);
+        // Point at a mock market whose view reports $5k rolling volume.
+        let mock_market = env.register_contract(None, MockMarket);
+        client.set_market(&mock_market);
+
+        let referrer = Address::generate(&env);
+        client.set_min_code_volume(&10_000_0000000);
+        let res = client.try_create_code(&referrer, &String::from_str(&env, "whale01"));
+        assert_eq!(res, Err(Ok(ReferralError::InsufficientVolume)));
+
+        client.set_min_code_volume(&5_000_0000000);
+        client.create_code(&referrer, &String::from_str(&env, "whale01"));
+        assert!(client.resolve_code(&String::from_str(&env, "whale01")).is_some());
+    }
+
+    #[test]
+    fn revoked_referrer_accrues_nothing_and_code_stops_binding() {
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let (referrer, referee) = bind_and_accrue(&env, &client);
+        let before = client.get_info(&referrer).claimable;
+
+        client.revoke_code(&String::from_str(&env, "alice42"));
+        let (d, p) = client.record_trade(&referee, &10_000_000_000, &100_000_0000000);
+        assert_eq!((d, p), (0, 0));
+        assert_eq!(client.get_info(&referrer).claimable, before);
+
+        let newbie = Address::generate(&env);
+        let bind = client.try_set_referrer(&newbie, &String::from_str(&env, "alice42"));
+        assert_eq!(bind, Err(Ok(ReferralError::RevokedCode)));
+
+        // Reversible: unrevoke restores accrual.
+        client.unrevoke_code(&String::from_str(&env, "alice42"));
+        let (d2, _p2) = client.record_trade(&referee, &10_000_000_000, &0);
+        assert_eq!(d2, 400_000_000);
+    }
+
+    #[test]
+    fn paused_registry_is_noop_and_blocks_state_changes() {
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let (referrer, referee) = bind_and_accrue(&env, &client);
+        let before = client.get_info(&referrer).claimable;
+
+        client.set_paused(&true);
+        let (d, p) = client.record_trade(&referee, &10_000_000_000, &0);
+        assert_eq!((d, p), (0, 0));
+        assert_eq!(client.get_info(&referrer).claimable, before);
+        let newcode = client.try_create_code(&Address::generate(&env), &String::from_str(&env, "latecomer"));
+        assert_eq!(newcode, Err(Ok(ReferralError::RegistryPaused)));
+
+        client.set_paused(&false);
+        let (d2, _p2) = client.record_trade(&referee, &10_000_000_000, &0);
+        assert_eq!(d2, 400_000_000);
+    }
+
+    #[test]
+    fn unbind_stops_accrual() {
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let (referrer, referee) = bind_and_accrue(&env, &client);
+        let before = client.get_info(&referrer).claimable;
+
+        client.unbind(&referee);
+        assert_eq!(client.get_referrer(&referee), None);
+        let (d, p) = client.record_trade(&referee, &10_000_000_000, &0);
+        assert_eq!((d, p), (0, 0));
+        assert_eq!(client.get_info(&referrer).claimable, before);
+    }
+
+    #[test]
+    fn set_market_repoints() {
+        let (env, _admin, market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        assert_eq!(client.get_market(), market);
+        let new_market = Address::generate(&env);
+        client.set_market(&new_market);
+        assert_eq!(client.get_market(), new_market);
     }
 }
