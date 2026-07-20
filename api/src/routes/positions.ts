@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '@noether/db';
+import type { AdlQueueService } from '../services/adlQueue.js';
 
 interface OpenPositionsQuery {
   trader?: string;
@@ -36,6 +37,7 @@ export function mapPositionRow(r: PositionRow) {
 export async function registerPositionsRoutes(
   app: FastifyInstance,
   db: Db,
+  adl?: AdlQueueService,
 ): Promise<void> {
   app.get<{ Querystring: OpenPositionsQuery }>(
     '/v1/positions/open',
@@ -60,7 +62,25 @@ export async function registerPositionsRoutes(
           : { sql, args: [GLOBAL_POSITIONS_LIMIT] },
       );
       const rows = (result.rows as unknown as PositionRow[]).map(mapPositionRow);
-      return reply.send({ positions: rows });
+
+      // L0-1: merge the advisory ADL quintile (1..5, 1 = first deleveraged;
+      // null = not in the queue / queue unavailable). Best-effort — a failed
+      // queue never fails the positions read.
+      let withQuintiles = rows.map((row) => ({ ...row, adlQuintile: null as number | null }));
+      if (adl && rows.length > 0) {
+        try {
+          const assets = [...new Set(rows.map((row) => row.asset))];
+          const maps = await Promise.all(assets.map((asset) => adl.quintiles(asset)));
+          const byAsset = new Map(assets.map((asset, i) => [asset, maps[i]]));
+          withQuintiles = rows.map((row) => ({
+            ...row,
+            adlQuintile: byAsset.get(row.asset)?.get(row.positionId) ?? null,
+          }));
+        } catch {
+          // leave nulls
+        }
+      }
+      return reply.send({ positions: withQuintiles });
     },
   );
 }

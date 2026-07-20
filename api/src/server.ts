@@ -18,6 +18,7 @@ import { registerVaultRoutes } from './routes/vaults.js';
 import { registerReferralRoutes } from './routes/referral.js';
 import { registerPositionsRoutes } from './routes/positions.js';
 import { registerVolumeRoutes } from './routes/volume.js';
+import { registerAdlRoutes } from './routes/adl.js';
 import { registerTradesRoutes } from './routes/trades.js';
 import { registerCandlesRoutes } from './routes/candles.js';
 import { registerLeaderboardRoutes } from './routes/leaderboard.js';
@@ -35,6 +36,8 @@ import { WsManager } from './services/wsManager.js';
 import { OracleTicker } from './services/oracleTicker.js';
 import { LiveTailer } from './services/liveTailer.js';
 import { StatsService } from './services/stats.js';
+import { AdlQueueService } from './services/adlQueue.js';
+import { ShortfallService } from './services/shortfall.js';
 import { createIndexerDb } from './services/indexerDb.js';
 import { getNetworkPassphrase } from '@noether/shared';
 import { authPlugin } from './plugins/auth.js';
@@ -59,6 +62,8 @@ export interface ServerDeps {
   vaults: VaultsService;
   referral: ReferralReadService;
   stats: StatsService;
+  adlQueue: AdlQueueService;
+  shortfall: ShortfallService;
 }
 
 const PKG = JSON.parse(
@@ -121,8 +126,9 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register((instance) => registerTxRoutes(instance, deps.tx));
   await app.register((instance) => registerVaultRoutes(instance, deps.vaults));
   await app.register((instance) => registerReferralRoutes(instance, deps.referral));
-  await app.register((instance) => registerPositionsRoutes(instance, deps.db));
+  await app.register((instance) => registerPositionsRoutes(instance, deps.db, deps.adlQueue));
   await app.register((instance) => registerVolumeRoutes(instance, deps.stats));
+  await app.register((instance) => registerAdlRoutes(instance, deps.adlQueue, deps.shortfall));
   await app.register((instance) => registerTradesRoutes(instance, deps.stats));
   await app.register((instance) => registerCandlesRoutes(instance, deps.stats));
   await app.register((instance) => registerLeaderboardRoutes(instance, deps.stats));
@@ -168,5 +174,13 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   // Scope leaderboard scans to the live market so retired deployments
   // never leak into the totals (resolves via CONTRACT_MARKET override).
   const stats = new StatsService(db, config.contracts.contracts.market);
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats };
+  // L0-1/L0-3 (Batch-1 surfaces, fail-soft against today's chain).
+  const adlQueue = new AdlQueueService({
+    db,
+    oracle,
+    marketContractId: config.contracts.contracts.market,
+    rpcUrl: config.rpcUrl,
+  });
+  const shortfall = new ShortfallService(reader, config.contracts.contracts.vault);
+  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall };
 }

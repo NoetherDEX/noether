@@ -179,9 +179,23 @@ export async function setupTestServer(opts?: {
   txOverride?: import('../src/routes/tx.js').TxRoutesDeps;
   /** Enables POST /v1/oracle/heartbeat with this shared secret. */
   keeperHeartbeatSecret?: string;
+  /** L0-1: decoded position states served to the AdlQueueService in place
+   *  of ledger-entry hydration. */
+  adlPositions?: import('../src/services/adlQueue.js').AdlPositionState[];
+  /** L0-3: vault shortfall view values; absent = the reader throws like a
+   *  pre-Batch-1 vault (supported:false path). */
+  shortfall?: { owed: bigint; reserve: bigint };
 }) {
   const reader = {
-    async read<T>(_contractId: string, _method: string, args: unknown[] = []): Promise<T> {
+    async read<T>(_contractId: string, method: string, args: unknown[] = []): Promise<T> {
+      if (method === 'get_shortfall_owed') {
+        if (!opts?.shortfall) throw new Error('MissingValue: invoking unknown export');
+        return opts.shortfall.owed as T;
+      }
+      if (method === 'get_shortfall_reserve') {
+        if (!opts?.shortfall) throw new Error('MissingValue: invoking unknown export');
+        return opts.shortfall.reserve as T;
+      }
       const arg = args[0];
       const symbol = extractSymbol(arg);
       const tuple = (opts?.oraclePrices ?? {})[symbol] ?? [0n, 0n];
@@ -249,9 +263,22 @@ export async function setupTestServer(opts?: {
   const vaults = new (await import('../src/services/vaults.js')).VaultsService(db);
   const referral = new (await import('../src/services/referral.js')).ReferralReadService(db);
   const stats = new (await import('../src/services/stats.js')).StatsService(db, FAKE_CONTRACT);
+  const adlQueue = new (await import('../src/services/adlQueue.js')).AdlQueueService({
+    db,
+    oracle,
+    marketContractId: FAKE_CONTRACT,
+    rpcUrl: TEST_CONFIG.rpcUrl,
+    hydratePositions: async (ids) =>
+      (opts?.adlPositions ?? []).filter((p) => ids.includes(p.positionId)),
+  });
+  const shortfall = new (await import('../src/services/shortfall.js')).ShortfallService(
+    reader,
+    FAKE_CONTRACT,
+  );
   const deps: ServerDeps = {
     oracle, markets, events, apiKeys, walletAuth, rateLimiter, db,
     orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats,
+    adlQueue, shortfall,
   };
   const app = await buildServer(
     { ...TEST_CONFIG, keeperHeartbeatSecret: opts?.keeperHeartbeatSecret },
