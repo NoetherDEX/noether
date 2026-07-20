@@ -260,6 +260,42 @@ export async function removeCollateral(
 }
 
 /**
+ * L0-12 (Batch-1): per-asset leverage cap from the risk ladder, cached per
+ * asset for the session. null = no ladder for this asset (legacy global cap
+ * applies), a pre-L0-12 market, or a failed read — callers fall back to
+ * TRADING.MAX_LEVERAGE. Nulls are not pinned, so a transient failure
+ * re-probes on the next asset switch.
+ */
+const assetMaxLeverageCache = new Map<string, Promise<number | null>>();
+export function getAssetMaxLeverage(asset: string): Promise<number | null> {
+  let cached = assetMaxLeverageCache.get(asset);
+  if (!cached) {
+    cached = (async (): Promise<number | null> => {
+      try {
+        const tx = await buildSimulateTransaction(NULL_ACCOUNT, 'get_asset_risk', [
+          toScVal(asset, 'symbol'),
+        ]);
+        const sim = await sorobanRpc.simulateTransaction(tx);
+        if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) return null;
+        const native = scValToNative(sim.result.retval) as
+          | { max_leverage?: number | bigint }
+          | null;
+        if (native == null || native.max_leverage == null) return null;
+        const cap = Number(native.max_leverage);
+        return Number.isFinite(cap) && cap > 0 ? cap : null;
+      } catch {
+        return null;
+      }
+    })();
+    cached.then((value) => {
+      if (value === null) assetMaxLeverageCache.delete(asset);
+    });
+    assetMaxLeverageCache.set(asset, cached);
+  }
+  return cached;
+}
+
+/**
  * L0-15 two-tier pause state: mode 0 live / 1 halt-open (exit-only) /
  * 2 full-freeze. null = the deployed market predates Batch-1 (no view) or
  * the read failed — callers treat null as "no banner, no Batch-1 UI".

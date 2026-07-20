@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore, useLeaderModeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
-import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo, setStopLoss, setTakeProfit } from '@/lib/stellar/market';
+import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, placeTrailingStop, getCrossMarginBalance, depositCrossMargin, withdrawCrossMargin, getTraderFeeInfo, setStopLoss, setTakeProfit, getAssetMaxLeverage } from '@/lib/stellar/market';
 import { leaderOpenPosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
 import { fetchTraderVolume14d } from '@/lib/api/volume';
@@ -172,6 +172,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       cancelled = true;
     };
   }, []);
+  // L0-12 (Batch-1): per-asset leverage cap from the risk ladder — legacy
+  // global cap when the ladder is unset or the market predates it. Clamps
+  // the current selection on asset switch so a 25x BTC choice can't ride
+  // into a 5x-capped pair.
+  const [assetMaxLeverage, setAssetMaxLeverage] = useState<number>(TRADING.MAX_LEVERAGE);
+  useEffect(() => {
+    let cancelled = false;
+    getAssetMaxLeverage(asset)
+      .then((cap) => {
+        if (cancelled) return;
+        const effective = cap ?? TRADING.MAX_LEVERAGE;
+        setAssetMaxLeverage(effective);
+        if (leverage > effective) setLeverage(effective);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clamp only on asset switch
+  }, [asset]);
+
   const opposingNotional = useMemo(() => {
     if (!batch1Features || orderType !== 'Market') return 0;
     const wantCross = marginMode === 'Cross';
@@ -1029,7 +1050,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             <input
               type="range"
               min={1}
-              max={10}
+              max={assetMaxLeverage}
               step={1}
               value={leverage}
               onChange={(e) => setLeverage(parseInt(e.target.value))}
@@ -1039,23 +1060,32 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             />
           </div>
 
-          {/* Quick leverage buttons */}
+          {/* Quick leverage buttons — capped by the per-asset ladder (L0-12) */}
           <div className="grid grid-flow-col auto-cols-fr gap-0.5 bg-surface-2 rounded-md p-0.5">
-            {[1, 2, 5, 8, 10].map((lev) => (
-              <button
-                key={lev}
-                onClick={() => setLeverage(lev)}
-                className={cn(
-                  'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
-                  leverage === lev
-                    ? 'bg-surface-3 text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                {lev}x
-              </button>
-            ))}
+            {Array.from(
+              new Set([1, 2, 5, 8, 10].filter((lev) => lev <= assetMaxLeverage).concat(assetMaxLeverage)),
+            )
+              .sort((a, b) => a - b)
+              .map((lev) => (
+                <button
+                  key={lev}
+                  onClick={() => setLeverage(lev)}
+                  className={cn(
+                    'rounded-[4px] py-1.5 text-xs font-mono font-medium transition-colors',
+                    leverage === lev
+                      ? 'bg-surface-3 text-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {lev}x
+                </button>
+              ))}
           </div>
+          {assetMaxLeverage !== TRADING.MAX_LEVERAGE && (
+            <p className="text-[11px] text-faint">
+              Max {assetMaxLeverage}x for {asset} — per-asset risk limit.
+            </p>
+          )}
         </div>}
 
         {/* Limit Order Settings (only show when Limit is selected) */}
