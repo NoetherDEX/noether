@@ -29,7 +29,7 @@
  */
 
 import { loadConfig } from './config';
-import { StellarClient, extractContractErrorCode } from './stellar';
+import { StellarClient, extractContractErrorCode, isMissingContractFunction } from './stellar';
 import {
   FundingOutcome,
   KeeperConfig,
@@ -41,7 +41,13 @@ import {
 } from './types';
 import { initAlerts, sendAlert } from './alerts';
 import { loadKeeperState, saveKeeperState } from './state';
-import { isCrossLiquidationCandidate, isLiquidationCandidate } from './health';
+import {
+  adlFlagDecision,
+  assetPayableUpnl,
+  isCrossLiquidationCandidate,
+  isLiquidationCandidate,
+  rankAdlCandidates,
+} from './health';
 import { getReferencePrice } from './reference';
 import { getStorkPrice, getStorkStatus, refreshStorkPrices } from './stork';
 import { sendHeartbeat } from './heartbeat';
@@ -84,6 +90,8 @@ const READ_FAILURE_BACKOFF_MS = 10_000;
 const FULL_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
 /** Cross-margin pool balances change rarely — cache for the old scan interval. */
 const CROSS_BALANCE_CACHE_MS = 60_000;
+/** Vault coverage (buffer + LP USDC) for the ADL mirror — 30s cache (L0-1). */
+const VAULT_COVERAGE_CACHE_MS = 30_000;
 /** Funding cadence (K-7): contract enforces 1h; 30s slack avoids an early #55. */
 const FUNDING_INTERVAL_MS = 60 * 60 * 1000 + 30_000;
 const FUNDING_NOT_DUE_RETRY_MS = 5 * 60 * 1000;
@@ -137,6 +145,19 @@ class KeeperBot {
   private lastFullSweepAt: number = 0;
   private crossBalanceCache: Map<string, { balance: bigint; fetchedAt: number }> = new Map();
   private orphanedOrderIds: Set<string> = new Set();
+  // ADL manager (L0-1)
+  /** Last known on-chain ADL flag per asset (probe-synced). */
+  private adlActive: Map<string, boolean> = new Map();
+  /** Per-asset throttle on check_adl_trigger probes while the flag is off. */
+  private adlLastProbeAt: Map<string, number> = new Map();
+  /** undefined = unknown; false = deployed market predates L0-1 (phase inert). */
+  private adlSupported: boolean | undefined;
+  private adlUnsupportedLogged = false;
+  private vaultCoverageCache?: { value: bigint; fetchedAt: number };
+  // Factory reconcile duty (L0-20)
+  /** undefined = unknown; false = deployed factory predates L0-20 (duty inert). */
+  private factoryReconcileSupported: boolean | undefined;
+  private factoryReconcileUnsupportedLogged = false;
   private throttledLogAt: Map<string, number> = new Map();
   private nextTtlBumpAt: number = 0; // P3-9
 
@@ -158,6 +179,9 @@ class KeeperBot {
       syncPnlPushes: 0,
       trailingPeakUpdates: 0,
       fundingApplications: 0,
+      adlCloses: 0,
+      adlFlagFlips: 0,
+      ordersReconciled: 0,
     };
   }
 
@@ -315,6 +339,8 @@ class KeeperBot {
     console.log(`  Orders Cancelled:      ${this.stats.ordersCancelledSlippage} (slippage)`);
     console.log(`  Orders Skipped:        ${this.stats.ordersSkippedOrphaned} (orphaned - position closed)`);
     console.log(`  Trailing Peak Updates: ${this.stats.trailingPeakUpdates}`);
+    console.log(`  ADL Closes: ${this.stats.adlCloses} (flag flips: ${this.stats.adlFlagFlips})`);
+    console.log(`  Factory Orders Reconciled: ${this.stats.ordersReconciled}`);
     console.log(`  Funding Applications:  ${this.stats.fundingApplications}`);
     console.log(`  PnL Syncs:             ${this.stats.syncPnlPushes}`);
     console.log(`  Total Rewards:         ${this.formatAmount(this.stats.totalRewardsEarned)} USDC`);
@@ -385,6 +411,10 @@ class KeeperBot {
 
       // 5. Order execution (simulate-first)
       await this.checkOrders(snapshot);
+
+      // 5.5 ADL manager (L0-1) — advisory ranking authority; quiet no-op
+      //     until the deployed market exports the ADL entry points.
+      await this.manageAdl(snapshot, fullSweep);
     }
 
     // 6. Apply funding rate (hourly, tri-state — K-7)
@@ -828,8 +858,9 @@ class KeeperBot {
         if (!sim.ok) {
           const code = extractContractErrorCode(sim.error);
           // 50 healthy / 20 already gone / 83 within the partial-liq grace
-          // window (L0-5) — all expected, no alert.
-          if (code === 50 || code === 20 || code === 83) continue;
+          // window (L0-5) / 90 full-freeze pause (L0-15) / 86 confirmation
+          // pending (L0-9) — all expected, no alert.
+          if (code === 50 || code === 20 || code === 83 || code === 90 || code === 86) continue;
           this.logThrottled(
             `liq-sim-${position.id}`,
             `⚠️  Liquidation preflight for position ${position.id} rejected: ${sim.error}`,
@@ -927,9 +958,10 @@ class KeeperBot {
           console.log(`\n⏳ Cross liquidation for ${trader.slice(0, 8)}... indeterminate — re-checking next cycle`);
         } else {
           const code = extractContractErrorCode(result.error ?? '');
-          // #78 healthy (prefilter was conservative) or #83 inside the
-          // account-scoped staged-liq grace window (L0-5) — both expected.
-          if (code !== 78 && code !== 83) {
+          // #78 healthy (prefilter was conservative), #83 inside the
+          // account-scoped staged-liq grace window (L0-5), #90 full-freeze
+          // pause (L0-15), #86 confirmation pending (L0-9) — all expected.
+          if (code !== 78 && code !== 83 && code !== 90 && code !== 86) {
             this.logThrottled(
               `cross-liq-${trader}`,
               `⚠️  Cross liquidation attempt for ${trader.slice(0, 8)}... failed: ${result.error}`,
@@ -961,6 +993,280 @@ class KeeperBot {
         `⚠️  Cross balance read failed for ${trader.slice(0, 8)}...: ${error instanceof Error ? error.message : error}`,
       );
       return cached?.balance; // stale beats blind
+    }
+  }
+
+  /**
+   * L0-20 keeper duty: a factory-vault order that just executed (or was
+   * cancelled by slippage) leaves the vault's full-NAV under-counted (an
+   * executed order contributes 0 until its OrderVault mapping moves to the
+   * created position; a cancel refund sits uncredited). reconcile_order is
+   * permissionless — the keeper calls it right after its own execution.
+   * Quiet no-op for non-factory orders, stacks without a factory id, and
+   * pre-L0-20 factories (missing export → duty marks itself inert).
+   */
+  private async maybeReconcileFactoryOrder(orderId: bigint): Promise<void> {
+    if (!this.config.vaultFactoryContractId || this.factoryReconcileSupported === false) return;
+
+    let vaultId: number | null;
+    try {
+      vaultId = await this.stellar.getOrderVault(orderId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isMissingContractFunction(message)) {
+        this.factoryReconcileSupported = false;
+        if (!this.factoryReconcileUnsupportedLogged) {
+          this.factoryReconcileUnsupportedLogged = true;
+          console.log(
+            '\nℹ️  Factory reconcile views not present on this deployment — reconcile duty disabled until the Batch-1 redeploy.',
+          );
+        }
+      } else {
+        this.logThrottled(`reconcile-read-${orderId}`, `⚠️  get_order_vault read failed for ${orderId}: ${message}`);
+      }
+      return;
+    }
+    this.factoryReconcileSupported = true;
+    if (vaultId == null) return; // not a factory-vault order
+
+    const result = await this.stellar.reconcileOrder(vaultId, orderId);
+    if (result.success) {
+      this.stats.ordersReconciled++;
+      console.log(`   🔗 Factory order ${orderId} reconciled to vault ${vaultId}`);
+    } else if (!result.indeterminate) {
+      const code = extractContractErrorCode(result.error ?? '');
+      // #3 InvalidParameter = order still Pending (stop→limit phase
+      // transition) — reconcile applies only once it finalizes.
+      if (code === 3) return;
+      this.logThrottled(
+        `reconcile-${orderId}`,
+        `⚠️  reconcile_order failed for order ${orderId} (vault ${vaultId}): ${result.error}`,
+      );
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ADL Manager (L0-1)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Advisory ADL phase (L0-1). The keeper is the RANKING authority only —
+   * the on-chain #84/#85 gates are the consensus. Per asset with open
+   * positions: mirror the trigger math locally (payable uPnL from the
+   * snapshot at the keeper's own prices vs cached vault coverage) and
+   * spend a check_adl_trigger simulation only when the mirror says the
+   * flag should flip, the flag is already active, or the periodic full
+   * sweep is due (shortfall auto-flips happen on-chain with no keeper
+   * involvement — the sweep bounds their discovery latency). While the
+   * flag is active: walk positive-pnl positions by adlRank desc through
+   * adl_close (bounded per cycle), re-checking the trigger between
+   * closes. Every activation / clear / execution fires the alert channel —
+   * ADL is a five-alarm event. Against a pre-L0-1 market every probe
+   * fails with "unknown export": the phase marks itself unsupported and
+   * goes quiet until the next restart (the Batch-1 redeploy).
+   */
+  /** True once a probe proved the deployed market lacks the ADL entry points. */
+  private adlDisabled(): boolean {
+    return this.adlSupported === false;
+  }
+
+  private async manageAdl(snapshot: CycleSnapshot, fullSweep: boolean): Promise<void> {
+    if (this.adlDisabled()) return;
+
+    const prices = this.localPriceMap();
+    const byAsset = new Map<string, Position[]>();
+    for (const position of snapshot.positions) {
+      const list = byAsset.get(position.asset);
+      if (list) list.push(position);
+      else byAsset.set(position.asset, [position]);
+    }
+
+    for (const [asset, positions] of byAsset) {
+      if (this.adlDisabled()) return; // flipped mid-loop by a probe
+      const price = prices.get(asset);
+      if (price === undefined || price <= 0n) continue;
+
+      try {
+        const active = this.adlActive.get(asset) ?? false;
+        const probeDue =
+          fullSweep ||
+          active ||
+          Date.now() - (this.adlLastProbeAt.get(asset) ?? 0) >= this.config.adlCheckIntervalMs;
+        if (!probeDue) continue;
+
+        if (!active && !fullSweep) {
+          // Local mirror: only spend the probe when it could matter.
+          const payable = assetPayableUpnl(positions, price);
+          if (payable === 0n) continue; // nothing payable → ADL cannot be needed
+          const coverage = await this.getVaultCoverageCached();
+          if (coverage !== undefined) {
+            const decision = adlFlagDecision(
+              payable,
+              coverage,
+              false,
+              BigInt(this.config.adlTriggerRatioBps),
+              BigInt(this.config.adlClearRatioBps),
+            );
+            if (decision === 'hold') continue;
+          }
+          // coverage unreadable or mirror says activate → probe on-chain truth
+        }
+
+        await this.probeAndDriveAdl(asset, positions, price);
+      } catch (error) {
+        this.logThrottled(
+          `adl-${asset}`,
+          `⚠️  ADL phase error for ${asset}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Probe the on-chain flag (check_adl_trigger simulation — its retval is
+   * the flag AFTER the call would run), reconcile it on-chain when it
+   * would change, and while active walk ranked winners through adl_close.
+   */
+  private async probeAndDriveAdl(asset: string, positions: Position[], price: bigint): Promise<void> {
+    this.adlLastProbeAt.set(asset, Date.now());
+
+    const sim = await this.stellar.simulateCheckAdlTrigger(asset);
+    if (!sim.ok) {
+      if (isMissingContractFunction(sim.error)) {
+        this.adlSupported = false;
+        if (!this.adlUnsupportedLogged) {
+          this.adlUnsupportedLogged = true;
+          console.log(
+            '\nℹ️  ADL entry points not present on this market deployment — ADL phase disabled until the Batch-1 redeploy.',
+          );
+        }
+      } else {
+        this.logThrottled(
+          `adl-sim-${asset}`,
+          `⚠️  check_adl_trigger preflight failed for ${asset}: ${sim.error}`,
+        );
+      }
+      return;
+    }
+    this.adlSupported = true;
+
+    const simFlag = sim.retval === true;
+    const cached = this.adlActive.get(asset);
+
+    // Reconcile: submit only when the call would actually change the
+    // stored on-chain flag — a same-state submit is a wasted fee.
+    if (cached === undefined || simFlag !== cached) {
+      let onChain: boolean;
+      try {
+        onChain = await this.stellar.isAdlActive(asset);
+      } catch (error) {
+        this.logThrottled(
+          `adl-read-${asset}`,
+          `⚠️  is_adl_active read failed for ${asset}: ${error instanceof Error ? error.message : error}`,
+        );
+        return;
+      }
+      if (simFlag !== onChain) {
+        const result = await this.stellar.checkAdlTrigger(asset);
+        if (!result.success) {
+          if (!result.indeterminate) {
+            this.logThrottled(
+              `adl-flip-${asset}`,
+              `⚠️  check_adl_trigger submit failed for ${asset}: ${result.error}`,
+            );
+          }
+          return; // cache untouched — re-probed next cycle
+        }
+        this.stats.adlFlagFlips++;
+        if (simFlag) {
+          console.log(`\n🚨 ADL ACTIVATED for ${asset} — auto-deleveraging ranked winners`);
+          await sendAlert(
+            'critical',
+            `ADL activated for ${asset}`,
+            'Pool coverage fell under the trigger ratio — the keeper is force-realizing ranked winners.',
+          );
+        } else {
+          console.log(`\n✅ ADL cleared for ${asset}`);
+          await sendAlert('warn', `ADL cleared for ${asset}`, 'Pool coverage recovered above the clear ratio.');
+        }
+      }
+      this.adlActive.set(asset, simFlag);
+    }
+
+    if (!this.adlActive.get(asset)) return;
+
+    // The walk: ranked winners, bounded per cycle, re-check between closes.
+    const ranked = rankAdlCandidates(positions, price);
+    let closes = 0;
+    for (const candidate of ranked) {
+      if (closes >= this.config.adlMaxClosesPerCycle) break;
+
+      const result = await this.stellar.adlClose(candidate.position.id);
+      if (result.success) {
+        closes++;
+        this.stats.adlCloses++;
+        console.log(
+          `\n⚡ ADL closed position ${candidate.position.id} (${asset} ${candidate.position.direction}, score ${candidate.score})`,
+        );
+        await sendAlert(
+          'critical',
+          `ADL executed on ${asset}`,
+          `Position ${candidate.position.id} force-realized (rank score ${candidate.score}).`,
+        );
+
+        // Re-check the trigger between closes; clear on-chain and stop
+        // as soon as coverage has recovered.
+        const recheck = await this.stellar.simulateCheckAdlTrigger(asset);
+        if (recheck.ok && recheck.retval === false) {
+          const clear = await this.stellar.checkAdlTrigger(asset);
+          if (clear.success) {
+            this.stats.adlFlagFlips++;
+            this.adlActive.set(asset, false);
+            console.log(`\n✅ ADL cleared for ${asset} after ${closes} close(s)`);
+            await sendAlert(
+              'warn',
+              `ADL cleared for ${asset}`,
+              `Coverage recovered after ${closes} ADL close(s).`,
+            );
+          }
+          break;
+        }
+      } else if (result.indeterminate) {
+        break; // may still land — never stack closes on a stale ranking
+      } else {
+        const code = extractContractErrorCode(result.error ?? '');
+        if (code === 84) {
+          this.adlActive.set(asset, false); // flag off on-chain — cache was stale
+          break;
+        }
+        if (code === 85 || code === 20) continue; // no longer a winner / gone — next candidate
+        this.logThrottled(
+          `adl-close-${candidate.position.id}`,
+          `⚠️  adl_close failed for position ${candidate.position.id}: ${result.error}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Vault coverage (buffer + LP USDC) with a 30s cache; stale beats blind,
+   * undefined only when never readable (the mirror then defers to probes).
+   */
+  private async getVaultCoverageCached(): Promise<bigint | undefined> {
+    const now = Date.now();
+    if (this.vaultCoverageCache && now - this.vaultCoverageCache.fetchedAt < VAULT_COVERAGE_CACHE_MS) {
+      return this.vaultCoverageCache.value;
+    }
+    try {
+      const value = await this.stellar.getVaultCoverage();
+      this.vaultCoverageCache = { value, fetchedAt: now };
+      return value;
+    } catch (error) {
+      this.logThrottled(
+        'adl-coverage',
+        `⚠️  Vault coverage read failed: ${error instanceof Error ? error.message : error}`,
+      );
+      return this.vaultCoverageCache?.value;
     }
   }
 
@@ -1059,8 +1365,14 @@ class KeeperBot {
 
     // Business rejections for this tick (new contract): #80 cross-order
     // unsupported, #81 price deviation too high, #82 OI cap exceeded.
-    // Also #61 (already executed elsewhere) and #30 (price stale).
-    if (code === 80 || code === 81 || code === 82 || code === 61 || code === 30) {
+    // Also #61 (already executed elsewhere), #30 (price stale), and the
+    // Batch-1 codes — #87 acceptable-price bound (L0-10), #89 skew cap
+    // (L0-14), #90 frozen (L0-15), #91 nets-to-zero (L1-3), #92 asset
+    // halted (L1-24).
+    if (
+      code === 80 || code === 81 || code === 82 || code === 61 || code === 30 ||
+      code === 87 || code === 89 || code === 90 || code === 91 || code === 92
+    ) {
       this.logThrottled(
         `order-biz-${order.id}-${code}`,
         `ℹ️  Order ${order.id} not executable this tick (contract #${code})`,
@@ -1087,6 +1399,9 @@ class KeeperBot {
         } else {
           this.stats.ordersCancelledSlippage++;
           console.log(`   ⚠️  Order ${orderId} cancelled due to slippage exceeded (collateral refunded)`);
+          // L0-20: a cancelled factory-vault order left its refund sitting
+          // uncredited at the factory — reconcile books it.
+          await this.maybeReconcileFactoryOrder(orderId);
         }
       } else {
         this.stats.ordersExecuted++;
@@ -1094,6 +1409,9 @@ class KeeperBot {
         console.log(`   ✅ Order executed successfully!`);
         console.log(`   Transaction: ${result.txHash}`);
         console.log(`   Keeper fee: ${this.formatAmount(result.reward!)} USDC`);
+        // L0-20: an executed factory-vault order contributes 0 to the
+        // vault's full-NAV until reconciled to its created position.
+        await this.maybeReconcileFactoryOrder(orderId);
       }
     } else if (result.indeterminate) {
       console.log(`   ⏳ Order execution indeterminate (tx ${result.txHash?.slice(0, 8)}... may still land) — will re-check next cycle`);

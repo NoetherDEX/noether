@@ -81,6 +81,12 @@ export interface KeeperStats {
   trailingPeakUpdates: number;
   /** apply_funding submissions that landed. */
   fundingApplications: number;
+  /** adl_close submissions that landed (L0-1). */
+  adlCloses: number;
+  /** check_adl_trigger submissions that flipped the on-chain flag (L0-1). */
+  adlFlagFlips: number;
+  /** Factory reconcile_order submissions that landed (L0-20). */
+  ordersReconciled: number;
 }
 
 // Execution result
@@ -138,6 +144,8 @@ export interface KeeperConfig {
   /** Noeracle on-chain contract — destination for update_batch_ed25519_persistent. */
   noeracleContractId: string;
   vaultContractId: string;
+  /** Vault factory — L0-20 reconcile duty. Empty = duty disabled. */
+  vaultFactoryContractId: string;
   /** Router — extended by the TTL job (P3-9). */
   routerContractId: string;
   /** Noeracle shim — extended by the TTL job (P3-9). */
@@ -146,6 +154,16 @@ export interface KeeperConfig {
   // Timing
   pollIntervalMs: number;
   oracleUpdateIntervalMs: number;
+
+  // ADL manager (L0-1) — advisory local mirror of the on-chain trigger
+  // ratios (MarketConfig adl_trigger_ratio_bps / adl_clear_ratio_bps).
+  // Gates when simulations are spent, never who gets closed.
+  adlTriggerRatioBps: number;
+  adlClearRatioBps: number;
+  /** Bound on adl_close submissions per asset per cycle. */
+  adlMaxClosesPerCycle: number;
+  /** Per-asset check_adl_trigger probe throttle while the flag is off. */
+  adlCheckIntervalMs: number;
 
   // TTL bump job (P3-9) + wallet-funding alarm (P3-10)
   /** How often to extend contract instance TTLs. */

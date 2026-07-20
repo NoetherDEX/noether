@@ -63,9 +63,15 @@ const READ_FEE = '100';
  * 60 OrderNotFound, 61 OrderNotPending, 62 OrderNotTriggered,
  * 63 SlippageExceeded, 78 CrossMarginNotLiquidatable,
  * 80 CrossMarginOrderNotSupported, 81 PriceDeviationTooHigh,
- * 82 OpenInterestCapExceeded.
+ * 82 OpenInterestCapExceeded, 83 staged-liq grace,
+ * 84 AdlNotActive, 85 AdlNotEligible (L0-1),
+ * 86 LiquidationNotConfirmed (L0-9), 87 AcceptablePriceExceeded (L0-10),
+ * 89 SkewCapExceeded (L0-14), 90 Frozen (L0-15), 91 NetsToZero (L1-3),
+ * 92 AssetHalted (L1-24).
  */
-const NON_RETRYABLE_CODES = new Set([20, 50, 55, 60, 61, 62, 63, 78, 80, 81, 82, 83]);
+const NON_RETRYABLE_CODES = new Set([
+  20, 50, 55, 60, 61, 62, 63, 78, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92,
+]);
 
 const NON_RETRYABLE_NAMES = [
   'SlippageExceeded',
@@ -85,6 +91,17 @@ const NON_RETRYABLE_NAMES = [
 export function extractContractErrorCode(message: string): number | null {
   const match = message.match(/Error\(Contract, #(\d+)\)/);
   return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * True when a simulation/read failure means the ENTRY POINT does not exist
+ * on the deployed contract (a pre-upgrade chain) rather than a transient
+ * fault — the Wasm VM reports a missing export as MissingValue / "invoking
+ * unknown export". Callers use this to disable phases that target entry
+ * points newer than the deployed market (e.g. ADL before Batch-1).
+ */
+export function isMissingContractFunction(message: string): boolean {
+  return /MissingValue|unknown export|invoking unknown/i.test(message);
 }
 
 function isNonRetryableContractError(message: string): boolean {
@@ -139,6 +156,10 @@ export class StellarClient {
   private networkPassphrase: string;
   private marketContract: Contract;
   private noeracleContract: Contract;
+  /** Vault contract — ADL coverage reads (L0-1). Null when unconfigured. */
+  private vaultContract: Contract | null;
+  /** Vault factory — order reconcile duty (L0-20). Null when unconfigured. */
+  private factoryContract: Contract | null;
 
   constructor(private config: KeeperConfig) {
     this.servers = config.rpcUrls.map(
@@ -152,6 +173,10 @@ export class StellarClient {
     this.networkPassphrase = config.networkPassphrase;
     this.marketContract = new Contract(config.marketContractId);
     this.noeracleContract = new Contract(config.noeracleContractId);
+    this.vaultContract = config.vaultContractId ? new Contract(config.vaultContractId) : null;
+    this.factoryContract = config.vaultFactoryContractId
+      ? new Contract(config.vaultFactoryContractId)
+      : null;
   }
 
   get publicKey(): string {
@@ -509,6 +534,110 @@ export class StellarClient {
       [new Address(trader).toScVal()],
     );
     return BigInt(result ?? 0);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ADL Functions (L0-1)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Read the on-chain ADL flag for an asset. THROWS on read failure —
+   * including "unknown export" against a pre-L0-1 market (callers detect
+   * that with isMissingContractFunction and disable the phase).
+   */
+  async isAdlActive(asset: string): Promise<boolean> {
+    const result = await this.invokeContractRead<boolean>(
+      this.marketContract,
+      'is_adl_active',
+      [nativeToScVal(asset, { type: 'symbol' })],
+    );
+    return result === true;
+  }
+
+  /**
+   * Preview the permissionless trigger check: the simulated retval is the
+   * flag AS IT WOULD BE after the call runs (trigger/clear hysteresis
+   * applied on-chain against live vault coverage).
+   */
+  async simulateCheckAdlTrigger(asset: string): Promise<SimulationOutcome> {
+    return this.simulateCall(this.marketContract, 'check_adl_trigger', [
+      nativeToScVal(asset, { type: 'symbol' }),
+    ]);
+  }
+
+  /** Submit check_adl_trigger — flips/clears AdlActive(asset) on-chain. */
+  async checkAdlTrigger(asset: string): Promise<ExecutionResult> {
+    return this.invokeContractWriteWithRetry(this.marketContract, 'check_adl_trigger', [
+      nativeToScVal(asset, { type: 'symbol' }),
+    ]);
+  }
+
+  /**
+   * Auto-deleverage one ranked winner (L0-1). Permissionless; the built-in
+   * pre-submit simulation rejects #84 (flag off) / #85 (not a net winner) /
+   * #20 (gone) before any fee is spent. Fee-escalates like liquidate —
+   * ADL runs during solvency stress, exactly when fees spike.
+   */
+  async adlClose(positionId: bigint): Promise<ExecutionResult> {
+    return this.invokeContractWriteWithRetry(
+      this.marketContract,
+      'adl_close',
+      [new Address(this.publicKey).toScVal(), nativeToScVal(positionId, { type: 'u64' })],
+      {
+        escalateFees: true,
+        recheck: async () => (await this.getPosition(positionId)) !== null,
+      },
+    );
+  }
+
+  /**
+   * Pool coverage for the local ADL mirror: vault buffer + LP USDC — the
+   * same two views check_adl_trigger sums on-chain. THROWS on read failure
+   * or when no vault contract id is configured.
+   */
+  async getVaultCoverage(): Promise<bigint> {
+    if (!this.vaultContract) throw new Error('vault contract id not configured');
+    const [buffer, totalUsdc] = await Promise.all([
+      this.invokeContractRead<bigint | number>(this.vaultContract, 'get_buffer_balance', []),
+      this.invokeContractRead<bigint | number>(this.vaultContract, 'get_total_usdc', []),
+    ]);
+    return BigInt(buffer ?? 0) + BigInt(totalUsdc ?? 0);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Vault Factory Functions (L0-20)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Which factory vault (if any) owns an order. Returns null for
+   * non-factory orders or when no factory is configured. THROWS on
+   * transport failure and on a pre-L0-20 factory (missing export) —
+   * callers detect the latter with isMissingContractFunction.
+   */
+  async getOrderVault(orderId: bigint): Promise<number | null> {
+    if (!this.factoryContract) return null;
+    const result = await this.invokeContractRead<number | bigint | null>(
+      this.factoryContract,
+      'get_order_vault',
+      [nativeToScVal(orderId, { type: 'u64' })],
+    );
+    return result == null ? null : Number(result);
+  }
+
+  /**
+   * Permissionless L0-20 reconcile: binds an executed factory-vault order
+   * to its created position (or credits a cancel refund) so the vault's
+   * full-NAV stops under-counting. InvalidParameter (#3) = order still
+   * Pending (e.g. stop→limit phase transition) — callers skip quietly.
+   */
+  async reconcileOrder(vaultId: number, orderId: bigint): Promise<ExecutionResult> {
+    if (!this.factoryContract) {
+      return { success: false, error: 'vault factory contract id not configured' };
+    }
+    return this.invokeContractWriteWithRetry(this.factoryContract, 'reconcile_order', [
+      nativeToScVal(vaultId, { type: 'u32' }),
+      nativeToScVal(orderId, { type: 'u64' }),
+    ]);
   }
 
   // ═══════════════════════════════════════════════════════════════════════

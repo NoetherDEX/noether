@@ -24,7 +24,11 @@ import {
   isLiquidationCandidate,
   isCrossLiquidationCandidate,
   adlRank,
+  assetPayableUpnl,
+  adlFlagDecision,
+  rankAdlCandidates,
   HealthPosition,
+  AdlPosition,
 } from './health';
 
 let checks = 0;
@@ -141,5 +145,103 @@ check(
 );
 check('adlRank: a loser never ranks', adlRank(-1n, 100n * PRECISION, 10n), 0n);
 check('adlRank: zero collateral is safe', adlRank(50n * PRECISION, 0n, 10n), 0n);
+
+// ── ADL trigger mirror + walk order (L0-1) ──────────────────────────────
+// assetPayableUpnl mirrors check_adl_trigger's per-side exposure formula:
+//   long_upnl = price × lk / PRECISION − ls, clamped per side at 0.
+const mkAdl = (
+  id: bigint,
+  direction: 'Long' | 'Short',
+  size: bigint,
+  entry: bigint,
+  collateral: bigint,
+  leverage: number,
+): AdlPosition => ({
+  id,
+  leverage,
+  asset: 'BTC',
+  direction,
+  size,
+  entry_price: entry,
+  collateral,
+  liquidation_price: 0n,
+});
+
+const px = (n: number): bigint => BigInt(Math.round(n * 10_000_000));
+
+check(
+  'payableUpnl: single long winner (100 @ 1.00 → 1.10 = +10)',
+  assetPayableUpnl([mkAdl(1n, 'Long', 100n * PRECISION, px(1), 10n * PRECISION, 10)], px(1.1)),
+  10n * PRECISION,
+);
+check(
+  'payableUpnl: losing side clamps to 0, never nets against winners',
+  assetPayableUpnl(
+    [
+      mkAdl(1n, 'Long', 100n * PRECISION, px(1), 10n * PRECISION, 10),
+      mkAdl(2n, 'Short', 50n * PRECISION, px(1), 5n * PRECISION, 10),
+    ],
+    px(1.1),
+  ),
+  10n * PRECISION,
+);
+check(
+  'payableUpnl: both sides can be payable (long +10, short entry 1.25 → +6)',
+  assetPayableUpnl(
+    [
+      mkAdl(1n, 'Long', 100n * PRECISION, px(1), 10n * PRECISION, 10),
+      mkAdl(2n, 'Short', 50n * PRECISION, px(1.25), 5n * PRECISION, 10),
+    ],
+    px(1.1),
+  ),
+  16n * PRECISION,
+);
+check('payableUpnl: zero price is safe', assetPayableUpnl([mkAdl(1n, 'Long', 100n * PRECISION, px(1), 10n * PRECISION, 10)], 0n), 0n);
+
+// Hysteresis: trigger 12_500 (< 1.25× coverage), clear 15_000 (≥ 1.5×).
+const PAYABLE = 100n * PRECISION;
+check(
+  'adlFlag: activates when coverage under trigger ratio (124 < 125)',
+  adlFlagDecision(PAYABLE, 124n * PRECISION, false, 12_500n, 15_000n),
+  'activate',
+);
+check(
+  'adlFlag: holds at exactly the trigger boundary (125)',
+  adlFlagDecision(PAYABLE, 125n * PRECISION, false, 12_500n, 15_000n),
+  'hold',
+);
+check(
+  'adlFlag: active holds inside the hysteresis band (149 < 150)',
+  adlFlagDecision(PAYABLE, 149n * PRECISION, true, 12_500n, 15_000n),
+  'hold',
+);
+check(
+  'adlFlag: clears at the clear ratio (150)',
+  adlFlagDecision(PAYABLE, 150n * PRECISION, true, 12_500n, 15_000n),
+  'clear',
+);
+check('adlFlag: clears when nothing is payable', adlFlagDecision(0n, 0n, true, 12_500n, 15_000n), 'clear');
+check('adlFlag: inactive with nothing payable holds', adlFlagDecision(0n, 0n, false, 12_500n, 15_000n), 'hold');
+
+// Walk order: highest score first, losers excluded, ties by lower id.
+const walk = rankAdlCandidates(
+  [
+    mkAdl(1n, 'Long', 200n * PRECISION, px(1), 100n * PRECISION, 2), // pnl +20 → score 2_000×2
+    mkAdl(2n, 'Long', 1000n * PRECISION, px(1), 100n * PRECISION, 10), // pnl +100 → score 10_000×10
+    mkAdl(3n, 'Short', 100n * PRECISION, px(1), 100n * PRECISION, 10), // loser — excluded
+  ],
+  px(1.1),
+);
+check('adlWalk: winners only', walk.length, 2);
+check('adlWalk: highest score first', walk[0].position.id, 2n);
+check('adlWalk: exact top score ((100% of coll in bps) × 10x)', walk[0].score, 100_000n);
+const tie = rankAdlCandidates(
+  [
+    mkAdl(7n, 'Long', 100n * PRECISION, px(1), 100n * PRECISION, 5),
+    mkAdl(3n, 'Long', 100n * PRECISION, px(1), 100n * PRECISION, 5),
+  ],
+  px(1.1),
+);
+check('adlWalk: score ties break by lower id', tie[0].position.id, 3n);
 
 console.log(`\n✅ smoke: all ${checks} assertions passed (no network calls made)`);
