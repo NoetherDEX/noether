@@ -104,6 +104,67 @@ export function isMissingContractFunction(message: string): boolean {
   return /MissingValue|unknown export|invoking unknown/i.test(message);
 }
 
+/**
+ * One signed Noeracle round for a single asset — the subset of the SDK's
+ * Attestation the router's *_with_price entry points consume. price is the
+ * 7-decimal scaled integer; publisher/signature are hex (32/64 bytes).
+ */
+export interface RouterRound {
+  price: string | number | bigint;
+  timestamp: string | number | bigint;
+  round_id: string | number | bigint;
+  publisher: string;
+  signature: string;
+}
+
+/**
+ * Args for router execute_with_price / liquidate_with_price /
+ * adl_with_price — all three share the exact signature
+ * (actor: Address, id: u64, asset: Symbol, price: i128, timestamp: u64,
+ * round_id: u64, pubkeys: Vec<BytesN<32>>, sigs: Vec<BytesN<64>>).
+ * Pure and exported so the smoke suite pins the arg order/types offline
+ * (the G-6 arity-drift class).
+ */
+export function buildRouterCallArgs(
+  actor: string,
+  id: bigint,
+  asset: string,
+  round: RouterRound,
+): xdr.ScVal[] {
+  return [
+    new Address(actor).toScVal(),
+    nativeToScVal(id, { type: 'u64' }),
+    nativeToScVal(asset, { type: 'symbol' }),
+    nativeToScVal(BigInt(round.price), { type: 'i128' }),
+    nativeToScVal(BigInt(round.timestamp), { type: 'u64' }),
+    nativeToScVal(BigInt(round.round_id), { type: 'u64' }),
+    xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.publisher, 'hex'))]),
+    xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.signature, 'hex'))]),
+  ];
+}
+
+/**
+ * PriceAttestation struct ScVal for liquidate_cross_with_prices. Soroban
+ * UDT structs decode from an ScMap whose entries are SORTED BY KEY —
+ * for this struct: asset < price < pubkeys < round_id < sigs < timestamp.
+ * Pure and exported for the smoke suite.
+ */
+export function buildPriceAttestationScVal(asset: string, round: RouterRound): xdr.ScVal {
+  const entry = (key: string, val: xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+  return xdr.ScVal.scvMap([
+    entry('asset', nativeToScVal(asset, { type: 'symbol' })),
+    entry('price', nativeToScVal(BigInt(round.price), { type: 'i128' })),
+    entry('pubkeys', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.publisher, 'hex'))])),
+    entry('round_id', nativeToScVal(BigInt(round.round_id), { type: 'u64' })),
+    entry('sigs', xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.from(round.signature, 'hex'))])),
+    entry('timestamp', nativeToScVal(BigInt(round.timestamp), { type: 'u64' })),
+  ]);
+}
+
+/** Router entry points the keeper can route executions through (L0-19). */
+export type RouterPriceFn = 'execute_with_price' | 'liquidate_with_price' | 'adl_with_price';
+
 function isNonRetryableContractError(message: string): boolean {
   const code = extractContractErrorCode(message);
   if (code !== null && NON_RETRYABLE_CODES.has(code)) return true;
@@ -160,6 +221,8 @@ export class StellarClient {
   private vaultContract: Contract | null;
   /** Vault factory — order reconcile duty (L0-20). Null when unconfigured. */
   private factoryContract: Contract | null;
+  /** Router — verify-then-trade execution path (L0-19). Null when unconfigured. */
+  private routerContract: Contract | null;
 
   constructor(private config: KeeperConfig) {
     this.servers = config.rpcUrls.map(
@@ -177,6 +240,7 @@ export class StellarClient {
     this.factoryContract = config.vaultFactoryContractId
       ? new Contract(config.vaultFactoryContractId)
       : null;
+    this.routerContract = config.routerContractId ? new Contract(config.routerContractId) : null;
   }
 
   get publicKey(): string {
@@ -602,6 +666,98 @@ export class StellarClient {
       this.invokeContractRead<bigint | number>(this.vaultContract, 'get_total_usdc', []),
     ]);
     return BigInt(buffer ?? 0) + BigInt(totalUsdc ?? 0);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Router Verify-Then-Trade Functions (L0-19)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Preview a router *_with_price call — relays the signed round and runs
+   * the market op in one simulated tx. Market business codes (#62/#50/#78/
+   * #20/#83…) surface through the router hop's diagnostics, so callers
+   * classify with extractContractErrorCode exactly as on direct calls.
+   */
+  async simulateRouterCall(
+    fn: RouterPriceFn,
+    id: bigint,
+    asset: string,
+    round: RouterRound,
+  ): Promise<SimulationOutcome> {
+    if (!this.routerContract) return { ok: false, error: 'router contract id not configured' };
+    return this.simulateCall(
+      this.routerContract,
+      fn,
+      buildRouterCallArgs(this.publicKey, id, asset, round),
+    );
+  }
+
+  /** Execute a triggered order via router execute_with_price (fresh mark). */
+  async executeOrderViaRouter(orderId: bigint, asset: string, round: RouterRound): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    return this.invokeContractWriteWithRetry(
+      this.routerContract,
+      'execute_with_price',
+      buildRouterCallArgs(this.publicKey, orderId, asset, round),
+      {
+        recheck: async () => {
+          const order = await this.getOrder(orderId);
+          return order !== null && order.status === 'Pending';
+        },
+      },
+    );
+  }
+
+  /** Liquidate via router liquidate_with_price (settles on the relayed mark). */
+  async liquidateViaRouter(positionId: bigint, asset: string, round: RouterRound): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    return this.invokeContractWriteWithRetry(
+      this.routerContract,
+      'liquidate_with_price',
+      buildRouterCallArgs(this.publicKey, positionId, asset, round),
+      {
+        escalateFees: true,
+        recheck: async () => (await this.getPosition(positionId)) !== null,
+      },
+    );
+  }
+
+  /** ADL-close via router adl_with_price (forced realization on a fresh mark). */
+  async adlCloseViaRouter(positionId: bigint, asset: string, round: RouterRound): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    return this.invokeContractWriteWithRetry(
+      this.routerContract,
+      'adl_with_price',
+      buildRouterCallArgs(this.publicKey, positionId, asset, round),
+      {
+        escalateFees: true,
+        recheck: async () => (await this.getPosition(positionId)) !== null,
+      },
+    );
+  }
+
+  /**
+   * Cross liquidation via router liquidate_cross_with_prices: one signed
+   * round per distinct asset the account holds, as Vec<PriceAttestation>.
+   */
+  async liquidateCrossViaRouter(
+    trader: string,
+    rounds: Array<{ asset: string; round: RouterRound }>,
+  ): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    return this.invokeContractWriteWithRetry(
+      this.routerContract,
+      'liquidate_cross_with_prices',
+      [
+        new Address(this.publicKey).toScVal(),
+        new Address(trader).toScVal(),
+        xdr.ScVal.scvVec(rounds.map((r) => buildPriceAttestationScVal(r.asset, r.round))),
+      ],
+      {
+        escalateFees: true,
+        recheck: async () => (await this.getCrossMarginPositions(trader)).length > 0,
+      },
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════

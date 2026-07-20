@@ -192,6 +192,15 @@ export function loadConfig(): KeeperConfig {
     ttlExtendToLedgers: envInt('TTL_EXTEND_TO_LEDGERS', 518_400), // ~30 days
     minKeeperXlm: envFloat('MIN_KEEPER_XLM', 20),
 
+    // Active-active + liveness (L0-19). NOTE: pollOffsetMs defaults to 0 —
+    // the spec's "default POLL_INTERVAL_MS/2" reading would give BOTH
+    // instances the same offset and no stagger; set it explicitly (~2500)
+    // on the second instance only.
+    instanceId: process.env.KEEPER_INSTANCE_ID || 'keeper-1',
+    pollOffsetMs: envInt('KEEPER_POLL_OFFSET_MS', 0),
+    triggeredStuckAlertCycles: envInt('TRIGGERED_STUCK_ALERT_CYCLES', 3),
+    healthcheckUrl: process.env.HEALTHCHECK_URL || '',
+
     // Reliability (K-1). The default watchdog scales with the asset count:
     // a full oracle pass costs ~10-12s per asset (tx confirm + NAV sync +
     // inter-asset delay), so the old flat 3 minutes was only right for 3

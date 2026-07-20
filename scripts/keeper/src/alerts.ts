@@ -18,6 +18,9 @@ export interface AlertChannels {
   discordWebhookUrl?: string;
   telegramBotToken?: string;
   telegramChatId?: string;
+  /** Stamped into every alert line (L0-19) — disambiguates active-active
+   *  instances sharing one channel. Empty = single-instance, no stamp. */
+  instanceId?: string;
 }
 
 const ALERT_FETCH_TIMEOUT_MS = 5_000;
@@ -30,10 +33,12 @@ const LEVEL_EMOJI: Record<AlertLevel, string> = {
 };
 
 let channels: AlertChannels = {};
+let instanceId = '';
 const lastSentAt = new Map<string, number>();
 
 export function initAlerts(config: AlertChannels): void {
   channels = config;
+  instanceId = config.instanceId ?? '';
   const active: string[] = [];
   if (channels.discordWebhookUrl) active.push('discord');
   if (channels.telegramBotToken && channels.telegramChatId) active.push('telegram');
@@ -57,7 +62,8 @@ export async function sendAlert(level: AlertLevel, title: string, details?: stri
     lastSentAt.set(key, now);
     pruneDedupeMap(now);
 
-    const text = `${LEVEL_EMOJI[level]} [noether-keeper/${level.toUpperCase()}] ${title}${details ? `\n${details}` : ''}`;
+    const instance = instanceId ? `/${instanceId}` : '';
+    const text = `${LEVEL_EMOJI[level]} [noether-keeper${instance}/${level.toUpperCase()}] ${title}${details ? `\n${details}` : ''}`;
     console.log(`\n${text}`);
 
     const deliveries: Promise<void>[] = [];

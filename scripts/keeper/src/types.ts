@@ -87,6 +87,8 @@ export interface KeeperStats {
   adlFlagFlips: number;
   /** Factory reconcile_order submissions that landed (L0-20). */
   ordersReconciled: number;
+  /** Executions/liquidations that settled via the router *_with_price path (L0-19). */
+  routerExecutions: number;
 }
 
 // Execution result
@@ -178,6 +180,18 @@ export interface KeeperConfig {
   watchdogTimeoutMs: number;
   /** Alert after this many consecutive main-cycle errors. */
   alertErrorStreak: number;
+
+  // Active-active + liveness (L0-19)
+  /** Stamped into the status line + every alert (disambiguates instances). */
+  instanceId: string;
+  /** One-time sleep before the first cycle — set ~pollIntervalMs/2 on the
+   *  second instance so the pair staggers. Default 0. */
+  pollOffsetMs: number;
+  /** Cycles a triggered order may stay pending before the CRITICAL alert. */
+  triggeredStuckAlertCycles: number;
+  /** healthchecks.io-style URL pinged after every completed cycle. Empty =
+   *  disabled (fail-open). */
+  healthcheckUrl: string;
 
   // Publish-path defenses (K-2)
   /** File the circuit-breaker state (last pushed prices) persists to. */

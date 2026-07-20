@@ -13,7 +13,15 @@
  */
 
 import * as assert from 'assert';
+import { scValToNative } from '@stellar/stellar-sdk';
 import { loadConfig } from './config';
+import {
+  buildRouterCallArgs,
+  buildPriceAttestationScVal,
+  extractContractErrorCode,
+  isMissingContractFunction,
+} from './stellar';
+import { trackTriggeredStuck } from './deadman';
 import {
   PRECISION,
   calculatePnl,
@@ -268,5 +276,87 @@ const tie = rankAdlCandidates(
   px(1.1),
 );
 check('adlWalk: score ties break by lower id', tie[0].position.id, 3n);
+
+// ── Router call assembly (L0-19) — the G-6 arity-drift guard ────────────
+// Pins the exact arg order/types of execute_with_price / liquidate_with_price
+// / adl_with_price: (actor, id u64, asset symbol, price i128, timestamp u64,
+// round_id u64, pubkeys Vec<BytesN<32>>, sigs Vec<BytesN<64>>).
+{
+  const NULL_KEY = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+  const round = {
+    price: '1234567',
+    timestamp: 1_700_000_000,
+    round_id: 42,
+    publisher: 'ab'.repeat(32),
+    signature: 'cd'.repeat(64),
+  };
+  const args = buildRouterCallArgs(NULL_KEY, 7n, 'BTC', round);
+  check('router args: exactly 8 (flattened attestation)', args.length, 8);
+  check('router args[0]: actor address', scValToNative(args[0]), NULL_KEY);
+  check('router args[1]: id u64', scValToNative(args[1]), 7n);
+  check('router args[2]: asset symbol', scValToNative(args[2]), 'BTC');
+  check('router args[3]: price i128', scValToNative(args[3]), 1234567n);
+  check('router args[4]: timestamp u64', scValToNative(args[4]), 1700000000n);
+  check('router args[5]: round_id u64', scValToNative(args[5]), 42n);
+  const pubkeys = scValToNative(args[6]) as Buffer[];
+  const sigs = scValToNative(args[7]) as Buffer[];
+  check('router args[6]: one 32-byte pubkey', `${pubkeys.length}:${pubkeys[0].length}`, '1:32');
+  check('router args[7]: one 64-byte sig', `${sigs.length}:${sigs[0].length}`, '1:64');
+
+  // PriceAttestation struct map: UDT decode requires KEY-SORTED entries.
+  const att = buildPriceAttestationScVal('ETH', round);
+  const keys = att
+    .map()!
+    .map((entry) => entry.key().sym().toString());
+  check(
+    'attestation map: entries key-sorted for UDT decode',
+    keys.join(','),
+    'asset,price,pubkeys,round_id,sigs,timestamp',
+  );
+  const native = scValToNative(att) as Record<string, unknown>;
+  check('attestation map: asset roundtrips', native.asset, 'ETH');
+  check('attestation map: price roundtrips', native.price, 1234567n);
+}
+
+// ── Market error codes survive the router hop (L0-19) ───────────────────
+// The router's env.invoke_contract trap surfaces the market's inner code in
+// the simulation diagnostics — the extractor must find it in wrapped,
+// multi-line messages, and missing-export detection must not false-match.
+check(
+  'router hop: #62 extracted from wrapped diagnostics',
+  extractContractErrorCode(
+    'Simulation failed: HostError: Error(Contract, #62)\nBacktrace: router invoke_contract trap',
+  ),
+  62,
+);
+check(
+  'router hop: #78 extracted from wrapped diagnostics',
+  extractContractErrorCode('host invocation failed: Error(Contract, #78) [diagnostic events omitted]'),
+  78,
+);
+check(
+  'missing-export: adl_with_price on a pre-Batch-1 router',
+  isMissingContractFunction('HostError: Error(WasmVm, MissingValue)\ninvoking unknown export: adl_with_price'),
+  true,
+);
+check(
+  'missing-export: a plain contract rejection is NOT a missing export',
+  isMissingContractFunction('Simulation failed: HostError: Error(Contract, #62)'),
+  false,
+);
+
+// ── Dead-man counter (L0-19) ────────────────────────────────────────────
+{
+  const counts = new Map<string, number>();
+  const t = (...ids: string[]) => trackTriggeredStuck(counts, new Set(ids), 3);
+  check('deadman: cycle 1 silent', t('a').join(','), '');
+  check('deadman: cycle 2 silent', t('a').join(','), '');
+  check('deadman: fires exactly at the threshold', t('a').join(','), 'a');
+  check('deadman: fire-once (no refire while still stuck)', t('a').join(','), '');
+  check('deadman: executed order prunes its counter', (t(), counts.size), 0);
+  t('b');
+  t('b', 'c');
+  check('deadman: independent ids fire independently', t('b', 'c').join(','), 'b');
+}
 
 console.log(`\n✅ smoke: all ${checks} assertions passed (no network calls made)`);

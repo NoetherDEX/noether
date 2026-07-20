@@ -29,8 +29,14 @@
  */
 
 import { loadConfig } from './config';
-import { StellarClient, extractContractErrorCode, isMissingContractFunction } from './stellar';
 import {
+  StellarClient,
+  extractContractErrorCode,
+  isMissingContractFunction,
+  RouterRound,
+} from './stellar';
+import {
+  ExecutionResult,
   FundingOutcome,
   KeeperConfig,
   KeeperState,
@@ -39,6 +45,7 @@ import {
   Position,
   PriceData,
 } from './types';
+import { trackTriggeredStuck } from './deadman';
 import { initAlerts, sendAlert } from './alerts';
 import { loadKeeperState, saveKeeperState } from './state';
 import {
@@ -95,6 +102,14 @@ const CROSS_BALANCE_CACHE_MS = 60_000;
 const VAULT_COVERAGE_CACHE_MS = 30_000;
 /** Per-asset mm_bps for the prefilters — risk params change rarely (L0-12). */
 const ASSET_RISK_CACHE_MS = 10 * 60 * 1000;
+/**
+ * Round sourcing for router executions (L0-19): a cached round ≤15s old is
+ * already fresher than the 30s publish cadence — use it without an HTTP
+ * hop; past that do ONE fresh fetch; past the on-chain staleness bound the
+ * round is useless and the caller falls back to the direct market call.
+ */
+const ROUND_FRESH_FAST_PATH_MS = 15_000;
+const ROUND_MAX_AGE_MS = 60_000;
 /** Funding cadence (K-7): contract enforces 1h; 30s slack avoids an early #55. */
 const FUNDING_INTERVAL_MS = 60 * 60 * 1000 + 30_000;
 const FUNDING_NOT_DUE_RETRY_MS = 5 * 60 * 1000;
@@ -166,6 +181,14 @@ class KeeperBot {
   private assetMmBpsCache: Map<string, { mmBps: bigint; fetchedAt: number }> = new Map();
   /** undefined = unknown; false = deployed market predates L0-12 (legacy mm). */
   private riskLadderSupported: boolean | undefined;
+  // Router execution path (L0-19)
+  /** Latest defense-passed signed round per symbol (execution relays). */
+  private latestRounds: Map<string, { att: Attestation; cachedAt: number }> = new Map();
+  /** Per-entrypoint support: adl_with_price is Batch-1-only while
+   *  execute/liquidate/cross shipped with the deployed routers. */
+  private routerFnSupported: Map<string, boolean> = new Map();
+  /** Dead-man counters: triggered-but-still-pending cycles per order id. */
+  private triggeredStuckCounts: Map<string, number> = new Map();
   private throttledLogAt: Map<string, number> = new Map();
   private nextTtlBumpAt: number = 0; // P3-9
 
@@ -190,6 +213,7 @@ class KeeperBot {
       adlCloses: 0,
       adlFlagFlips: 0,
       ordersReconciled: 0,
+      routerExecutions: 0,
     };
   }
 
@@ -217,6 +241,7 @@ class KeeperBot {
       discordWebhookUrl: this.config.discordWebhookUrl,
       telegramBotToken: this.config.telegramBotToken,
       telegramChatId: this.config.telegramChatId,
+      instanceId: this.config.instanceId,
     });
 
     // Seed the price circuit breaker from persisted state (K-2)
@@ -243,6 +268,9 @@ class KeeperBot {
     console.log(`  Poll Interval:     ${this.config.pollIntervalMs}ms`);
     console.log(`  Oracle Interval:   ${this.config.oracleUpdateIntervalMs}ms`);
     console.log(`  Watchdog:          exit after ${this.config.watchdogTimeoutMs}ms without a completed cycle`);
+    console.log(`  Instance:          ${this.config.instanceId}${this.config.pollOffsetMs > 0 ? ` (poll offset ${this.config.pollOffsetMs}ms)` : ''}`);
+    console.log(`  Router:            ${this.config.routerContractId ? `${this.config.routerContractId.slice(0, 8)}… (verify-then-trade preferred)` : 'not configured (direct market calls only)'}`);
+    console.log(`  Healthcheck:       ${this.config.healthcheckUrl ? 'enabled' : 'disabled'}`);
     console.log(`  State File:        ${this.config.stateFilePath}`);
     console.log(`  Assets:            ${this.config.assets.map(a => `${a.symbol} (±${a.maxMovePct}%, $${a.minPrice}-$${a.maxPrice})`).join(', ')}`);
     console.log('');
@@ -273,6 +301,13 @@ class KeeperBot {
     console.log('🚀 Keeper bot started. Monitoring...\n');
     console.log('═'.repeat(80) + '\n');
 
+    // L0-19: stagger active-active instances — the second instance sets
+    // KEEPER_POLL_OFFSET_MS ≈ pollIntervalMs/2 so the pair halves the
+    // effective heartbeat instead of racing in phase.
+    if (this.config.pollOffsetMs > 0) {
+      await this.sleep(this.config.pollOffsetMs);
+    }
+
     // Main loop
     while (this.isRunning) {
       try {
@@ -295,6 +330,9 @@ class KeeperBot {
 
       // Heartbeat: the cycle ran to completion (watchdog watches for hangs).
       this.lastCycleCompletedAt = Date.now();
+      // L0-19: dead-man ping — silence at healthchecks.io means BOTH
+      // instances are down (or wedged), independent of the alert path.
+      this.pingHealthcheck();
 
       await this.sleep(this.config.pollIntervalMs);
     }
@@ -349,6 +387,7 @@ class KeeperBot {
     console.log(`  Trailing Peak Updates: ${this.stats.trailingPeakUpdates}`);
     console.log(`  ADL Closes: ${this.stats.adlCloses} (flag flips: ${this.stats.adlFlagFlips})`);
     console.log(`  Factory Orders Reconciled: ${this.stats.ordersReconciled}`);
+    console.log(`  Router Executions: ${this.stats.routerExecutions}`);
     console.log(`  Funding Applications:  ${this.stats.fundingApplications}`);
     console.log(`  PnL Syncs:             ${this.stats.syncPnlPushes}`);
     console.log(`  Total Rewards:         ${this.formatAmount(this.stats.totalRewardsEarned)} USDC`);
@@ -440,7 +479,7 @@ class KeeperBot {
       .filter(Boolean)
       .join(' | ');
 
-    process.stdout.write(`\r[${timestamp}] ${priceStr}    `);
+    process.stdout.write(`\r[${this.config.instanceId} ${timestamp}] ${priceStr}    `);
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -524,6 +563,8 @@ class KeeperBot {
 
       eligible.push(attestation);
       symbolByPair.set(attestation.asset, asset.symbol);
+      // L0-19: defense-passed rounds double as execution relays.
+      this.latestRounds.set(asset.symbol, { att: attestation, cachedAt: Date.now() });
     }
 
     if (eligible.length === 0) {
@@ -877,7 +918,7 @@ class KeeperBot {
         }
 
         console.log(`\n⚠️  Position ${position.id} is liquidatable (local margin check + simulation)`);
-        await this.executeLiquidation(position.id);
+        await this.executeLiquidation(position);
       } catch (error) {
         // Transport failure on the preflight — next cycle retries.
         this.logThrottled(
@@ -891,12 +932,32 @@ class KeeperBot {
   /**
    * Execute a liquidation
    */
-  private async executeLiquidation(positionId: bigint): Promise<void> {
-    console.log(`   Executing liquidation for position ${positionId}...`);
+  private async executeLiquidation(position: Position): Promise<void> {
+    console.log(`   Executing liquidation for position ${position.id}...`);
 
-    const result = await this.stellar.liquidate(positionId);
+    // L0-19: settle on a relayed fresh mark when a round is available; any
+    // router-side failure falls back to the direct call — a liquidation is
+    // never lost to the router path.
+    let via: 'router' | 'direct' = 'direct';
+    let result: ExecutionResult | null = null;
+    if (this.routerAvailable('liquidate_with_price')) {
+      const round = await this.getExecutionRound(position.asset);
+      if (round) {
+        result = await this.stellar.liquidateViaRouter(position.id, position.asset, round);
+        via = 'router';
+        if (!result.success && !result.indeterminate) {
+          if (isMissingContractFunction(result.error ?? '')) {
+            this.routerFnSupported.set('liquidate_with_price', false);
+          }
+          result = null;
+          via = 'direct';
+        }
+      }
+    }
+    if (result === null) result = await this.stellar.liquidate(position.id);
 
     if (result.success) {
+      if (via === 'router') this.stats.routerExecutions++;
       this.stats.liquidationsExecuted++;
       if (result.reward) {
         this.stats.totalRewardsEarned += result.reward;
@@ -969,8 +1030,42 @@ class KeeperBot {
 
         // Preflight stays inside the write path: the pre-submit simulation
         // rejects healthy accounts with #78 before any fee is spent.
-        const result = await this.stellar.liquidateCrossAccount(trader);
+        // L0-19: prefer the router relay when EVERY leg's asset has a fresh
+        // round (the account settles on relayed marks); business rejections
+        // stand, router-specific failures fall back to the direct call.
+        let result: ExecutionResult | null = null;
+        let via: 'router' | 'direct' = 'direct';
+        if (this.routerAvailable('liquidate_cross_with_prices')) {
+          const rounds: Array<{ asset: string; round: RouterRound }> = [];
+          for (const asset of new Set(positions.map(p => p.asset))) {
+            const round = await this.getExecutionRound(asset);
+            if (!round) {
+              rounds.length = 0;
+              break;
+            }
+            rounds.push({ asset, round });
+          }
+          if (rounds.length > 0) {
+            result = await this.stellar.liquidateCrossViaRouter(trader, rounds);
+            via = 'router';
+            if (!result.success && !result.indeterminate) {
+              if (isMissingContractFunction(result.error ?? '')) {
+                this.routerFnSupported.set('liquidate_cross_with_prices', false);
+              }
+              const code = extractContractErrorCode(result.error ?? '');
+              if (code !== 78 && code !== 83 && code !== 90 && code !== 86) {
+                result = null; // router-specific failure → direct fallback
+                via = 'direct';
+              }
+            }
+          }
+        }
+        if (result === null) {
+          result = await this.stellar.liquidateCrossAccount(trader);
+          via = 'direct';
+        }
         if (result.success) {
+          if (via === 'router') this.stats.routerExecutions++;
           this.stats.liquidationsExecuted++;
           if (result.reward) this.stats.totalRewardsEarned += result.reward;
           console.log(`\n⚠️  Cross-margin account ${trader.slice(0, 8)}... liquidated!`);
@@ -1100,6 +1195,83 @@ class KeeperBot {
         `⚠️  reconcile_order failed for order ${orderId} (vault ${vaultId}): ${result.error}`,
       );
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Router Execution Path (L0-19)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /** True unless a probe proved the deployed router lacks this entry point. */
+  private routerAvailable(fn: string): boolean {
+    return !!this.config.routerContractId && this.routerFnSupported.get(fn) !== false;
+  }
+
+  /**
+   * Signed round for one asset, freshest-first: cache ≤15s (already
+   * fresher than the 30s publish cadence — no HTTP hop) → one fresh
+   * Noeracle fetch under the existing timeout (refreshes every symbol's
+   * cache) → cache ≤60s (the on-chain staleness bound) → null, and the
+   * caller falls back to the DIRECT market call. Round sourcing must never
+   * cost execution liveness.
+   */
+  private async getExecutionRound(symbol: string): Promise<RouterRound | null> {
+    const now = Date.now();
+    const cached = this.latestRounds.get(symbol);
+    if (cached && now - cached.cachedAt <= ROUND_FRESH_FAST_PATH_MS) return cached.att;
+
+    try {
+      const fresh = await this.fetchNoeracleFresh();
+      const fetchedAt = Date.now();
+      for (const att of fresh.attestations) {
+        const sym = att.asset.endsWith('/USD') ? att.asset.slice(0, -4) : att.asset;
+        this.latestRounds.set(sym, { att, cachedAt: fetchedAt });
+      }
+    } catch (error) {
+      this.logThrottled(
+        'round-fetch',
+        `⚠️  Noeracle round fetch for execution failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+
+    const fallback = this.latestRounds.get(symbol);
+    if (fallback && Date.now() - fallback.cachedAt <= ROUND_MAX_AGE_MS) return fallback.att;
+    return null;
+  }
+
+  /** healthchecks.io-style liveness ping after every completed cycle. */
+  private pingHealthcheck(): void {
+    if (!this.config.healthcheckUrl) return;
+    fetch(this.config.healthcheckUrl).catch(() => {});
+  }
+
+  /**
+   * #30 rescue (the core L0-19 fix): a strict-path entry execution that
+   * fails PriceStale on the direct simulation is exactly what the router
+   * relay repairs — verify-then-trade carries a fresh signed round in the
+   * same tx. Returns true when the order was handled via the router.
+   */
+  private async tryRouterRescue(order: Order): Promise<boolean> {
+    if (!this.routerAvailable('execute_with_price')) return false;
+    const round = await this.getExecutionRound(order.asset);
+    if (!round) return false;
+
+    const sim = await this.stellar.simulateRouterCall('execute_with_price', order.id, order.asset, round);
+    if (!sim.ok) {
+      if (isMissingContractFunction(sim.error)) {
+        this.routerFnSupported.set('execute_with_price', false);
+      } else {
+        this.classifyOrderSimRejection(order, sim.error);
+      }
+      return false;
+    }
+
+    console.log(
+      `\n📋 Order ${order.id} triggered via router relay (${order.order_type} ${order.direction} ${order.asset})`,
+    );
+    console.log(`   Executing order ${order.id}...`);
+    const result = await this.stellar.executeOrderViaRouter(order.id, order.asset, round);
+    await this.handleOrderExecutionResult(order.id, order.order_type, result, 'router');
+    return true;
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1258,8 +1430,31 @@ class KeeperBot {
     for (const candidate of ranked) {
       if (closes >= this.config.adlMaxClosesPerCycle) break;
 
-      const result = await this.stellar.adlClose(candidate.position.id);
+      // L0-19: forced realizations settle on a relayed fresh mark when
+      // available; business rejections (#84/#85/#20) stand either way,
+      // router-specific failures fall back to the direct call.
+      let result: ExecutionResult | null = null;
+      let via: 'router' | 'direct' = 'direct';
+      if (this.routerAvailable('adl_with_price')) {
+        const round = await this.getExecutionRound(asset);
+        if (round) {
+          result = await this.stellar.adlCloseViaRouter(candidate.position.id, asset, round);
+          via = 'router';
+          if (!result.success && !result.indeterminate) {
+            if (isMissingContractFunction(result.error ?? '')) {
+              this.routerFnSupported.set('adl_with_price', false);
+            }
+            const code = extractContractErrorCode(result.error ?? '');
+            if (code !== 84 && code !== 85 && code !== 20) {
+              result = null; // router-specific failure → direct fallback
+              via = 'direct';
+            }
+          }
+        }
+      }
+      if (result === null) result = await this.stellar.adlClose(candidate.position.id);
       if (result.success) {
+        if (via === 'router') this.stats.routerExecutions++;
         closes++;
         this.stats.adlCloses++;
         console.log(
@@ -1381,24 +1576,48 @@ class KeeperBot {
    */
   private async checkOrders(snapshot: CycleSnapshot): Promise<void> {
     const pendingOrders = snapshot.orders.filter(o => o.status === 'Pending');
-    if (pendingOrders.length === 0) return;
+    const triggeredIds = new Set<string>();
 
     for (const order of pendingOrders) {
       try {
         const sim = await this.stellar.simulateExecuteOrder(order.id);
         if (!sim.ok) {
+          // L0-19: strict-path staleness (#30) is exactly what the router
+          // relay fixes — try execute_with_price before giving up the tick.
+          if (extractContractErrorCode(sim.error) === 30 && (await this.tryRouterRescue(order))) {
+            triggeredIds.add(order.id.toString());
+            continue;
+          }
           this.classifyOrderSimRejection(order, sim.error);
           continue;
         }
 
+        triggeredIds.add(order.id.toString());
         console.log(`\n📋 Order ${order.id} triggered! (${order.order_type} ${order.direction} ${order.asset})`);
-        await this.executeOrder(order.id, order.order_type);
+        await this.executeOrder(order.id, order.order_type, order.asset);
       } catch (error) {
         this.logThrottled(
           `order-err-${order.id}`,
           `⚠️  Order check error for ${order.id}: ${error instanceof Error ? error.message : error}`,
         );
       }
+    }
+
+    // L0-19 dead-man: a triggered order still pending after N cycles means
+    // executions are not landing (RPC dead, fee starvation, sequence
+    // pinning) — the silent single-keeper failure mode. Runs even on an
+    // empty book so counters for gone orders are pruned.
+    const stuck = trackTriggeredStuck(
+      this.triggeredStuckCounts,
+      triggeredIds,
+      this.config.triggeredStuckAlertCycles,
+    );
+    if (stuck.length > 0) {
+      await sendAlert(
+        'critical',
+        'Triggered orders stuck pending',
+        `Orders ${stuck.join(', ')} triggered for ${this.config.triggeredStuckAlertCycles}+ consecutive cycles without executing — check RPC health, fees, and keeper sequence.`,
+      );
     }
   }
 
@@ -1441,13 +1660,41 @@ class KeeperBot {
   }
 
   /**
-   * Execute a triggered order
+   * Execute a triggered order — via the router relay when a fresh signed
+   * round is available (settles on the relayed mark), falling back to the
+   * direct market call otherwise (L0-19: liveness before freshness).
    */
-  private async executeOrder(orderId: bigint, orderType: string): Promise<void> {
+  private async executeOrder(orderId: bigint, orderType: string, asset: string): Promise<void> {
     console.log(`   Executing order ${orderId}...`);
 
-    const result = await this.stellar.executeOrder(orderId);
+    let via: 'router' | 'direct' = 'direct';
+    let result: ExecutionResult | null = null;
+    if (this.routerAvailable('execute_with_price')) {
+      const round = await this.getExecutionRound(asset);
+      if (round) {
+        const sim = await this.stellar.simulateRouterCall('execute_with_price', orderId, asset, round);
+        if (sim.ok) {
+          result = await this.stellar.executeOrderViaRouter(orderId, asset, round);
+          via = 'router';
+        } else if (isMissingContractFunction(sim.error)) {
+          this.routerFnSupported.set('execute_with_price', false);
+        }
+        // Any other router-sim rejection → fall through to the direct path.
+      }
+    }
+    if (result === null) result = await this.stellar.executeOrder(orderId);
 
+    await this.handleOrderExecutionResult(orderId, orderType, result, via);
+  }
+
+  /** Shared outcome handling for direct and router order executions. */
+  private async handleOrderExecutionResult(
+    orderId: bigint,
+    orderType: string,
+    result: ExecutionResult,
+    via: 'router' | 'direct',
+  ): Promise<void> {
+    if (result.success && via === 'router') this.stats.routerExecutions++;
     if (result.success) {
       // Check if order was cancelled due to slippage or StopLimit phase transition (reward = 0)
       if (result.reward === BigInt(0)) {
