@@ -21,6 +21,7 @@ import {
   removeCollateral,
 } from '@/lib/stellar/market';
 import { marketHasBatch1Features } from '@/lib/stellar/capabilities';
+import { ShortfallCard } from '@/components/portfolio/ShortfallCard';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { listTrades, toTrade } from '@/lib/api/trades';
 import { gatewayServesThisMarket } from '@/lib/api/gateway';
@@ -345,6 +346,12 @@ function PortfolioPage() {
             unpricedCount={unpricedCount}
             pricesStale={staleAssets.length > 0}
           />
+
+          {/* L0-3 (Batch-1): claimable shortfall — renders only when the
+              vault actually owes this wallet. */}
+          {isConnected && publicKey && (
+            <ShortfallCard publicKey={publicKey} sign={sign} onClaimed={refreshBalances} />
+          )}
 
           {/* Row 1.5 — Open Positions with real management actions (B12):
               traders expect the account page to manage exposure, not

@@ -64,9 +64,11 @@ const NOETHER_ERROR_MESSAGES: Record<number, string> = {
   81: 'Price moved too fast — please retry in a moment',
   82: 'Open interest cap reached for this market — try a smaller size',
   // Solvency / risk / execution (83-91)
+  27: 'Remaining position would be below the $10 minimum — close the full position instead',
   83: 'This position was just partially liquidated — try again in a moment',
   84: 'Auto-deleveraging is not active for this market right now',
   85: 'Only winning positions can be auto-deleveraged',
+  86: 'Liquidation needs a confirmed price first — retry in a moment',
   87: 'Filled worse than your acceptable price — resubmit or widen the limit',
   88: 'This market has no risk parameters configured yet',
   89: 'This order would push the market past its long/short skew cap — try a smaller size or the other side',
@@ -74,6 +76,9 @@ const NOETHER_ERROR_MESSAGES: Record<number, string> = {
   91: 'This order only reduces your opposite position — use Close or reduce-only instead',
   92: 'Trading in this market is temporarily halted — closing positions still works',
   93: 'Withdrawals unlock a short cooldown after your latest deposit — try again shortly',
+  94: 'This agent key is not authorized for that action',
+  95: 'This order has not expired yet',
+  96: 'NOE supply exhausted — deposits are temporarily unavailable',
 };
 
 /** FactoryError — contracts/vault_factory/src/types.rs. */

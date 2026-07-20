@@ -47,6 +47,8 @@ interface PositionsListProps {
   /** True once the deployed market exposes the Batch-1 entry points —
    *  gates the partial-close pills and the margin modal (inert before). */
   batch1Features?: boolean;
+  /** L0-1 advisory ADL quintile per position id (1 = first deleveraged). */
+  adlQuintiles?: Map<number, number>;
   onSetStopLoss?: (id: number, triggerPrice: number, slippageBps: number) => Promise<void>;
   onSetTakeProfit?: (id: number, triggerPrice: number, slippageBps: number, limitPrice?: number) => Promise<void>;
   onRefresh?: () => void;
@@ -64,6 +66,7 @@ export function PositionsList({
   onAddCollateral,
   onRemoveCollateral,
   batch1Features,
+  adlQuintiles,
   onSetStopLoss,
   onSetTakeProfit,
   onRefresh,
@@ -337,6 +340,7 @@ export function PositionsList({
                   setActionModal('margin');
                 }}
                 showMarginButton={!!batch1Features && !!onAddCollateral && !!onRemoveCollateral}
+                adlQuintile={adlQuintiles?.get(position.id) ?? null}
                 onSetStopLoss={() => {
                   setSelectedPosition(position);
                   // Suggest a stop-loss 5% below entry for long, 5% above for short
@@ -1091,6 +1095,7 @@ const PositionRow = memo(function PositionRow({
   onShare,
   onEditMargin,
   showMarginButton,
+  adlQuintile,
 }: {
   position: DisplayPosition;
   isLiquidationRisk: boolean;
@@ -1102,6 +1107,7 @@ const PositionRow = memo(function PositionRow({
   onShare: () => void;
   onEditMargin?: () => void;
   showMarginButton?: boolean;
+  adlQuintile?: number | null;
 }) {
   // NaN pnl = mark price unknown — render '—' in neutral color, never a
   // signed/colored fabrication (formatters dash NaN automatically).
@@ -1137,6 +1143,14 @@ const PositionRow = memo(function PositionRow({
           {position.direction.toUpperCase()}
           {position.marginMode === 'Cross' && (
             <span className="ml-1 text-[9px] px-1 py-0.5 bg-primary/10 text-primary rounded-sm">CROSS</span>
+          )}
+          {adlQuintile != null && (
+            <span
+              className="ml-1 text-[9px] px-1 py-0.5 bg-short/10 text-short rounded-sm"
+              title={`ADL queue ${adlQuintile}/5 — quintile 1 is first to be auto-deleveraged if pool coverage fails`}
+            >
+              ADL {adlQuintile}/5
+            </span>
           )}
         </span>
       </td>
@@ -1290,6 +1304,8 @@ const PositionRow = memo(function PositionRow({
   && prev.hasSlTpCallbacks === next.hasSlTpCallbacks
   // L0-6: the margin button appears when the Batch-1 probe resolves.
   && prev.showMarginButton === next.showMarginButton
+  // L0-1: the ADL chip must re-render when the queue shifts.
+  && prev.adlQuintile === next.adlQuintile
   // B8: the TP/SL cell must re-render when protection orders change.
   && prev.protection?.tp === next.protection?.tp
   && prev.protection?.sl === next.protection?.sl
