@@ -131,7 +131,23 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // router path is a later contract change).
   const [attachSl, setAttachSl] = useState<string>('');
   const [attachTp, setAttachTp] = useState<string>('');
-  const canAttachTpSl = orderType === 'Market' && marginMode === 'Isolated' && !isLeader;
+  // L1-1: the Batch-1 market settles cross triggers through the shared
+  // pool, so protective orders ungate once the capability probe passes.
+  const [batch1Features, setBatch1Features] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    marketHasBatch1Features()
+      .then((ok) => {
+        if (!cancelled) setBatch1Features(ok);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const canAttachTpSl =
+    orderType === 'Market' && !isLeader && (batch1Features || marginMode === 'Isolated');
 
   // Stop Limit states
   const [stopPrice, setStopPrice] = useState<string>('');
@@ -152,26 +168,13 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // base tier and labeled estimated (A18).
   const [existing14dVolume, setExisting14dVolume] = useState<number | null>(null);
 
-  // M-3 interim guard: trailing stops attached to cross positions execute via
-  // the isolated close path on-chain, corrupting the shared pool. Only offer
-  // isolated positions until the contract fix deploys.
-  const trailingEligiblePositions = positions.filter(p => p.marginMode !== 'Cross');
+  // Pre-Batch-1 markets execute attached orders via the isolated path
+  // (the M-3 pool-escape) — cross positions stay excluded until the
+  // capability probe confirms the L1-1 market. Post-probe: all positions.
+  const trailingEligiblePositions = batch1Features
+    ? positions
+    : positions.filter(p => p.marginMode !== 'Cross');
   const hasCrossPositions = positions.length > trailingEligiblePositions.length;
-
-  // L1-3 (Batch-1): the market auto-nets a new open against opposite
-  // same-asset/same-mode positions — surface it BEFORE the signature.
-  const [batch1Features, setBatch1Features] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    marketHasBatch1Features()
-      .then((ok) => {
-        if (!cancelled) setBatch1Features(ok);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
   // L0-12 (Batch-1): per-asset leverage cap from the risk ladder — legacy
   // global cap when the ladder is unset or the market predates it. Clamps
   // the current selection on asset switch so a 25x BTC choice can't ride
@@ -372,8 +375,8 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   const errors: string[] = [];
   if (orderType === 'TrailingStop') {
     if (!trailingPositionId) errors.push('Select a position');
-    if (positions.find(p => p.id === Number(trailingPositionId))?.marginMode === 'Cross')
-      errors.push('Unavailable for cross-margin positions (contract fix pending)');
+    if (!batch1Features && positions.find(p => p.id === Number(trailingPositionId))?.marginMode === 'Cross')
+      errors.push('Not yet available for cross-margin positions');
     if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
   } else {
     if (collateralNum > 0 && collateralNum < 10) errors.push('Minimum collateral is 10 USDC');
@@ -480,9 +483,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (orderType === 'TrailingStop') {
       // Trailing stop - attach to existing position
       const posId = parseInt(trailingPositionId) || 0;
-      // M-3 interim guard — cross positions must never reach place_trailing_stop.
-      if (positions.find(p => p.id === posId)?.marginMode === 'Cross') {
-        toast.error('Unavailable for cross-margin positions (contract fix pending)');
+      // Pre-Batch-1 guard — cross positions must never reach the isolated
+      // execution path on the old market (M-3 pool escape).
+      if (!batch1Features && positions.find(p => p.id === posId)?.marginMode === 'Cross') {
+        toast.error('Not yet available for cross-margin positions');
         setIsSubmitting(false);
         return;
       }
@@ -1236,7 +1240,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               )}
               {hasCrossPositions && (
                 <p className="text-[11px] text-faint">
-                  Unavailable for cross-margin positions (contract fix pending)
+                  Not yet available for cross-margin positions
                 </p>
               )}
             </div>

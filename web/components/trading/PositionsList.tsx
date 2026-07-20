@@ -341,6 +341,7 @@ export function PositionsList({
                 }}
                 showMarginButton={!!batch1Features && !!onAddCollateral && !!onRemoveCollateral}
                 adlQuintile={adlQuintiles?.get(position.id) ?? null}
+                crossOrdersEnabled={!!batch1Features}
                 onSetStopLoss={() => {
                   setSelectedPosition(position);
                   // Suggest a stop-loss 5% below entry for long, 5% above for short
@@ -396,6 +397,7 @@ export function PositionsList({
               setActionModal('take-profit');
             }}
             hasSlTpCallbacks={!!onSetStopLoss && !!onSetTakeProfit}
+            crossOrdersEnabled={!!batch1Features}
             onShare={() => handleShare(position)}
           />
         ))}
@@ -1096,6 +1098,7 @@ const PositionRow = memo(function PositionRow({
   onEditMargin,
   showMarginButton,
   adlQuintile,
+  crossOrdersEnabled,
 }: {
   position: DisplayPosition;
   isLiquidationRisk: boolean;
@@ -1108,15 +1111,17 @@ const PositionRow = memo(function PositionRow({
   onEditMargin?: () => void;
   showMarginButton?: boolean;
   adlQuintile?: number | null;
+  crossOrdersEnabled?: boolean;
 }) {
   // NaN pnl = mark price unknown — render '—' in neutral color, never a
   // signed/colored fabrication (formatters dash NaN automatically).
   const hasPnl = Number.isFinite(position.pnl);
   const isPositive = hasPnl && position.pnl >= 0;
-  // M-3 interim guard: SL/TP orders on cross positions execute via the
-  // isolated close path on-chain, corrupting the shared pool. Disabled
-  // until the contract fix deploys.
   const isCross = position.marginMode === 'Cross';
+  // Pre-Batch-1: the old market routes cross triggers through the isolated
+  // path (M-3 pool escape) — protective orders stay disabled on cross rows
+  // until the L1-1 capability probe passes.
+  const crossBlocked = isCross && !crossOrdersEnabled;
 
   return (
     <tr className="border-b border-border hover:bg-surface-3/50 transition-colors">
@@ -1246,27 +1251,27 @@ const PositionRow = memo(function PositionRow({
             <>
               <button
                 onClick={onSetStopLoss}
-                disabled={isCross}
+                disabled={crossBlocked}
                 className={cn(
                   'p-1.5 rounded-sm transition-colors',
-                  isCross
+                  crossBlocked
                     ? 'text-muted-foreground/30 cursor-not-allowed'
                     : 'hover:bg-short/10 text-muted-foreground hover:text-short'
                 )}
-                title={isCross ? 'Unavailable for cross-margin positions (contract fix pending)' : 'Set Stop-Loss'}
+                title={crossBlocked ? 'Not yet available for cross-margin positions' : 'Set Stop-Loss'}
               >
                 <Shield className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={onSetTakeProfit}
-                disabled={isCross}
+                disabled={crossBlocked}
                 className={cn(
                   'p-1.5 rounded-sm transition-colors',
-                  isCross
+                  crossBlocked
                     ? 'text-muted-foreground/30 cursor-not-allowed'
                     : 'hover:bg-long/10 text-muted-foreground hover:text-long'
                 )}
-                title={isCross ? 'Unavailable for cross-margin positions (contract fix pending)' : 'Set Take-Profit'}
+                title={crossBlocked ? 'Not yet available for cross-margin positions' : 'Set Take-Profit'}
               >
                 <Target className="w-3.5 h-3.5" />
               </button>
@@ -1306,6 +1311,8 @@ const PositionRow = memo(function PositionRow({
   && prev.showMarginButton === next.showMarginButton
   // L0-1: the ADL chip must re-render when the queue shifts.
   && prev.adlQuintile === next.adlQuintile
+  // L1-1: SL/TP buttons enable on cross rows when the probe passes.
+  && prev.crossOrdersEnabled === next.crossOrdersEnabled
   // B8: the TP/SL cell must re-render when protection orders change.
   && prev.protection?.tp === next.protection?.tp
   && prev.protection?.sl === next.protection?.sl
@@ -1319,6 +1326,7 @@ const PositionCard = memo(function PositionCard({
   onSetTakeProfit,
   hasSlTpCallbacks,
   onShare,
+  crossOrdersEnabled,
 }: {
   position: DisplayPosition;
   onClose: () => void;
@@ -1326,6 +1334,7 @@ const PositionCard = memo(function PositionCard({
   onSetTakeProfit: () => void;
   hasSlTpCallbacks: boolean;
   onShare: () => void;
+  crossOrdersEnabled?: boolean;
 }) {
   // NaN pnl = mark price unknown → '—' in neutral color (see PositionRow).
   const hasPnl = Number.isFinite(position.pnl);
@@ -1391,9 +1400,9 @@ const PositionCard = memo(function PositionCard({
       </div>
 
       {hasSlTpCallbacks && (
-        position.marginMode === 'Cross' ? (
+        position.marginMode === 'Cross' && !crossOrdersEnabled ? (
           <p className="mb-2 text-xs text-muted-foreground/70">
-            Stop-loss / take-profit unavailable for cross-margin positions (contract fix pending)
+            Stop-loss / take-profit not yet available for cross-margin positions
           </p>
         ) : (
           <div className="flex gap-2 mb-2">
@@ -1418,4 +1427,5 @@ const PositionCard = memo(function PositionCard({
     </Card>
   );
 }, (prev, next) => prev.hasSlTpCallbacks === next.hasSlTpCallbacks
+  && prev.crossOrdersEnabled === next.crossOrdersEnabled
   && positionEquals(prev.position, next.position));

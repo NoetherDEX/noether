@@ -759,12 +759,12 @@ function TradePage() {
   const handleSetStopLoss = async (positionId: number, triggerPrice: number, slippageBps: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
 
-    // M-3 interim guard: SL orders attached to cross positions execute via
-    // the isolated close path on-chain, corrupting the shared pool. Refuse
-    // until the contract fix deploys.
+    // Pre-Batch-1 guard: the old market executes attached orders via the
+    // isolated path (M-3 pool escape). The L1-1 market settles cross
+    // triggers through the pool — ungated by the capability probe.
     const targetPosition = positions.find(p => p.id === positionId);
-    if (targetPosition?.marginMode === 'Cross') {
-      toast.error('Unavailable for cross-margin positions (contract fix pending)');
+    if (!batch1Features && targetPosition?.marginMode === 'Cross') {
+      toast.error('Not yet available for cross-margin positions');
       return;
     }
 
@@ -792,10 +792,10 @@ function TradePage() {
   const handleSetTakeProfit = async (positionId: number, triggerPrice: number, slippageBps: number, limitPrice?: number): Promise<void> => {
     if (!publicKey) throw new Error('Wallet not connected');
 
-    // M-3 interim guard — see handleSetStopLoss.
+    // Pre-Batch-1 guard — see handleSetStopLoss.
     const targetPosition = positions.find(p => p.id === positionId);
-    if (targetPosition?.marginMode === 'Cross') {
-      toast.error('Unavailable for cross-margin positions (contract fix pending)');
+    if (!batch1Features && targetPosition?.marginMode === 'Cross') {
+      toast.error('Not yet available for cross-margin positions');
       return;
     }
 

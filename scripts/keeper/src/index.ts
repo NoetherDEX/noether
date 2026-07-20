@@ -1639,8 +1639,9 @@ class KeeperBot {
       return;
     }
 
-    // Business rejections for this tick (new contract): #80 cross-order
-    // unsupported, #81 price deviation too high, #82 OI cap exceeded.
+    // Business rejections for this tick: #80 cross-order unsupported
+    // (PRE-Batch-1 markets only — the L1-1 market accepts cross triggers),
+    // #81 price deviation too high, #82 OI cap exceeded.
     // Also #61 (already executed elsewhere), #30 (price stale), and the
     // Batch-1 codes — #87 acceptable-price bound (L0-10), #89 skew cap
     // (L0-14), #90 frozen (L0-15), #91 nets-to-zero (L1-3), #92 asset
