@@ -25,7 +25,7 @@
 | L1-15 | Open-access mode + MM tier path + key management surface | M | offchain | offchain-now | L1-27 | todo |
 | L1-16 | Docs corrections + stable API domain + changelog channel | S | mixed | operator-track | L1-14 | todo |
 | L1-17 | Points program v1 (indexer-driven, wash-resistant) | M | offchain | offchain-now | L1-19 | todo |
-| L1-18 | Referral economics activation — IN Redeploy Batch 1 (founder decision 2026-07-17) | M | mixed | batch-1-redeploy | L2-18 | todo |
+| L1-18 | Referral economics activation — IN Redeploy Batch 1 (founder decision 2026-07-17) | M | mixed | batch-1-redeploy | L2-18 | in-progress — contracts+offchain done 2026-07-20 (commits 5d7dc4c + 1e779d9: fee-path hook w/ pot-from-cut, funded claims, R-3/R-5/R-8 fixes, 6-field event both-generations plumbing, gated web claims); LEFT: sdk claim mirrors (rides L1-14 publish), docs page, deploy-day ops (initialize w/ usdc → set_referral → set_fee_split → smoke) |
 | L1-19 | Protocol-vault indexing → real LP APY + NOE history | M | offchain | offchain-now | — | todo |
 | L1-20 | Mainnet fee sheet + all-in cost story + GET /v1/fees | S | mixed | offchain-now | — | todo |
 | L1-21 | Keeper-fee disclosure now + maker≤taker restructure in Batch 1 | M | mixed | batch-1-redeploy | L2-18 | in-progress — contracts done 2026-07-18 (Wave 5, commit 39b8ebd; KeeperFeeConfig→config bps-only, maker+keeper≤taker). web/api/docs disclosure pending sweep |
