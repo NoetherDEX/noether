@@ -8,7 +8,7 @@
 
 | ID | Title | Effort | Lane | Ships in | Needs | Status |
 |----|-------|--------|------|----------|-------|--------|
-| L1-1 | Protective orders on cross-margin positions (lift #80 via cross-aware settlement) | M | mixed | batch-1-redeploy | — | todo |
+| L1-1 | Protective orders on cross-margin positions (lift #80 via cross-aware settlement) | M | mixed | batch-1-redeploy | — | in-progress — contracts+tests+web ungate done 2026-07-20 (commits 31ba586 + 9fb527a, conservation property test in; web gated on the Batch-1 capability probe); live verification at the Batch-1 deploy |
 | L1-2 | Atomic bracket placement (router open_with_price_and_tpsl — G-1) | M | mixed | batch-1-redeploy | L0-21, L1-1, L0-10 | todo |
 | L1-3 | Auto-net at open (minimum-viable position netting) | M | mixed | batch-1-redeploy | L0-6, L1-1 | in-progress — contracts+tests done 2026-07-18 (Wave 3, commit 264b240, #91; v1 no-partial-leg); web netting UX + indexer multi-event fixture pending sweep |
 | L1-4 | Cross-collateral operations via API/SDK | S | offchain | offchain-now | L0-21 | todo |
