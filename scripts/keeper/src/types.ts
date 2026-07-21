@@ -89,6 +89,7 @@ export interface KeeperStats {
   ordersReconciled: number;
   /** Executions/liquidations that settled via the router *_with_price path (L0-19). */
   routerExecutions: number;
+  storkRelays: number;
 }
 
 // Execution result
@@ -212,12 +213,21 @@ export interface KeeperConfig {
   // Stork secondary oracle (T3-D1) — fail-open: empty key disables it.
   /** Stork API token (Authorization: Basic <token>). Empty = disabled. */
   storkApiKey: string;
-  /** Stork Core REST base URL. */
-  storkRestUrl: string;
   /** Skip the push when attestation vs Stork diverges more than this %. */
   storkMaxDivergencePct: number;
   /** Ignore cached Stork prices older than this (stale data must not veto). */
   storkMaxAgeMs: number;
+
+  // Stork Fast on-chain relay (L0-8 relay_stork wiring)
+  /** Fast WS endpoint serving signed_ecdsa frames (relay + cross-val). */
+  storkWsUrl: string;
+  /** Dedicated fee-payer secret for router.relay_stork — its OWN account so
+   *  relays never race the keeper account's sequence. Empty = relay off. */
+  storkRelaySecretKey: string;
+  /** Relay the newest signed frame this often (router freshness bar: 60s). */
+  storkRelayIntervalMs: number;
+  /** Fast taxonomy ids to subscribe to (must mirror router set_stork_assets). */
+  storkAssetIds: number[];
 
   // Oracle-health heartbeat (T3-D1) — fail-open: empty URL disables it.
   /** api gateway heartbeat ingest URL (…/v1/oracle/heartbeat). */

@@ -1,44 +1,52 @@
 /**
- * One-shot Stork key/endpoint validator.
+ * One-shot Stork Fast validator (L0-8 relay_stork wiring).
  *
- * Run this the moment the STORK_API_KEY arrives: it makes one batched
- * fetch for every configured asset, prints what parsed, and cross-checks
- * each price against a fresh Noeracle attestation so you see the two
- * sources side by side before enabling anything on-chain.
+ * Connects to the Fast WS with the configured key, captures ONE signed
+ * frame, prints the parsed prices side-by-side with a fresh Noeracle
+ * round, then SIMULATES router.relay_stork with the captured payload —
+ * proving the on-chain verifier accepts real production traffic before
+ * anything is deployed or armed.
  *
- *   cd scripts/keeper && STORK_API_KEY=<token> npm run stork:check
+ *   cd scripts/keeper && npm run stork:check
  *
- * Exit codes: 0 = key works and prices parsed; 1 = key missing, endpoint
- * unreachable, or nothing parseable (fix before relying on Stork).
+ * Exit codes: 0 = frame captured, parsed, and the router simulation
+ * accepted it; 1 = key missing, feed unreachable, or the router rejected.
  */
 
 import { loadConfig } from './config';
-import { getStorkPrice, getStorkStatus, refreshStorkPrices, storkEnabled } from './stork';
+import { storkEnabled } from './stork';
+import { StorkFastClient, STORK_DEFAULT_ID_SYMBOLS, type FastFrame } from './storkFast';
+import { StellarClient } from './stellar';
+
+const FRAME_TIMEOUT_MS = 30_000;
 
 async function main(): Promise<void> {
   const config = loadConfig();
 
   if (!storkEnabled(config)) {
-    throw new Error('STORK_API_KEY is not set — export it (or add to .env) and rerun');
+    throw new Error('STORK_API_KEY is not set — add it to scripts/keeper/.env and rerun');
   }
 
-  const symbols = config.assets.map((a) => a.symbol);
-  console.log(`Stork REST : ${config.storkRestUrl}`);
-  console.log(`Assets     : ${symbols.join(', ')}`);
+  console.log(`Fast WS    : ${config.storkWsUrl}`);
+  console.log(`Asset ids  : ${config.storkAssetIds.join(', ')}`);
   console.log('');
 
-  await refreshStorkPrices(config, symbols);
-  const status = getStorkStatus(config);
-  if (status.lastSuccessAt === null) {
-    throw new Error(`Stork fetch failed: ${status.lastError ?? 'unknown error'}`);
-  }
+  const frame = await captureOneFrame(config.storkWsUrl, config.storkApiKey, config.storkAssetIds);
+  const idToSymbol = new Map<number, string>(STORK_DEFAULT_ID_SYMBOLS);
+  const ageMs = Date.now() - Number(frame.timestampNs / 1_000_000n);
+  console.log(`✅ Frame captured: taxonomy ${frame.taxonomy}, ${frame.entries.size} assets, signed ${ageMs}ms ago, ${frame.payloadHex.length / 2} bytes`);
+  console.log('');
 
   // Side-by-side with Noeracle so divergence is visible immediately.
   let noeraclePrices = new Map<string, number>();
   try {
     const { Noeracle } = await import('@noeracle/sdk');
     const client = new Noeracle({ network: config.network });
-    const fresh = await client.fetchLatest(symbols.map((s) => `${s}/USD`));
+    const pairs = [...frame.entries.keys()]
+      .map((id) => idToSymbol.get(id))
+      .filter((s): s is string => !!s)
+      .map((s) => `${s}/USD`);
+    const fresh = await client.fetchLatest(pairs);
     noeraclePrices = new Map(
       fresh.attestations.map((a) => [a.asset.replace('/USD', ''), a.price_human]),
     );
@@ -48,15 +56,9 @@ async function main(): Promise<void> {
     );
   }
 
-  let parsed = 0;
   console.log('symbol   stork            noeracle         divergence');
-  for (const symbol of symbols) {
-    const stork = getStorkPrice(symbol, config.storkMaxAgeMs);
-    if (stork === null) {
-      console.log(`${symbol.padEnd(8)} (no data — not in this key's entitlement?)`);
-      continue;
-    }
-    parsed++;
+  for (const [id, stork] of frame.entries) {
+    const symbol = idToSymbol.get(id) ?? `id${id}`;
     const noeracle = noeraclePrices.get(symbol);
     const divergence =
       noeracle !== undefined ? `${(((stork - noeracle) / noeracle) * 100).toFixed(3)}%` : '—';
@@ -64,17 +66,49 @@ async function main(): Promise<void> {
       `${symbol.padEnd(8)} $${String(stork).padEnd(15)} $${String(noeracle ?? '—').padEnd(15)} ${divergence}`,
     );
   }
-
-  if (parsed === 0) {
-    throw new Error(
-      'Key authenticated but no configured asset parsed — check the entitlement list with Stork',
-    );
-  }
   console.log('');
-  console.log(`✅ Stork key OK — ${parsed}/${symbols.length} configured assets available`);
+
+  // The real proof: does the deployed router's verifier accept this payload?
+  if (!config.routerContractId) {
+    console.warn('⚠️  No router configured — skipping the relay_stork simulation');
+    return;
+  }
+  const stellar = new StellarClient(config);
+  const sim = await stellar.simulateRelayStork(Buffer.from(frame.payloadHex, 'hex'));
+  if (!sim.ok) {
+    throw new Error(`router.relay_stork simulation REJECTED the live payload: ${sim.error}`);
+  }
+  console.log(`✅ router.relay_stork simulation accepted the payload (router ${config.routerContractId.slice(0, 8)}…)`);
 }
 
-main().catch((err) => {
-  console.error('❌', err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+function captureOneFrame(wsUrl: string, apiKey: string, assetIds: number[]): Promise<FastFrame> {
+  return new Promise((resolve, reject) => {
+    const client = new StorkFastClient({
+      wsUrl,
+      apiKey,
+      assetIds,
+      onFrame: (frame) => {
+        client.stop();
+        clearTimeout(timer);
+        resolve(frame);
+      },
+    });
+    const timer = setTimeout(() => {
+      const status = client.status();
+      client.stop();
+      reject(
+        new Error(
+          `no signed frame within ${FRAME_TIMEOUT_MS / 1000}s (connected: ${status.connected}, reconnects: ${status.reconnects}, last error: ${status.lastError ?? 'none'})`,
+        ),
+      );
+    }, FRAME_TIMEOUT_MS);
+    client.start();
+  });
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('❌', err instanceof Error ? err.message : err);
+    process.exit(1);
+  });

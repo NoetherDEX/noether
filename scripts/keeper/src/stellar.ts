@@ -840,6 +840,46 @@ export class StellarClient {
   }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // Stork Fast Relay (L0-8 relay_stork wiring)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Relay one raw signed Fast payload into router.relay_stork. The router
+   * verifies signer/taxonomy/freshness/replay on-chain and stores mapped
+   * assets at 7dp; unmapped taxonomy ids are silently skipped. Returns the
+   * standard ExecutionResult; the relay caller runs on its OWN StellarClient
+   * (dedicated fee key) so this never races the keeper account's sequence.
+   */
+  async relayStork(payload: Buffer): Promise<ExecutionResult> {
+    if (!this.routerContract) return { success: false, error: 'router contract id not configured' };
+    return this.invokeContractWriteWithRetry(this.routerContract, 'relay_stork', [
+      xdr.ScVal.scvBytes(payload),
+    ]);
+  }
+
+  /** Free preflight for stork-check: does the router accept this payload? */
+  async simulateRelayStork(payload: Buffer): Promise<SimulationOutcome> {
+    if (!this.routerContract) return { ok: false, error: 'router contract id not configured' };
+    return this.simulateCall(this.routerContract, 'relay_stork', [xdr.ScVal.scvBytes(payload)]);
+  }
+
+  /** Router strict-asset list (L0-8) — [] when unset, unreadable, or the
+   *  deployed router predates the view (alert-escalation input only). */
+  async getStorkStrictAssets(): Promise<string[]> {
+    if (!this.routerContract) return [];
+    try {
+      const result = await this.invokeContractRead<string[] | null>(
+        this.routerContract,
+        'get_stork_strict_assets',
+        [],
+      );
+      return Array.isArray(result) ? result.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Risk Ladder Functions (L0-12)
   // ═══════════════════════════════════════════════════════════════════════
 

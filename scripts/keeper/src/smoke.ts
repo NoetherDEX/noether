@@ -349,6 +349,43 @@ check('adlWalk: score ties break by lower id', tie[0].position.id, 3n);
   );
 }
 
+// ── Stork Fast payload parser + subscribe dialect (L0-8 relay wiring) ───
+{
+  const { parseFastPayload, buildSubscribeMessage, STORK_DEFAULT_ID_SYMBOLS } =
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    require('./storkFast') as typeof import('./storkFast');
+
+  const i128be = (v: bigint) => Buffer.from(v.toString(16).padStart(32, '0'), 'hex');
+  const body = Buffer.concat([
+    Buffer.from([0, 1]), // taxonomy 1
+    (() => { const b = Buffer.alloc(8); b.writeBigUInt64BE(1_700_000_000_000_000_000n); return b; })(),
+    Buffer.from([0, 3]), i128be(70_000n * 10n ** 18n), // BTC id 3 @ $70k
+    Buffer.from([0, 4]), i128be(3_000n * 10n ** 18n),  // ETH id 4 @ $3k
+  ]);
+  const payload = 'ab'.repeat(65) + body.toString('hex');
+  const frame = parseFastPayload('0x' + payload);
+  check('fast parse: taxonomy', frame.taxonomy, 1);
+  check('fast parse: timestamp ns', frame.timestampNs, 1_700_000_000_000_000_000n);
+  check('fast parse: 2 entries', frame.entries.size, 2);
+  check('fast parse: BTC id 3 @ 70k', frame.entries.get(3), 70_000);
+  check('fast parse: ETH id 4 @ 3k', frame.entries.get(4), 3_000);
+  check('fast parse: payload hex preserved for relay', frame.payloadHex, payload);
+  let threw = false;
+  try { parseFastPayload('0x' + 'ab'.repeat(70)); } catch { threw = true; }
+  check('fast parse: malformed length throws', threw, true);
+  check(
+    'fast subscribe: numeric ids in an assets field',
+    buildSubscribeMessage([3, 4]),
+    '{"type":"subscribe","assets":[3,4]}',
+  );
+  check('fast id map: 13 pairs, XLM absent (no Fast feed)', STORK_DEFAULT_ID_SYMBOLS.length, 13);
+  check(
+    'fast id map: no XLM entry',
+    STORK_DEFAULT_ID_SYMBOLS.some(([, s]) => s === 'XLM'),
+    false,
+  );
+}
+
 // ── L0-9 interim: crossEquity for the two-strike bankruptcy override ────
 {
   const long: HealthPosition = {

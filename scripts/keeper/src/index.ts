@@ -59,7 +59,8 @@ import {
   rankAdlCandidates,
 } from './health';
 import { getReferencePrice } from './reference';
-import { getStorkPrice, getStorkStatus, refreshStorkPrices } from './stork';
+import { getStorkPrice, getStorkStatus, ingestStorkPrice, storkEnabled } from './stork';
+import { StorkFastClient, STORK_DEFAULT_ID_SYMBOLS, type FastFrame } from './storkFast';
 import { sendHeartbeat } from './heartbeat';
 
 // Type-only imports — the @noeracle/sdk package is ESM-only, so the runtime
@@ -88,7 +89,16 @@ const WATCHDOG_CHECK_INTERVAL_MS = 30_000;
 /** Bound on the Noeracle attestation fetch (the SDK takes no signal — raced). */
 const NOERACLE_FETCH_TIMEOUT_MS = 10_000;
 /** Delay between per-asset oracle pushes (sequence-conflict avoidance). */
-const ORACLE_INTER_ASSET_DELAY_MS = 4_000;
+const ORACLE_INTER_ASSET_DELAY_MS = 1_500;
+/** Sync every asset's NAV at least this often even without price moves. */
+const FULL_PNL_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+/** NAV sync triggers when an asset moved at least this many bps since its
+ *  last sync (0.1%) — most cycles sync 0-2 assets instead of all 14, which
+ *  is what restores the 30s oracle push target (was ~150s effective). */
+const PNL_SYNC_MOVE_BPS = 10n;
+/** Feed-dark watchdog: alert when no Fast frame for this long. */
+const STORK_FEED_DARK_MS = 2 * 60 * 1000;
+const STORK_FEED_ALERT_THROTTLE_MS = 10 * 60 * 1000;
 /** Consecutive whole-snapshot read failures before alert + backoff (K-4). */
 const READ_FAILURE_ALERT_THRESHOLD = 3;
 const READ_FAILURE_BACKOFF_MS = 10_000;
@@ -196,6 +206,18 @@ class KeeperBot {
   private liqStrikes: Map<string, number> = new Map();
   /** L0-9 spike-alert throttle: last alert ms epoch per symbol. */
   private spikeAlertAt: Map<string, number> = new Map();
+  // Stork Fast relay (L0-8 relay_stork wiring)
+  private fastClient: StorkFastClient | null = null;
+  /** Separate StellarClient on the DEDICATED relay key — relays must never
+   *  race the keeper account's sequence numbers. */
+  private storkRelayClient: StellarClient | null = null;
+  private storkRelayFailStreak = 0;
+  private storkFeedAlertAt = 0;
+  private storkStrictAssets: string[] = [];
+  private storkStrictProbeAt = 0;
+  // Oracle-cadence fix: NAV sync only on real moves (full pass bounds drift)
+  private lastSyncedPnlPrice: Map<string, bigint> = new Map();
+  private lastFullPnlSyncAt = 0;
   private throttledLogAt: Map<string, number> = new Map();
   private nextTtlBumpAt: number = 0; // P3-9
 
@@ -221,6 +243,7 @@ class KeeperBot {
       adlFlagFlips: 0,
       ordersReconciled: 0,
       routerExecutions: 0,
+      storkRelays: 0,
     };
   }
 
@@ -277,6 +300,7 @@ class KeeperBot {
     console.log(`  Watchdog:          exit after ${this.config.watchdogTimeoutMs}ms without a completed cycle`);
     console.log(`  Instance:          ${this.config.instanceId}${this.config.pollOffsetMs > 0 ? ` (poll offset ${this.config.pollOffsetMs}ms)` : ''}`);
     console.log(`  Router:            ${this.config.routerContractId ? `${this.config.routerContractId.slice(0, 8)}… (verify-then-trade preferred)` : 'not configured (direct market calls only)'}`);
+    console.log(`  Stork relay:       ${storkEnabled(this.config) && this.config.storkRelaySecretKey ? `every ${Math.round(this.config.storkRelayIntervalMs / 1000)}s via Fast WS (${this.config.storkAssetIds.length} ids)` : storkEnabled(this.config) ? 'key set but STORK_RELAY_SECRET_KEY missing — relay OFF, cross-val only' : 'disabled (no STORK_API_KEY)'}`);
     console.log(`  Healthcheck:       ${this.config.healthcheckUrl ? 'enabled' : 'disabled'}`);
     console.log(`  State File:        ${this.config.stateFilePath}`);
     console.log(`  Assets:            ${this.config.assets.map(a => `${a.symbol} (±${a.maxMovePct}%, $${a.minPrice}-$${a.maxPrice})`).join(', ')}`);
@@ -304,6 +328,8 @@ class KeeperBot {
         'Set a dedicated KEEPER_SECRET_KEY — admin key exposure on the keeper box is unnecessary blast radius.',
       );
     }
+
+    this.startStorkRelay();
 
     console.log('🚀 Keeper bot started. Monitoring...\n');
     console.log('═'.repeat(80) + '\n');
@@ -539,10 +565,9 @@ class KeeperBot {
       return pushed;
     }
 
-    // Stork secondary oracle (T3-D1): one batched fetch per cycle so the
-    // per-asset defense below can cross-check. No key / unreachable →
-    // no-op (fail-open); the defense simply sees "no data".
-    await refreshStorkPrices(this.config, this.config.assets.map(a => a.symbol));
+    // Stork cross-check data streams in from the Fast WS (storkFast.ts →
+    // ingestStorkPrice) — no per-cycle fetch. No key / feed dark → the
+    // defense below simply sees "no data" (fail-open, unchanged).
 
     // Validate every asset first (K-2 defenses unchanged, per asset), then
     // push the survivors as ONE batched transaction per cycle — the hardened
@@ -641,11 +666,23 @@ class KeeperBot {
           );
         }
 
-        // P1-4: refresh the vault NAV per asset now that the oracle prices
-        // moved. Permissionless + non-fatal by design; spaced to be gentle
-        // on the keeper account's sequence.
+        // P1-4: refresh the vault NAV — but only for assets that actually
+        // MOVED (>= 0.1%) since their last sync, with a periodic full pass
+        // bounding drift. The old unconditional 14-asset spaced loop alone
+        // took ~2min, dragging the effective oracle cadence to ~150s vs the
+        // 30s target (and the 60s on-chain staleness bar).
+        const fullSync = Date.now() - this.lastFullPnlSyncAt > FULL_PNL_SYNC_INTERVAL_MS;
+        if (fullSync) this.lastFullPnlSyncAt = Date.now();
         for (const symbol of pushed) {
+          const price = this.currentPrices.get(symbol)?.priceScaled ?? 0n;
+          const last = this.lastSyncedPnlPrice.get(symbol);
+          const moved =
+            last === undefined || last === 0n
+              ? true
+              : ((price > last ? price - last : last - price) * 10_000n) / last >= PNL_SYNC_MOVE_BPS;
+          if (!fullSync && !moved) continue;
           await this.syncAssetPnl(symbol);
+          this.lastSyncedPnlPrice.set(symbol, price);
           await this.sleep(ORACLE_INTER_ASSET_DELAY_MS);
         }
       } else if (result.indeterminate) {
@@ -662,6 +699,104 @@ class KeeperBot {
     }
 
     return pushed;
+  }
+
+  /**
+   * L0-8 relay_stork wiring: keep the router's on-chain Stork price fresh
+   * (≤ the router's 60s bar) so the second-source guard has data and
+   * strict assets can be armed. Independent async loop on a DEDICATED fee
+   * key — the ~30s+ main cycle could never hold a 60s freshness bound, and
+   * sharing the keeper account would race sequence numbers. The router is
+   * the verifier; a relay failure just retries next tick (fail-open unless
+   * strict is armed, which is exactly what strict means).
+   */
+  private startStorkRelay(): void {
+    if (!storkEnabled(this.config)) return;
+
+    const idToSymbol = new Map<number, string>(STORK_DEFAULT_ID_SYMBOLS);
+    this.fastClient = new StorkFastClient({
+      wsUrl: this.config.storkWsUrl,
+      apiKey: this.config.storkApiKey,
+      assetIds: this.config.storkAssetIds,
+      onFrame: (frame: FastFrame) => {
+        // Cross-validation ingest (replaces the retired Core REST poll).
+        for (const [id, price] of frame.entries) {
+          const symbol = idToSymbol.get(id);
+          if (symbol) ingestStorkPrice(symbol, price, frame.receivedAt);
+        }
+      },
+    });
+    this.fastClient.start();
+
+    if (!this.config.storkRelaySecretKey) return; // cross-val only
+
+    this.storkRelayClient = new StellarClient({
+      ...this.config,
+      secretKey: this.config.storkRelaySecretKey,
+    });
+    const tick = async () => {
+      try {
+        await this.storkRelayTick();
+      } catch (error) {
+        this.logThrottled(
+          'stork-relay-err',
+          `⚠️  Stork relay tick error: ${error instanceof Error ? error.message : error}`,
+        );
+      }
+      setTimeout(tick, this.config.storkRelayIntervalMs).unref?.();
+    };
+    setTimeout(tick, 5_000).unref?.();
+  }
+
+  private async storkRelayTick(): Promise<void> {
+    if (!this.fastClient || !this.storkRelayClient) return;
+    const now = Date.now();
+
+    // Refresh the strict-asset cache hourly: a dark feed is warn-level
+    // fail-open normally, but CRITICAL while strict is armed (BTC/ETH
+    // opens are then halting by design).
+    if (now - this.storkStrictProbeAt > 60 * 60 * 1000) {
+      this.storkStrictProbeAt = now;
+      this.storkStrictAssets = await this.stellar.getStorkStrictAssets();
+    }
+
+    const status = this.fastClient.status();
+    if (now - (status.lastFrameAt ?? 0) > STORK_FEED_DARK_MS) {
+      if (now - this.storkFeedAlertAt > STORK_FEED_ALERT_THROTTLE_MS) {
+        this.storkFeedAlertAt = now;
+        const strict = this.storkStrictAssets.length > 0;
+        console.warn(`\n⚠️  Stork Fast feed dark ${Math.round((now - (status.lastFrameAt ?? 0)) / 1000)}s (${status.lastError ?? 'no frames'})`);
+        void sendAlert(
+          strict ? 'critical' : 'warn',
+          strict
+            ? `Stork feed DARK with strict armed [${this.storkStrictAssets.join(', ')}] — opens halting`
+            : 'Stork Fast feed dark — guard fail-open',
+          `No signed frame for ${Math.round((now - (status.lastFrameAt ?? 0)) / 1000)}s (reconnects: ${status.reconnects}, last error: ${status.lastError ?? 'none'}).`,
+        );
+      }
+      return;
+    }
+
+    const frame = this.fastClient.latest();
+    if (!frame) return;
+    // Don't pay fees for a payload that will be stale by landing time.
+    if (now - frame.receivedAt > 55_000) return;
+
+    const result = await this.storkRelayClient.relayStork(Buffer.from(frame.payloadHex, 'hex'));
+    if (result.success) {
+      this.stats.storkRelays++;
+      this.storkRelayFailStreak = 0;
+    } else if (!result.indeterminate) {
+      this.storkRelayFailStreak++;
+      this.logThrottled('stork-relay-fail', `⚠️  relay_stork failed (${this.storkRelayFailStreak}x): ${result.error}`);
+      if (this.storkRelayFailStreak === 5) {
+        void sendAlert(
+          'warn',
+          'relay_stork failing repeatedly',
+          `${this.storkRelayFailStreak} consecutive failures; last: ${result.error}`,
+        );
+      }
+    }
   }
 
   /**

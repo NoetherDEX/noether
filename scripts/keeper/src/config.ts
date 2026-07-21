@@ -6,6 +6,7 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
 import { KeeperConfig, AssetConfig, KeySource } from './types';
+import { STORK_DEFAULT_ID_SYMBOLS } from './storkFast';
 
 // Load .env - try local first, then project root (for monorepo)
 dotenv.config(); // loads .env from cwd (Railway sets env vars directly)
@@ -32,6 +33,15 @@ const DEFAULT_ASSETS: AssetConfig[] = [
   { symbol: 'BCH', decimals: 7, maxMovePct: 20, minPrice: 1, maxPrice: 100_000 },
   { symbol: 'LTC', decimals: 7, maxMovePct: 20, minPrice: 1, maxPrice: 100_000 },
 ];
+
+function parseStorkAssetIds(raw: string | undefined): number[] {
+  if (!raw) return STORK_DEFAULT_ID_SYMBOLS.map(([id]) => id);
+  const ids = raw
+    .split(',')
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 0);
+  return ids.length > 0 ? ids : STORK_DEFAULT_ID_SYMBOLS.map(([id]) => id);
+}
 
 function envInt(name: string, fallback: number): number {
   const parsed = parseInt(process.env[name] || '', 10);
@@ -224,9 +234,17 @@ export function loadConfig(): KeeperConfig {
     // Stork secondary oracle (T3-D1). Empty key = disabled = the keeper
     // runs Noeracle-only, exactly as before — fail-open by design.
     storkApiKey: process.env.STORK_API_KEY || '',
-    storkRestUrl: process.env.STORK_REST_URL || 'https://rest.jp.stork-oracle.network',
     storkMaxDivergencePct: envFloat('STORK_MAX_DIVERGENCE_PCT', 1.5),
     storkMaxAgeMs: envInt('STORK_MAX_AGE_MS', 120_000),
+
+    // L0-8 relay_stork wiring: independent loop + dedicated fee key so the
+    // 60s on-chain freshness bar never hangs off the main cycle's cadence.
+    storkWsUrl:
+      process.env.STORK_WS_URL ||
+      'wss://fast.jp.stork-oracle.network/ws?channel=1s&message_type=signed_ecdsa',
+    storkRelaySecretKey: process.env.STORK_RELAY_SECRET_KEY || '',
+    storkRelayIntervalMs: envInt('STORK_RELAY_INTERVAL_MS', 40_000),
+    storkAssetIds: parseStorkAssetIds(process.env.STORK_ASSET_IDS),
 
     // Oracle-health heartbeat (T3-D1): POSTed to the api gateway after
     // every oracle cycle. Empty URL = disabled — fire-and-forget either way.
