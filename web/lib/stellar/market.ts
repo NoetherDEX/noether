@@ -65,6 +65,26 @@ function bigIntToNumber(value: bigint | number | undefined, decimals = 7): numbe
 /**
  * Open a new leveraged position
  */
+/** Default close-side L0-10 bound: 1% from the user-visible mark. */
+export const DEFAULT_CLOSE_BOUND_BPS = 100;
+
+/**
+ * L0-10 close bound from the LAST PRICE THE USER SAW (never from the
+ * relayed attestation — that would be self-referential). Long exits sell,
+ * so the bound sits below the mark; shorts buy back, bound above.
+ * Returns 0 (unbounded) when no usable mark exists — closes must never
+ * be blocked by missing display data.
+ */
+export function closeAcceptableBound(
+  direction: Direction,
+  markUsd: number,
+  bps: number = DEFAULT_CLOSE_BOUND_BPS,
+): bigint {
+  if (!(markUsd > 0) || bps <= 0) return BigInt(0);
+  const factor = direction === 'Long' ? 1 - bps / 10_000 : 1 + bps / 10_000;
+  return BigInt(Math.round(markUsd * factor * 10_000_000));
+}
+
 export async function openPosition(
   signerPublicKey: string,
   signTransaction: (xdr: string) => Promise<string>,
@@ -73,6 +93,8 @@ export async function openPosition(
     collateral: bigint;
     leverage: number;
     direction: Direction;
+    /** L0-10 worst-fill bound (7dp). Omit/0 = unbounded. Batch-1 only. */
+    acceptablePrice?: bigint;
   }
 ): Promise<Position> {
   debugLog('[DEBUG] Opening position...');
@@ -108,7 +130,7 @@ export async function openPosition(
             toScVal(params.collateral, 'i128'),
             toScVal(params.leverage, 'u32'),
             toScVal(params.direction, 'direction'),
-            toScVal(BigInt(0), 'i128'), // acceptable_price
+            toScVal(params.acceptablePrice ?? BigInt(0), 'i128'),
             attestationStructArg(params.asset, att),
           ]
         : [...tradeArgs, ...priceTailArgs(att)],
@@ -120,7 +142,7 @@ export async function openPosition(
       signerPublicKey,
       marketContract,
       'open_position',
-      batch1 ? [...tradeArgs, toScVal(BigInt(0), 'i128')] : tradeArgs,
+      batch1 ? [...tradeArgs, toScVal(params.acceptablePrice ?? BigInt(0), 'i128')] : tradeArgs,
     );
   }
 
@@ -143,6 +165,7 @@ export async function closePosition(
   signTransaction: (xdr: string) => Promise<string>,
   positionId: number,
   asset: string,
+  acceptablePrice: bigint = BigInt(0),
 ): Promise<{ pnl: bigint; fee: bigint }> {
   debugLog('[DEBUG] Closing position...');
 
@@ -165,7 +188,7 @@ export async function closePosition(
         ? [
             toScVal(signerPublicKey, 'address'),
             toScVal(positionId, 'u64'),
-            toScVal(BigInt(0), 'i128'), // acceptable_price (0 = unbounded)
+            toScVal(acceptablePrice, 'i128'), // 0 = unbounded
             attestationStructArg(asset, att),
           ]
         : [
@@ -185,7 +208,7 @@ export async function closePosition(
       signerPublicKey,
       marketContract,
       'close_position',
-      batch1 ? [...args, toScVal(BigInt(0), 'i128')] : args,
+      batch1 ? [...args, toScVal(acceptablePrice, 'i128')] : args,
     );
   }
 
@@ -1493,6 +1516,8 @@ export async function openPositionCross(
     collateral: bigint;
     leverage: number;
     direction: Direction;
+    /** L0-10 worst-fill bound (7dp). Omit/0 = unbounded. Batch-1 only. */
+    acceptablePrice?: bigint;
   }
 ): Promise<Position> {
   const args = [
@@ -1504,7 +1529,9 @@ export async function openPositionCross(
   ];
 
   // Batch-1 open_position_cross gained the L0-10 acceptable_price arg.
-  if (await marketHasBatch1Features()) args.push(toScVal(BigInt(0), 'i128'));
+  if (await marketHasBatch1Features()) {
+    args.push(toScVal(params.acceptablePrice ?? BigInt(0), 'i128'));
+  }
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position_cross', args);
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
@@ -1521,7 +1548,8 @@ export async function openPositionCross(
 export async function closePositionCross(
   signerPublicKey: string,
   signTransaction: (xdr: string) => Promise<string>,
-  positionId: number
+  positionId: number,
+  acceptablePrice: bigint = BigInt(0),
 ): Promise<{ pnl: bigint }> {
   const args = [
     toScVal(signerPublicKey, 'address'),
@@ -1529,7 +1557,9 @@ export async function closePositionCross(
   ];
 
   // Batch-1 close_position_cross gained the L0-10 acceptable_price arg.
-  if (await marketHasBatch1Features()) args.push(toScVal(BigInt(0), 'i128'));
+  if (await marketHasBatch1Features()) {
+    args.push(toScVal(acceptablePrice, 'i128'));
+  }
   const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_cross', args);
   const signedXdr = await signTransaction(xdrStr);
   const result = await submitTransaction(signedXdr);
