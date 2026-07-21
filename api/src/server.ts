@@ -25,6 +25,7 @@ import { registerLeaderboardRoutes } from './routes/leaderboard.js';
 import { VaultsService } from './services/vaults.js';
 import { ReferralReadService } from './services/referral.js';
 import { ContractReader } from './services/contractReader.js';
+import { PauseStateService } from './services/pauseState.js';
 import { OracleService } from './services/oracle.js';
 import { MarketsService } from './services/markets.js';
 import { EventsService } from './services/events.js';
@@ -64,6 +65,8 @@ export interface ServerDeps {
   stats: StatsService;
   adlQueue: AdlQueueService;
   shortfall: ShortfallService;
+  /** L0-15 pause-state probe for /v1/health — optional in test setups. */
+  pauseState?: PauseStateService;
 }
 
 const PKG = JSON.parse(
@@ -109,7 +112,11 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
   await app.register(wsPlugin, { manager: deps.wsManager, apiKeys: deps.apiKeys });
 
   await app.register((instance) =>
-    registerHealthRoutes(instance, { db: deps.db, contracts: config.contracts }),
+    registerHealthRoutes(instance, {
+      db: deps.db,
+      contracts: config.contracts,
+      pauseState: deps.pauseState,
+    }),
   );
   await app.register((instance) => registerMarketsRoutes(instance, deps.markets, deps.stats));
   await app.register((instance) => registerOracleRoutes(instance, deps.oracle));
@@ -169,7 +176,11 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const wsManager = new WsManager(wsBus, log, config.ws);
   const oracleTicker = new OracleTicker({ oracle, bus: wsBus, log });
   const liveTailer = new LiveTailer({ db, bus: wsBus, log });
-  const vaults = new VaultsService(db);
+  const vaults = new VaultsService(db, {
+    reader,
+    vaultFactoryId: config.contracts.contracts.vaultFactory ?? '',
+  });
+  const pauseState = new PauseStateService(reader, config.contracts.contracts.market ?? '');
   const referral = new ReferralReadService(db);
   // Scope leaderboard scans to the live market so retired deployments
   // never leak into the totals (resolves via CONTRACT_MARKET override).
@@ -182,5 +193,5 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
     rpcUrl: config.rpcUrl,
   });
   const shortfall = new ShortfallService(reader, config.contracts.contracts.vault);
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall };
+  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall, pauseState };
 }

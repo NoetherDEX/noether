@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '@noether/db';
 import { resolvedContracts, type ContractKey, type ContractsManifest } from '@noether/shared';
+import type { PauseStateService } from '../services/pauseState.js';
 
 const ECHOED_KEYS: readonly ContractKey[] = [
   'market',
@@ -16,6 +17,8 @@ const ECHOED_KEYS: readonly ContractKey[] = [
 export interface HealthDeps {
   db: Db;
   contracts: ContractsManifest;
+  /** L0-15 market pause state (Batch-1) — omitted in minimal test setups. */
+  pauseState?: PauseStateService;
 }
 
 export async function registerHealthRoutes(app: FastifyInstance, deps?: HealthDeps): Promise<void> {
@@ -63,7 +66,13 @@ export async function registerHealthRoutes(app: FastifyInstance, deps?: HealthDe
         // poll_cursor absent (fresh DB) — leave nulls
       }
 
-      return { ...base, network: deps.contracts.network, contracts, indexer };
+      // L0-15 (Batch-1): the market's effective pause mode. supported:false
+      // on the pre-Batch-1 chain — consumers must not read that as "live".
+      const market = deps.pauseState
+        ? { pauseState: await deps.pauseState.pauseState() }
+        : undefined;
+
+      return { ...base, network: deps.contracts.network, contracts, indexer, ...(market ? { market } : {}) };
     },
   );
 }

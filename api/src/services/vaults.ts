@@ -1,5 +1,7 @@
+import { nativeToScVal } from '@stellar/stellar-sdk';
 import { isMissingTable, type Db } from '@noether/db';
 import { TtlCache } from './cache.js';
+import type { ContractReader } from './contractReader.js';
 
 export interface VaultRow {
   id: number;
@@ -115,8 +117,35 @@ export class VaultsService {
   // Coalesce the per-vault aggregate fan-out (audit A-7) so a burst of
   // /v1/vaults requests doesn't re-run the N+1 round-trips every time.
   private readonly aggCache = new TtlCache<VaultAggregates>(AGG_TTL_MS);
+  private readonly navCache = new TtlCache<string | null>(15_000);
 
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    /** L0-20 full-NAV enrichment (Batch-1) — omitted in db-only test setups. */
+    private readonly chain?: { reader: ContractReader; vaultFactoryId: string },
+  ) {}
+
+  /**
+   * L0-20 full NAV (liquid + deployed position equity + pending order
+   * collateral) via the factory's `get_full_nav` view. null = unavailable:
+   * pre-Batch-1 factory, no chain wiring, a #18 fail-closed valuation, or a
+   * transport failure — the UI renders 'unavailable', never a fabricated 0.
+   */
+  async fullNav(vaultId: number): Promise<string | null> {
+    if (!this.chain?.vaultFactoryId) return null;
+    return this.navCache.getOrLoad(String(vaultId), async () => {
+      try {
+        const nav = await this.chain!.reader.read<bigint>(
+          this.chain!.vaultFactoryId,
+          'get_full_nav',
+          [nativeToScVal(vaultId, { type: 'u32' })],
+        );
+        return BigInt(nav ?? 0).toString();
+      } catch {
+        return null;
+      }
+    });
+  }
 
   async list(opts?: { leader?: string; limit?: number }): Promise<VaultRow[]> {
     const limit = clampLimit(opts?.limit);

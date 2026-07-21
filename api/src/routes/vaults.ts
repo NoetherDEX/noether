@@ -28,6 +28,8 @@ const VAULT_SCHEMA = {
     hwmNav: { type: 'string' },
     realizedPnl: { type: 'string' },
     leaderShares: { type: 'string' },
+    /** L0-20 full NAV (7dp string). null = unavailable (pre-Batch-1 / #18). */
+    navFull: { type: ['string', 'null'] },
     profitShareBps: { type: 'integer' },
     paused: { type: 'boolean' },
     updatedAt: { type: 'integer' },
@@ -147,8 +149,11 @@ export async function registerVaultRoutes(
     async (req, reply) => {
       const row = await vaults.get(req.params.id);
       if (!row) return reply.code(404).send({ error: 'vault_not_found', id: req.params.id });
-      const agg = await vaults.aggregates(req.params.id, row);
-      return reply.send({ ...row, ...agg });
+      const [agg, navFull] = await Promise.all([
+        vaults.aggregates(req.params.id, row),
+        vaults.fullNav(req.params.id),
+      ]);
+      return reply.send({ ...row, ...agg, navFull });
     },
   );
 

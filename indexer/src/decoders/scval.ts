@@ -32,6 +32,11 @@ export function asNumber(v: unknown, label: string): number {
   throw new Error(`Expected number for ${label}, got ${typeof v}`);
 }
 
+export function asBool(v: unknown, label: string): boolean {
+  if (typeof v !== 'boolean') throw new Error(`${label}: expected bool, got ${typeof v}`);
+  return v;
+}
+
 export function asString(v: unknown, label: string): string {
   if (typeof v === 'string') return v;
   throw new Error(`Expected string for ${label}, got ${typeof v}`);

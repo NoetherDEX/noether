@@ -571,7 +571,21 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         setIsSubmitting(false);
         return;
       }
-      // Market order - immediate execution
+      // Market order - immediate execution.
+      // L0-10 (Batch-1): worst-fill bound from the LIVE mark the user is
+      // looking at — longs cap the entry above, shorts floor it below. A
+      // fill beyond the bound reverts (#87) instead of executing. 0 =
+      // unbounded (no mark / slippage set to 0 / pre-Batch-1 chain).
+      const openBound =
+        batch1Features && assetPrice > 0 && slippageTolerance > 0
+          ? BigInt(Math.round(
+              assetPrice *
+                (direction === 'Long'
+                  ? 1 + slippageTolerance / 10_000
+                  : 1 - slippageTolerance / 10_000) *
+                10_000_000,
+            ))
+          : BigInt(0);
       if (marginMode === 'Cross') {
         // Cross-margin: single tx - contract auto-deposits from wallet if pool insufficient
         const openCrossPromise = openPositionCross(publicKey, sign, {
@@ -579,6 +593,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           collateral: toPrecision(collateralNum),
           leverage,
           direction,
+          acceptablePrice: openBound,
         });
 
         toast.promise(openCrossPromise, {
@@ -603,6 +618,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           collateral: toPrecision(collateralNum),
           leverage,
           direction,
+          acceptablePrice: openBound,
         });
 
         toast.promise(openPositionPromise, {
@@ -1283,15 +1299,22 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
             TIF + Reduce-Only encode into the contract's u32 (bits 0-7 TIF,
             bit 8 RO) and apply to Limit orders and the Stop-Limit's limit
             phase; trailing stops take only the slippage band. Market orders
-            get the acceptable-price treatment in the Batch-1 L0-10 work. */}
-        {orderType !== 'Market' && (
+            (Batch-1, L0-10) reuse the same control as a worst-fill bound:
+            the trade reverts beyond mark ± tolerance instead of filling. */}
+        {(orderType !== 'Market' || batch1Features) && (
           <div className="space-y-3 border-t border-border pt-4">
             {/* Slippage Tolerance */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs text-muted-foreground flex items-center gap-1.5">
-                  Slippage Tolerance
-                  <Tooltip content="Maximum difference between trigger and execution price before the order cancels itself.">
+                  {orderType === 'Market' ? 'Max Slippage' : 'Slippage Tolerance'}
+                  <Tooltip
+                    content={
+                      orderType === 'Market'
+                        ? 'Worst acceptable fill vs the live mark. The trade reverts (never fills) beyond this bound.'
+                        : 'Maximum difference between trigger and execution price before the order cancels itself.'
+                    }
+                  >
                     <Info className="h-3 w-3 opacity-50" />
                   </Tooltip>
                 </label>

@@ -47,6 +47,7 @@ import {
   getFundingRate,
   getCumulativeFundingRate,
   getRecentLiquidations,
+  closeAcceptableBound,
 } from '@/lib/stellar/market';
 import { marketHasBatch1Features } from '@/lib/stellar/capabilities';
 import { useNotificationStore } from '@/lib/store/notificationStore';
@@ -659,11 +660,16 @@ function TradePage() {
         }).catch(() => {});
         return null; // vault_factory proxy doesn't surface the PnL
       }
+      // L0-10 (Batch-1): bound the exit at 1% from the mark the user last
+      // saw; 0 (unbounded) when the row had no live mark. Inert pre-Batch-1.
+      const bound = pos
+        ? closeAcceptableBound(pos.direction, pos.currentPrice)
+        : BigInt(0);
       if (pos?.marginMode === 'Cross') {
-        const result = await closePositionCross(publicKey, sign, positionId);
+        const result = await closePositionCross(publicKey, sign, positionId, bound);
         return result.pnl;
       }
-      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? selectedAsset);
+      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? selectedAsset, bound);
       return result.pnl;
     })();
 

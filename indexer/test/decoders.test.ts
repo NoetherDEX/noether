@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { Address, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import { decodeMarketEvent, type RawEvent } from '../src/decoders/market.js';
+import { decodeVaultEvent } from '../src/decoders/vault.js';
 
 const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
 const FAKE_TRADER = 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
 const FAKE_TX_HASH = 'a'.repeat(64);
 
-function makeRawEvent(topic: string, value: xdr.ScVal, ledger = 100): RawEvent {
+function makeRawEvent(
+  topic: string,
+  value: xdr.ScVal,
+  ledger = 100,
+  extraTopics: xdr.ScVal[] = [],
+): RawEvent {
   return {
     id: `${ledger}-1`,
     contractId: FAKE_CONTRACT,
     type: 'contract',
-    topic: [nativeToScVal(topic, { type: 'symbol' })],
+    topic: [nativeToScVal(topic, { type: 'symbol' }), ...extraTopics],
     value,
     ledger,
     ledgerClosedAt: '2026-04-29T00:00:00Z',
@@ -274,5 +280,110 @@ describe('decodeMarketEvent', () => {
     const value = vec(nativeToScVal(1n, { type: 'i128' }));
     const decoded = decodeMarketEvent(makeRawEvent('something_new', value));
     expect(decoded).toBeNull();
+  });
+
+  it('decodes paused as the L0-15 (mode, since) tuple', () => {
+    const value = vec(
+      nativeToScVal(2n, { type: 'u32' }),
+      nativeToScVal(1_700_000_000n, { type: 'u64' }),
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('paused', value));
+    if (decoded?.topic !== 'paused') throw new Error('wrong topic');
+    expect(decoded.mode).toBe(2);
+    expect(decoded.since).toBe(1_700_000_000);
+  });
+
+  it('decodes pause_degraded (from, to)', () => {
+    const value = vec(
+      nativeToScVal(2n, { type: 'u32' }),
+      nativeToScVal(1n, { type: 'u32' }),
+    );
+    const decoded = decodeMarketEvent(makeRawEvent('pause_degraded', value));
+    if (decoded?.topic !== 'pause_degraded') throw new Error('wrong topic');
+    expect(decoded.fromMode).toBe(2);
+    expect(decoded.toMode).toBe(1);
+  });
+
+  it('decodes asset_halt_set (asset in topic[1], halted 1-tuple payload)', () => {
+    const value = vec(nativeToScVal(true, { type: 'bool' }));
+    const decoded = decodeMarketEvent(
+      makeRawEvent('asset_halt_set', value, 100, [nativeToScVal('DOGE', { type: 'symbol' })]),
+    );
+    if (decoded?.topic !== 'asset_halt_set') throw new Error('wrong topic');
+    expect(decoded.asset).toBe('DOGE');
+    expect(decoded.halted).toBe(true);
+  });
+
+  it('decodes collateral_added / collateral_removed (id, trader, amount, liq_price)', () => {
+    const value = vec(
+      nativeToScVal(42n, { type: 'u64' }),
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal(50_0000000n, { type: 'i128' }),
+      nativeToScVal(58_000_0000000n, { type: 'i128' }),
+    );
+    for (const topic of ['collateral_added', 'collateral_removed'] as const) {
+      const decoded = decodeMarketEvent(makeRawEvent(topic, value));
+      if (decoded?.topic !== topic) throw new Error('wrong topic');
+      expect(decoded.positionId).toBe(42);
+      expect(decoded.trader).toBe(FAKE_TRADER);
+      expect(decoded.amount).toBe(50_0000000n);
+      expect(decoded.liquidationPrice).toBe(58_000_0000000n);
+    }
+  });
+});
+
+describe('decodeVaultEvent — Batch-1 factory topics', () => {
+  const vaultTopic = (id: number) => [nativeToScVal(id, { type: 'u32' })];
+
+  it('decodes leader_limit / leader_cancel / leader_stop_limit (leader, order_id)', () => {
+    const value = vec(
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal(9n, { type: 'u64' }),
+    );
+    for (const topic of ['leader_limit', 'leader_cancel', 'leader_stop_limit'] as const) {
+      const decoded = decodeVaultEvent(makeRawEvent(topic, value, 100, vaultTopic(3)));
+      if (decoded?.topic !== topic) throw new Error('wrong topic');
+      expect(decoded.vaultId).toBe(3);
+      expect(decoded.leader).toBe(FAKE_TRADER);
+      expect(decoded.orderId).toBe(9n);
+    }
+  });
+
+  it('decodes leader_sl / leader_tp / leader_trail (leader, order_id, position_id)', () => {
+    const value = vec(
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal(9n, { type: 'u64' }),
+      nativeToScVal(42n, { type: 'u64' }),
+    );
+    for (const topic of ['leader_sl', 'leader_tp', 'leader_trail'] as const) {
+      const decoded = decodeVaultEvent(makeRawEvent(topic, value, 100, vaultTopic(3)));
+      if (decoded?.topic !== topic) throw new Error('wrong topic');
+      expect(decoded.orderId).toBe(9n);
+      expect(decoded.positionId).toBe(42n);
+    }
+  });
+
+  it('decodes order_reconciled (order_id, position_id, credited)', () => {
+    const value = vec(
+      nativeToScVal(9n, { type: 'u64' }),
+      nativeToScVal(0n, { type: 'u64' }), // cancelled/expired refund path
+      nativeToScVal(75_0000000n, { type: 'i128' }),
+    );
+    const decoded = decodeVaultEvent(makeRawEvent('order_reconciled', value, 100, vaultTopic(3)));
+    if (decoded?.topic !== 'order_reconciled') throw new Error('wrong topic');
+    expect(decoded.orderId).toBe(9n);
+    expect(decoded.positionId).toBe(0n);
+    expect(decoded.credited).toBe(75_0000000n);
+  });
+
+  it('decodes position_reconciled (position_id, proceeds)', () => {
+    const value = vec(
+      nativeToScVal(42n, { type: 'u64' }),
+      nativeToScVal(130_0000000n, { type: 'i128' }),
+    );
+    const decoded = decodeVaultEvent(makeRawEvent('position_reconciled', value, 100, vaultTopic(3)));
+    if (decoded?.topic !== 'position_reconciled') throw new Error('wrong topic');
+    expect(decoded.positionId).toBe(42n);
+    expect(decoded.proceeds).toBe(130_0000000n);
   });
 });

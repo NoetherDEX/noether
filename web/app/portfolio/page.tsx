@@ -19,6 +19,7 @@ import {
   closePositionPartial,
   addCollateral,
   removeCollateral,
+  closeAcceptableBound,
 } from '@/lib/stellar/market';
 import { marketHasBatch1Features } from '@/lib/stellar/capabilities';
 import { ShortfallCard } from '@/components/portfolio/ShortfallCard';
@@ -225,11 +226,16 @@ function PortfolioPage() {
     const label = pos ? `${pos.asset} ${pos.direction}` : `position #${positionId}`;
 
     const closePromise = (async (): Promise<bigint | null> => {
+      // L0-10 (Batch-1): bound the exit at 1% from the last displayed mark;
+      // 0 (unbounded) when no live mark. Inert pre-Batch-1.
+      const bound = pos
+        ? closeAcceptableBound(pos.direction, pos.currentPrice)
+        : BigInt(0);
       if (pos?.marginMode === 'Cross') {
-        const result = await closePositionCross(publicKey, sign, positionId);
+        const result = await closePositionCross(publicKey, sign, positionId, bound);
         return result.pnl;
       }
-      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? 'BTC');
+      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? 'BTC', bound);
       return result.pnl;
     })();
 

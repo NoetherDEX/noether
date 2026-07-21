@@ -48,7 +48,11 @@ export type VaultEvent =
   | VaultFeesClaimedEvent
   | VaultPausedEvent
   | VaultLeaderOpenEvent
-  | VaultLeaderCloseEvent;
+  | VaultLeaderCloseEvent
+  | VaultLeaderOrderEvent
+  | VaultLeaderProtectiveEvent
+  | VaultOrderReconciledEvent
+  | VaultPositionReconciledEvent;
 
 export interface VaultEventEnvelope {
   topic: string;
@@ -100,4 +104,36 @@ export interface VaultLeaderCloseEvent extends VaultEventEnvelope {
   topic: 'leader_close';
   leader: StellarAddress;
   positionId: bigint;
+}
+
+/** L1-30/L0-20: a leader placed or cancelled an entry order. */
+export interface VaultLeaderOrderEvent extends VaultEventEnvelope {
+  topic: 'leader_limit' | 'leader_cancel' | 'leader_stop_limit';
+  leader: StellarAddress;
+  orderId: bigint;
+}
+
+/** L1-30: a leader attached a protective order to a vault position. */
+export interface VaultLeaderProtectiveEvent extends VaultEventEnvelope {
+  topic: 'leader_sl' | 'leader_tp' | 'leader_trail';
+  leader: StellarAddress;
+  orderId: bigint;
+  positionId: bigint;
+}
+
+/** L0-20: an executed/cancelled order was reconciled back into its vault
+ * (positionId 0 = cancelled/expired refund; credited = USDC returned). */
+export interface VaultOrderReconciledEvent extends VaultEventEnvelope {
+  topic: 'order_reconciled';
+  orderId: bigint;
+  positionId: bigint;
+  credited: bigint;
+}
+
+/** L1-30: a market-side full close/liquidation of a vault position was
+ * reconciled — `proceeds` credited to the vault's total_usdc. */
+export interface VaultPositionReconciledEvent extends VaultEventEnvelope {
+  topic: 'position_reconciled';
+  positionId: bigint;
+  proceeds: bigint;
 }
