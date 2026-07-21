@@ -54,7 +54,7 @@ B1_BUFFER_SEED_USDC=            # insurance seed via vault.seed_buffer (empty = 
 B1_STORK_SIGNER_EVM=            # 20-byte hex EVM addr of the Stork Fast signer
 B1_STORK_TAXONOMY=              # Stork taxonomy id (u32)
 B1_STORK_ASSET_IDS=             # e.g. [0,1]      (parallel with B1_STORK_TAGS)
-B1_STORK_TAGS=                  # e.g. ["4254435553440000","4554485553440000"] (hex 8-byte tags)
+B1_STORK_TAGS=                  # COMMA list, e.g. 4254435553440000,4554485553440000 (hex 8-byte tags, NO quotes/brackets)
 B1_REFLECTOR_ORACLE_ID=         # SEP-40 vendor (Reflector) contract id
 B1_REFLECTOR_DECIMALS=14
 TPL
@@ -94,12 +94,15 @@ invoke() { # invoke LABEL -- <cli args…>: fatal on error, prints the label
   echo "  ✓ $label"
 }
 
-init_contract() { # init_contract LABEL -- <invoke args…>: #1 AlreadyInitialized = ok
+init_contract() { # init_contract LABEL -- <invoke args…>
+  # AlreadyInitialized is #2 in NoetherError (market/shim/router) but #1 in
+  # the vault/factory/referral enums — in an init context both codes only
+  # ever mean "already initialized", so both make a re-run idempotent.
   local label="$1"; shift
   local out
   if out="$("$CLI" contract invoke "$@" 2>&1)"; then
     echo "  ✓ $label initialized"
-  elif echo "$out" | grep -q "Error(Contract, #1)"; then
+  elif echo "$out" | grep -qE "Error\(Contract, #(1|2)\)"; then
     echo "  • $label already initialized"
   else
     echo -e "${RED}  ✗ $label init FAILED:${NC}"; echo "$out" | tail -5; exit 1
@@ -130,13 +133,27 @@ for w in noeracle_shim vault market noether_router vault_factory referral; do
 done
 echo -e "${GREEN}✓ WASM ready${NC}"; echo ""
 
-# ── 1. Fresh NOE SAC (new issuer per stack = clean LP accounting) ───────────
+# ── 1. Fresh NOE SAC with a FRESH ISSUER keypair ────────────────────────────
+# A SAC's contract id is DETERMINISTIC in (code, issuer): reusing the admin
+# as issuer resolves to the OLD stack's NOE, and stale LP shares from the
+# previous vault could then withdraw against the fresh one. A throwaway
+# issuer per ceremony makes the asset genuinely new (persisted for resume).
+NOE_IDENT="batch1_${ENV_NAME}_noe_issuer"
+if [[ -z "${B1_NOE_ISSUER_SECRET:-}" ]]; then
+  echo -e "${YELLOW}[1/9] Generating fresh NOE issuer keypair…${NC}"
+  $CLI keys generate "$NOE_IDENT" --network testnet --fund >/dev/null 2>&1 || true
+  B1_NOE_ISSUER_SECRET="$($CLI keys show "$NOE_IDENT")"
+  save_var B1_NOE_ISSUER_SECRET "$B1_NOE_ISSUER_SECRET"
+else
+  SOROBAN_SECRET_KEY="$B1_NOE_ISSUER_SECRET" $CLI keys add "$NOE_IDENT" --secret-key >/dev/null 2>&1 || true
+fi
+NOE_ISSUER_PK="$($CLI keys address "$NOE_IDENT")"
+curl -s "https://friendbot.stellar.org/?addr=$NOE_ISSUER_PK" >/dev/null 2>&1 || true
 if [[ -z "${B1_NOE_TOKEN_ID:-}" ]]; then
-  echo -e "${YELLOW}[1/9] Deploying NOE SAC (NOE:$ADMIN_PK)…${NC}"
-  B1_NOE_TOKEN_ID="$($CLI contract asset deploy --asset "NOE:$ADMIN_PK" --source "$IDENTITY" --network testnet)"
+  B1_NOE_TOKEN_ID="$($CLI contract asset deploy --asset "NOE:$NOE_ISSUER_PK" --source "$NOE_IDENT" --network testnet)"
   save_var B1_NOE_TOKEN_ID "$B1_NOE_TOKEN_ID"
 fi
-echo -e "${GREEN}  NOE: $B1_NOE_TOKEN_ID${NC}"; echo ""
+echo -e "${GREEN}  NOE: $B1_NOE_TOKEN_ID (issuer $NOE_ISSUER_PK)${NC}"; echo ""
 
 # ── 2. Deploy the six contracts (resumable) ─────────────────────────────────
 deploy_wasm() { # deploy_wasm VARNAME wasm_name
@@ -244,8 +261,21 @@ JSON
     set_stork_config --config-file-path "$STORKCFG"
   rm -f "$STORKCFG"
   if [[ -n "${B1_STORK_ASSET_IDS:-}" && -n "${B1_STORK_TAGS:-}" ]]; then
+    # B1_STORK_TAGS is a COMMA list of 8-byte hex tags (no brackets/quotes —
+    # `source` would strip them); build the JSON array in a file for the CLI.
+    TAGSF="$(mktemp)"
+    printf '[' > "$TAGSF"
+    first=1
+    IFS=',' read -ra TAGARR <<< "$B1_STORK_TAGS"
+    for t in "${TAGARR[@]}"; do
+      [[ $first == 1 ]] || printf ',' >> "$TAGSF"
+      first=0
+      printf '"%s"' "$t" >> "$TAGSF"
+    done
+    printf ']' >> "$TAGSF"
     invoke "router.set_stork_assets" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network testnet -- \
-      set_stork_assets --ids "$B1_STORK_ASSET_IDS" --tags "$B1_STORK_TAGS"
+      set_stork_assets --ids "$B1_STORK_ASSET_IDS" --tags-file-path "$TAGSF"
+    rm -f "$TAGSF"
   fi
 else
   echo "  • Stork config vars unset — guard stays unconfigured (fail-open)"
@@ -271,10 +301,10 @@ else
 fi
 echo ""
 
-# ── 7. NOE pre-mint to the vault ────────────────────────────────────────────
+# ── 7. NOE pre-mint to the vault (SAC mint auth = the ISSUER) ───────────────
 if [[ -z "${B1_NOE_PREMINTED:-}" ]]; then
   echo -e "${YELLOW}[7/9] Pre-minting 1,000,000,000 NOE to the vault…${NC}"
-  invoke "NOE mint → vault" --id "$B1_NOE_TOKEN_ID" --source "$IDENTITY" --network testnet -- \
+  invoke "NOE mint → vault" --id "$B1_NOE_TOKEN_ID" --source "$NOE_IDENT" --network testnet -- \
     mint --to "$B1_VAULT_ID" --amount 10000000000000000
   save_var B1_NOE_PREMINTED yes
 else
@@ -289,6 +319,10 @@ if [[ -z "$FUND" && "${DEPLOY_YES:-}" != "1" ]]; then
   read -r -p "  LP-seed the vault via deposit? Whole USDC (empty = skip): " FUND
 fi
 if [[ -n "$FUND" && "$FUND" != "0" ]]; then
+  # The depositor receives NOE shares → needs a classic trustline to the
+  # fresh NOE asset first (idempotent).
+  "$CLI" tx new change-trust --source-account "$IDENTITY" --line "NOE:$NOE_ISSUER_PK" \
+    --network testnet >/dev/null 2>&1 || true
   invoke "vault.deposit $FUND USDC (admin LP seed)" --id "$B1_VAULT_ID" --source "$IDENTITY" --network testnet -- \
     deposit --depositor "$ADMIN_PK" --usdc_amount "${FUND}0000000"
 else
@@ -326,7 +360,7 @@ cat > "$MANIFEST" <<JSON
     "referral": "$B1_REFERRAL_ID"
   },
   "admin": "$ADMIN_PK",
-  "noeAsset": { "code": "NOE", "issuer": "$ADMIN_PK" }
+  "noeAsset": { "code": "NOE", "issuer": "$NOE_ISSUER_PK" }
 }
 JSON
 echo "  ✓ manifest written"
