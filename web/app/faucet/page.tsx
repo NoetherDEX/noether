@@ -1,5 +1,7 @@
 'use client';
 
+import { notFound } from 'next/navigation';
+import { IS_MAINNET_BUILD } from '@/lib/utils/constants';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Wallet } from 'lucide-react';
 import { Header } from '@/components/layout';
@@ -122,6 +124,8 @@ const queryClient = new QueryClient({
 });
 
 export default function FaucetPageWrapper() {
+  // Testnet-only surface: mainnet builds have no faucet, no admin mint key.
+  if (IS_MAINNET_BUILD) notFound();
   return (
     <QueryClientProvider client={queryClient}>
       <WalletProvider>

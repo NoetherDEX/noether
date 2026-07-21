@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { IS_MAINNET_BUILD } from '@/lib/utils/constants';
 import {
   motion,
   AnimatePresence,
@@ -340,7 +341,9 @@ export function Hero() {
             <div>
               {[
                 { n: '01', label: 'Connect your Stellar wallet', href: '/trade' },
-                { n: '02', label: 'Claim testnet USDC from the faucet', href: '/faucet' },
+                IS_MAINNET_BUILD
+                  ? { n: '02', label: 'Fund your wallet with USDC', href: '/trade' }
+                  : { n: '02', label: 'Claim testnet USDC from the faucet', href: '/faucet' },
                 { n: '03', label: 'Open your first position', href: '/trade' },
               ].map((step) => (
                 <Link

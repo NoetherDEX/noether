@@ -1,6 +1,9 @@
+import { IS_MAINNET_BUILD } from '@/lib/utils/constants';
+
 // Single source of truth for app navigation links.
 // The app Header and the landing footer both render from this list so the
 // IA can never drift again (the pre-T2 landing footer shipped stale links).
+// The faucet is a testnet-only surface — mainnet builds drop it entirely.
 export const APP_NAV_ITEMS = [
   { href: '/trade', label: 'Trade' },
   { href: '/portfolio', label: 'Portfolio' },
@@ -11,7 +14,7 @@ export const APP_NAV_ITEMS = [
   { href: '/vaults', label: 'Vaults' },
   { href: '/referrals', label: 'Referrals' },
   { href: '/leaderboard', label: 'Leaderboard' },
-  { href: '/faucet', label: 'Faucet' },
+  ...(IS_MAINNET_BUILD ? [] : [{ href: '/faucet', label: 'Faucet' }]),
 ];
 
 // Canonical docs link — the real docs site (was a Google Drive folder).

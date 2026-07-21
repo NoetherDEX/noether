@@ -26,7 +26,7 @@ import { decodeContractError } from '@/lib/utils/contractErrors';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { Tooltip } from '@/components/ui';
 import { WalletModal } from '@/components/wallet';
-import { TRADING, FEE_TIERS } from '@/lib/utils/constants';
+import { TRADING, FEE_TIERS, IS_MAINNET_BUILD } from '@/lib/utils/constants';
 import type { TriggerCondition, DisplayPosition } from '@/types';
 
 interface OrderPanelProps {
@@ -724,12 +724,16 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     if (usdcBalance != null && amount > usdcBalance) {
       // A11: route broke users to funds instead of dead-ending them.
       toast.error(
-        <span>
-          Insufficient USDC balance —{' '}
-          <Link href="/faucet" className="underline text-primary">
-            get test USDC from the faucet
-          </Link>
-        </span>,
+        IS_MAINNET_BUILD ? (
+          <span>Insufficient USDC balance — deposit USDC to your wallet first.</span>
+        ) : (
+          <span>
+            Insufficient USDC balance —{' '}
+            <Link href="/faucet" className="underline text-primary">
+              get test USDC from the faucet
+            </Link>
+          </span>
+        ),
       );
       return;
     }

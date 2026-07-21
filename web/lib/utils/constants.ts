@@ -96,13 +96,26 @@ export const FAUCET_DAILY_LIMIT_USDC = 1000;
 // is the invite the active T2 surfaces (referrals, api-keys) already shipped.
 export const DISCORD_URL = 'https://discord.gg/hmS6t2R5z';
 
-// Network configuration
+// Network configuration — build-time selected via NEXT_PUBLIC_STELLAR_NETWORK
+// (mainnet builds set it to 'mainnet'; absent = testnet, so every existing
+// build behaves exactly as before). RPC/Horizon are overridable per build so
+// a mainnet image can pin a paid RPC endpoint.
+const IS_MAINNET = process.env.NEXT_PUBLIC_STELLAR_NETWORK === 'mainnet';
 export const NETWORK = {
-  NAME: 'testnet' as const,
-  PASSPHRASE: 'Test SDF Network ; September 2015',
-  RPC_URL: 'https://soroban-testnet.stellar.org',
-  HORIZON_URL: 'https://horizon-testnet.stellar.org',
+  NAME: (IS_MAINNET ? 'public' : 'testnet') as 'public' | 'testnet',
+  PASSPHRASE: IS_MAINNET
+    ? 'Public Global Stellar Network ; September 2015'
+    : 'Test SDF Network ; September 2015',
+  RPC_URL:
+    process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ||
+    (IS_MAINNET ? 'https://mainnet.sorobanrpc.com' : 'https://soroban-testnet.stellar.org'),
+  HORIZON_URL:
+    process.env.NEXT_PUBLIC_HORIZON_URL ||
+    (IS_MAINNET ? 'https://horizon.stellar.org' : 'https://horizon-testnet.stellar.org'),
 } as const;
+
+/** True on mainnet builds — gates testnet-only surfaces (faucet, test mint). */
+export const IS_MAINNET_BUILD = IS_MAINNET;
 
 // stellar.expert explorer base for the current network — use instead of
 // hardcoding the '/testnet/' path segment in links.

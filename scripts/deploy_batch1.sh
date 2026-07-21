@@ -2,7 +2,11 @@
 # ═════════════════════════════════════════════════════════════════════════════
 # Batch-1 FRESH stack deploy — the P0-mainnet-gates cutover ceremony.
 #
-#   ./scripts/deploy_batch1.sh staging|prod
+#   ./scripts/deploy_batch1.sh staging|prod|mainnet
+#
+# mainnet mode adds guards (Circle-USDC check, no friendbot, real-XLM funding
+# checks) and ends with the LOCKDOWN step: pause(1) dark + NOE issuer supply
+# lock + the self-2-of-3 admin flip (see MULTISIG-CEREMONY.md).
 #
 # Deploys and wires the COMPLETE Batch-1 stack in dependency order:
 #   NOE SAC → shim → vault+market (ABI-coupled, deploy together) → router
@@ -32,10 +36,21 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WASM_DIR="$ROOT/contracts/target/wasm"
 
 ENV_NAME="${1:-}"
-if [[ "$ENV_NAME" != "staging" && "$ENV_NAME" != "prod" ]]; then
-  echo "usage: $0 staging|prod"; exit 1
+if [[ "$ENV_NAME" != "staging" && "$ENV_NAME" != "prod" && "$ENV_NAME" != "mainnet" ]]; then
+  echo "usage: $0 staging|prod|mainnet"; exit 1
 fi
 ENV_FILE="$ROOT/.env.batch1.$ENV_NAME"
+
+# Network plumbing: staging/prod = testnet stacks; mainnet is the real thing
+# (no friendbot — accounts are created/funded with real XLM; the ceremony
+# ends dark: multisig handover + NOE issuer lock + pause).
+if [[ "$ENV_NAME" == "mainnet" ]]; then
+  NET="mainnet"
+  HORIZON="https://horizon.stellar.org"
+else
+  NET="testnet"
+  HORIZON="https://horizon-testnet.stellar.org"
+fi
 
 # ── First run: write a template env file and stop ────────────────────────────
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -57,6 +72,10 @@ B1_STORK_ASSET_IDS=             # e.g. [0,1]      (parallel with B1_STORK_TAGS)
 B1_STORK_TAGS=                  # COMMA list, e.g. 4254435553440000,4554485553440000 (hex 8-byte tags, NO quotes/brackets)
 B1_REFLECTOR_ORACLE_ID=         # SEP-40 vendor (Reflector) contract id
 B1_REFLECTOR_DECIMALS=14
+# ── Mainnet only (self-2-of-3: K1 = B1_ADMIN_SECRET_KEY above) ──────────────
+B1_MULTISIG_K2_PK=              # phone-wallet signer PUBLIC key (G…)
+B1_MULTISIG_K3_PK=              # paper-backup signer PUBLIC key (G…)
+B1_RPC_URL=                     # paid mainnet RPC for the ceremony (empty = public)
 TPL
   echo -e "${YELLOW}Wrote template $ENV_FILE — fill the REQUIRED block and re-run.${NC}"
   exit 1
@@ -122,9 +141,33 @@ if [[ "${DEPLOY_YES:-}" != "1" ]]; then
   [[ "$ok" == "y" || "$ok" == "Y" ]] || exit 1
 fi
 
+# ── Mainnet guards ──────────────────────────────────────────────────────────
+if [[ "$ENV_NAME" == "mainnet" ]]; then
+  # Ensure the CLI knows the network (idempotent; B1_RPC_URL from the env
+  # file — a paid endpoint if set, the public one otherwise).
+  stellar network add mainnet \
+    --rpc-url "${B1_RPC_URL:-https://mainnet.sorobanrpc.com}" \
+    --network-passphrase 'Public Global Stellar Network ; September 2015' >/dev/null 2>&1 || true
+  if [[ "$B1_USDC_TOKEN_ID" == "CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4" ]]; then
+    echo -e "${RED}B1_USDC_TOKEN_ID is the TESTNET USDC. Mainnet must use Circle's issued"
+    echo -e "USDC SAC — derive it with:"
+    echo -e "  stellar contract asset id --asset USDC:<circle issuer> --network mainnet"
+    echo -e "and verify the issuer against circle.com/usdc docs before proceeding.${NC}"
+    exit 1
+  fi
+  : "${B1_MULTISIG_K2_PK:?mainnet needs B1_MULTISIG_K2_PK (phone-wallet signer public key)}"
+  : "${B1_MULTISIG_K3_PK:?mainnet needs B1_MULTISIG_K3_PK (paper-backup signer public key)}"
+fi
+
 # ── 0. Funded admin + fresh optimized WASM ──────────────────────────────────
-if ! curl -s "https://horizon-testnet.stellar.org/accounts/$ADMIN_PK" | grep -q '"account_id"'; then
-  echo -e "${RED}Admin $ADMIN_PK unfunded. Fund: curl 'https://friendbot.stellar.org/?addr=$ADMIN_PK'${NC}"; exit 1
+if ! curl -s "$HORIZON/accounts/$ADMIN_PK" | grep -q '"account_id"'; then
+  if [[ "$ENV_NAME" == "mainnet" ]]; then
+    echo -e "${RED}Admin $ADMIN_PK does not exist on mainnet — fund it with real XLM"
+    echo -e "(~100 XLM recommended for the full ceremony) and re-run.${NC}"
+  else
+    echo -e "${RED}Admin $ADMIN_PK unfunded. Fund: curl 'https://friendbot.stellar.org/?addr=$ADMIN_PK'${NC}"
+  fi
+  exit 1
 fi
 echo -e "${YELLOW}[0/9] Building + optimizing contracts…${NC}"
 "$SCRIPT_DIR/build_contracts.sh" >/dev/null
@@ -141,16 +184,25 @@ echo -e "${GREEN}✓ WASM ready${NC}"; echo ""
 NOE_IDENT="batch1_${ENV_NAME}_noe_issuer"
 if [[ -z "${B1_NOE_ISSUER_SECRET:-}" ]]; then
   echo -e "${YELLOW}[1/9] Generating fresh NOE issuer keypair…${NC}"
-  $CLI keys generate "$NOE_IDENT" --network testnet --fund >/dev/null 2>&1 || true
+  $CLI keys generate "$NOE_IDENT" --network "$NET" --fund >/dev/null 2>&1 || true
   B1_NOE_ISSUER_SECRET="$($CLI keys show "$NOE_IDENT")"
   save_var B1_NOE_ISSUER_SECRET "$B1_NOE_ISSUER_SECRET"
 else
   SOROBAN_SECRET_KEY="$B1_NOE_ISSUER_SECRET" $CLI keys add "$NOE_IDENT" --secret-key >/dev/null 2>&1 || true
 fi
 NOE_ISSUER_PK="$($CLI keys address "$NOE_IDENT")"
-curl -s "https://friendbot.stellar.org/?addr=$NOE_ISSUER_PK" >/dev/null 2>&1 || true
+if [[ "$ENV_NAME" == "mainnet" ]]; then
+  # No friendbot on mainnet: create+fund the issuer from the admin (3 XLM
+  # covers the base reserve + the lock tx; idempotent — exists = skip).
+  if ! curl -s "$HORIZON/accounts/$NOE_ISSUER_PK" | grep -q '"account_id"'; then
+    "$CLI" tx new create-account --source-account "$IDENTITY" \
+      --destination "$NOE_ISSUER_PK" --starting-balance 30000000 --network "$NET" >/dev/null
+  fi
+else
+  curl -s "https://friendbot.stellar.org/?addr=$NOE_ISSUER_PK" >/dev/null 2>&1 || true
+fi
 if [[ -z "${B1_NOE_TOKEN_ID:-}" ]]; then
-  B1_NOE_TOKEN_ID="$($CLI contract asset deploy --asset "NOE:$NOE_ISSUER_PK" --source "$NOE_IDENT" --network testnet)"
+  B1_NOE_TOKEN_ID="$($CLI contract asset deploy --asset "NOE:$NOE_ISSUER_PK" --source "$NOE_IDENT" --network "$NET")"
   save_var B1_NOE_TOKEN_ID "$B1_NOE_TOKEN_ID"
 fi
 echo -e "${GREEN}  NOE: $B1_NOE_TOKEN_ID (issuer $NOE_ISSUER_PK)${NC}"; echo ""
@@ -159,7 +211,7 @@ echo -e "${GREEN}  NOE: $B1_NOE_TOKEN_ID (issuer $NOE_ISSUER_PK)${NC}"; echo ""
 deploy_wasm() { # deploy_wasm VARNAME wasm_name
   local var="$1" wasm="$2"
   if [[ -z "${!var:-}" ]]; then
-    local id; id="$($CLI contract deploy --wasm "$WASM_DIR/$wasm" --source "$IDENTITY" --network testnet 2>/dev/null | tail -1)"
+    local id; id="$($CLI contract deploy --wasm "$WASM_DIR/$wasm" --source "$IDENTITY" --network "$NET" 2>/dev/null | tail -1)"
     save_var "$var" "$id"; printf '%s' "$id"
   else printf '%s' "${!var}"; fi
 }
@@ -175,10 +227,10 @@ echo ""
 # ── 3. Initialize in dependency order ───────────────────────────────────────
 echo -e "${YELLOW}[3/9] Initializing…${NC}"
 
-init_contract "shim → quorum Noeracle" --id "$B1_SHIM_ID" --source "$IDENTITY" --network testnet -- \
+init_contract "shim → quorum Noeracle" --id "$B1_SHIM_ID" --source "$IDENTITY" --network "$NET" -- \
   initialize --admin "$ADMIN_PK" --noeracle_oracle "$B1_NOERACLE_ID"
 
-init_contract "vault" --id "$B1_VAULT_ID" --source "$IDENTITY" --network testnet -- initialize \
+init_contract "vault" --id "$B1_VAULT_ID" --source "$IDENTITY" --network "$NET" -- initialize \
   --admin "$ADMIN_PK" --usdc_token "$B1_USDC_TOKEN_ID" --noe_token "$B1_NOE_TOKEN_ID" \
   --market_contract "$B1_MARKET_ID" --deposit_fee_bps 30 --withdraw_fee_bps 30
 
@@ -199,29 +251,29 @@ cat > "$MKTCFG" <<'JSON'
  "adl_compensation_bps":0,"min_liq_bounty":"50000000",
  "lenient_clamp_bps":300,"keeper_fee_base":"0","keeper_fee_deci_bps":10}
 JSON
-init_contract "market (oracle → shim)" --id "$B1_MARKET_ID" --source "$IDENTITY" --network testnet -- \
+init_contract "market (oracle → shim)" --id "$B1_MARKET_ID" --source "$IDENTITY" --network "$NET" -- \
   initialize --admin "$ADMIN_PK" --oracle_adapter "$B1_SHIM_ID" --vault "$B1_VAULT_ID" \
   --usdc_token "$B1_USDC_TOKEN_ID" --config-file-path "$MKTCFG"
 rm -f "$MKTCFG"
 
-init_contract "router" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network testnet -- initialize \
+init_contract "router" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network "$NET" -- initialize \
   --admin "$ADMIN_PK" --market "$B1_MARKET_ID" --noeracle "$B1_NOERACLE_ID" \
   --publishers "[\"$B1_PUBLISHER_HEX\"]"
 
-init_contract "vault_factory" --id "$B1_FACTORY_ID" --source "$IDENTITY" --network testnet -- \
+init_contract "vault_factory" --id "$B1_FACTORY_ID" --source "$IDENTITY" --network "$NET" -- \
   initialize --admin "$ADMIN_PK" --market "$B1_MARKET_ID" --usdc "$B1_USDC_TOKEN_ID"
 
-init_contract "referral" --id "$B1_REFERRAL_ID" --source "$IDENTITY" --network testnet -- \
+init_contract "referral" --id "$B1_REFERRAL_ID" --source "$IDENTITY" --network "$NET" -- \
   initialize --admin "$ADMIN_PK" --market "$B1_MARKET_ID" --usdc_token "$B1_USDC_TOKEN_ID"
 echo ""
 
 # ── 4. Wire referral economics (L1-18 deploy-day ordering) ──────────────────
 echo -e "${YELLOW}[4/9] Wiring referral economics…${NC}"
-invoke "market.set_referral" --id "$B1_MARKET_ID" --source "$IDENTITY" --network testnet -- \
+invoke "market.set_referral" --id "$B1_MARKET_ID" --source "$IDENTITY" --network "$NET" -- \
   set_referral --referral "$B1_REFERRAL_ID"
-invoke "market.set_fee_split(treasury, 2000)" --id "$B1_MARKET_ID" --source "$IDENTITY" --network testnet -- \
+invoke "market.set_fee_split(treasury, 2000)" --id "$B1_MARKET_ID" --source "$IDENTITY" --network "$NET" -- \
   set_fee_split --treasury "$TREASURY_PK" --bps 2000
-REFCFG="$($CLI contract invoke --id "$B1_REFERRAL_ID" --source "$IDENTITY" --network testnet -- get_config 2>/dev/null | tail -1)"
+REFCFG="$($CLI contract invoke --id "$B1_REFERRAL_ID" --source "$IDENTITY" --network "$NET" -- get_config 2>/dev/null | tail -1)"
 if echo "$REFCFG" | grep -q "400" && echo "$REFCFG" | grep -q "1000"; then
   echo "  ✓ referral get_config sane: $REFCFG"
 else
@@ -242,7 +294,7 @@ cat > "$RISK" <<'JSON'
  "funding_clamp_bps":100,"skew_scale":"2000000000000"}
 JSON
 for sym in BTC ETH XLM SOL XRP ADA BNB TRX HYPE DOGE ZEC LINK BCH LTC; do
-  invoke "set_asset_risk $sym" --id "$B1_MARKET_ID" --source "$IDENTITY" --network testnet -- \
+  invoke "set_asset_risk $sym" --id "$B1_MARKET_ID" --source "$IDENTITY" --network "$NET" -- \
     set_asset_risk --asset "$sym" --params-file-path "$RISK"
 done
 rm -f "$RISK"
@@ -257,7 +309,7 @@ if [[ -n "${B1_STORK_SIGNER_EVM:-}" && -n "${B1_STORK_TAXONOMY:-}" ]]; then
 {"enabled":$STORK_ENABLED,"require_fresh":false,"signer":"$B1_STORK_SIGNER_EVM",
  "taxonomy":$B1_STORK_TAXONOMY,"max_age_secs":60,"max_dev_bps":100}
 JSON
-  invoke "router.set_stork_config (enabled=$STORK_ENABLED)" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network testnet -- \
+  invoke "router.set_stork_config (enabled=$STORK_ENABLED)" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network "$NET" -- \
     set_stork_config --config-file-path "$STORKCFG"
   rm -f "$STORKCFG"
   if [[ -n "${B1_STORK_ASSET_IDS:-}" && -n "${B1_STORK_TAGS:-}" ]]; then
@@ -273,7 +325,7 @@ JSON
       printf '"%s"' "$t" >> "$TAGSF"
     done
     printf ']' >> "$TAGSF"
-    invoke "router.set_stork_assets" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network testnet -- \
+    invoke "router.set_stork_assets" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network "$NET" -- \
       set_stork_assets --ids "$B1_STORK_ASSET_IDS" --tags-file-path "$TAGSF"
     rm -f "$TAGSF"
   fi
@@ -281,7 +333,7 @@ else
   echo "  • Stork config vars unset — guard stays unconfigured (fail-open)"
 fi
 if [[ "$ENV_NAME" == "staging" ]]; then
-  invoke "router.set_stork_strict_assets [BTC, ETH]" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network testnet -- \
+  invoke "router.set_stork_strict_assets [BTC, ETH]" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network "$NET" -- \
     set_stork_strict_assets --assets '["BTC","ETH"]'
 else
   echo "  • prod: strict-assets list left empty (arm after soak)"
@@ -293,7 +345,7 @@ if [[ -n "${B1_REFLECTOR_ORACLE_ID:-}" ]]; then
 {"enabled":$REFL_ENABLED,"oracle":"$B1_REFLECTOR_ORACLE_ID",
  "decimals":${B1_REFLECTOR_DECIMALS:-14},"max_age_secs":300,"max_dev_bps":100}
 JSON
-  invoke "router.set_reflector_config (enabled=$REFL_ENABLED)" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network testnet -- \
+  invoke "router.set_reflector_config (enabled=$REFL_ENABLED)" --id "$B1_ROUTER_ID" --source "$IDENTITY" --network "$NET" -- \
     set_reflector_config --config-file-path "$REFLCFG"
   rm -f "$REFLCFG"
 else
@@ -304,7 +356,7 @@ echo ""
 # ── 7. NOE pre-mint to the vault (SAC mint auth = the ISSUER) ───────────────
 if [[ -z "${B1_NOE_PREMINTED:-}" ]]; then
   echo -e "${YELLOW}[7/9] Pre-minting 1,000,000,000 NOE to the vault…${NC}"
-  invoke "NOE mint → vault" --id "$B1_NOE_TOKEN_ID" --source "$NOE_IDENT" --network testnet -- \
+  invoke "NOE mint → vault" --id "$B1_NOE_TOKEN_ID" --source "$NOE_IDENT" --network "$NET" -- \
     mint --to "$B1_VAULT_ID" --amount 10000000000000000
   save_var B1_NOE_PREMINTED yes
 else
@@ -322,8 +374,8 @@ if [[ -n "$FUND" && "$FUND" != "0" ]]; then
   # The depositor receives NOE shares → needs a classic trustline to the
   # fresh NOE asset first (idempotent).
   "$CLI" tx new change-trust --source-account "$IDENTITY" --line "NOE:$NOE_ISSUER_PK" \
-    --network testnet >/dev/null 2>&1 || true
-  invoke "vault.deposit $FUND USDC (admin LP seed)" --id "$B1_VAULT_ID" --source "$IDENTITY" --network testnet -- \
+    --network "$NET" >/dev/null 2>&1 || true
+  invoke "vault.deposit $FUND USDC (admin LP seed)" --id "$B1_VAULT_ID" --source "$IDENTITY" --network "$NET" -- \
     deposit --depositor "$ADMIN_PK" --usdc_amount "${FUND}0000000"
 else
   echo "  • LP seed skipped"
@@ -333,7 +385,7 @@ if [[ -z "$SEED" && "${DEPLOY_YES:-}" != "1" ]]; then
   read -r -p "  Seed the insurance buffer? Whole USDC (empty = skip): " SEED
 fi
 if [[ -n "$SEED" && "$SEED" != "0" ]]; then
-  invoke "vault.seed_buffer $SEED USDC" --id "$B1_VAULT_ID" --source "$IDENTITY" --network testnet -- \
+  invoke "vault.seed_buffer $SEED USDC" --id "$B1_VAULT_ID" --source "$IDENTITY" --network "$NET" -- \
     seed_buffer --from "$ADMIN_PK" --amount "${SEED}0000000"
 else
   echo "  • buffer seed skipped"
@@ -341,11 +393,13 @@ fi
 echo ""
 
 # ── 9. Contracts manifest + verify + checklist ──────────────────────────────
-MANIFEST="$ROOT/contracts.json"; [[ "$ENV_NAME" == "staging" ]] && MANIFEST="$ROOT/contracts.staging.json"
+MANIFEST="$ROOT/contracts.json"
+[[ "$ENV_NAME" == "staging" ]] && MANIFEST="$ROOT/contracts.staging.json"
+[[ "$ENV_NAME" == "mainnet" ]] && MANIFEST="$ROOT/contracts.mainnet.json"
 echo -e "${YELLOW}[9/9] Writing $(basename "$MANIFEST")…${NC}"
 cat > "$MANIFEST" <<JSON
 {
-  "network": "testnet",
+  "network": "$NET",
   "env": "$ENV_NAME",
   "deployedAt": "$(date -u '+%Y-%m-%d %H:%M:%S')",
   "contracts": {
@@ -366,12 +420,52 @@ JSON
 echo "  ✓ manifest written"
 
 # Cheap read-back verification (fatal on mismatch).
-GOT_MARKET="$($CLI contract invoke --id "$B1_ROUTER_ID" --source "$IDENTITY" --network testnet -- get_market 2>/dev/null | tail -1 | tr -d '"')"
+GOT_MARKET="$($CLI contract invoke --id "$B1_ROUTER_ID" --source "$IDENTITY" --network "$NET" -- get_market 2>/dev/null | tail -1 | tr -d '"')"
 [[ "$GOT_MARKET" == "$B1_MARKET_ID" ]] || { echo -e "${RED}router.get_market mismatch: $GOT_MARKET${NC}"; exit 1; }
-GOT_VER="$($CLI contract invoke --id "$B1_REFERRAL_ID" --source "$IDENTITY" --network testnet -- version 2>/dev/null | tail -1)"
+GOT_VER="$($CLI contract invoke --id "$B1_REFERRAL_ID" --source "$IDENTITY" --network "$NET" -- version 2>/dev/null | tail -1)"
 echo "$GOT_VER" | grep -q referral_v1 || { echo -e "${RED}referral.version != referral_v1: $GOT_VER${NC}"; exit 1; }
 echo -e "${GREEN}  ✓ router→market wired, referral_v1 confirmed${NC}"
 echo ""
+
+# ── 10. Mainnet lockdown: dark pause → NOE supply lock → 2-of-3 flip ────────
+if [[ "$ENV_NAME" == "mainnet" ]]; then
+  echo -e "${YELLOW}[10] Mainnet lockdown…${NC}"
+
+  # (a) DARK: halt-open pause. Opens/deposits blocked (#4); closes, cancels
+  #     and liquidations stay possible by design. Unpause happens after the
+  #     audit clears — and will then need TWO signatures.
+  invoke "market.pause(1) — stack goes DARK" --id "$B1_MARKET_ID" --source "$IDENTITY" --network "$NET" -- \
+    pause --mode 1
+
+  # (b) NOE supply lock: an unlocked LP-share issuer is a vault-drain key
+  #     (mint shares → withdraw real USDC). Master weight 0 fixes the
+  #     supply at the 1B pre-mint FOREVER. IRREVERSIBLE by construction.
+  if [[ -z "${B1_NOE_LOCKED:-}" ]]; then
+    "$CLI" tx new set-options --source-account "$NOE_IDENT" --master-weight 0 --network "$NET" >/dev/null
+    save_var B1_NOE_LOCKED yes
+    echo "  ✓ NOE issuer LOCKED — supply fixed forever"
+  else
+    echo "  • NOE issuer already locked"
+  fi
+
+  # (c) Self-2-of-3: add K2 (phone) and K3 (paper), raising every threshold
+  #     to 2 IN THE SAME TX as the last signer — there is never a moment
+  #     where the account is locked out or single-key with raised bars.
+  #     From here on, EVERY admin op needs two of {K1 laptop, K2 phone,
+  #     K3 paper} — see scripts/sign2.sh and MULTISIG-CEREMONY.md.
+  if [[ -z "${B1_MULTISIG_DONE:-}" ]]; then
+    "$CLI" tx new set-options --source-account "$IDENTITY" --network "$NET" \
+      --signer "$B1_MULTISIG_K2_PK" --signer-weight 1 >/dev/null
+    "$CLI" tx new set-options --source-account "$IDENTITY" --network "$NET" \
+      --signer "$B1_MULTISIG_K3_PK" --signer-weight 1 \
+      --master-weight 1 --low-threshold 2 --med-threshold 2 --high-threshold 2 >/dev/null
+    save_var B1_MULTISIG_DONE yes
+    echo "  ✓ Admin is now 2-of-3 — K1 alone can no longer act"
+  else
+    echo "  • 2-of-3 already configured"
+  fi
+  echo ""
+fi
 
 echo -e "${CYAN}══ DONE — manual propagation checklist (nothing below is automated) ══${NC}"
 cat <<EOF

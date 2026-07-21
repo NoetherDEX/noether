@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { IS_MAINNET_BUILD } from '@/lib/utils/constants';
 
 const DISMISS_KEY = 'noether-first-session-dismissed';
 
@@ -49,15 +50,19 @@ export function FirstSessionChecklist({
       key: 'fund',
       label: 'Fund the account with XLM (gas)',
       done: isConnected && xlmBalance != null && xlmBalance >= 1,
-      cta: { href: '/faucet', label: 'Fund via faucet →' },
-      hint: 'New testnet accounts start empty — the faucet funds them for free.',
+      cta: IS_MAINNET_BUILD ? undefined : { href: '/faucet', label: 'Fund via faucet →' },
+      hint: IS_MAINNET_BUILD
+        ? 'Your wallet needs a little XLM to pay network fees.'
+        : 'New testnet accounts start empty — the faucet funds them for free.',
     },
     {
       key: 'usdc',
-      label: 'Claim test USDC (collateral)',
+      label: IS_MAINNET_BUILD ? 'Hold USDC (collateral)' : 'Claim test USDC (collateral)',
       done: isConnected && usdcBalance != null && usdcBalance > 0,
-      cta: { href: '/faucet', label: 'Claim USDC →' },
-      hint: 'Up to 1,000 test USDC per day.',
+      cta: IS_MAINNET_BUILD ? undefined : { href: '/faucet', label: 'Claim USDC →' },
+      hint: IS_MAINNET_BUILD
+        ? 'Deposit or swap into USDC on Stellar to trade.'
+        : 'Up to 1,000 test USDC per day.',
     },
     {
       key: 'trade',
