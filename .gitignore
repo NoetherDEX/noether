@@ -121,3 +121,6 @@ KNOWN_ISSUES.md
 * 3.*
 * 2
 * 3
+
+# Batch-1 deploy inputs (secrets + resume state)
+.env.batch1.*
