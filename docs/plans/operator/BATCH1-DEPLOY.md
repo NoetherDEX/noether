@@ -99,7 +99,13 @@ the ceremony; the fresh stack simply stops receiving traffic.
 
 - Update `CLAUDE.md` address table + memory ledgers.
 - Post-soak arming (prod): `set_stork_config enabled:true`,
-  `set_reflector_config enabled:true`, `set_stork_strict_assets`.
-- Later, gated on more publisher keys: multi-key publish loop, then
-  `set_quorum(2)` — at which point the keeper MUST publish via
-  `update_quorum_ed25519_persistent` (the batch path closes itself).
+  `set_reflector_config enabled:true`, `set_stork_strict_assets` — this
+  multi-VENDOR posture IS the mainnet oracle-integrity story (founder
+  decision 2026-07-21; the GMX-v1-style model: operator feed, bounded and
+  cross-checked at consumption).
+- **Quorum stays 1 permanently** (founder descope 2026-07-21): no
+  multi-key infra, no quorum publish loop. The capability remains dormant
+  in-contract (audit answer + optionality); the fcec0ee guard closes the
+  keeper's publish path if quorum is ever raised, so never `set_quorum`
+  above 1 casually. Publisher-key opsec instead: dedicated key, rotation
+  via one `set_publishers` call, the keeper spike alert watching pushes.
