@@ -172,6 +172,36 @@ export interface AdlFlagEvent extends EventEnvelope {
   coverage: bigint;
 }
 
+/** L0-15: the market's pause mode changed (0 live / 1 halt-open / 2 full-freeze). */
+export interface PausedEvent extends EventEnvelope {
+  topic: 'paused';
+  mode: number;
+  since: number;
+}
+
+/** L0-15: a full-freeze auto-degraded to halt-open after the 72h ceiling. */
+export interface PauseDegradedEvent extends EventEnvelope {
+  topic: 'pause_degraded';
+  fromMode: number;
+  toMode: number;
+}
+
+/** L1-24: per-asset trading halt flipped (risk-increasing paths only). */
+export interface AssetHaltSetEvent extends EventEnvelope {
+  topic: 'asset_halt_set';
+  asset: string;
+  halted: boolean;
+}
+
+/** L0-6: collateral added to / removed from an isolated position. */
+export interface CollateralChangedEvent extends EventEnvelope {
+  topic: 'collateral_added' | 'collateral_removed';
+  positionId: number;
+  trader: string;
+  amount: bigint;
+  liquidationPrice: bigint;
+}
+
 export type DecodedMarketEvent =
   | PositionOpenedEvent
   | PositionClosedEvent
@@ -187,7 +217,11 @@ export type DecodedMarketEvent =
   | LiqRefundEvent
   | BadDebtRecordedEvent
   | AdlExecutedEvent
-  | AdlFlagEvent;
+  | AdlFlagEvent
+  | PausedEvent
+  | PauseDegradedEvent
+  | AssetHaltSetEvent
+  | CollateralChangedEvent;
 
 /** Position state fetched lazily from the contract for enrichment. */
 export interface ContractPosition {

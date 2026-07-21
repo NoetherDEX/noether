@@ -12,7 +12,9 @@ import type {
   EventEnvelope,
   AdlExecutedEvent,
   AdlFlagEvent,
+  AssetHaltSetEvent,
   BadDebtRecordedEvent,
+  CollateralChangedEvent,
   CrossLiquidatedEvent,
   FundingAppliedEvent,
   InitializedEvent,
@@ -20,13 +22,15 @@ import type {
   OrderCancelledEvent,
   OrderExecutedEvent,
   OrderPlacedEvent,
+  PauseDegradedEvent,
+  PausedEvent,
   PositionClosedEvent,
   PositionLiquidatedEvent,
   PositionOpenedEvent,
   PositionPartialLiqEvent,
   PositionReducedEvent,
 } from '../types/events.js';
-import { decodeEventValue, decodeTopics, asBigInt, asNumber, asString } from './scval.js';
+import { decodeEventValue, decodeTopics, asBigInt, asBool, asNumber, asString } from './scval.js';
 
 export type RawEvent = rpc.Api.EventResponse;
 
@@ -85,6 +89,40 @@ export function decodeMarketEvent(raw: RawEvent): DecodedMarketEvent | null {
     case 'adl_triggered':
     case 'adl_cleared':
       return decodeAdlFlag(raw, value, topic);
+    case 'paused':
+      // L0-15 payload: (mode: u32, since: u64) — the pre-L0-15 market never
+      // emitted this topic, so there is no legacy arity to branch on.
+      return {
+        ...envelope(raw, 'paused'),
+        topic: 'paused',
+        mode: asNumber(value[0], 'paused.mode'),
+        since: asNumber(value[1], 'paused.since'),
+      } satisfies PausedEvent;
+    case 'pause_degraded':
+      return {
+        ...envelope(raw, 'pause_degraded'),
+        topic: 'pause_degraded',
+        fromMode: asNumber(value[0], 'pause_degraded.from'),
+        toMode: asNumber(value[1], 'pause_degraded.to'),
+      } satisfies PauseDegradedEvent;
+    case 'asset_halt_set':
+      // Topic carries the asset symbol; payload is the 1-tuple (halted,).
+      return {
+        ...envelope(raw, 'asset_halt_set'),
+        topic: 'asset_halt_set',
+        asset: asString(topics[1], 'asset_halt_set topic[1] (asset)'),
+        halted: asBool(value[0], 'asset_halt_set.halted'),
+      } satisfies AssetHaltSetEvent;
+    case 'collateral_added':
+    case 'collateral_removed':
+      return {
+        ...envelope(raw, topic),
+        topic,
+        positionId: asNumber(value[0], `${topic}.position_id`),
+        trader: asString(value[1], `${topic}.trader`),
+        amount: asBigInt(value[2], `${topic}.amount`),
+        liquidationPrice: asBigInt(value[3], `${topic}.liquidation_price`),
+      } satisfies CollateralChangedEvent;
     default:
       return null;
   }

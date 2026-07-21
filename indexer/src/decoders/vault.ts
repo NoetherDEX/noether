@@ -21,6 +21,10 @@ import type {
   VaultWithdrawEvent,
   VaultLeaderOpenEvent,
   VaultLeaderCloseEvent,
+  VaultLeaderOrderEvent,
+  VaultLeaderProtectiveEvent,
+  VaultOrderReconciledEvent,
+  VaultPositionReconciledEvent,
 } from '@noether/types';
 import { decodeEventValue, decodeTopics, asBigInt, asNumber, asString } from './scval.js';
 
@@ -37,6 +41,14 @@ const VAULT_TOPICS = new Set([
   'admin_unpaused',
   'leader_open',
   'leader_close',
+  'leader_limit',
+  'leader_cancel',
+  'leader_stop_limit',
+  'leader_sl',
+  'leader_tp',
+  'leader_trail',
+  'order_reconciled',
+  'position_reconciled',
 ]);
 
 function envelope(raw: RawEvent, topic: string, vaultId: number): VaultEventEnvelope & {
@@ -116,6 +128,40 @@ export function decodeVaultEvent(raw: RawEvent): VaultEvent | null {
         leader: asString(value[0], 'vault.leader_close.leader'),
         positionId: asBigInt(value[1], 'vault.leader_close.position_id'),
       } satisfies VaultLeaderCloseEvent;
+    case 'leader_limit':
+    case 'leader_cancel':
+    case 'leader_stop_limit':
+      return {
+        ...envelope(raw, topic, vaultId),
+        topic,
+        leader: asString(value[0], `vault.${topic}.leader`),
+        orderId: asBigInt(value[1], `vault.${topic}.order_id`),
+      } satisfies VaultLeaderOrderEvent;
+    case 'leader_sl':
+    case 'leader_tp':
+    case 'leader_trail':
+      return {
+        ...envelope(raw, topic, vaultId),
+        topic,
+        leader: asString(value[0], `vault.${topic}.leader`),
+        orderId: asBigInt(value[1], `vault.${topic}.order_id`),
+        positionId: asBigInt(value[2], `vault.${topic}.position_id`),
+      } satisfies VaultLeaderProtectiveEvent;
+    case 'order_reconciled':
+      return {
+        ...envelope(raw, 'order_reconciled', vaultId),
+        topic: 'order_reconciled',
+        orderId: asBigInt(value[0], 'vault.order_reconciled.order_id'),
+        positionId: asBigInt(value[1], 'vault.order_reconciled.position_id'),
+        credited: asBigInt(value[2], 'vault.order_reconciled.credited'),
+      } satisfies VaultOrderReconciledEvent;
+    case 'position_reconciled':
+      return {
+        ...envelope(raw, 'position_reconciled', vaultId),
+        topic: 'position_reconciled',
+        positionId: asBigInt(value[0], 'vault.position_reconciled.position_id'),
+        proceeds: asBigInt(value[1], 'vault.position_reconciled.proceeds'),
+      } satisfies VaultPositionReconciledEvent;
     default:
       return null;
   }

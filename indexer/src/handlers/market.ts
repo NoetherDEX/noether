@@ -342,6 +342,14 @@ const MARKET_TOPICS: DecodedMarketEvent['topic'][] = [
   'adl_executed',
   'adl_triggered',
   'adl_cleared',
+  // Batch-1 state events (L0-15/L1-24/L0-6) — archive + generic bus only;
+  // the positions projection carries no collateral/liq-price columns and
+  // pause state is read from chain by the api.
+  'paused',
+  'pause_degraded',
+  'asset_halt_set',
+  'collateral_added',
+  'collateral_removed',
 ];
 
 export function buildMarketRegistrations(marketContractId: string): MarketHandlerRegistration[] {

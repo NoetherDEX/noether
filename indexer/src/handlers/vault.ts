@@ -189,9 +189,21 @@ async function upsertVault(db: DbConn, event: VaultEvent, contractId: string): P
       return;
     case 'leader_open':
     case 'leader_close':
+    case 'order_reconciled':
+    case 'position_reconciled':
       // Handled after commit: the truthful numbers come from an
       // on-chain view_vault simulation (see makeHandler), which must
-      // not run inside the write transaction.
+      // not run inside the write transaction. Reconciles change
+      // total_usdc on-chain the same way leader trades do.
+      return;
+    case 'leader_limit':
+    case 'leader_cancel':
+    case 'leader_stop_limit':
+    case 'leader_sl':
+    case 'leader_tp':
+    case 'leader_trail':
+      // Archive-only: order placement moves no vault cash the projection
+      // tracks (prefunded collateral is reconciled via order_reconciled).
       return;
   }
 }
@@ -348,6 +360,15 @@ const VAULT_TOPICS: VaultEvent['topic'][] = [
   'admin_unpaused',
   'leader_open',
   'leader_close',
+  // Batch-1 (L0-20/L1-30) — inert until the redeployed factory emits them.
+  'leader_limit',
+  'leader_cancel',
+  'leader_stop_limit',
+  'leader_sl',
+  'leader_tp',
+  'leader_trail',
+  'order_reconciled',
+  'position_reconciled',
 ];
 
 export function buildVaultRegistrations(
@@ -390,7 +411,12 @@ function makeHandler(topic: VaultEvent['topic'], contractId: string): Handler {
       throw err;
     }
 
-    if (v.topic === 'leader_open' || v.topic === 'leader_close') {
+    if (
+      v.topic === 'leader_open' ||
+      v.topic === 'leader_close' ||
+      v.topic === 'order_reconciled' ||
+      v.topic === 'position_reconciled'
+    ) {
       // Re-read the canonical VaultInfo struct from the factory.
       // We can't rely on event payloads for leader trades:
       //  - leader_open carries `collateral` but doesn't reflect the
