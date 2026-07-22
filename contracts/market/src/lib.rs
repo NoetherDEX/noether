@@ -512,6 +512,8 @@ impl MarketContract {
             // liquidation cannot lever up further.
             let existing_cross_positions = get_cross_margin_position_ids(&env, &trader);
             if !existing_cross_positions.is_empty() {
+                // On oracle failure → 0 → aggregate values the leg at -size,
+                // so a dead feed blocks the (risk-increasing) open (theme 2).
                 let get_price = |asset: &Symbol| -> i128 {
                     Self::get_oracle_price(&env, asset, false).unwrap_or(0)
                 };
@@ -1556,9 +1558,11 @@ impl MarketContract {
         let position_ids = get_cross_margin_position_ids(&env, &trader);
 
         if !position_ids.is_empty() {
-            // Calculate equity AFTER withdrawal
-            // Use current oracle prices; if oracle fails, use 0 which makes equity lower = safer
-            // (prevents withdrawal when prices unavailable)
+            // Calculate equity AFTER withdrawal. On oracle failure the closure
+            // returns 0, which aggregate_cross_positions treats as a -size
+            // (deep-loss) leg — understating equity so a dead feed can only
+            // BLOCK the withdrawal, never enable it. (Pre-fix this understated
+            // longs but fabricated +size profit for shorts; audit theme 2.)
             let get_price = |asset: &Symbol| -> i128 {
                 Self::get_oracle_price(&env, asset, false).unwrap_or(0)
             };
@@ -1795,12 +1799,33 @@ impl MarketContract {
         keeper.require_auth();
 
         let config = get_config(&env);
-        // For liquidation verification: oracle failure = not liquidatable (safe)
+
+        // Fail closed on incomplete information (audit theme 2): a cross
+        // account's health can only be judged when EVERY leg is priceable. If
+        // any leg's lenient price is unreadable, refuse — otherwise that leg's
+        // PnL is silently dropped (aggregate skips an overflowing/absent price)
+        // while its margin is still counted, understating equity, falsely
+        // flagging the account, and closing only the HEALTHY legs while the
+        // dead-feed leg survives. This pre-scan also guarantees the closures
+        // below never reach their fallback.
+        let scan_ids = get_cross_margin_position_ids(&env, &trader);
+        for i in 0..scan_ids.len() {
+            if let Some(pos) = get_position(&env, scan_ids.get(i).unwrap()) {
+                match Self::get_oracle_price(&env, &pos.asset, false) {
+                    Ok(p) if p > 0 => {}
+                    _ => return Err(NoetherError::CrossMarginNotLiquidatable),
+                }
+            }
+        }
+
+        // Past the pre-scan every price is readable, so unwrap_or is dead code;
+        // 0 (not i128::MAX/2) keeps any unreachable fallback on the safe side of
+        // the -size rule instead of relying on multiply overflow (audit #14).
         let get_price = |asset: &Symbol| -> i128 {
-            Self::get_oracle_price(&env, asset, false).unwrap_or(i128::MAX / 2)
+            Self::get_oracle_price(&env, asset, false).unwrap_or(0)
         };
 
-        // Verify account is liquidatable (will fail if oracle down - safe)
+        // Verify account is liquidatable.
         if !position::is_cross_account_liquidatable(
             &env, &trader, config.maintenance_margin_bps, &get_price,
         ) {
@@ -7135,6 +7160,73 @@ mod tests {
         assert!(matches!(
             test.market.try_withdraw_cross_margin(&trader, &(5 * PRECISION)),
             Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
+        ));
+    }
+
+    #[test]
+    fn test_oracle_failure_blocks_withdraw_for_shorts() {
+        // Regression (audit theme 2): a dead feed used to fabricate +size
+        // profit for SHORT legs (calculate_pnl(short, 0) = +size), inflating
+        // equity and letting a short withdraw margin against an unreadable
+        // price. The -size fail-closed rule now collapses equity for shorts
+        // too, so the withdraw is blocked exactly like the long case above.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+
+        test.market.deposit_cross_margin(&trader, &(120 * PRECISION));
+        test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Short, &0,
+        );
+
+        // Dead feed → price 0. Pre-fix a short read +size (fake profit) and the
+        // $5 withdraw sailed through; now it is blocked.
+        oracle.set_price(&xlm, &0);
+        assert!(matches!(
+            test.market.try_withdraw_cross_margin(&trader, &(5 * PRECISION)),
+            Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
+        ));
+    }
+
+    #[test]
+    fn test_cross_liquidation_refuses_on_unreadable_leg() {
+        // Regression (audit theme 2): a cross account can only be judged on
+        // COMPLETE information. Here the account is HEALTHY only because a
+        // profitable BTC leg offsets an underwater XLM leg. Pre-fix, killing
+        // the BTC feed dropped that leg's PnL (calculate_pnl overflowed the
+        // i128::MAX/2 sentinel) while still counting its margin — the account
+        // looked bankrupt and the loop torched the healthy XLM leg while the
+        // dead-feed BTC leg survived. The pre-scan now refuses instead.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let btc = Symbol::new(&test.env, "BTC");
+
+        test.market.deposit_cross_margin(&trader, &(300 * PRECISION));
+        test.market.open_position_cross(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
+        test.market.open_position_cross(&trader, &btc, &(100 * PRECISION), &10, &Direction::Long, &0);
+
+        // XLM dives (leg deeply underwater); BTC rips (leg deeply profitable).
+        // Net equity stays comfortably above maintenance margin.
+        oracle.set_price(&xlm, &(PRECISION * 65 / 1000)); // $0.065 from $0.10
+        oracle.set_price(&btc, &(90_000 * PRECISION)); // +50% from $60k
+
+        // Healthy on full info → not liquidatable.
+        assert!(matches!(
+            test.market.try_liquidate_cross_account(&keeper, &trader),
+            Err(Ok(NoetherError::CrossMarginNotLiquidatable))
+        ));
+
+        // Kill the BTC feed. The account is STILL healthy — a dead feed must
+        // not make it liquidatable by silently dropping the profitable leg.
+        // Pre-fix this returned Ok(reward) and force-closed the XLM leg.
+        oracle.set_price(&btc, &0);
+        assert!(matches!(
+            test.market.try_liquidate_cross_account(&keeper, &trader),
+            Err(Ok(NoetherError::CrossMarginNotLiquidatable))
         ));
     }
 

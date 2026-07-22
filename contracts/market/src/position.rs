@@ -77,11 +77,21 @@ fn aggregate_cross_positions(
         if let Some(pos) = get_position(env, id) {
             // Collateral in position (must be counted toward equity!)
             agg.total_collateral = agg.total_collateral.checked_add(pos.collateral).unwrap_or(agg.total_collateral);
-            // PnL
+            // PnL. Fail closed on an unreadable/bogus price: value the leg at
+            // -size (deep loss) so equity can only be UNDERSTATED, never
+            // inflated. This is the correct direction for the withdraw/open
+            // free-margin gates — a dead feed blocks risk-increasing actions
+            // instead of fabricating +size profit for shorts
+            // (calculate_pnl(short, 0) = +size). The liquidation path
+            // pre-screens every price, so this branch never fires there (where
+            // -size would be the wrong direction and falsely liquidate).
             let price = get_price(&pos.asset);
-            if let Ok(pnl) = calculate_pnl(&pos, price) {
-                agg.unrealized_pnl = agg.unrealized_pnl.checked_add(pnl).unwrap_or(agg.unrealized_pnl);
-            }
+            let pnl = if price <= 0 {
+                -pos.size
+            } else {
+                calculate_pnl(&pos, price).unwrap_or(-pos.size)
+            };
+            agg.unrealized_pnl = agg.unrealized_pnl.checked_add(pnl).unwrap_or(agg.unrealized_pnl);
             // Funding from the position's OWN asset index (L0-13 per-market).
             let current_cumulative = get_funding_state(env, &pos.asset).0;
             let pos_funding = calculate_cumulative_funding(
