@@ -10,6 +10,17 @@ Severity key: **P0** money-loss/live-exploit · **P1** fix before mainnet · **P
 
 ---
 
+## Remediation log (updated as fixes land on `staging`)
+
+- ✅ **Theme 1** — vault/factory share-price accounting: deposit-fee double-count, dead-share 1:1 mint (vault + factory), shortfall-reserve spend in `pay_bounty`/`reserve_for_position`. Tests across noether_common/vault/vault_factory.
+- ✅ **Theme 2** — cross-margin oracle fail-safe inversion (#1); retired the unsound `i128::MAX/2` sentinel (#14). market +2 tests.
+- ✅ **Deploy-safety** — market `initialize`/`migrate_config` validation parity (#13); `RiskConfig` borrow/funding/skew field bounds so `borrow_fee_rate` can't overflow-trap (#46). market +1, risk +2 tests.
+- ⏳ **Next contract passes** — router divergence guard should validate the *stored* price (`get_price_pers`) rather than the router-local `median_of(att.prices)` (#22); position/order + referral TTL extension (#12/#19).
+- 🔒 **Blocked on the soroban-sdk 22 bump** — guarded-`initialize` front-run windows (#17/#20/#45) need `__constructor`; the SDK bump is a separate mainnet-gate decision (tracked in the scout disposition).
+- 📤 **Off-chain (does NOT gate the contract deploy)** — `restorePreamble` archival handling (keeper/web/tx-builders); RPC 429/failover classification (indexer/keeper/web).
+
+---
+
 ## Themes (read this first)
 
 > **STATUS 2026-07-22 — Theme 1 RESOLVED.** All five vault/factory accounting bugs fixed on `staging` with regression tests. Changes: `vault/src/lib.rs` deposit credits net principal (not gross) to `total_usdc`; `noether_common/src/math.rs` `calculate_glp_for_deposit` refuses 1:1 mint when supply is outstanding but AUM≤0; `vault_factory/src/math.rs` `shares_for_deposit` refuses par-mint when NAV≤0 with shares outstanding; `pay_bounty` and `reserve_for_position` now subtract the earmarked `ShortfallReserve` from spendable balance. The shared test fixture was made fee-free (`setup_with_fees` added) so settlement/shortfall suites keep exact round numbers; 6 new tests added. Verified: `noether_common` 27, `vault` 49, `vault_factory` 55, `market` 173 — all pass. Note surfaced during the fix: a fully-drained vault (AUM=0, NOE outstanding) is now deposit-locked by design and recovers via trader losses (`receive_loss`), not new LP deposits — a graceful admin supply-reset path is a possible follow-up but not required for correctness.

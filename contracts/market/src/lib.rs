@@ -118,6 +118,37 @@ impl MarketContract {
     /// * `vault` - Vault contract address
     /// * `usdc_token` - USDC token contract address
     /// * `config` - Market configuration parameters
+    /// Shared MarketConfig validation (audit #13). `initialize` and
+    /// `migrate_config` MUST accept exactly the same configs, so a fresh
+    /// deploy can never store a config that `migrate_config` would later
+    /// reject — a self-inflicted brick. Env-free; the union of both prior
+    /// checks (initialize used to gate only max_leverage; migrate_config
+    /// gated the rest but let max_leverage > 100 through).
+    fn validate_config(config: &MarketConfig) -> Result<(), NoetherError> {
+        if config.max_leverage < 1
+            || config.max_leverage > 100
+            || config.min_collateral <= 0
+            || config.maintenance_margin_bps >= BASIS_POINTS
+            || config.liquidation_fee_bps >= BASIS_POINTS
+            || config.partial_liq_tranche_bps >= BASIS_POINTS
+            || config.insurance_buffer_share_bps > BASIS_POINTS
+            || config.liquidation_penalty_bps >= BASIS_POINTS
+            || config.penalty_keeper_share_bps > BASIS_POINTS
+            || config.cross_liq_restore_target_bps <= BASIS_POINTS
+            || config.cross_close_out_bps >= BASIS_POINTS
+            || config.adl_clear_ratio_bps < config.adl_trigger_ratio_bps
+            || config.adl_compensation_bps > 100
+            || config.min_liq_bounty < 0                          // L1-23
+            || config.lenient_clamp_bps >= BASIS_POINTS           // L1-26
+            || config.keeper_fee_deci_bps > 15                    // L1-21: maker+keeper ≤ taker
+            || config.keeper_fee_base > 500_000                   // L1-21: ≤ 0.05 USDC dust
+            || config.twap_records > 32                           // L0-9: upstream RING_CAP
+        {
+            return Err(NoetherError::InvalidParameter);
+        }
+        Ok(())
+    }
+
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -132,10 +163,8 @@ impl MarketContract {
 
         admin.require_auth();
 
-        // Validate config
-        if config.max_leverage < 1 || config.max_leverage > 100 {
-            return Err(NoetherError::InvalidParameter);
-        }
+        // Validate config identically to migrate_config (audit #13).
+        Self::validate_config(&config)?;
 
         // Store addresses
         set_admin(&env, &admin);
@@ -278,26 +307,7 @@ impl MarketContract {
     /// upgrade. Admin-only; validated like `initialize`.
     pub fn migrate_config(env: Env, config: MarketConfig) -> Result<(), NoetherError> {
         require_admin(&env)?;
-        if config.max_leverage == 0
-            || config.min_collateral <= 0
-            || config.maintenance_margin_bps >= BASIS_POINTS
-            || config.liquidation_fee_bps >= BASIS_POINTS
-            || config.partial_liq_tranche_bps >= BASIS_POINTS
-            || config.insurance_buffer_share_bps > BASIS_POINTS
-            || config.liquidation_penalty_bps >= BASIS_POINTS
-            || config.penalty_keeper_share_bps > BASIS_POINTS
-            || config.cross_liq_restore_target_bps <= BASIS_POINTS
-            || config.cross_close_out_bps >= BASIS_POINTS
-            || config.adl_clear_ratio_bps < config.adl_trigger_ratio_bps
-            || config.adl_compensation_bps > 100
-            || config.min_liq_bounty < 0                          // L1-23
-            || config.lenient_clamp_bps >= BASIS_POINTS           // L1-26
-            || config.keeper_fee_deci_bps > 15                    // L1-21: maker+keeper ≤ taker
-            || config.keeper_fee_base > 500_000                   // L1-21: ≤ 0.05 USDC dust
-            || config.twap_records > 32                           // L0-9: upstream RING_CAP
-        {
-            return Err(NoetherError::InvalidParameter);
-        }
+        Self::validate_config(&config)?;
         set_config(&env, &config);
         extend_instance_ttl(&env);
         Ok(())
@@ -8138,6 +8148,47 @@ mod tests {
         assert_eq!(
             test.market.try_migrate_config(&bad2),
             Err(Ok(NoetherError::InvalidParameter))
+        );
+
+        // audit #13: the shared validator also closes migrate_config's old gap
+        // — max_leverage > 100 (it used to reject only 0).
+        let bad_lev = MarketConfig { max_leverage: 200, ..MarketConfig::default() };
+        assert_eq!(
+            test.market.try_migrate_config(&bad_lev),
+            Err(Ok(NoetherError::InvalidParameter))
+        );
+    }
+
+    #[test]
+    fn test_initialize_validates_like_migrate_config() {
+        // audit #13: a fresh deploy must not store a config that migrate_config
+        // would reject. cross_close_out_bps >= BASIS_POINTS is one such config
+        // the old (max_leverage-only) initialize accepted.
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let market_id = env.register_contract(None, MarketContract);
+        let market = MarketContractClient::new(&env, &market_id);
+
+        let bad = MarketConfig { cross_close_out_bps: BASIS_POINTS, ..MarketConfig::default() };
+        assert!(matches!(
+            market.try_initialize(
+                &admin,
+                &Address::generate(&env),
+                &Address::generate(&env),
+                &Address::generate(&env),
+                &bad,
+            ),
+            Err(Ok(NoetherError::InvalidParameter))
+        ));
+
+        // A valid config still initializes (panics on error).
+        market.initialize(
+            &admin,
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &MarketConfig::default(),
         );
     }
 

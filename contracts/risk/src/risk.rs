@@ -11,6 +11,16 @@ use soroban_sdk::contracttype;
 
 use noether_common::types::{BASIS_POINTS, PRECISION};
 
+/// Ceiling for each dual-slope borrow-fee knob (deci-bps, hourly). 100_000 =
+/// 100%/hr — already absurd as a policy limit, and it keeps borrow_fee_rate's
+/// u32 `fee × util` (util ≤ 10_000) well under u32::MAX so a misconfigured fee
+/// can never overflow-trap (audit #46).
+pub const MAX_BORROW_FEE_DECI_BPS: u32 = 100_000;
+
+/// Sanity ceiling for funding-rate velocity (bps/day). Presets use 360_000
+/// (~36%/day); this is a generous bound, not a policy limit (audit #46).
+pub const MAX_FUNDING_VELOCITY_BPS: u32 = 10_000_000;
+
 /// Per-market risk parameters (P5-1). The rollout vehicle for new pairs:
 /// an admin stores one of these per asset in the `risk` contract, and the
 /// market/keeper read them instead of the single global `MarketConfig`.
@@ -93,6 +103,16 @@ impl RiskConfig {
             && self.im_bps >= 400 // ≤ 25x
             && self.oi_cap_bps > 0
             && self.oi_cap_bps <= BASIS_POINTS
+            // audit #46: bound the funding + borrow-fee fields the old check
+            // ignored, so downstream math (borrow_fee_rate's u32 multiply,
+            // funding_velocity) can never overflow-trap on a misconfig.
+            && self.skew_cap_bps > 0
+            && self.skew_cap_bps <= BASIS_POINTS
+            && self.funding_clamp_bps <= BASIS_POINTS
+            && self.max_funding_velocity_bps <= MAX_FUNDING_VELOCITY_BPS
+            && self.borrow_base_fee <= self.borrow_target_fee
+            && self.borrow_target_fee <= self.borrow_max_fee
+            && self.borrow_max_fee <= MAX_BORROW_FEE_DECI_BPS
     }
 
     /// Max leverage implied by the initial margin (10000/im_bps).
@@ -215,6 +235,42 @@ mod tests {
         let mut c = RiskConfig::major(2_500);
         c.mm_bps = c.im_bps; // MM must be < IM and == IM/2
         assert!(!c.is_valid());
+    }
+
+    #[test]
+    fn is_valid_bounds_borrow_and_funding_fields() {
+        // audit #46: is_valid used to ignore the borrow/funding/skew fields, so
+        // an unbounded borrow fee passed validation and could overflow-trap
+        // borrow_fee_rate's u32 multiply.
+        assert!(RiskConfig::major(2_500).is_valid());
+        // Non-monotonic borrow curve rejected.
+        let mut c = RiskConfig::major(2_500);
+        c.borrow_base_fee = c.borrow_target_fee + 1;
+        assert!(!c.is_valid());
+        // Overflow-prone borrow fee rejected.
+        let mut c2 = RiskConfig::major(2_500);
+        c2.borrow_target_fee = u32::MAX;
+        c2.borrow_max_fee = u32::MAX;
+        assert!(!c2.is_valid());
+        // Absurd skew cap rejected.
+        let mut c3 = RiskConfig::major(2_500);
+        c3.skew_cap_bps = BASIS_POINTS + 1;
+        assert!(!c3.is_valid());
+    }
+
+    #[test]
+    fn borrow_fee_rate_cannot_overflow_at_validated_ceiling() {
+        // Worst cases for the u32 `fee × util` multiply: max fee at the 100%
+        // utilization ceiling on each slope. At MAX_BORROW_FEE_DECI_BPS these
+        // stay under u32::MAX, so no overflow-trap (unbounded fees would trap).
+        let flat = borrow_fee_rate(
+            BASIS_POINTS, BASIS_POINTS, 0, MAX_BORROW_FEE_DECI_BPS, MAX_BORROW_FEE_DECI_BPS,
+        );
+        assert_eq!(flat, MAX_BORROW_FEE_DECI_BPS);
+        let steep = borrow_fee_rate(
+            BASIS_POINTS, 0, 0, 0, MAX_BORROW_FEE_DECI_BPS,
+        );
+        assert_eq!(steep, MAX_BORROW_FEE_DECI_BPS);
     }
 
     #[test]
