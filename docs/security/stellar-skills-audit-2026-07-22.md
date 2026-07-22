@@ -15,7 +15,8 @@ Severity key: **P0** money-loss/live-exploit · **P1** fix before mainnet · **P
 - ✅ **Theme 1** — vault/factory share-price accounting: deposit-fee double-count, dead-share 1:1 mint (vault + factory), shortfall-reserve spend in `pay_bounty`/`reserve_for_position`. Tests across noether_common/vault/vault_factory.
 - ✅ **Theme 2** — cross-margin oracle fail-safe inversion (#1); retired the unsound `i128::MAX/2` sentinel (#14). market +2 tests.
 - ✅ **Deploy-safety** — market `initialize`/`migrate_config` validation parity (#13); `RiskConfig` borrow/funding/skew field bounds so `borrow_fee_rate` can't overflow-trap (#46). market +1, risk +2 tests.
-- ⏳ **Next contract passes** — router divergence guard should validate the *stored* price (`get_price_pers`) rather than the router-local `median_of(att.prices)` (#22); position/order + referral TTL extension (#12/#19).
+- ✅ **Router divergence guard (#22)** — the Stork/Reflector guards now judge the price Noeracle actually **stored** (read back via `get_price_pers` after the relay), which equals the market's fill on the 7dp Noeracle-native path (shim rescale is the identity there) — not the router-local `median_of(att.prices)` mirror that could drift from the on-chain median. Removed `median_of`; the test mock now stores the median faithfully and exposes `get_price_pers`. noether_router +1 test (39 total).
+- ⏳ **Next contract passes** — position/order + referral TTL extension (#12/#19); contract P3s (referral code validation #43, missing governance events, etc.).
 - 🔒 **Blocked on the soroban-sdk 22 bump** — guarded-`initialize` front-run windows (#17/#20/#45) need `__constructor`; the SDK bump is a separate mainnet-gate decision (tracked in the scout disposition).
 - 📤 **Off-chain (does NOT gate the contract deploy)** — `restorePreamble` archival handling (keeper/web/tx-builders); RPC 429/failover classification (indexer/keeper/web).
 

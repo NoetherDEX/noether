@@ -108,6 +108,19 @@ pub struct StorkPriceEntry {
     pub timestamp_ns: u64,
 }
 
+/// Mirror of Noeracle's `get_price_pers` return UDT — field names and order
+/// MUST match for cross-contract decode. Used to read back the exact price the
+/// oracle just stored (audit #22) so the divergence guards judge the value the
+/// trade actually executes at, not a router-local median that could drift from
+/// Noeracle's on-chain median.
+#[contracttype]
+#[derive(Clone)]
+pub struct NoeraclePriceEntry {
+    pub price: i128,
+    pub timestamp: u64,
+    pub round_id: u64,
+}
+
 // Stork payload layout (Stork Fast `signed_ecdsa`, all big-endian):
 //   [0..64)  signature r ‖ s
 //   [64]     recovery byte (0/1 — raw, NOT the EVM +27 form)
@@ -237,10 +250,13 @@ impl NoetherRouterContract {
         trader.require_auth();
 
         Self::refresh_price(&env, &att)?;
-        // Second-source cross-checks (Stork + SEP-40/Reflector) against the
-        // bundle's median — risk-increasing paths only; closes and
-        // liquidations are never gated on either guard.
-        let guard_price = Self::median_of(&env, &att.prices);
+        // Second-source cross-checks (Stork + SEP-40/Reflector) — risk-
+        // increasing paths only; closes and liquidations are never gated on
+        // either guard. Judge the price Noeracle actually STORED (== the
+        // market's fill), read back after refresh_price, not a router-local
+        // median that could drift from the on-chain median (audit #22).
+        let tag = symbol_to_tag(&env, &att.asset)?;
+        let guard_price = Self::stored_price(&env, &tag)?;
         Self::stork_guard(&env, &att.asset, guard_price)?;
         Self::sep40_guard(&env, &att.asset, guard_price)?;
 
@@ -360,8 +376,10 @@ impl NoetherRouterContract {
 
         Self::refresh_price(&env, &att)?;
         // Order execution can open/extend exposure, so it gets the same
-        // cross-checks as opens (closes/liquidations are never gated).
-        let guard_price = Self::median_of(&env, &att.prices);
+        // cross-checks as opens (closes/liquidations are never gated). Guard
+        // against the STORED price, read back after the relay (audit #22).
+        let tag = symbol_to_tag(&env, &att.asset)?;
+        let guard_price = Self::stored_price(&env, &tag)?;
         Self::stork_guard(&env, &att.asset, guard_price)?;
         Self::sep40_guard(&env, &att.asset, guard_price)?;
 
@@ -832,26 +850,22 @@ impl NoetherRouterContract {
         Ok(())
     }
 
-    /// Median of a non-empty price bundle (even count → mean of middles) —
-    /// the router-side mirror of the value the Noeracle stores, used as the
-    /// reference for the divergence guards.
-    fn median_of(env: &Env, prices: &Vec<i128>) -> i128 {
-        let mut sorted: Vec<i128> = Vec::new(env);
-        for p in prices.iter() {
-            let mut idx = sorted.len();
-            for i in 0..sorted.len() {
-                if p < sorted.get_unchecked(i) {
-                    idx = i;
-                    break;
-                }
-            }
-            sorted.insert(idx, p);
-        }
-        let n = sorted.len();
-        if n % 2 == 1 {
-            sorted.get_unchecked(n / 2)
-        } else {
-            (sorted.get_unchecked(n / 2 - 1) + sorted.get_unchecked(n / 2)) / 2
+    /// Read back the price Noeracle just stored for `tag` — the exact value
+    /// the market will read via the shim on execution (the Noeracle-native
+    /// path is 7dp, so the shim's rescale is the identity). The divergence
+    /// guards compare THIS against the second sources rather than a
+    /// router-local median that could drift from Noeracle's on-chain median
+    /// (audit #22). Fails closed if nothing valid is stored — right after a
+    /// successful refresh_price that can only mean an oracle inconsistency,
+    /// and a risk-increasing open must not proceed unguarded.
+    fn stored_price(env: &Env, tag: &BytesN<8>) -> Result<i128, NoetherError> {
+        let noeracle = Self::noeracle_addr(env)?;
+        let args: Vec<Val> = (tag.clone(),).into_val(env);
+        let entry: Option<NoeraclePriceEntry> =
+            env.invoke_contract(&noeracle, &Symbol::new(env, "get_price_pers"), args);
+        match entry {
+            Some(e) if e.price > 0 => Ok(e.price),
+            _ => Err(NoetherError::InvalidPrice),
         }
     }
 
@@ -966,22 +980,47 @@ mod tests {
                 round_id: u64,
                 rounds: Vec<PublisherRound>,
             ) {
-                // Median forming is Noeracle's job — the mock just records
-                // the first round's prices and the round count so tests can
-                // assert the router forwarded the full bundle.
-                let first = rounds.get_unchecked(0);
+                // Faithful to Noeracle: the STORED price is the median across
+                // publishers per asset (not the first round), which the router
+                // reads back via get_price_pers for the divergence guards
+                // (audit #22). Round count is kept so forwarding tests still
+                // assert the full bundle reached the quorum entrypoint.
                 for i in 0..assets.len() {
                     let asset = assets.get_unchecked(i);
-                    let price = first.prices.get_unchecked(i);
-                    env.storage().instance().set(&symbol_short!("PRICE"), &price);
+                    let mut vals: Vec<i128> = Vec::new(&env);
+                    for j in 0..rounds.len() {
+                        let v = rounds.get_unchecked(j).prices.get_unchecked(i);
+                        let mut idx = vals.len();
+                        for k in 0..vals.len() {
+                            if v < vals.get_unchecked(k) {
+                                idx = k;
+                                break;
+                            }
+                        }
+                        vals.insert(idx, v);
+                    }
+                    let n = vals.len();
+                    let median = if n % 2 == 1 {
+                        vals.get_unchecked(n / 2)
+                    } else {
+                        (vals.get_unchecked(n / 2 - 1) + vals.get_unchecked(n / 2)) / 2
+                    };
+                    env.storage().instance().set(&symbol_short!("PRICE"), &median);
                     env.storage().instance().set(&symbol_short!("TAG"), &asset);
                     // per-tag map for multi-asset tests
-                    env.storage().instance().set(&asset, &price);
+                    env.storage().instance().set(&asset, &median);
                 }
                 env.storage()
                     .instance()
                     .set(&symbol_short!("NROUNDS"), &rounds.len());
                 let _ = (timestamp, round_id);
+            }
+
+            /// Read back the stored median as Noeracle's UDT — the router's
+            /// stored_price path decodes this after the relay (audit #22).
+            pub fn get_price_pers(env: Env, asset: BytesN<8>) -> Option<super::NoeraclePriceEntry> {
+                let price: i128 = env.storage().instance().get(&asset)?;
+                Some(super::NoeraclePriceEntry { price, timestamp: 0, round_id: 0 })
             }
 
             pub fn recorded_price(env: Env) -> i128 {
@@ -1788,6 +1827,31 @@ mod tests {
         // entrypoint — the median forms there, not in the router.
         let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
         assert_eq!(noeracle.recorded_rounds(), 2);
+    }
+
+    #[test]
+    fn stored_price_is_bundle_median_read_back_by_guards() {
+        // audit #22: the divergence guards judge the price Noeracle STORED
+        // (its median across publishers), read back after the relay — not a
+        // router-local median mirror. With Stork disabled the open succeeds;
+        // the stored value must be the median, which is what stored_price feeds
+        // the guards (proved end-to-end by stork_guard_checks_bundle_median).
+        let f = setup();
+        let a = quorum_att_btc(&f, 70_000 * PRECISION, 74_200 * PRECISION);
+        let pos = f.client.open_with_price(
+            &Address::generate(&f.env),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0i128,
+            &a,
+        );
+        assert_eq!(pos.id, 777);
+
+        let noeracle = mock_noeracle::MockNoeracleClient::new(&f.env, &f.noeracle_id);
+        let btc_tag = BytesN::from_array(&f.env, &[b'B', b'T', b'C', b'U', b'S', b'D', 0, 0]);
+        // Median of [70_000, 74_200] = 72_100 — NOT the first price 70_000.
+        assert_eq!(noeracle.price_for(&btc_tag), 72_100 * PRECISION);
     }
 
     #[test]
