@@ -32,10 +32,16 @@ pub fn shares_for_deposit(
     if amount <= 0 {
         return Err(FactoryError::AmountMustBePositive);
     }
-    if circulating_shares == 0 || total_usdc == 0 {
+    // Bootstrap 1:1 ONLY for a genuinely empty vault (no shares outstanding).
+    if circulating_shares == 0 {
         return Ok(amount);
     }
-    if total_usdc < 0 || circulating_shares < 0 {
+    // Shares exist but NAV is zero — a wiped vault (leader capital deployed,
+    // positions liquidated to zero recorded proceeds). Par-minting here would
+    // hand the depositor only a fraction of their own money and gift the rest
+    // to dead shares. Refuse until holders burn the worthless supply (withdraw
+    // pays 0 at NAV<=0) and the vault re-bootstraps.
+    if total_usdc <= 0 || circulating_shares < 0 {
         return Err(FactoryError::NavCalculationFailed);
     }
     let scaled = amount
@@ -215,5 +221,19 @@ mod tests {
         // amount * circulating must overflow; amount=i128::MAX/2, circulating=3
         let r = shares_for_deposit(i128::MAX / 2, 1, 3);
         assert_eq!(r.unwrap_err(), FactoryError::Overflow);
+    }
+
+    #[test]
+    fn deposit_blocked_when_nav_zero_but_shares_outstanding() {
+        // Wiped vault: 1000 shares still outstanding, NAV drained to 0.
+        // Must refuse rather than par-mint alongside worthless dead shares.
+        assert_eq!(
+            shares_for_deposit(1_000, 0, 1_000).unwrap_err(),
+            FactoryError::NavCalculationFailed,
+        );
+        // A genuinely empty vault (no shares) still bootstraps 1:1.
+        assert_eq!(shares_for_deposit(1_000, 0, 0).unwrap(), 1_000);
+        // A live vault with NAV still mints pro-rata as before.
+        assert_eq!(shares_for_deposit(300, 1500, 1000).unwrap(), 200);
     }
 }

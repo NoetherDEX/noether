@@ -259,9 +259,17 @@ pub fn funding_velocity(
 /// # Returns
 /// GLP tokens to mint (7 decimals)
 pub fn calculate_glp_for_deposit(usdc_amount: i128, total_glp: i128, aum: i128) -> Result<i128, NoetherError> {
-    if total_glp == 0 || aum == 0 {
+    if total_glp == 0 {
         // First depositor gets 1:1 ratio
         return Ok(usdc_amount);
+    }
+
+    // Supply is outstanding but the pool has no measurable value (AUM floored
+    // to 0 by a mark spike or drained by settlement). Minting 1:1 here would
+    // price the new shares against dead ones and donate the depositor's capital
+    // to worthless legacy holders — block instead until AUM recovers.
+    if aum <= 0 {
+        return Err(NoetherError::InsufficientLiquidity);
     }
 
     // Proportional minting
@@ -473,6 +481,26 @@ mod tests {
 
         // deposit / aum * total_glp = 110/1100 * 1000 = 100
         assert_eq!(glp, 100 * PRECISION);
+    }
+
+    #[test]
+    fn test_glp_deposit_blocked_when_supply_outstanding_but_aum_zero() {
+        // Pool has NOE circulating but AUM floored to 0 (drained / mark spike).
+        // Minting must be refused, not priced 1:1 against dead shares.
+        assert_eq!(
+            calculate_glp_for_deposit(100 * PRECISION, 1000 * PRECISION, 0).unwrap_err(),
+            NoetherError::InsufficientLiquidity,
+        );
+        // Negative AUM is likewise blocked.
+        assert_eq!(
+            calculate_glp_for_deposit(100 * PRECISION, 1000 * PRECISION, -5).unwrap_err(),
+            NoetherError::InsufficientLiquidity,
+        );
+        // First depositor (no supply yet) still bootstraps 1:1 even at AUM 0.
+        assert_eq!(
+            calculate_glp_for_deposit(100 * PRECISION, 0, 0).unwrap(),
+            100 * PRECISION,
+        );
     }
 
     #[test]

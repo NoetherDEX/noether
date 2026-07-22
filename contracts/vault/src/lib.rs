@@ -190,8 +190,11 @@ impl VaultContract {
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&depositor, &env.current_contract_address(), &usdc_amount);
 
-        // Update pool state
-        set_total_usdc(&env, get_total_usdc(&env) + usdc_amount);
+        // Update pool state. Credit only the NET principal to LP accounting —
+        // the fee is booked separately in total_fees (which AUM already adds).
+        // Crediting the gross here would double-count the fee into AUM and
+        // inflate NOE price above the vault's physical USDC on every deposit.
+        set_total_usdc(&env, get_total_usdc(&env) + net_amount);
         set_deposited(&env, &depositor, already + usdc_amount);
         // L1-28: re-arm the withdraw cooldown on every deposit (topping up
         // resets the clock, killing deposit-just-before-a-settlement timing).
@@ -462,7 +465,11 @@ impl VaultContract {
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
         let bal = token_client.balance(&env.current_contract_address());
-        let paid = amount.min(buffer).min(bal);
+        // The ShortfallReserve is earmarked USDC (owed to shortfall claimants,
+        // outside buffer + LP accounting) — a bounty may never physically spend
+        // it. Mirror the settle_pnl / claim_shortfall spendable cap.
+        let spendable = bal - storage::get_shortfall_reserve(&env);
+        let paid = amount.min(buffer).min(spendable);
         if paid <= 0 {
             env.events().publish((Symbol::new(&env, "bounty_paid"),), (keeper, amount, 0i128));
             return Ok(0);
@@ -599,7 +606,9 @@ impl VaultContract {
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
         let vault_balance = token_client.balance(&env.current_contract_address());
-        if reserved + amount > vault_balance {
+        // Earmarked shortfall USDC is already owed out — it cannot back new
+        // position reservations. Exclude it from the physical coverage check.
+        if reserved + amount > vault_balance - storage::get_shortfall_reserve(&env) {
             return Err(NoetherError::InsufficientLiquidity);
         }
 
@@ -1329,7 +1338,19 @@ mod tests {
         lp: Address,
     }
 
+    /// Fee-free fixture. The settlement / shortfall / reserve suites assert
+    /// exact round numbers and are not about deposit fees, so deposits credit
+    /// gross == net here. Fee accounting is covered by dedicated tests that use
+    /// `setup_with_fees` (e.g. deposit_fee_does_not_inflate_aum).
     fn setup(initial_deposit: i128) -> VaultTest {
+        setup_with_fees(initial_deposit, 0, 0)
+    }
+
+    fn setup_with_fees(
+        initial_deposit: i128,
+        deposit_fee_bps: u32,
+        withdraw_fee_bps: u32,
+    ) -> VaultTest {
         let env = Env::default();
         env.mock_all_auths();
         env.budget().reset_unlimited();
@@ -1346,7 +1367,7 @@ mod tests {
 
         let vault_id = env.register_contract(None, VaultContract);
         let vault = VaultContractClient::new(&env, &vault_id);
-        vault.initialize(&admin, &usdc, &noe, &market, &30, &30);
+        vault.initialize(&admin, &usdc, &noe, &market, &deposit_fee_bps, &withdraw_fee_bps);
 
         StellarAssetClient::new(&env, &noe).mint(&vault_id, &(1_000_000_000 * PRECISION));
         StellarAssetClient::new(&env, &usdc).mint(&lp, &(100_000_000 * PRECISION));
@@ -1374,7 +1395,7 @@ mod tests {
 
     #[test]
     fn deposit_withdraw_round_trip_with_fees() {
-        let t = setup(0);
+        let t = setup_with_fees(0, 30, 30);
         let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
         let start = usdc.balance(&t.lp);
 
@@ -1719,10 +1740,14 @@ mod tests {
         t.vault.settle_pnl(&w, &(120 * PRECISION));
         assert_eq!(t.vault.get_shortfall(), 20 * PRECISION);
 
-        // Refill: LP deposits 100; an inflow of 40 reserves 20 for the claim.
-        // Deliberately accounting-only (no backing mint) so the earmark must
-        // bind against the SAME USDC the LP wants to withdraw.
-        t.vault.deposit(&t.lp, &(100 * PRECISION));
+        // Refill the drained pool the realistic way — a trader loss lands 100
+        // USDC back in — so the LP's existing shares regain value. (A fresh
+        // deposit is intentionally NOT used here: the dead-pool guard blocks
+        // minting 1:1 while AUM is 0.) Then an inflow of 40 reserves 20 for the
+        // claim, deliberately accounting-only (no backing mint) so the earmark
+        // must bind against the SAME USDC the LP wants to withdraw.
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(100 * PRECISION));
+        t.vault.receive_loss(&(100 * PRECISION));
         t.vault.fund_buffer(&(40 * PRECISION));
         assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
 
@@ -2029,6 +2054,100 @@ mod tests {
         let t = setup(0);
         let keeper = Address::generate(&t.env);
         assert_eq!(t.vault.pay_bounty(&keeper, &(5 * PRECISION)), 0); // dry → 0, no revert
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // Share-price / NAV accounting regressions (stellar-skills audit 2026-07-22)
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn deposit_fee_does_not_inflate_aum() {
+        // 30 bps deposit fee, no withdraw fee, empty pool.
+        let t = setup_with_fees(0, 30, 0);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+
+        let gross = 1_000 * PRECISION;
+        let fee = gross * 30 / 10_000;
+        t.vault.deposit(&t.lp, &gross);
+
+        // Invariant: AUM must equal the vault's physical USDC — the fee is
+        // retained earnings already inside the balance, not new value on top.
+        // (Pre-fix the fee was double-counted, so AUM read gross + fee.)
+        let physical = usdc.balance(&t.vault_id);
+        assert_eq!(physical, gross);
+        assert_eq!(t.vault.get_aum(), gross);
+        // total_usdc tracks NET principal only; the fee lives in total_fees.
+        assert_eq!(t.vault.get_total_usdc(), gross - fee);
+    }
+
+    #[test]
+    fn deposit_blocked_when_pool_value_wiped() {
+        // Live pool with NOE circulating, then traders' unrealized profit wipes
+        // AUM to 0 (the reachable dead-share state).
+        let t = setup(1_000 * PRECISION);
+        t.vault.sync_exposure(&btc(&t.env), &(1_000 * PRECISION), &0);
+        assert_eq!(t.vault.get_aum(), 0);
+
+        // A new deposit must be refused, not minted 1:1 against dead shares.
+        let r = t.vault.try_deposit(&t.lp, &(100 * PRECISION));
+        assert!(matches!(r, Err(Ok(NoetherError::InsufficientLiquidity))));
+    }
+
+    #[test]
+    fn pay_bounty_never_spends_shortfall_reserve() {
+        let t = setup(10 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
+        let w = Address::generate(&t.env);
+
+        // Winner takes 30 against a 10 pool → 10 paid, 20 booked as shortfall.
+        t.vault.settle_pnl(&w, &(30 * PRECISION));
+        // Fund the buffer; 50% earmarks into the ShortfallReserve (accounting).
+        t.vault.fund_buffer(&(30 * PRECISION)); // reserve 15, buffer 15
+        // Back only 20 USDC of it physically. Spendable-for-bounty = 20 − 15 = 5,
+        // even though the buffer accounting shows 15.
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
+        assert_eq!(t.vault.get_shortfall_reserve(), 15 * PRECISION);
+        assert_eq!(t.vault.get_buffer_balance(), 15 * PRECISION);
+
+        let keeper = Address::generate(&t.env);
+        // Request 10: buffer (15) would allow it, but the 15 earmarked for
+        // shortfall claimants caps the physically-spendable amount at 5.
+        let paid = t.vault.pay_bounty(&keeper, &(10 * PRECISION));
+        assert_eq!(paid, 5 * PRECISION);
+        assert_eq!(usdc.balance(&keeper), 5 * PRECISION);
+        // The reserve's USDC is still physically present for the claimant.
+        assert_eq!(usdc.balance(&t.vault_id), 15 * PRECISION);
+        assert_eq!(t.vault.get_shortfall_reserve(), 15 * PRECISION);
+    }
+
+    #[test]
+    fn reserve_for_position_excludes_earmarked_shortfall_reserve() {
+        let t = setup(0);
+        let w = Address::generate(&t.env);
+
+        // Large outstanding shortfall so the earmarked reserve can exceed the
+        // small physical balance rebuilt below.
+        t.vault.settle_pnl(&w, &(1_000 * PRECISION)); // owed 1000, paid 0
+        t.vault.fund_buffer(&(2_000 * PRECISION)); // reserve 1000, buffer 1000
+        assert_eq!(t.vault.get_shortfall_reserve(), 1_000 * PRECISION);
+
+        // Rebuild a small real balance / AUM via a trader loss (not a deposit,
+        // which the dead-pool guard would now block): 100 USDC in.
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(100 * PRECISION));
+        t.vault.receive_loss(&(100 * PRECISION)); // total_usdc 100, AUM 100
+        t.vault.set_asset_cap(&btc(&t.env), &10_000); // lift OI cap out of the way
+
+        // Physical balance is 100 but 1000 is earmarked for shortfall claimants,
+        // so ZERO is available to back a new reservation. Even a 10-USDC reserve
+        // (well under the OI cap) must be refused.
+        let r = t.vault.try_reserve_for_position(
+            &btc(&t.env),
+            &(10 * PRECISION),
+            &(10 * PRECISION),
+            &0,
+            &0,
+        );
+        assert!(matches!(r, Err(Ok(NoetherError::InsufficientLiquidity))));
     }
 
     // ───────────────────────────────────────────────────────────────────
