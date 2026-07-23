@@ -1636,6 +1636,30 @@ mod tests {
     }
 
     #[test]
+    fn security_critical_entry_points_require_auth() {
+        // audit #5: clear the mocked auths and assert each require_auth bites at
+        // the HOST layer (a try_ OUTER Err). relay_stork is intentionally
+        // permissionless (validity from the signature) and is not included.
+        let f = setup();
+        f.env.ledger().set_timestamp(STORK_TS);
+        let trader = Address::generate(&f.env);
+        let keeper = Address::generate(&f.env);
+        let a = att(&f.env, "BTC", 70_000 * PRECISION, STORK_TS, 1);
+
+        f.env.set_auths(&[]);
+
+        // Trader / keeper authed (require_auth precedes refresh_price).
+        assert!(f
+            .client
+            .try_open_with_price(&trader, &(100 * PRECISION), &5, &Direction::Long, &0i128, &a)
+            .is_err());
+        assert!(f.client.try_close_with_price(&trader, &1u64, &0i128, &a).is_err());
+        assert!(f.client.try_liquidate_with_price(&keeper, &1u64, &a).is_err());
+        // Admin authed (require_admin).
+        assert!(f.client.try_set_market(&Address::generate(&f.env)).is_err());
+    }
+
+    #[test]
     fn relay_stork_rejects_wrong_signer() {
         let f = setup();
         let _ = enable_stork(&f, false);

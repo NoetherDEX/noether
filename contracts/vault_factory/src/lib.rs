@@ -1052,6 +1052,29 @@ mod tests {
     }
 
     #[test]
+    fn security_critical_entry_points_require_auth() {
+        // audit #5: clear the mocked auths and assert each require_auth bites at
+        // the HOST layer (a try_ OUTER Err); a dropped require_auth would make
+        // these Ok(..) and fail the assertion.
+        let (env, _admin, _market, _usdc, id) = setup();
+        let client = VaultFactoryContractClient::new(&env, &id);
+        let leader = Address::generate(&env);
+        let vid = client.create_vault(&leader, &String::from_str(&env, "myvault"));
+
+        env.set_auths(&[]);
+
+        // Leader / participant-authed (require_auth precedes all logic).
+        assert!(client
+            .try_create_vault(&Address::generate(&env), &String::from_str(&env, "v2"))
+            .is_err());
+        assert!(client.try_deposit(&Address::generate(&env), &vid, &100i128).is_err());
+        assert!(client.try_withdraw(&Address::generate(&env), &vid, &1i128).is_err());
+        // Admin-authed (require_admin).
+        assert!(client.try_set_max_vaults(&10u32).is_err());
+        assert!(client.try_set_paused(&vid, &true).is_err());
+    }
+
+    #[test]
     fn create_vault_records_starting_state() {
         let (env, _admin, _market, _usdc, id) = setup();
         let client = VaultFactoryContractClient::new(&env, &id);

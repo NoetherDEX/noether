@@ -4900,6 +4900,54 @@ mod tests {
         assert_eq!(usdc.balance(&trader), bal_before); // fully refunded
     }
 
+    #[test]
+    fn security_critical_entry_points_require_auth() {
+        // audit #5: the suite runs under global mock_all_auths(), so a dropped
+        // require_auth would leave every other test green. Clear the mocked
+        // auths and assert each security-critical entry point fails at the HOST
+        // auth layer — a try_ OUTER Err (`.is_err()`); a mere contract error
+        // would be `Ok(Err(..))` and pass `.is_err()` as false, so this
+        // discriminates a present require_auth from a removed one.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        // Establish real targets while auths are still mocked.
+        let pos = test.market.open_position(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0,
+        );
+        let order = test.market.place_limit_order(
+            &trader, &xlm, &Direction::Long, &(100 * PRECISION), &5,
+            &(PRECISION / 20), &false, &500, &0,
+        );
+
+        // Drop every mocked auth: require_auth must now bite before any logic.
+        test.env.set_auths(&[]);
+
+        // Trader-authed.
+        assert!(test.market
+            .try_open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0)
+            .is_err());
+        assert!(test.market.try_close_position(&trader, &pos.id, &0).is_err());
+        assert!(test.market.try_deposit_cross_margin(&trader, &(100 * PRECISION)).is_err());
+        assert!(test.market.try_withdraw_cross_margin(&trader, &(1 * PRECISION)).is_err());
+        assert!(test.market.try_cancel_order(&trader, &order.id).is_err());
+
+        // Keeper-authed (require_auth precedes the liquidatable check).
+        assert!(test.market.try_liquidate(&keeper, &pos.id).is_err());
+
+        // Admin-authed (require_admin → admin.require_auth).
+        assert!(test.market.try_pause(&1u32).is_err());
+        assert!(test.market.try_migrate_config(&MarketConfig::default()).is_err());
+        assert!(test.market
+            .try_set_asset_risk(&Symbol::new(&test.env, "BTC"), &risk(25, 400))
+            .is_err());
+        assert!(test.market
+            .try_set_fee_split(&Address::generate(&test.env), &1_000u32)
+            .is_err());
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // Cross-Margin Order Guard + Zombie-Order Cleanup (M-3 / P1-2)
     // ═══════════════════════════════════════════════════════════════════

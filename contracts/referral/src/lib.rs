@@ -514,6 +514,33 @@ mod tests {
     }
 
     #[test]
+    fn security_critical_entry_points_require_auth() {
+        // audit #5: clear the mocked auths and assert each require_auth bites at
+        // the HOST layer (a try_ OUTER Err). A dropped require_auth would make
+        // these `Ok(..)` and fail the assertion.
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let referrer = Address::generate(&env);
+        let referee = Address::generate(&env);
+        let code = String::from_str(&env, "alice42");
+        client.create_code(&referrer, &code);
+
+        env.set_auths(&[]);
+
+        // Participant-authed.
+        assert!(client
+            .try_create_code(&Address::generate(&env), &String::from_str(&env, "bob99"))
+            .is_err());
+        assert!(client.try_set_referrer(&referee, &code).is_err());
+        assert!(client.try_claim(&referrer).is_err());
+        // Market-authed (require_market → get_market().require_auth()).
+        assert!(client.try_record_trade(&referee, &100i128, &1_000i128).is_err());
+        // Admin-authed (require_admin).
+        assert!(client.try_revoke_code(&code).is_err());
+        assert!(client.try_set_discount_bps(&500u32).is_err());
+    }
+
+    #[test]
     fn create_code_rejects_duplicate() {
         let (env, _admin, _market, id) = setup();
         let client = ReferralContractClient::new(&env, &id);
