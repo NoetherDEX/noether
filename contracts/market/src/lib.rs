@@ -3839,7 +3839,26 @@ impl MarketContract {
         let (max_leverage, max_position_size, mm_bps) =
             match Self::effective_open_limits(env, &order.asset, &config) {
                 Ok(limits) => limits,
-                Err(_) => (config.max_leverage, config.max_position_size, config.maintenance_margin_bps),
+                Err(_) => {
+                    // Ladder live but this asset has no risk params → fail
+                    // closed exactly like a fresh open (do_open uses `?`),
+                    // instead of silently opening against global limits. Cancel
+                    // + refund rather than trap the keeper (audit #36).
+                    // effective_open_limits already returns global limits for
+                    // the genuine pre-ladder case (epoch == 0), so this arm is
+                    // only ever the unconfigured-asset case.
+                    if order.collateral > 0 {
+                        let usdc_token = get_usdc_token(env);
+                        let token_client = token::Client::new(env, &usdc_token);
+                        token_client.transfer(&env.current_contract_address(), &order.trader, &order.collateral);
+                    }
+                    update_order_status(env, order.id, OrderStatus::Cancelled);
+                    env.events().publish(
+                        (Symbol::new(env, "order_cancelled"),),
+                        (order.id, Symbol::new(env, "asset_unconfigured")),
+                    );
+                    return Ok(0);
+                }
             };
         let size = calculate_position_size(order.collateral, order.leverage);
         if order.leverage > max_leverage || size > max_position_size {
@@ -4837,6 +4856,48 @@ mod tests {
         // Execute — should cancel because no opposing position exists
         let reward = test.market.execute_order(&keeper, &order.id);
         assert_eq!(reward, 0); // 0 = cancelled, not executed
+    }
+
+    #[test]
+    fn executing_order_on_unconfigured_asset_fails_closed() {
+        // audit #36: once the ladder is live, a resting order on an asset with
+        // no risk params must cancel + refund (fail closed like a fresh open),
+        // not open against global limits via the legacy fallback.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let keeper = fund_trader(&test, 100 * PRECISION);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        // Placed while the ladder is dormant (epoch == 0) → allowed under
+        // global limits; locks 100 collateral.
+        let bal_before = usdc.balance(&trader);
+        let order = test.market.place_limit_order(
+            &trader,
+            &xlm,
+            &Direction::Long,
+            &(100 * PRECISION),
+            &5,
+            &(PRECISION / 20),
+            &false,
+            &500,
+            &0,
+        );
+        assert_eq!(usdc.balance(&trader), bal_before - 100 * PRECISION);
+
+        // Ladder goes live via configuring a DIFFERENT asset; XLM stays
+        // unconfigured, so effective_open_limits(XLM) now errors.
+        test.market
+            .set_asset_risk(&Symbol::new(&test.env, "BTC"), &risk(25, 400));
+
+        // Trigger the order.
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION / 20));
+
+        // execute_order fails closed: cancels + refunds, never opens.
+        let reward = test.market.execute_order(&keeper, &order.id);
+        assert_eq!(reward, 0);
+        assert_eq!(usdc.balance(&trader), bal_before); // fully refunded
     }
 
     // ═══════════════════════════════════════════════════════════════════

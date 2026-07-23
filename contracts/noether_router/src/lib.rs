@@ -136,6 +136,9 @@ const STORK_SCALE_DIVISOR: i128 = 100_000_000_000;
 // only need to outlive max_age_secs, not rent long-term.
 const STORK_TTL_THRESHOLD: u32 = 60;
 const STORK_TTL_EXTEND: u32 = 240;
+// Max clock skew tolerated for a Stork payload timestamp ahead of the ledger
+// clock. Beyond this the payload is future-dated and rejected (audit #47).
+const STORK_MAX_FUTURE_SKEW_SECS: u64 = 60;
 
 /// One signed Noeracle round for a single asset (L0-8): `prices[i]` is
 /// what `pubkeys[i]` signed with `sigs[i]` over the shared
@@ -464,8 +467,17 @@ impl NoetherRouterContract {
         let mut eight = [0u8; 8];
         payload.slice(67..75).copy_into_slice(&mut eight);
         let ts_ns = u64::from_be_bytes(eight);
+        let ts_secs = ts_ns / 1_000_000_000;
         let now = env.ledger().timestamp();
-        if now.saturating_sub(ts_ns / 1_000_000_000) > cfg.max_age_secs {
+        // Reject future-dated payloads (beyond a small clock-skew tolerance).
+        // A future timestamp reads as permanently "fresh" (now.saturating_sub
+        // = 0) AND, being the newest ts, pins the price and locks out every
+        // legitimate later relay via the monotonic check below until wall-clock
+        // catches up (audit #47).
+        if ts_secs > now.saturating_add(STORK_MAX_FUTURE_SKEW_SECS) {
+            return Err(NoetherError::InvalidParameter);
+        }
+        if now.saturating_sub(ts_secs) > cfg.max_age_secs {
             return Err(NoetherError::PriceStale);
         }
 
@@ -835,7 +847,14 @@ impl NoetherRouterContract {
         } else if cfg.decimals < 7 {
             let mut d = 7 - cfg.decimals;
             while d > 0 {
-                vendor = vendor.saturating_mul(10);
+                // Fail OPEN on overflow, not saturate-to-MAX. A vendor price we
+                // can't represent is unusable second-source data, not a reason
+                // to trap the open — saturating_mul would clamp to i128::MAX and
+                // then blow up the dev_bps multiply below (audit #48).
+                vendor = match vendor.checked_mul(10) {
+                    Some(v) => v,
+                    None => return Ok(()),
+                };
                 d -= 1;
             }
         }
@@ -843,7 +862,15 @@ impl NoetherRouterContract {
             return Ok(());
         }
 
-        let dev_bps = (noeracle_price - vendor).abs() * 10_000 / vendor;
+        // Deviation in bps; fail open if the arithmetic can't be represented
+        // (a pathological vendor magnitude must not trap trading).
+        let dev_bps = match (noeracle_price - vendor)
+            .checked_abs()
+            .and_then(|diff| diff.checked_mul(10_000))
+        {
+            Some(scaled) => scaled / vendor,
+            None => return Ok(()),
+        };
         if dev_bps > cfg.max_dev_bps as i128 {
             return Err(NoetherError::PriceDeviationTooHigh);
         }
@@ -1580,6 +1607,35 @@ mod tests {
     }
 
     #[test]
+    fn relay_stork_rejects_future_dated_payload() {
+        // audit #47: a future-dated payload reads as permanently "fresh"
+        // (now.saturating_sub = 0) and, being the newest ts, pins the price and
+        // locks out every legitimate later relay via the monotonic check. Reject.
+        let f = setup();
+        let sk = enable_stork(&f, false);
+        f.env.ledger().set_timestamp(STORK_TS);
+
+        // One hour ahead — well beyond the 60s skew tolerance.
+        let raw = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            (STORK_TS + 3_600) * NS,
+            &[(0, 70_000 * E18)],
+        );
+        let res = f.client.try_relay_stork(&Bytes::from_slice(&f.env, &raw));
+        assert!(matches!(res, Err(Ok(NoetherError::InvalidParameter))));
+
+        // A payload within the skew tolerance (30s ahead) is still accepted.
+        let ok = stork_helpers::payload(
+            &sk,
+            stork_helpers::TAXONOMY,
+            (STORK_TS + 30) * NS,
+            &[(0, 70_000 * E18)],
+        );
+        assert_eq!(f.client.relay_stork(&Bytes::from_slice(&f.env, &ok)), 1);
+    }
+
+    #[test]
     fn relay_stork_rejects_wrong_signer() {
         let f = setup();
         let _ = enable_stork(&f, false);
@@ -1998,6 +2054,23 @@ mod tests {
         // 0.5% divergence — inside the 1% band, passes (also proves the
         // 14dp → 7dp rescale is right; a decimals bug would be ~10^7 off).
         let pos = open_btc_at(&f, 70_350 * PRECISION).unwrap();
+        assert_eq!(pos.id, 777);
+    }
+
+    #[test]
+    fn reflector_overflow_fails_open_not_traps() {
+        // audit #48: a pathological vendor magnitude that overflows the decimal
+        // up-scale to 7dp must fail OPEN (unusable second-source data), not
+        // saturate to i128::MAX and then trap the open via the dev_bps multiply.
+        let f = setup();
+        let oracle = enable_reflector(&f, 1); // 1 decimal → six ×10 up-scales
+        f.env.ledger().set_timestamp(STORK_TS);
+        let sep = mock_sep40::MockSep40Client::new(&f.env, &oracle);
+        sep.set(&Symbol::new(&f.env, "BTC"), &i128::MAX, &STORK_TS);
+
+        // The open still succeeds — the guard degrades to fail-open, never
+        // panics. (Pre-fix the saturating rescale trapped the whole tx.)
+        let pos = open_btc_at(&f, 70_000 * PRECISION).unwrap();
         assert_eq!(pos.id, 777);
     }
 
