@@ -382,7 +382,7 @@ pub fn get_position(env: &Env, id: u64) -> Option<Position> {
 pub fn save_position(env: &Env, position: &Position) {
     // Save position
     env.storage().persistent().set(&DataKey::Position(position.id), position);
-    extend_persistent_ttl(env, &DataKey::Position(position.id));
+    extend_position_ttl(env, &DataKey::Position(position.id));
 
     // Add to trader's position list
     let trader_key = DataKey::TraderPositions(position.trader.clone());
@@ -593,6 +593,19 @@ fn extend_persistent_ttl(env: &Env, key: &DataKey) {
     env.storage().persistent().extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
+/// Position and order DATA entries can sit idle far longer than the shared
+/// 30-day window: funding is lazy (no writes refresh their TTL) and a limit
+/// order may wait indefinitely for its trigger. A ~150-day window keeps them
+/// live to close / liquidate / execute without an intervening restore (audit
+/// #12). The per-trader and global INDEX lists keep the standard window —
+/// market activity refreshes them. extend_ttl caps at the network max, so an
+/// over-large target never traps.
+const POSITION_TTL_EXTEND_TO: u32 = 2_592_000; // ~150 days
+
+fn extend_position_ttl(env: &Env, key: &DataKey) {
+    env.storage().persistent().extend_ttl(key, TTL_THRESHOLD, POSITION_TTL_EXTEND_TO);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Order Storage
 // ═══════════════════════════════════════════════════════════════════════════
@@ -620,7 +633,7 @@ pub fn get_order(env: &Env, id: u64) -> Option<Order> {
 pub fn save_order(env: &Env, order: &Order) {
     // Save order
     env.storage().persistent().set(&DataKey::Order(order.id), order);
-    extend_persistent_ttl(env, &DataKey::Order(order.id));
+    extend_position_ttl(env, &DataKey::Order(order.id));
 
     // Add to trader's order list if pending
     if order.status == OrderStatus::Pending {
@@ -671,7 +684,7 @@ pub fn update_order_status(env: &Env, order_id: u64, status: OrderStatus) {
     if let Some(mut order) = get_order(env, order_id) {
         order.status = status;
         env.storage().persistent().set(&DataKey::Order(order_id), &order);
-        extend_persistent_ttl(env, &DataKey::Order(order_id));
+        extend_position_ttl(env, &DataKey::Order(order_id));
 
         // Remove from active lists if no longer pending
         if status != OrderStatus::Pending {
@@ -717,7 +730,7 @@ pub fn set_order_position_id(env: &Env, order_id: u64, position_id: u64) {
     if let Some(mut order) = get_order(env, order_id) {
         order.position_id = position_id;
         env.storage().persistent().set(&DataKey::Order(order_id), &order);
-        extend_persistent_ttl(env, &DataKey::Order(order_id));
+        extend_position_ttl(env, &DataKey::Order(order_id));
     }
 }
 

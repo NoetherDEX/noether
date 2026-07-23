@@ -8193,6 +8193,32 @@ mod tests {
     }
 
     #[test]
+    fn position_ttl_uses_extended_window() {
+        use soroban_sdk::testutils::storage::Persistent as _;
+        // audit #12: position (and order) DATA entries get a ~150-day window,
+        // not the shared 30-day one, so an idle position survives to
+        // close/liquidate without an intervening restore.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "BTC"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0,
+        );
+        let ttl = test.env.as_contract(&test.market_id, || {
+            test.env
+                .storage()
+                .persistent()
+                .get_ttl(&crate::storage::DataKey::Position(pos.id))
+        });
+        // Comfortably beyond the standard 30-day extend (518_400 ledgers).
+        assert!(ttl > 518_400, "position TTL {} must exceed the 30-day window", ttl);
+    }
+
+    #[test]
     fn test_partial_liq_insufficient_margin_after_partial_falls_through_to_full() {
         // Edge case from the deliverable: when a tranche cannot leave a
         // solvent remainder (the realized debit + keeper reward would consume

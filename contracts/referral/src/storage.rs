@@ -118,10 +118,17 @@ pub fn set_revoked(env: &Env, referrer: &Address, revoked: bool) {
 }
 
 pub fn is_revoked(env: &Env, referrer: &Address) -> bool {
-    env.storage()
-        .persistent()
-        .get(&StorageKey::Revoked(referrer.clone()))
-        .unwrap_or(false)
+    let key = StorageKey::Revoked(referrer.clone());
+    let revoked = env.storage().persistent().get(&key).unwrap_or(false);
+    if revoked {
+        // Keep an active revocation alive so it can't silently lapse by
+        // archival — a lapsed revocation would let a revoked referrer earn
+        // again (audit #19).
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+    }
+    revoked
 }
 
 pub fn remove_referrer_of(env: &Env, referee: &Address) {
@@ -158,7 +165,16 @@ pub fn assign_code(env: &Env, code: &String, referrer: &Address) {
 }
 
 pub fn lookup_code(env: &Env, code: &String) -> Option<Address> {
-    env.storage().persistent().get(&StorageKey::Code(code.clone()))
+    let key = StorageKey::Code(code.clone());
+    let referrer = env.storage().persistent().get(&key);
+    if referrer.is_some() {
+        // A code still being resolved must not archive out from under its
+        // referrer (audit #19).
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+    }
+    referrer
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -174,9 +190,16 @@ pub fn save_info(env: &Env, info: &ReferralInfo) {
 }
 
 pub fn load_info(env: &Env, referrer: &Address) -> Option<ReferralInfo> {
-    env.storage()
-        .persistent()
-        .get(&StorageKey::Info(referrer.clone()))
+    let key = StorageKey::Info(referrer.clone());
+    let info = env.storage().persistent().get(&key);
+    if info.is_some() {
+        // Read on record_trade and claim; extend so a referrer's accrued
+        // stats/earnings can't archive before they claim (audit #19).
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+    }
+    info
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -184,9 +207,16 @@ pub fn load_info(env: &Env, referrer: &Address) -> Option<ReferralInfo> {
 // ───────────────────────────────────────────────────────────────────────
 
 pub fn referrer_of(env: &Env, referee: &Address) -> Option<Address> {
-    env.storage()
-        .persistent()
-        .get(&StorageKey::RefereeOf(referee.clone()))
+    let key = StorageKey::RefereeOf(referee.clone());
+    let referrer = env.storage().persistent().get(&key);
+    if referrer.is_some() {
+        // Every recorded trade reads this link; extend it so a referee's
+        // referrer mapping can't archive mid-relationship (audit #19).
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND);
+    }
+    referrer
 }
 
 pub fn set_referrer_of(env: &Env, referee: &Address, referrer: &Address) {

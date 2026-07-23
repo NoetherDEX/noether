@@ -486,6 +486,34 @@ mod tests {
     }
 
     #[test]
+    fn resolving_a_code_refreshes_its_ttl() {
+        use soroban_sdk::testutils::{storage::Persistent as _, Ledger as _};
+        // audit #19: reading an identity entry on a live path re-extends its
+        // TTL, so a code (and referee link / revocation) can't silently archive
+        // out from under an active relationship.
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let referrer = Address::generate(&env);
+        let code = String::from_str(&env, "alice42");
+        client.create_code(&referrer, &code);
+
+        let key = crate::types::StorageKey::Code(code.clone());
+        let ttl0 = env.as_contract(&id, || env.storage().persistent().get_ttl(&key));
+
+        // Age the ledger until the entry is near expiry (below the ~1-day
+        // re-extend threshold) but not yet archived.
+        env.ledger().set_sequence_number(env.ledger().sequence() + ttl0 - 1_000);
+        let ttl_low = env.as_contract(&id, || env.storage().persistent().get_ttl(&key));
+        assert!(ttl_low < 17_280, "precondition: TTL {} should be below threshold", ttl_low);
+
+        // Resolving the code must re-extend it (pre-fix it stayed at ttl_low
+        // and would eventually archive).
+        assert_eq!(client.resolve_code(&code), Some(referrer));
+        let ttl_after = env.as_contract(&id, || env.storage().persistent().get_ttl(&key));
+        assert!(ttl_after > ttl_low, "resolve should refresh TTL: {} -> {}", ttl_low, ttl_after);
+    }
+
+    #[test]
     fn create_code_rejects_duplicate() {
         let (env, _admin, _market, id) = setup();
         let client = ReferralContractClient::new(&env, &id);
