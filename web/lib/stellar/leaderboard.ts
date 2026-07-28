@@ -10,6 +10,33 @@ export interface LeaderboardTrader {
   lastUpdated?: number | null;
 }
 
+/** Market-wide headline totals, counted across every trader (not just the page). */
+export interface LeaderboardTotals {
+  traders: number;
+  trades: number;
+  /** USD, already descaled from 7-dec fixed point. */
+  volume: number;
+  lastUpdated?: number | null;
+}
+
+/**
+ * Totals for the stat tiles. Aggregated server-side over every trader —
+ * summing the row page undercounts once the board outgrows its 200-row limit.
+ * Throws on failure so the caller can fall back to the (undercounted) row sum
+ * rather than rendering a fabricated zero.
+ */
+export async function getLeaderboardTotals(): Promise<LeaderboardTotals> {
+  const res = await fetch('/api/leaderboard/totals');
+  if (!res.ok) {
+    throw new Error(`Leaderboard totals request failed (${res.status})`);
+  }
+  const data = await res.json();
+  if (typeof data?.traders !== 'number' || typeof data?.volume !== 'number') {
+    throw new Error('Leaderboard totals response was malformed');
+  }
+  return data as LeaderboardTotals;
+}
+
 // Throws on any failure — an outage must surface as an error state, never as
 // an empty (fake "No traders yet") board. Callers keep last-good data.
 export async function getLeaderboardData(): Promise<LeaderboardTrader[]> {

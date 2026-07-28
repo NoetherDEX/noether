@@ -8,7 +8,12 @@ import { Tooltip } from '@/components/ui';
 import { formatNumber, formatUSD, formatRelativeTime, truncateAddress } from '@/lib/utils/format';
 import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useWalletStore } from '@/lib/store';
-import { getLeaderboardData, type LeaderboardTrader } from '@/lib/stellar/leaderboard';
+import {
+  getLeaderboardData,
+  getLeaderboardTotals,
+  type LeaderboardTotals,
+  type LeaderboardTrader,
+} from '@/lib/stellar/leaderboard';
 
 type SortField = 'totalVolume' | 'pnl';
 
@@ -70,24 +75,37 @@ function SkeletonRow() {
 
 export function LeaderboardContent() {
   const [traders, setTraders] = useState<LeaderboardTrader[]>([]);
+  const [totals, setTotals] = useState<LeaderboardTotals | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchFailed, setFetchFailed] = useState(false);
   const [sortBy, setSortBy] = useState<SortField>('pnl');
   const walletAddress = useWalletStore((s) => s.address);
 
   const fetchData = useCallback(async () => {
-    try {
-      const data = await getLeaderboardData();
-      setTraders(data);
+    // The ranked rows and the headline totals are independent reads: the rows
+    // are a capped page, the totals are aggregated across every trader. Fetch
+    // both, and let each degrade on its own.
+    const [rows, agg] = await Promise.allSettled([getLeaderboardData(), getLeaderboardTotals()]);
+
+    if (rows.status === 'fulfilled') {
+      setTraders(rows.value);
       setFetchFailed(false);
-    } catch (error) {
-      console.error('[Leaderboard] Failed to fetch:', error);
+    } else {
+      console.error('[Leaderboard] Failed to fetch:', rows.reason);
       // Keep last-good data — a failed refresh shows a stale banner, never a
       // fake-empty board.
       setFetchFailed(true);
-    } finally {
-      setLoading(false);
     }
+
+    if (agg.status === 'fulfilled') {
+      setTotals(agg.value);
+    } else {
+      // Keep last-good totals; the tiles fall back to summing visible rows,
+      // which undercounts past 200 traders but never invents a number.
+      console.error('[Leaderboard] Failed to fetch totals:', agg.reason);
+    }
+
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -110,6 +128,9 @@ export function LeaderboardContent() {
 
   // Error with nothing to show: totals are unknown, not zero.
   const errorNoData = fetchFailed && traders.length === 0;
+  // Tiles only go blank when neither source can answer: server totals survive a
+  // failed row fetch, since they are an independent read.
+  const totalsUnknown = errorNoData && !totals;
   const staleData = fetchFailed && traders.length > 0;
 
   // Cron-sync freshness: rankings update via a background sync, not live.
@@ -123,9 +144,11 @@ export function LeaderboardContent() {
   const selfIdx = walletAddress ? sorted.findIndex((t) => t.address === walletAddress) : -1;
   const self = selfIdx >= 0 ? sorted[selfIdx] : null;
 
-  const totalTraders = traders.length;
-  const totalVolume = traders.reduce((sum, t) => sum + t.totalVolume, 0);
-  const totalTrades = traders.reduce((sum, t) => sum + t.tradeCount, 0);
+  // Prefer the server-side aggregate: `traders` is a page capped at 200 rows,
+  // so summing it pins the trader count and drops the tail's volume/trades.
+  const totalTraders = totals?.traders ?? traders.length;
+  const totalVolume = totals?.volume ?? traders.reduce((sum, t) => sum + t.totalVolume, 0);
+  const totalTrades = totals?.trades ?? traders.reduce((sum, t) => sum + t.tradeCount, 0);
 
   return (
     <div className="space-y-6">
@@ -139,7 +162,7 @@ export function LeaderboardContent() {
             <span className="text-[11px] text-faint uppercase tracking-wide">Traders</span>
           </div>
           <div className="text-xl font-medium font-mono tabular-nums">
-            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatNumber(totalTraders, 0)}
+            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : totalsUnknown ? '—' : formatNumber(totalTraders, 0)}
           </div>
         </div>
         <div className="rounded-lg border border-border bg-surface p-5">
@@ -150,7 +173,7 @@ export function LeaderboardContent() {
             <span className="text-[11px] text-faint uppercase tracking-wide">Total Volume</span>
           </div>
           <div className="text-xl font-medium font-mono tabular-nums">
-            {loading ? <div className="h-7 w-24 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatUSD(totalVolume, 0)}
+            {loading ? <div className="h-7 w-24 bg-surface-2 rounded-sm animate-pulse" /> : totalsUnknown ? '—' : formatUSD(totalVolume, 0)}
           </div>
         </div>
         <div className="rounded-lg border border-border bg-surface p-5">
@@ -161,7 +184,7 @@ export function LeaderboardContent() {
             <span className="text-[11px] text-faint uppercase tracking-wide">Total Trades</span>
           </div>
           <div className="text-xl font-medium font-mono tabular-nums">
-            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatNumber(totalTrades, 0)}
+            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : totalsUnknown ? '—' : formatNumber(totalTrades, 0)}
           </div>
         </div>
       </div>
