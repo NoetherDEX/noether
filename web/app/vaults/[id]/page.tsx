@@ -28,8 +28,11 @@ export default async function VaultDetailPage({
 }: {
   params: { id: string };
 }) {
+  // Match the canonical digit string, not the numeric value: Number('1.0')
+  // is 1 and passes Number.isInteger, so '/vaults/1.0' used to render vault 1
+  // under a URL the launch-gate matcher treated as a static file.
+  if (!/^\d+$/.test(params.id)) notFound();
   const id = Number(params.id);
-  if (!Number.isInteger(id) || id < 0) notFound();
 
   // B15: the gateway is a projection, not the source of truth. A gateway
   // outage (or the indexing window right after create_vault) used to 404 a

@@ -116,7 +116,15 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
 
 export const config = {
   // The launch gate must see every page and api route; Next internals and
-  // public files (anything with an extension) stay out. The geoblock narrows
-  // itself to GUARDED_PREFIXES in code.
-  matcher: ['/((?!_next/static|_next/image|.*\\..*).*)'],
+  // public files stay out. The geoblock narrows itself to GUARDED_PREFIXES
+  // in code.
+  //
+  // Excluding `.*\..*` — any path containing a dot — let `/vaults/1.0`
+  // through ungated: Number('1.0') is 1, so the route rendered vault 1 to
+  // anyone. Only real static-asset extensions are excluded now, anchored at
+  // the end of the path, so a dot inside a route segment no longer bypasses
+  // the gate.
+  matcher: [
+    '/((?!_next/static|_next/image|.*\\.(?:ico|png|jpg|jpeg|gif|svg|webp|avif|bmp|css|js|mjs|map|txt|xml|json|webmanifest|woff|woff2|ttf|otf|eot|mp4|webm|pdf)$).*)',
+  ],
 };
