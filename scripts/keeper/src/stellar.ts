@@ -352,12 +352,21 @@ export class StellarClient {
   }
 
   /**
-   * Extend a contract's instance+code TTL via the canonical
-   * extendFootprintTtl operation (P3-9). An archived instance is a dead
-   * exchange until restored, and the keeper doesn't otherwise write to
-   * vault/router/shim. Best-effort: returns true on a PENDING submit, false
-   * on any failure (logged by the caller, never fatal). On-chain verification
-   * of the footprint is the operator's first-run step.
+   * Extend a contract's instance AND code TTL via extendFootprintTtl (P3-9).
+   *
+   * Instance and code entries archive independently, and this job used to put
+   * only the instance in the footprint even though its own comment said
+   * instance and code. So the code entries were never bumped and drifted onto
+   * the seven day min ttl treadmill, quietly archiving the oracle read path.
+   * We read the wasm hash from the instance and extend both keys together.
+   *
+   * Fire and forget on purpose: returns true once the bump is submitted, false
+   * only on an immediate reject. It does NOT wait for confirmation, because the
+   * TTL job runs inline in the same tick as the price push and the keeper
+   * serialises account use to avoid sequence collisions, so waiting nine
+   * confirmations here could delay the next price push past the sixty second
+   * staleness gate. Whether the runway actually advanced is verified separately
+   * by reading liveUntil from chain, which is the honest source anyway.
    */
   async bumpContractTtl(contractId: string, extendTo: number): Promise<boolean> {
     if (!contractId) return false;
@@ -370,7 +379,16 @@ export class StellarClient {
           durability: xdr.ContractDataDurability.persistent(),
         }),
       );
-      const sorobanData = new SorobanDataBuilder().setReadOnly([instanceKey]).build();
+
+      const footprint = [instanceKey];
+      const wasmHash = await this.contractWasmHash(instanceKey);
+      if (wasmHash) {
+        footprint.push(
+          xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash: wasmHash })),
+        );
+      }
+
+      const sorobanData = new SorobanDataBuilder().setReadOnly(footprint).build();
       const tx = new TransactionBuilder(account, {
         fee: String(BASE_INCLUSION_FEE),
         networkPassphrase: this.networkPassphrase,
@@ -381,10 +399,24 @@ export class StellarClient {
         .build();
       const prepared = await this.withRpc((server) => server.prepareTransaction(tx));
       prepared.sign(this.keypair);
-      const res = await this.withRpc((server) => server.sendTransaction(prepared));
-      return res.status === 'PENDING';
+      const send = await this.withRpc((server) => server.sendTransaction(prepared));
+      return send.status !== 'ERROR';
     } catch {
       return false;
+    }
+  }
+
+  /** Read a contract's wasm hash from its instance ledger entry, or null. */
+  private async contractWasmHash(instanceKey: xdr.LedgerKey): Promise<Buffer | null> {
+    try {
+      const res = await this.withRpc((server) => server.getLedgerEntries(instanceKey));
+      const entry = res.entries?.[0];
+      if (!entry) return null;
+      const exec = entry.val.contractData().val().instance().executable();
+      if (exec.switch() !== xdr.ContractExecutableType.contractExecutableWasm()) return null;
+      return Buffer.from(exec.wasmHash());
+    } catch {
+      return null;
     }
   }
 

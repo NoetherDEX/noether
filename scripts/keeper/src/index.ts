@@ -789,11 +789,17 @@ class KeeperBot {
     } else if (!result.indeterminate) {
       this.storkRelayFailStreak++;
       this.logThrottled('stork-relay-fail', `⚠️  relay_stork failed (${this.storkRelayFailStreak}x): ${result.error}`);
-      if (this.storkRelayFailStreak === 5) {
+      // Escalating thresholds instead of a single equals 5 check. That check
+      // fired exactly once and then went silent while relay_stork failed
+      // twelve thousand times in a row for six days. Alert at 5, 25 and 100,
+      // then once an hour, and raise the severity once it is clearly stuck.
+      const streak = this.storkRelayFailStreak;
+      const hourly = streak > 100 && streak % 120 === 0; // ~once an hour at a 30s cadence
+      if (streak === 5 || streak === 25 || streak === 100 || hourly) {
         void sendAlert(
-          'warn',
+          streak >= 100 ? 'critical' : 'warn',
           'relay_stork failing repeatedly',
-          `${this.storkRelayFailStreak} consecutive failures; last: ${result.error}`,
+          `${streak} consecutive failures; last: ${result.error}`,
         );
       }
     }
@@ -2002,22 +2008,30 @@ class KeeperBot {
       );
     }
 
-    // Extend instance+code TTLs. Failures are logged, never fatal.
-    const targets: Array<[string, string]> = [
-      ['market', this.config.marketContractId],
-      ['vault', this.config.vaultContractId],
-      ['router', this.config.routerContractId],
-      ['shim', this.config.shimContractId],
-    ];
+    // Extend instance AND code TTLs for every contract in contracts.json.
+    // Failures are logged, never fatal.
     const bumped: string[] = [];
-    for (const [name, id] of targets) {
+    const failed: string[] = [];
+    for (const { name, id } of this.config.ttlContractIds) {
       if (!id) continue;
       const ok = await this.stellar.bumpContractTtl(id, this.config.ttlExtendToLedgers);
       if (ok) bumped.push(name);
-      else this.logThrottled(`ttl:${name}`, `⚠️  TTL bump failed for ${name} (${id.slice(0, 8)}…)`);
+      else {
+        failed.push(name);
+        this.logThrottled(`ttl:${name}`, `⚠️  TTL bump failed for ${name} (${id.slice(0, 8)}…)`);
+      }
     }
     if (bumped.length > 0) {
-      console.log(`\n🔁 Extended TTL: ${bumped.join(', ')}`);
+      console.log(`\n🔁 Extended TTL (instance+code): ${bumped.join(', ')}`);
+    }
+    // A TTL bump that keeps failing is how a contract silently drifts toward
+    // archival, so page on it rather than only logging.
+    if (failed.length > 0) {
+      void sendAlert(
+        'warn',
+        'TTL bump failing',
+        `could not extend: ${failed.join(', ')} (${bumped.length} succeeded)`,
+      );
     }
   }
 

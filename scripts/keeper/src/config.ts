@@ -200,7 +200,26 @@ export function loadConfig(): KeeperConfig {
     // TTL bump job (P3-9) + wallet-funding alarm (P3-10)
     ttlBumpIntervalMs: envInt('TTL_BUMP_INTERVAL_MS', 6 * 60 * 60 * 1000), // 6h
     ttlExtendToLedgers: envInt('TTL_EXTEND_TO_LEDGERS', 518_400), // ~30 days
-    minKeeperXlm: envFloat('MIN_KEEPER_XLM', 20),
+    // Every address in contracts.json, so a newly deployed contract is covered
+    // by the TTL job automatically. The old job listed only four contracts by
+    // hand and left referral, noeracle, the factory and the tokens to archive.
+    // The tokens are SAC wrapped classic assets, whose instance archiving would
+    // break contract side transfers, so they belong here too.
+    ttlContractIds: (() => {
+      const names: Record<string, unknown> = contracts.contracts ?? {};
+      const seen = new Set<string>();
+      const out: Array<{ name: string; id: string }> = [];
+      for (const [name, id] of Object.entries(names)) {
+        const envOverride = process.env[`NEXT_PUBLIC_${name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}_ID`];
+        const addr = (typeof envOverride === 'string' && envOverride.trim()) || (typeof id === 'string' ? id : '');
+        if (addr && !seen.has(addr)) {
+          seen.add(addr);
+          out.push({ name, id: addr });
+        }
+      }
+      return out;
+    })(),
+    minKeeperXlm: envFloat('MIN_KEEPER_XLM', 600),
 
     // Active-active + liveness (L0-19). NOTE: pollOffsetMs defaults to 0 —
     // the spec's "default POLL_INTERVAL_MS/2" reading would give BOTH

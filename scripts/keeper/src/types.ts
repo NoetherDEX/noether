@@ -153,6 +153,8 @@ export interface KeeperConfig {
   routerContractId: string;
   /** Noeracle shim — extended by the TTL job (P3-9). */
   shimContractId: string;
+  /** Every contract in contracts.json, for the TTL bump job to cover. */
+  ttlContractIds: Array<{ name: string; id: string }>;
 
   // Timing
   pollIntervalMs: number;
