@@ -1,7 +1,12 @@
 import { rpc, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk';
 import { getNetworkPassphrase } from '@noether/shared';
 import type { TxBuildContext } from '@noether/tx-builders';
-import { findContractError, type ContractErrorInfo } from './contractErrors.js';
+import {
+  findContractError,
+  findHostError,
+  type ContractErrorInfo,
+  type HostErrorInfo,
+} from './contractErrors.js';
 
 export interface TxSubmitOpts {
   pollTimeoutMs?: number;
@@ -11,9 +16,22 @@ export interface TxSubmitOpts {
 export type TxSubmitOutcome =
   | { kind: 'success'; hash: string; ledger?: number }
   | { kind: 'pending'; hash: string }
-  | { kind: 'failed'; hash: string; contractError: ContractErrorInfo | null; resultXdr?: string }
+  | {
+      kind: 'failed';
+      hash: string;
+      contractError: ContractErrorInfo | null;
+      /** Set when the host aborted outside contract code, e.g. a resource overrun. */
+      hostError?: HostErrorInfo | null;
+      resultXdr?: string;
+    }
   | { kind: 'try_again_later'; hash: string }
-  | { kind: 'rejected'; hash: string; message: string; contractError: ContractErrorInfo | null };
+  | {
+      kind: 'rejected';
+      hash: string;
+      message: string;
+      contractError: ContractErrorInfo | null;
+      hostError?: HostErrorInfo | null;
+    };
 
 export interface RpcLike {
   sendTransaction(tx: Transaction): Promise<rpc.Api.SendTransactionResponse>;
@@ -53,6 +71,7 @@ export class TxSubmitService {
         hash: send.hash,
         message: 'Submission rejected by RPC',
         contractError: findContractError(send.diagnosticEvents),
+        hostError: findHostError(send.diagnosticEvents),
       };
     }
     if (send.status === 'TRY_AGAIN_LATER') {
@@ -76,6 +95,7 @@ export class TxSubmitService {
           kind: 'failed',
           hash,
           contractError: findContractError(res.diagnosticEventsXdr),
+          hostError: findHostError(res.diagnosticEventsXdr),
           resultXdr: safeResultXdr(res),
         };
       }

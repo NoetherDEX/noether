@@ -100,3 +100,46 @@ function scErrorContractCode(val: xdr.ScVal): number | null {
     return null;
   }
 }
+
+export interface HostErrorInfo {
+  /** Host subsystem that aborted, e.g. "budget" or "storage". */
+  type: string;
+  /** Host error code, e.g. "exceeded_limit". */
+  code: string;
+}
+
+/** ExceededLimit -> exceeded_limit, WasmVm -> wasm_vm. */
+function snakeCase(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+}
+
+/**
+ * Scan diagnostic events for a NON contract Soroban error.
+ *
+ * A trade whose declared resources are overrun does not fail with a contract
+ * error, it traps in the host, so findContractError returns null and the
+ * caller used to report a bare FAILED with contractError null and nothing to
+ * act on. Naming the subsystem and code turns that into something a client can
+ * explain, and it is how an ExceededLimit trap becomes legible.
+ */
+export function findHostError(
+  events: xdr.DiagnosticEvent[] | undefined | null,
+): HostErrorInfo | null {
+  for (const ev of events ?? []) {
+    try {
+      const body = ev.event().body().v0();
+      for (const val of [...body.topics(), body.data()]) {
+        if (val.switch() !== xdr.ScValType.scvError()) continue;
+        const err = val.error();
+        if (err.switch() === xdr.ScErrorType.sceContract()) continue;
+        return {
+          type: snakeCase(String(err.switch().name).replace(/^sce/, '')),
+          code: snakeCase(String(err.code().name).replace(/^scec/, '')),
+        };
+      }
+    } catch {
+      // malformed / unexpected event shape — keep scanning
+    }
+  }
+  return null;
+}

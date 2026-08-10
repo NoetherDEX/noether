@@ -17,6 +17,7 @@ import {
   BASE_FEE,
   Contract,
   Networks,
+  SorobanDataBuilder,
   Transaction,
   TransactionBuilder,
   rpc,
@@ -90,11 +91,63 @@ export async function buildContractTx(
   if (rpc.Api.isSimulationError(sim)) {
     throw new TxSimulationError(`Simulation failed: ${sim.error}`, contractId, method, sim);
   }
-  const prepared = rpc.assembleTransaction(tx, sim).build();
+  const prepared = withResourceHeadroom(rpc.assembleTransaction(tx, sim).build());
   return {
     xdr: prepared.toXDR(),
     simulation: sim as rpc.Api.SimulateTransactionSuccessResponse,
   };
+}
+
+/**
+ * Margin applied to the simulated Soroban resources before the caller signs.
+ *
+ * Simulation prices the call against ledger state at that instant and those
+ * numbers are frozen into the envelope as a hard ceiling. The market rewrites
+ * shared index entries on every open, so a trade landing between our
+ * simulation and our submission makes the real cost exceed what we declared,
+ * and the host aborts with a bare ExceededLimit trap that carries no contract
+ * error code.
+ *
+ * The margin is not free. Soroban refunds only the rent and events portion of
+ * the resource fee; compute and ledger io are charged from the resources we
+ * declare. A quarter more headroom costs roughly a quarter more on that
+ * portion, which is cheap against a trade that fails and burns the fee anyway.
+ */
+export const RESOURCE_MARGIN = 1.25;
+
+/** Widen an assembled transaction's declared Soroban resources by the margin. */
+export function withResourceHeadroom(assembled: Transaction): Transaction {
+  try {
+    const sorobanData = assembled.toEnvelope().v1().tx().ext().sorobanData();
+    if (!sorobanData) return assembled;
+
+    const res = sorobanData.resources();
+    const originalResourceFee = BigInt(sorobanData.resourceFee().toString());
+    const inflatedResourceFee = BigInt(Math.ceil(Number(originalResourceFee) * RESOURCE_MARGIN));
+
+    const data = new SorobanDataBuilder(sorobanData)
+      .setResources(
+        Math.ceil(res.instructions() * RESOURCE_MARGIN),
+        Math.ceil(res.diskReadBytes() * RESOURCE_MARGIN),
+        Math.ceil(res.writeBytes() * RESOURCE_MARGIN),
+      )
+      .setResourceFee(inflatedResourceFee)
+      .build();
+
+    // TransactionBuilder takes the INCLUSION fee per operation and adds the
+    // resource fee itself during build, so pass only the base portion. Handing
+    // it base plus resource would charge the resource fee twice.
+    const numOps = BigInt(assembled.operations.length || 1);
+    const basePortion = BigInt(assembled.fee) - originalResourceFee;
+    const perOpBase = basePortion > 0n ? basePortion / numOps : BigInt(BASE_FEE);
+
+    return TransactionBuilder.cloneFrom(assembled, { fee: perOpBase.toString() })
+      .setSorobanData(data)
+      .build();
+  } catch {
+    // Never block a trade over fee tuning; fall back to simulated resources.
+    return assembled;
+  }
 }
 
 export class TxSimulationError extends Error {

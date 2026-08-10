@@ -2,6 +2,7 @@ import {
   Contract,
   rpc,
   Horizon,
+  SorobanDataBuilder,
   TransactionBuilder,
   Transaction,
   Networks,
@@ -82,8 +83,9 @@ export async function buildTransaction(
     );
   }
 
-  // Prepare the transaction with the simulation results
-  const prepared = rpc.assembleTransaction(transaction, simulated).build();
+  // Prepare the transaction with the simulation results, then widen the
+  // declared resources before the user ever sees the signing prompt.
+  const prepared = withResourceHeadroom(rpc.assembleTransaction(transaction, simulated).build());
 
   // Convert to XDR string for Freighter
   // Use toXDR() which returns base64 string in browser environment
@@ -92,6 +94,66 @@ export async function buildTransaction(
   debugLog('[DEBUG] Built transaction XDR (first 100 chars):', xdrString.substring(0, 100));
 
   return xdrString;
+}
+
+/**
+ * Margin applied to the simulated Soroban resources before signing.
+ *
+ * Simulation prices the call against ledger state at that instant, and those
+ * numbers are frozen into the envelope as a hard ceiling. The market rewrites
+ * shared index entries (AllPositions, TraderPositions) on every open, so any
+ * trade landing before ours executes makes the real cost exceed what we
+ * declared — and the host aborts with a bare ExceededLimit trap carrying no
+ * contract code.
+ *
+ * A browser transaction is unusually exposed here: the footprint is fixed at
+ * simulation, then sits in the wallet for however long the user takes to
+ * review and approve. That window is far wider than a server-side signer's,
+ * so the margin is correspondingly generous.
+ *
+ * The margin is not free. Soroban refunds only the rent and events portion of
+ * the resource fee; the compute and ledger io portion is charged from the
+ * resources we declare, not the ones we use. Widening them by a quarter
+ * therefore costs roughly a quarter more on that portion, which is worth it
+ * against a trade that fails outright and still burns the fee.
+ */
+const RESOURCE_MARGIN = 1.25;
+
+function withResourceHeadroom(assembled: Transaction): Transaction {
+  try {
+    const sorobanData = assembled.toEnvelope().v1().tx().ext().sorobanData();
+    if (!sorobanData) return assembled;
+
+    const res = sorobanData.resources();
+    const originalResourceFee = BigInt(sorobanData.resourceFee().toString());
+    const inflatedResourceFee = BigInt(Math.ceil(Number(originalResourceFee) * RESOURCE_MARGIN));
+
+    const data = new SorobanDataBuilder(sorobanData)
+      .setResources(
+        Math.ceil(res.instructions() * RESOURCE_MARGIN),
+        Math.ceil(res.diskReadBytes() * RESOURCE_MARGIN),
+        Math.ceil(res.writeBytes() * RESOURCE_MARGIN),
+      )
+      .setResourceFee(inflatedResourceFee)
+      .build();
+
+    // TransactionBuilder takes the INCLUSION fee per operation and adds the
+    // soroban resource fee itself during build. Handing it base plus resource
+    // made build add the resource fee a second time, so the wallet showed
+    // roughly two and a half times the real cost. Pass only the base portion
+    // and let build supply the rest.
+    const numOps = BigInt(assembled.operations.length || 1);
+    const basePortion = BigInt(assembled.fee) - originalResourceFee;
+    const perOpBase = basePortion > 0n ? basePortion / numOps : BigInt(BASE_FEE);
+
+    return TransactionBuilder.cloneFrom(assembled, { fee: perOpBase.toString() })
+      .setSorobanData(data)
+      .build();
+  } catch (err) {
+    // Never block a trade over fee tuning — fall back to simulated resources.
+    debugError('[buildTransaction] resource headroom unavailable:', err);
+    return assembled;
+  }
 }
 
 /**
@@ -114,6 +176,41 @@ function contractErrorFromDiagnostics(
       for (const val of [...body.topics(), body.data()]) {
         const code = scErrorContractCode(val);
         if (code !== null) return messageForCode(code) ?? `Contract error #${code}`;
+      }
+    } catch {
+      // malformed / unexpected event shape — keep scanning
+    }
+  }
+  return null;
+}
+
+/**
+ * Recognise a host-level (non-contract) failure and explain it in plain terms.
+ *
+ * `contractErrorFromDiagnostics` deliberately ignores anything that is not
+ * `Error(Contract, #N)`, so a resource trap used to fall all the way through to
+ * the bare generic — which reads like the app is broken when in fact the trade
+ * was simply overtaken by other on-chain activity and will very likely succeed
+ * on a retry. Distinguishing the two is the difference between "try again" and
+ * "something is wrong with this market".
+ */
+function hostErrorFromDiagnostics(
+  events: xdr.DiagnosticEvent[] | undefined | null
+): string | null {
+  for (const ev of events ?? []) {
+    try {
+      const body = ev.event().body().v0();
+      for (const val of [...body.topics(), body.data()]) {
+        if (val.switch() !== xdr.ScValType.scvError()) continue;
+        const err = val.error();
+        if (err.switch() === xdr.ScErrorType.sceContract()) continue; // handled elsewhere
+        if (err.code().name === 'scecExceededLimit') {
+          return (
+            'The network moved on before your transaction landed — its resource ' +
+            'estimate went stale. Nothing was charged and no position was opened. ' +
+            'Please try again.'
+          );
+        }
       }
     } catch {
       // malformed / unexpected event shape — keep scanning
@@ -213,6 +310,7 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
       'resultXdr' in result ? (result.resultXdr as xdr.TransactionResult) : undefined;
     const message =
       contractErrorFromDiagnostics(events) ??
+      hostErrorFromDiagnostics(events) ??
       txResultMessage(txResult) ??
       'Transaction failed on-chain — please try again';
     throw new Error(message);

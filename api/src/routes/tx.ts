@@ -31,6 +31,16 @@ const CONTRACT_ERROR_SCHEMA = {
   },
 } as const;
 
+/** Set when the host aborted outside contract code, e.g. a resource overrun,
+ *  which carries no contract error number and used to surface as null. */
+const HOST_ERROR_SCHEMA = {
+  type: ['object', 'null'],
+  properties: {
+    type: { type: 'string' },
+    code: { type: 'string' },
+  },
+} as const;
+
 export async function registerTxRoutes(app: FastifyInstance, deps: TxRoutesDeps): Promise<void> {
   const service = deps.submitService ?? new TxSubmitService(deps.txCtx);
 
@@ -44,7 +54,9 @@ export async function registerTxRoutes(app: FastifyInstance, deps: TxRoutesDeps)
           'pollTimeoutMs (default 30s). Resubmitting the same XDR is idempotent: a DUPLICATE is ' +
           'polled by hash and the prior result returned. When the RPC queue is full the response ' +
           'is 503 with a Retry-After header. FAILED transactions include the decoded Noether ' +
-          'contract error number + name when one is present in the diagnostic events.',
+          'contract error number + name when one is present in the diagnostic events, and ' +
+          '`hostError` when the host aborted outside contract code (a resource overrun reports ' +
+          'type "budget", code "exceeded_limit") — previously such failures carried no detail.',
         tags: ['trading'],
         body: {
           type: 'object',
@@ -62,6 +74,7 @@ export async function registerTxRoutes(app: FastifyInstance, deps: TxRoutesDeps)
               status: { type: 'string', enum: ['SUCCESS', 'PENDING', 'FAILED'] },
               ledger: { type: 'integer' },
               contractError: CONTRACT_ERROR_SCHEMA,
+              hostError: HOST_ERROR_SCHEMA,
               resultXdr: { type: 'string' },
             },
             required: ['hash', 'status'],
@@ -73,6 +86,7 @@ export async function registerTxRoutes(app: FastifyInstance, deps: TxRoutesDeps)
               error: { type: 'string' },
               message: { type: 'string' },
               contractError: CONTRACT_ERROR_SCHEMA,
+              hostError: HOST_ERROR_SCHEMA,
             },
             required: ['error'],
           },
@@ -124,6 +138,7 @@ function mapOutcome(outcome: TxSubmitOutcome, reply: FastifyReply): FastifyReply
         hash: outcome.hash,
         status: 'FAILED',
         contractError: outcome.contractError,
+        hostError: outcome.hostError ?? null,
         resultXdr: outcome.resultXdr,
       });
     case 'try_again_later':
@@ -139,6 +154,7 @@ function mapOutcome(outcome: TxSubmitOutcome, reply: FastifyReply): FastifyReply
         error: 'submission_rejected',
         message: outcome.message,
         contractError: outcome.contractError,
+        hostError: outcome.hostError ?? null,
       });
   }
 }

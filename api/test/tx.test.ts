@@ -31,6 +31,17 @@ function contractErrorEvent(code: number): xdr.DiagnosticEvent {
   );
 }
 
+/** The trap a resource overrun produces: a host error, not a contract one. */
+function budgetErrorEvent(): xdr.DiagnosticEvent {
+  return diagnosticEvent(
+    [
+      xdr.ScVal.scvSymbol('error'),
+      xdr.ScVal.scvError(xdr.ScError.sceBudget(xdr.ScErrorCode.scecExceededLimit())),
+    ],
+    xdr.ScVal.scvString('escalating error to VM trap'),
+  );
+}
+
 async function setupWithService(submitService: TxSubmitLike) {
   const txOverride: TxRoutesDeps = {
     txCtx: { rpcUrl: 'http://stub', network: 'testnet' },
@@ -195,7 +206,33 @@ describe('TxSubmitService', () => {
       kind: 'failed',
       hash: 'fail-hash',
       contractError: { code: 25, name: 'InsufficientMargin' },
+      // A contract error is not a host error, so this stays null.
+      hostError: null,
       resultXdr: 'RESULTB64==',
+    });
+  });
+
+  it('names a host trap that carries no contract error', async () => {
+    // A resource overrun aborts in the host, so there is no contract error to
+    // decode. Before hostError existed this surfaced as FAILED with
+    // contractError null and nothing else, which told the caller nothing.
+    const { server } = fakeRpc(
+      { status: 'PENDING', hash: 'budget-hash' },
+      [
+        {
+          status: rpc.Api.GetTransactionStatus.FAILED,
+          diagnosticEventsXdr: [budgetErrorEvent()],
+          resultXdr: { toXDR: () => 'RESULTB64==' },
+        },
+      ],
+    );
+    const service = new TxSubmitService(ctx, server);
+    const outcome = await service.submit(signedXdr, { pollTimeoutMs: 1000, pollIntervalMs: 1 });
+    expect(outcome).toMatchObject({
+      kind: 'failed',
+      hash: 'budget-hash',
+      contractError: null,
+      hostError: { type: 'budget', code: 'exceeded_limit' },
     });
   });
 
@@ -212,6 +249,7 @@ describe('TxSubmitService', () => {
       hash: 'err-hash',
       message: 'Submission rejected by RPC',
       contractError: { code: 3, name: 'Unauthorized' },
+      hostError: null,
     });
     expect(calls.get).toEqual([]);
   });
