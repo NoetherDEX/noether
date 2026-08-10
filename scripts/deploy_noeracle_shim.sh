@@ -38,7 +38,7 @@ WASM_DIR="$CONTRACTS_DIR/target/wasm"
 # Noeracle testnet address — the live attestation contract maintained by
 # the noeracle.org team. Confirmed against api.noeracle.org and the SDK
 # defaults. If they migrate to a new address, override here or via env.
-DEFAULT_NOERACLE_ID="CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG"
+DEFAULT_NOERACLE_ID="CBTO5K2NLG2KYHQDL5ME4SWFQ5GRR7GVU4DFATOXGVS3OUJJDFF2YYNS"
 
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${NC}"
 echo -e "${CYAN}           Noeracle Shim — Build + Deploy + Initialize                          ${NC}"

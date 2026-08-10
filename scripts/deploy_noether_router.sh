@@ -34,7 +34,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CONTRACTS_DIR="$PROJECT_ROOT/contracts"
 WASM_DIR="$CONTRACTS_DIR/target/wasm"
 
-DEFAULT_NOERACLE_ID="CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG"
+DEFAULT_NOERACLE_ID="CBTO5K2NLG2KYHQDL5ME4SWFQ5GRR7GVU4DFATOXGVS3OUJJDFF2YYNS"
 
 echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${NC}"
 echo -e "${CYAN}          Noether Router — Build + Deploy + Initialize                          ${NC}"
