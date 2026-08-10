@@ -11,8 +11,26 @@ export type { Credentials } from './transport.js';
 // Sub-client types so consumers can write helper functions without
 // reaching into nested paths.
 export { type HealthStatus } from './sub/health.js';
-export { type MarketSummary, type OracleSnapshot } from './sub/markets.js';
+export {
+  type MarketSummary,
+  type OracleSnapshot,
+  type AssetStats,
+  type SolvencyStats,
+  type MarketStatsResponse,
+  type MarketCandleInterval,
+  type CandlePoint,
+  type CandlesQuery,
+  type CandlesResponse,
+} from './sub/markets.js';
+export {
+  type OracleHealth,
+  type OracleAssetHealth,
+  type OracleOnchainHealth,
+  type OracleKeeperHealth,
+} from './sub/oracle.js';
 export { type RawEvent, type EventQuery } from './sub/events.js';
+export { type TradeRow, type TradesQuery } from './sub/trades.js';
+export { type AdlQueueRow, type AdlQueueResult, type AdlQueueQuery } from './sub/adl.js';
 export {
   type IssuedChallenge,
   type IssuedApiKey,
@@ -20,7 +38,13 @@ export {
   type BetaStatus,
   type ChallengeSigner,
 } from './sub/keys.js';
-export { type AccountIdentity } from './sub/account.js';
+export {
+  type AccountIdentity,
+  type AccountPositions,
+  type AccountVolume,
+  type AccountShortfall,
+  type AccountHistoryQuery,
+} from './sub/account.js';
 export {
   type PrepareRequest,
   type OpenPositionRequest,
@@ -56,10 +80,14 @@ export {
   NoetherError,
   ApiError,
   AuthError,
+  ForbiddenError,
   BadRequestError,
   NotFoundError,
+  ConflictError,
   RateLimitError,
+  RegionRestrictedError,
   ServerError,
+  ServiceUnavailableError,
   NetworkError,
 } from './errors.js';
 

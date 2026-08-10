@@ -16,6 +16,8 @@ export interface EventQuery {
   contract?: string;
   fromLedger?: number;
   toLedger?: number;
+  /** Cursor: only events with a ledger close time strictly below this unix time. */
+  beforeTs?: number;
   limit?: number;
 }
 
@@ -30,6 +32,7 @@ export class EventsApi {
         contract: query.contract,
         from_ledger: query.fromLedger,
         to_ledger: query.toLedger,
+        before_ts: query.beforeTs,
         limit: query.limit,
       },
     });

@@ -33,7 +33,7 @@ const client = new NoetherClient({
 });
 
 const me = await client.account.me();
-const positions = await client.account.positions();
+const { positions, events } = await client.account.positions();
 ```
 
 ## Issue an API key (one-shot)
@@ -85,16 +85,23 @@ console.log(result.submitted.hash, result.submitted.status);
 | `client.health.ping()`          | health probe                           | no   |
 | `client.markets.list()`         | all supported markets + oracle prices  | no   |
 | `client.markets.get(asset)`     | single market detail                   | no   |
+| `client.markets.stats()`        | open interest, 24h volume, solvency    | no   |
+| `client.markets.candles(asset, {...})` | OHLC candles, oldest first      | no   |
 | `client.oracle.getPrice(asset)` | live oracle price                      | no   |
 | `client.oracle.getPrices()`     | all asset prices                       | no   |
+| `client.oracle.health()`        | per source oracle health report        | no   |
 | `client.events.list(query)`     | raw indexer events (filterable)        | no   |
+| `client.trades.list({...})`     | recent trades, newest first            | no   |
+| `client.adl.queue(asset, {...})` | advisory auto deleveraging queue      | no   |
 | `client.keys.betaStatus(addr?)` | closed-beta gating status              | no   |
 | `client.keys.create({...})`     | challenge → sign → issue key           | no   |
 | `client.keys.list()`            | own API keys                           | yes  |
 | `client.keys.revoke(keyId)`     | revoke own key                         | yes  |
 | `client.account.me()`           | identity / tier                        | yes  |
-| `client.account.positions()`    | position events for owner              | yes  |
+| `client.account.positions()`    | open positions + position events       | yes  |
 | `client.account.orders()`       | order events for owner                 | yes  |
+| `client.account.volume(address)` | trailing 14 day traded notional       | no   |
+| `client.account.shortfall(address)` | claimable vault shortfall          | no   |
 | `client.orders.prepare(req)`    | build unsigned XDR                     | yes  |
 | `client.tx.submit(req)`         | submit signed XDR + poll               | yes  |
 | `client.executeTrade({...})`    | prepare + sign + submit one-shot       | yes  |

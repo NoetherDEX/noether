@@ -7,6 +7,7 @@ import httpx
 
 from .transport import Credentials, Transport
 from .sub.account import AccountApi
+from .sub.adl import AdlApi
 from .sub.events import EventsApi
 from .sub.health import HealthApi
 from .sub.keys import KeysApi
@@ -15,6 +16,7 @@ from .sub.oracle import OracleApi
 from .sub.orders import OrdersApi
 from .sub.positions import PositionsApi
 from .sub.referral import ReferralApi
+from .sub.trades import TradesApi
 from .sub.tx import TxApi
 from .sub.vaults import VaultsApi
 from .models import PreparedTransaction, SubmittedTx
@@ -45,6 +47,8 @@ class NoetherClient:
         self.account = AccountApi(self._transport, credentials)
         self.orders = OrdersApi(self._transport, credentials)
         self.positions = PositionsApi(self._transport)
+        self.trades = TradesApi(self._transport)
+        self.adl = AdlApi(self._transport)
         self.tx = TxApi(self._transport, credentials)
         self.vaults = VaultsApi(self._transport)
         self.referral = ReferralApi(self._transport, credentials)

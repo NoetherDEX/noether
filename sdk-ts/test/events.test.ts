@@ -15,6 +15,16 @@ describe('events sub-client', () => {
     expect(url.searchParams.get('limit')).toBe('50');
   });
 
+  it('list() forwards the beforeTs cursor as before_ts', async () => {
+    const { client, fake } = makeClient({
+      scripts: [{ status: 200, body: { events: [] } }],
+    });
+    await client.events.list({ beforeTs: 1_784_000_000, limit: 20 });
+    const url = new URL(fake.calls[0]!.url);
+    expect(url.searchParams.get('before_ts')).toBe('1784000000');
+    expect(url.searchParams.get('limit')).toBe('20');
+  });
+
   it('list() omits undefined filters', async () => {
     const { client, fake } = makeClient({
       scripts: [{ status: 200, body: { events: [] } }],

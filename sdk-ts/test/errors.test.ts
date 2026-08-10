@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { makeClient } from './helpers.js';
-import { BadRequestError, NotFoundError, RateLimitError, ServerError } from '../src/index.js';
+import {
+  AuthError,
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  RateLimitError,
+  RegionRestrictedError,
+  ServerError,
+  ServiceUnavailableError,
+} from '../src/index.js';
 
 describe('error classification', () => {
   it('400 → BadRequestError', async () => {
@@ -33,5 +43,74 @@ describe('error classification', () => {
       scripts: [{ status: 500, body: { error: 'boom' } }],
     });
     await expect(client.markets.list()).rejects.toBeInstanceOf(ServerError);
+  });
+
+  it('401 → AuthError but not ForbiddenError', async () => {
+    const { client } = makeClient({
+      scripts: [{ status: 401, body: { error: 'invalid_credentials' } }],
+    });
+    const err = await client.markets.list().catch((e) => e);
+    expect(err).toBeInstanceOf(AuthError);
+    expect(err).not.toBeInstanceOf(ForbiddenError);
+    expect(err.code).toBe('invalid_credentials');
+  });
+
+  it('403 not_in_beta → ForbiddenError, distinguishable from 401', async () => {
+    const { client } = makeClient({
+      scripts: [{ status: 403, body: { error: 'not_in_beta' } }],
+    });
+    const err = await client.markets.list().catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenError);
+    // Still an AuthError so pre existing catch blocks keep working.
+    expect(err).toBeInstanceOf(AuthError);
+    expect(err.status).toBe(403);
+    expect(err.code).toBe('not_in_beta');
+  });
+
+  it('409 key_limit_reached → ConflictError', async () => {
+    const { client } = makeClient({
+      scripts: [{ status: 409, body: { error: 'key_limit_reached' } }],
+    });
+    const err = await client.markets.list().catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err).not.toBeInstanceOf(BadRequestError);
+    expect(err.code).toBe('key_limit_reached');
+  });
+
+  it('451 region_restricted → RegionRestrictedError', async () => {
+    const { client } = makeClient({
+      scripts: [{ status: 451, body: { error: 'region_restricted' } }],
+    });
+    const err = await client.markets.list().catch((e) => e);
+    expect(err).toBeInstanceOf(RegionRestrictedError);
+    expect(err).not.toBeInstanceOf(BadRequestError);
+    expect(err.code).toBe('region_restricted');
+  });
+
+  it('503 try_again_later → ServiceUnavailableError with retryAfterSec', async () => {
+    const { client } = makeClient({
+      scripts: [
+        {
+          status: 503,
+          headers: { 'retry-after': '2' },
+          body: { error: 'try_again_later', retryable: true },
+        },
+      ],
+    });
+    const err = await client.markets.list().catch((e) => e);
+    expect(err).toBeInstanceOf(ServiceUnavailableError);
+    // Still a ServerError so pre existing catch blocks keep working.
+    expect(err).toBeInstanceOf(ServerError);
+    expect(err.retryAfterSec).toBe(2);
+    expect(err.code).toBe('try_again_later');
+  });
+
+  it('code getter is null when the body carries no error string', async () => {
+    const { client } = makeClient({
+      scripts: [{ status: 400, body: { message: 'nope' } }],
+    });
+    const err = await client.markets.list().catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestError);
+    expect(err.code).toBeNull();
   });
 });

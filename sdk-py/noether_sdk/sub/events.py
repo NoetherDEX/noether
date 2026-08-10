@@ -13,13 +13,20 @@ class EventsApi:
         contract: str | None = None,
         from_ledger: int | None = None,
         to_ledger: int | None = None,
+        before_ts: int | None = None,
         limit: int | None = None,
     ) -> list[RawEvent]:
+        """Raw decoded contract events captured by the indexer.
+
+        before_ts is a cursor: only events with a ledger close time strictly
+        below it are returned.
+        """
         params = {
             "topic": topic,
             "contract": contract,
             "from_ledger": from_ledger,
             "to_ledger": to_ledger,
+            "before_ts": before_ts,
             "limit": limit,
         }
         body = await self._transport.request("GET", "/v1/events", params=params)

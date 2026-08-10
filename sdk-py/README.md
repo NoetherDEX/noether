@@ -37,7 +37,7 @@ async with NoetherClient(
     credentials=Credentials("nk_...", "..."),
 ) as client:
     me = await client.account.me()
-    positions = await client.account.positions()
+    mine = await client.account.positions()  # mine.positions (open) + mine.events
 ```
 
 ## Issue an API key (one-shot)
@@ -93,13 +93,16 @@ print(submitted.hash, submitted.status)
 | Call | Auth |
 |---|---|
 | `client.health.ping()` | no |
-| `client.markets.list()` / `get(asset)` | no |
-| `client.oracle.get_price(asset)` / `get_prices()` | no |
-| `client.events.list(topic=, ...)` | no |
+| `client.markets.list()` / `get(asset)` / `stats()` / `candles(asset, ...)` | no |
+| `client.oracle.get_price(asset)` / `get_prices()` / `health()` | no |
+| `client.events.list(topic=, before_ts=, ...)` | no |
+| `client.trades.list(trader=, asset=, before_ts=, ...)` | no |
+| `client.adl.queue(asset, trader=...)` | no |
 | `client.keys.beta_status(address=...)` | no |
 | `client.keys.create(...)` | no |
 | `client.keys.list()` / `revoke(id)` | yes |
 | `client.account.me()` / `events()` / `positions()` / `orders()` | yes |
+| `client.account.volume(address)` / `shortfall(address)` | no |
 | `client.orders.prepare({op: ..., ...})` | yes |
 | `client.positions.open(trader=...)` | no |
 | `client.tx.submit(signed_xdr=...)` | yes |

@@ -9,6 +9,13 @@ export interface OpenPositionRow {
   entryPrice: string;
   openedAt: number;
   openedTxHash: string;
+  /**
+   * Advisory auto deleveraging quintile 1..5 (1 = first deleveraged);
+   * null when the position is not queued or the queue is unavailable.
+   * Served by GET /v1/positions/open; absent on the account positions
+   * feed.
+   */
+  adlQuintile?: number | null;
 }
 
 export interface OpenPositionsQuery {

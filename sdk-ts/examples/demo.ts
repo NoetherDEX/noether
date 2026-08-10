@@ -72,12 +72,13 @@ async function main() {
 
   // ─── 5 ───────────────────────────────────────────────────────────
   step(5, 'My positions + orders');
-  const [positions, orders] = await Promise.all([
+  const [mine, orders] = await Promise.all([
     client.account.positions(),
     client.account.orders(),
   ]);
-  console.log(`  open positions  ${positions.length}`);
-  console.log(`  open orders     ${orders.length}`);
+  console.log(`  open positions  ${mine.positions.length}`);
+  console.log(`  position events ${mine.events.length}`);
+  console.log(`  order events    ${orders.length}`);
 
   // ─── 6 ───────────────────────────────────────────────────────────
   step(6, 'Vault marketplace');
