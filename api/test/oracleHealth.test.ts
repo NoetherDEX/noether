@@ -116,4 +116,28 @@ describe('oracle health routes', () => {
     expect(body.keeper.stale).toBe(true);
     expect(body.keeper.ageMs).toBe(null);
   });
+
+  it('reports degraded with no keeper secret configured, even on fresh prices', async () => {
+    const setup = await setupTestServer({ oraclePrices: freshPrices() });
+    app = setup.app;
+    const res = await app.inject({ method: 'GET', url: '/v1/oracle/health' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // No secret means no keeper signal at all, which is a blind spot, so the
+    // status must not read ok.
+    expect(body.status).toBe('degraded');
+    expect(body.keeper.configured).toBe(false);
+  });
+
+  it('strict=1 answers 503 when the status is not ok', async () => {
+    const setup = await setupTestServer({ oraclePrices: freshPrices() });
+    app = setup.app;
+    const plain = await app.inject({ method: 'GET', url: '/v1/oracle/health' });
+    expect(plain.statusCode).toBe(200);
+    expect(plain.json().status).toBe('degraded');
+
+    const strict = await app.inject({ method: 'GET', url: '/v1/oracle/health?strict=1' });
+    expect(strict.statusCode).toBe(503);
+    expect(strict.json().status).toBe('degraded');
+  });
 });

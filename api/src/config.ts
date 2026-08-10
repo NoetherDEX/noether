@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import type { Network } from '@noether/types';
-import { getRpcUrls, loadContracts, type ContractsManifest } from '@noether/shared';
+import { getRpcUrls, resolvedManifest, type ContractsManifest } from '@noether/shared';
 
 export interface ApiConfig {
   network: Network;
@@ -38,7 +38,9 @@ export interface WsLimits {
 export const DEFAULT_HMAC_PEPPER = 'change-me-in-production';
 
 export function loadConfig(): ApiConfig {
-  const contracts = loadContracts();
+  // resolvedManifest, not loadContracts, so a CONTRACT_ override actually
+  // repoints the service everywhere, not only in getContract.
+  const contracts = resolvedManifest();
   const network = (process.env.NETWORK ?? 'testnet') as Network;
   const rpcUrls = getRpcUrls(network);
   const corsOriginRaw = process.env.API_CORS_ORIGIN ?? '*';

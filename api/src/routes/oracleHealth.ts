@@ -31,8 +31,15 @@ function secretsMatch(presented: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-/** On-chain price older than this is stale (market halts at 60s + slack). */
-const ONCHAIN_STALE_SEC = 90;
+/**
+ * On-chain price older than this counts as stale here.
+ *
+ * The market reverts an open once the price passes its 60s max staleness, so
+ * a looser threshold here reported green while opens were already failing with
+ * error 30. This tracks the contract at 60 so the page turns amber the moment
+ * trading is actually affected, not thirty seconds later.
+ */
+const ONCHAIN_STALE_SEC = 60;
 /** Keeper heartbeat older than this is stale (~4 missed 30s cycles). */
 const KEEPER_STALE_MS = 120_000;
 
@@ -87,15 +94,22 @@ export async function registerOracleHealthRoutes(
     },
   );
 
-  app.get(
+  app.get<{ Querystring: { strict?: string } }>(
     '/v1/oracle/health',
     {
       schema: {
         description:
-          'Per-source oracle health: on-chain price age per asset + the keeper self-report. Point uptime monitoring here.',
+          'Per-source oracle health: on-chain price age per asset + the keeper self-report. ' +
+          'Point uptime monitoring here. Pass strict=1 to get 503 instead of 200 when the ' +
+          'status is not ok, so a status-code monitor can page.',
         tags: ['oracle'],
+        querystring: {
+          type: 'object',
+          properties: { strict: { type: 'string' } },
+        },
         response: {
           200: { type: 'object', additionalProperties: true },
+          503: { type: 'object', additionalProperties: true },
         },
       },
     },
@@ -130,15 +144,24 @@ export async function registerOracleHealthRoutes(
       const keeperAgeMs = lastHeartbeat ? Date.now() - lastHeartbeat.receivedAt : null;
       const keeperStale =
         keeperConfigured && (keeperAgeMs === null || keeperAgeMs > KEEPER_STALE_MS);
+      // With no heartbeat secret we have no keeper signal at all, which is a
+      // blind spot, not health. It used to fall through to ok and hid that the
+      // keeper reporting path was never wired up.
+      const keeperUnknown = !keeperConfigured;
 
       const status =
         staleCount === assets.length
           ? 'down'
-          : staleCount > 0 || keeperStale
+          : staleCount > 0 || keeperStale || keeperUnknown
             ? 'degraded'
             : 'ok';
 
-      return reply.send({
+      // With strict, the endpoint answers with an http status a plain uptime
+      // monitor can page on: 200 only when everything is ok, 503 otherwise.
+      // Without it the body still carries the same status string as before.
+      const httpCode = _req.query.strict && status !== 'ok' ? 503 : 200;
+
+      return reply.code(httpCode).send({
         status,
         onchain: { staleAfterSec: ONCHAIN_STALE_SEC, staleCount, assets },
         keeper: {

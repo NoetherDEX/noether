@@ -103,6 +103,30 @@ export function hasContract(key: ContractKey, manifest?: ContractsManifest): boo
 }
 
 /**
+ * The manifest with every CONTRACT_ env override applied, keeping the
+ * ContractsManifest shape so callers can keep reading manifest.contracts.market.
+ *
+ * loadContracts on its own returns the baked contracts.json and ignores the
+ * overrides, so a service told to repoint one contract by env var kept talking
+ * to the old address everywhere except getContract. Loading through this closes
+ * that gap: repointing a service is once again just an env change and a
+ * restart.
+ */
+export function resolvedManifest(manifest?: ContractsManifest): ContractsManifest {
+  const base = manifest ?? loadContracts();
+  const contracts = { ...base.contracts };
+  let changed = false;
+  for (const key of Object.keys(contracts) as ContractKey[]) {
+    const override = process.env[contractEnvVar(key)];
+    if (override && override.trim()) {
+      contracts[key] = override.trim() as StellarAddress;
+      changed = true;
+    }
+  }
+  return changed ? { ...base, contracts } : base;
+}
+
+/**
  * Every contract address the process actually resolved to (env override or
  * manifest), tagged with the source. Logged at boot and echoed from
  * `/v1/health` so a running service self-reports which stack it serves —
