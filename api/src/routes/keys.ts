@@ -19,6 +19,9 @@ function loadAllowlist(): Set<string> | null {
   );
 }
 
+/** Active keys one wallet may hold at once. Override with API_MAX_KEYS_PER_OWNER. */
+const MAX_KEYS_PER_OWNER = Number(process.env.API_MAX_KEYS_PER_OWNER ?? 5);
+
 const ALLOWLIST = loadAllowlist();
 
 interface ChallengeBody {
@@ -175,6 +178,19 @@ export async function registerKeyRoutes(
       }
       const ok = wallet.verify(address, challenge, signature);
       if (!ok) return reply.code(401).send({ error: 'invalid_signature' });
+
+      // Checked only AFTER signature verification, so the endpoint cannot be
+      // used to probe how many keys an arbitrary wallet holds.
+      const active = await apiKeys.countActiveForOwner(address);
+      if (active >= MAX_KEYS_PER_OWNER) {
+        return reply.code(409).send({
+          error: 'key_limit_reached',
+          message:
+            `This wallet already has ${active} active API keys (limit ${MAX_KEYS_PER_OWNER}). ` +
+            'Revoke an unused key before issuing another.',
+        });
+      }
+
       const issued = await apiKeys.issue(address, label);
       return reply.code(201).send(issued);
     },

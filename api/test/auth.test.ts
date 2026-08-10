@@ -107,7 +107,7 @@ describe('bearer auth on protected routes', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/v1/account/me',
-      headers: { authorization: 'Bearer no-colon-here' },
+      headers: { authorization: 'Bearer no-colon-here', 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
     });
     expect(res.statusCode).toBe(401);
   });
@@ -118,7 +118,7 @@ describe('bearer auth on protected routes', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/v1/account/me',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { owner: string; tier: string };
@@ -133,13 +133,13 @@ describe('bearer auth on protected routes', () => {
     const del = await app.inject({
       method: 'DELETE',
       url: `/v1/keys/${keyId}`,
-      headers: { authorization: auth },
+      headers: { authorization: auth, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
     });
     expect(del.statusCode).toBe(200);
     const after = await app.inject({
       method: 'GET',
       url: '/v1/account/me',
-      headers: { authorization: auth },
+      headers: { authorization: auth, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
     });
     expect(after.statusCode).toBe(401);
   });
@@ -150,7 +150,7 @@ describe('bearer auth on protected routes', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/v1/keys',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { keys: Array<{ keyId: string; tier: string }> };
@@ -198,7 +198,7 @@ describe('account/me/events filtering', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/v1/account/me/events',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { events: Array<{ eventId: string }> };

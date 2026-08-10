@@ -21,7 +21,12 @@ export interface AuthPluginOpts {
 
 const TIMESTAMP_TOLERANCE_SEC = 30;
 
-export type AuthFailure = 'missing_bearer' | 'malformed_bearer' | 'stale_timestamp' | 'invalid_credentials';
+export type AuthFailure =
+  | 'missing_bearer'
+  | 'malformed_bearer'
+  | 'missing_timestamp'
+  | 'stale_timestamp'
+  | 'invalid_credentials';
 
 /**
  * Resolve the bearer credentials on a request and populate `request.user`.
@@ -45,15 +50,19 @@ export async function resolveRequestUser(
   const keyId = bearer.slice(0, sep);
   const secret = bearer.slice(sep + 1);
 
-  // Optional X-Timestamp replay protection (clients are encouraged but not
-  // required to send it; HTTPS is the primary mitigation).
+  // X-Timestamp replay protection is REQUIRED on authenticated requests.
+  // While it was optional, a captured bearer token could be replayed forever
+  // simply by omitting the header — the check was opt-in for the attacker.
+  // Every first-party client already sends it (sdk-ts transport, sdk-py
+  // transport, and web/lib/api/*), so requiring it costs them nothing.
   const tsRaw = request.headers['x-timestamp'];
-  if (tsRaw !== undefined) {
-    const ts = Number(Array.isArray(tsRaw) ? tsRaw[0] : tsRaw);
-    const now = Math.floor(Date.now() / 1000);
-    if (!Number.isFinite(ts) || Math.abs(now - ts) > TIMESTAMP_TOLERANCE_SEC) {
-      return 'stale_timestamp';
-    }
+  if (tsRaw === undefined) {
+    return 'missing_timestamp';
+  }
+  const ts = Number(Array.isArray(tsRaw) ? tsRaw[0] : tsRaw);
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(ts) || Math.abs(now - ts) > TIMESTAMP_TOLERANCE_SEC) {
+    return 'stale_timestamp';
   }
 
   const record = await apiKeys.lookupForAuth(keyId, secret);

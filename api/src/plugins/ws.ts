@@ -92,6 +92,7 @@ async function impl(app: FastifyInstance, opts: WsPluginOpts): Promise<void> {
 
     socket.on('close', () => {
       opts.manager.unregister(id);
+      failedLogins.delete(id); // never let the counter map outlive its sockets
       req.log.info({ connectionId: id }, 'ws closed');
     });
 
@@ -100,6 +101,10 @@ async function impl(app: FastifyInstance, opts: WsPluginOpts): Promise<void> {
     });
   });
 }
+
+/** Failed `login` attempts per connection id; cleared on success and on close. */
+const failedLogins = new Map<string, number>();
+const MAX_FAILED_LOGINS = Number(process.env.WS_MAX_FAILED_LOGINS ?? 5);
 
 async function handleMessage(conn: WsConnection, msg: ClientMessage, opts: WsPluginOpts): Promise<void> {
   const op = typeof msg.op === 'string' ? msg.op : '';
@@ -130,11 +135,29 @@ async function handleMessage(conn: WsConnection, msg: ClientMessage, opts: WsPlu
     }
 
     case 'login': {
+      // Every login attempt costs a database lookup, and this path never
+      // touches the HTTP rate limiter — so without a cap a single socket is a
+      // free DB-load amplifier. Counted in memory on purpose: consulting the
+      // Postgres-backed limiter here would incur the very query we are
+      // rationing. Only FAILED attempts count, so re-authenticating after a
+      // key rotation stays possible.
+      if ((failedLogins.get(conn.id) ?? 0) >= MAX_FAILED_LOGINS) {
+        conn.send({ type: 'login', ok: false, error: 'too_many_attempts' });
+        conn.close(1008, 'too many failed logins');
+        return;
+      }
       const keyId = typeof msg.keyId === 'string' ? msg.keyId : null;
       const secret = typeof msg.secret === 'string' ? msg.secret : null;
-      if (!keyId || !secret) return conn.send({ type: 'login', ok: false, error: 'missing_credentials' });
+      if (!keyId || !secret) {
+        failedLogins.set(conn.id, (failedLogins.get(conn.id) ?? 0) + 1);
+        return conn.send({ type: 'login', ok: false, error: 'missing_credentials' });
+      }
       const user = await loginWithBearer(opts.apiKeys, keyId, secret);
-      if (!user) return conn.send({ type: 'login', ok: false, error: 'invalid_credentials' });
+      if (!user) {
+        failedLogins.set(conn.id, (failedLogins.get(conn.id) ?? 0) + 1);
+        return conn.send({ type: 'login', ok: false, error: 'invalid_credentials' });
+      }
+      failedLogins.delete(conn.id);
       opts.manager.setUser(conn.id, user);
       conn.send({ type: 'login', ok: true, owner: user.owner, tier: user.tier });
       return;

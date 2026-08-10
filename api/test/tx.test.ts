@@ -49,7 +49,7 @@ async function setupWithService(submitService: TxSubmitLike) {
     payload: { address, challenge: challengeHex, signature: sig },
   });
   const { keyId, secret } = issued.json() as { keyId: string; secret: string };
-  return { app, headers: { authorization: `Bearer ${keyId}:${secret}` } };
+  return { app, headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) } };
 }
 
 describe('POST /v1/tx/submit error taxonomy', () => {

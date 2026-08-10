@@ -40,19 +40,21 @@ export class RateLimiter {
     // empty DB (no indexer run yet) we shouldn't 500 the entire surface.
     await this.ensureTable();
 
-    await this.db.execute({
+    // Single statement: the upsert returns the post-increment value directly.
+    // A separate SELECT would double the round trips per request and read a
+    // value other concurrent requests may already have moved.
+    const result = await this.db.execute({
       sql: `
         INSERT INTO rate_limit_buckets (key_id, window_start, count)
         VALUES (?, ?, 1)
         ON CONFLICT (key_id, window_start) DO UPDATE SET count = rate_limit_buckets.count + 1
+        RETURNING count
       `,
       args: [bucket, windowStart],
     });
-
-    const result = await this.db.execute({
-      sql: 'SELECT count FROM rate_limit_buckets WHERE key_id = ? AND window_start = ?',
-      args: [bucket, windowStart],
-    });
+    // `count > limit` is intentional, not an off-by-one: count is 1 on the
+    // first request, so requests 1..limit pass and limit+1 is the first to be
+    // rejected — exactly `limit` per window.
     const count = Number(result.rows[0]?.count ?? 0);
 
     if (count > limit) {

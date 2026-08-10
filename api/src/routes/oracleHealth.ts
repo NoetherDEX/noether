@@ -13,9 +13,23 @@
  * fail-open, and no new fail-closed boot requirement.
  */
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { SUPPORTED_ASSETS } from '@noether/shared';
 import type { OracleService } from '../services/oracle.js';
+
+/**
+ * Constant-time secret comparison.
+ *
+ * Both sides are hashed first so the operands are always 32 bytes:
+ * `timingSafeEqual` throws outright on a length mismatch, and comparing raw
+ * strings would leak the secret's length before any byte comparison happens.
+ */
+function secretsMatch(presented: string, expected: string): boolean {
+  const a = createHash('sha256').update(presented).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
 
 /** On-chain price older than this is stale (market halts at 60s + slack). */
 const ONCHAIN_STALE_SEC = 90;
@@ -58,7 +72,11 @@ export async function registerOracleHealthRoutes(
       if (!deps.heartbeatSecret) {
         return reply.code(503).send({ error: 'heartbeat_disabled' });
       }
-      if (req.headers['x-keeper-secret'] !== deps.heartbeatSecret) {
+      // Constant-time: `!==` short-circuits on the first differing byte, and
+      // this is a low-entropy operator-chosen secret, so a plain comparison
+      // leaks it a byte at a time to anyone who can time the response.
+      const presented = req.headers['x-keeper-secret'];
+      if (typeof presented !== 'string' || !secretsMatch(presented, deps.heartbeatSecret)) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
       lastHeartbeat = {

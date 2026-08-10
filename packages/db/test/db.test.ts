@@ -156,7 +156,17 @@ describe('isMissingTable', () => {
     expect(isMissingTable(null)).toBe(false);
   });
 
-  it('keeps the legacy libsql message form working', () => {
-    expect(isMissingTable(new Error('no such table: events_raw'))).toBe(true);
+  // Callers turn `true` into an empty/zero result, so a false positive here
+  // silently reports no bad debt and no open interest. Every error below says
+  // "does not exist" in its message and is NOT a missing table.
+  it('does not swallow other "does not exist" errors', () => {
+    const pgErr = (code: string, message: string) => Object.assign(new Error(message), { code });
+    expect(isMissingTable(pgErr('42703', 'column "traderr" does not exist'))).toBe(false);
+    expect(isMissingTable(pgErr('42883', 'operator does not exist: jsonb $1 unknown'))).toBe(false);
+    expect(isMissingTable(pgErr('42704', 'type "moneyy" does not exist'))).toBe(false);
+    expect(isMissingTable(pgErr('3D000', 'database "noetherr" does not exist'))).toBe(false);
+    // Message text alone must never qualify — only SQLSTATE 42P01 does.
+    expect(isMissingTable(new Error('relation "trades" does not exist'))).toBe(false);
+    expect(isMissingTable(new Error('no such table: events_raw'))).toBe(false);
   });
 });

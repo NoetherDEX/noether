@@ -6,6 +6,13 @@ const DAY_SEC = 86_400;
 export const VOLUME_WINDOW_SEC = 14 * DAY_SEC;
 
 const STATS_TTL_MS = 5_000;
+/**
+ * The leaderboard reads are full aggregates over events_raw — the most
+ * expensive queries in the service. A 5s TTL bought no freshness anyone could
+ * observe: the indexer cursor is ~2s behind, and the web proxy caches for 30s
+ * on top. Holding for 20s cuts the scan rate fourfold with no visible change.
+ */
+const LEADERBOARD_TTL_MS = 20_000;
 const DEFAULT_TRADES_LIMIT = 50;
 const MAX_TRADES_LIMIT = 200;
 const DEFAULT_ORDERS_LIMIT = 50;
@@ -34,6 +41,17 @@ export interface LeaderboardBoard {
   /** poll_cursor.updated_at (unix seconds) — when the index last advanced. */
   updatedAt: number | null;
   leaders: LeaderboardEntry[];
+}
+
+export interface LeaderboardTotals {
+  /** poll_cursor.updated_at (unix seconds) — when the index last advanced. */
+  updatedAt: number | null;
+  /** Distinct traders across the whole market, NOT just the returned page. */
+  traders: number;
+  /** Traded notional, 7-dec (opens + matched closes, + legacy baseline). */
+  volume: string;
+  /** Trade count (position_opened rows, + legacy baseline). */
+  trades: number;
 }
 
 export interface AssetStats {
@@ -109,7 +127,8 @@ export interface CandlePoint {
 export class StatsService {
   private readonly cache = new TtlCache<AssetStats[]>(STATS_TTL_MS);
   private readonly solvencyCache = new TtlCache<SolvencyStats>(STATS_TTL_MS);
-  private readonly lbCache = new TtlCache<LeaderboardBoard>(STATS_TTL_MS);
+  private readonly lbCache = new TtlCache<LeaderboardBoard>(LEADERBOARD_TTL_MS);
+  private readonly totalsCache = new TtlCache<LeaderboardTotals>(LEADERBOARD_TTL_MS);
   private readonly candleCache = new TtlCache<CandlePoint[]>(STATS_TTL_MS);
 
   constructor(
@@ -555,6 +574,98 @@ export class StatsService {
     return { updatedAt: await this.cursorUpdatedAt(), leaders: entries.slice(0, limit) };
   }
 
+  /**
+   * Market-wide headline totals, aggregated in SQL over EVERY trader.
+   *
+   * These deliberately do not reuse `leaderboard()`: that returns a ranked
+   * page (<= MAX_LEADERBOARD_LIMIT rows), so summing it silently undercounts
+   * once distinct traders exceed the limit — the count pins at the limit and
+   * the tail's volume/trades vanish. Same semantics as the per-row board:
+   * volume counts the open leg plus the matched close leg, trades counts
+   * position_opened only, and the legacy baseline is folded in.
+   */
+  async leaderboardTotals(): Promise<LeaderboardTotals> {
+    return this.totalsCache.getOrLoad('totals', () => this.computeLeaderboardTotals());
+  }
+
+  private async computeLeaderboardTotals(): Promise<LeaderboardTotals> {
+    const market = this.marketContractId;
+    const traders = new Set<string>();
+    let volume = 0n;
+    let trades = 0;
+
+    try {
+      const opens = await this.db.execute({
+        sql: `
+          SELECT COUNT(*) AS trades,
+                 COALESCE(SUM((payload_json ->> 'size')::numeric), 0) AS volume
+          FROM events_raw
+          WHERE topic = 'position_opened' AND contract_id = ?
+        `,
+        args: [market],
+      });
+      trades += Number(opens.rows[0]?.trades ?? 0);
+      volume += toBigIntNumeric(opens.rows[0]?.volume);
+
+      // Realized close legs carry no size — join back to the open event.
+      const closes = await this.db.execute({
+        sql: `
+          SELECT COALESCE(SUM((o.payload_json ->> 'size')::numeric), 0) AS volume
+          FROM events_raw c
+          JOIN events_raw o
+            ON o.topic = 'position_opened'
+           AND o.contract_id = c.contract_id
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
+          WHERE c.topic = 'position_closed' AND c.contract_id = ?
+        `,
+        args: [market],
+      });
+      volume += toBigIntNumeric(closes.rows[0]?.volume);
+
+      // Distinct-trader set is small (one row per wallet), so union it here
+      // rather than in SQL — leaderboard_legacy may not exist.
+      const addrs = await this.db.execute({
+        sql: `
+          SELECT DISTINCT payload_json ->> 'trader' AS trader
+          FROM events_raw
+          WHERE contract_id = ?
+            AND topic IN ('position_opened', 'position_closed',
+                          'position_liquidated', 'position_partial_liq', 'cross_liq')
+        `,
+        args: [market],
+      });
+      for (const row of addrs.rows) {
+        const trader = row.trader == null ? '' : String(row.trader);
+        if (trader) traders.add(trader);
+      }
+    } catch (err) {
+      if (isMissingTable(err)) return { updatedAt: null, traders: 0, volume: '0', trades: 0 };
+      throw err;
+    }
+
+    try {
+      const legacy = await this.db.execute(
+        'SELECT address, trade_count, total_volume FROM leaderboard_legacy',
+      );
+      for (const row of legacy.rows) {
+        const trader = row.address == null ? '' : String(row.address);
+        if (!trader) continue;
+        traders.add(trader);
+        volume += toBigInt(row.total_volume);
+        trades += Number(row.trade_count ?? 0);
+      }
+    } catch (err) {
+      if (!isMissingTable(err)) throw err;
+    }
+
+    return {
+      updatedAt: await this.cursorUpdatedAt(),
+      traders: traders.size,
+      volume: volume.toString(),
+      trades,
+    };
+  }
+
   /** poll_cursor.updated_at (ms) → unix seconds; null before first poll. */
   private async cursorUpdatedAt(): Promise<number | null> {
     try {
@@ -701,6 +812,16 @@ function toBigInt(value: unknown): bigint {
   } catch {
     return 0n;
   }
+}
+
+/**
+ * Postgres SUM() over numeric comes back as a string that may carry a
+ * fractional tail ("123" or "123.000"); BigInt() rejects the latter.
+ */
+function toBigIntNumeric(value: unknown): bigint {
+  if (value == null) return 0n;
+  const [whole] = String(value).split('.');
+  return toBigInt(whole);
 }
 
 function nowSec(): number {

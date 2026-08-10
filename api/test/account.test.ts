@@ -59,7 +59,7 @@ describe('account/me/positions and /me/orders scale past the global event window
     });
 
     const issued = await setup.deps.apiKeys.issue(address, 'account-test');
-    const headers = { authorization: `Bearer ${issued.keyId}:${issued.secret}` };
+    const headers = { authorization: `Bearer ${issued.keyId}:${issued.secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) };
 
     const posRes = await app.inject({ method: 'GET', url: '/v1/account/me/positions', headers });
     expect(posRes.statusCode).toBe(200);
@@ -101,7 +101,7 @@ describe('account/me/positions and /me/orders scale past the global event window
     });
 
     const issued = await setup.deps.apiKeys.issue(address, 'account-test');
-    const headers = { authorization: `Bearer ${issued.keyId}:${issued.secret}` };
+    const headers = { authorization: `Bearer ${issued.keyId}:${issued.secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) };
 
     const posRes = await app.inject({ method: 'GET', url: '/v1/account/me/positions', headers });
     expect(posRes.statusCode).toBe(200);

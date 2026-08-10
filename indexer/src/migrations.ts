@@ -63,6 +63,24 @@ async function loadMigrations(): Promise<Migration[]> {
     const sql = await readFile(resolve(MIGRATIONS_DIR, filename), 'utf8');
     migrations.push({ id, name, filename, sql });
   }
+
+  // Two files sharing a numeric prefix both parse to the same id, so the runner
+  // applies that id twice and dies on the schema_versions primary key — an
+  // error that names the constraint, never the real cause. The usual culprit
+  // is a Finder/editor copy ("003_bad_debt 2.sql"), which the `(.+)` in the
+  // pattern above happily accepts. Fail here instead, naming both files.
+  const byId = new Map<number, string>();
+  for (const m of migrations) {
+    const seen = byId.get(m.id);
+    if (seen) {
+      throw new Error(
+        `Duplicate migration id ${m.id}: "${seen}" and "${m.filename}". ` +
+          'Each migration needs a unique numeric prefix — delete the stray copy.',
+      );
+    }
+    byId.set(m.id, m.filename);
+  }
+
   return migrations;
 }
 

@@ -32,8 +32,12 @@ async function rateLimitPluginImpl(app: FastifyInstance, opts: RateLimitPluginOp
       await resolveRequestUser(request, opts.apiKeys);
     }
     const tier: RateLimitTier = request.user?.tier ?? 'public';
+    // Keyed on the OWNER, not the key id. Nothing stops a wallet minting many
+    // keys, and a per-key bucket would multiply its quota by the number of
+    // keys it holds — turning the limiter into a formality for anyone who
+    // bothers to loop the issuance endpoint.
     const bucket = request.user
-      ? `key:${request.user.keyId}`
+      ? `owner:${request.user.owner}`
       : `ip:${request.ip}`;
 
     const decision = await opts.limiter.checkAndConsume(bucket, tier);

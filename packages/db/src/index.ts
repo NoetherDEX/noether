@@ -1,6 +1,6 @@
-import { rewritePlaceholders } from './rewrite.js';
+import { rewriteWithCount, SqlRewriteError } from './rewrite.js';
 
-export { rewritePlaceholders } from './rewrite.js';
+export { rewritePlaceholders, rewriteWithCount, SqlRewriteError } from './rewrite.js';
 export { createPgDb, type PgDbOptions } from './pg.js';
 
 /** Accepted parameter values (superset of what call sites pass today). */
@@ -50,16 +50,25 @@ export interface SqlDriver {
 }
 
 /**
- * True when the error means the table doesn't exist. Postgres code 42P01
- * ("undefined_table"); the message check keeps pre-migration libsql fixtures
- * and wrapped errors working.
+ * True when the error means the table doesn't exist — Postgres SQLSTATE 42P01
+ * ("undefined_table"), and nothing else.
+ *
+ * Callers treat a `true` here as "this projection isn't populated yet" and
+ * return an empty/zero result. That makes a false positive genuinely
+ * dangerous: roughly twenty call sites turn it into `[]`, `0n` or `null`,
+ * including the cumulative bad-debt and open-interest figures. A misreported
+ * zero on those reads as "the protocol is solvent".
+ *
+ * This deliberately does NOT fall back to matching the message text.
+ * "does not exist" is Postgres's phrasing for undefined_column (42703),
+ * undefined_function/operator (42883), undefined_object (42704) and
+ * invalid_catalog_name (3D000) — every one of which is a real bug that must
+ * surface loudly rather than be laundered into a zero. The libsql fixtures
+ * that fallback once served were retired in the Supabase migration.
  */
 export function isMissingTable(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
-  const code = (err as { code?: unknown }).code;
-  if (code === '42P01') return true;
-  const message = (err as { message?: unknown }).message;
-  return typeof message === 'string' && (message.includes('no such table') || message.includes('does not exist'));
+  return (err as { code?: unknown }).code === '42P01';
 }
 
 function normalizeArgs(args: InValue[] | undefined): unknown[] {
@@ -74,10 +83,24 @@ function normalizeArgs(args: InValue[] | undefined): unknown[] {
 }
 
 function toStatement(stmt: string | InStatement): { sql: string; params: unknown[] } {
-  if (typeof stmt === 'string') {
-    return { sql: rewritePlaceholders(stmt), params: [] };
+  const source = typeof stmt === 'string' ? stmt : stmt.sql;
+  const params = typeof stmt === 'string' ? [] : normalizeArgs(stmt.args);
+  const rewritten = rewriteWithCount(source);
+
+  // Placeholders and arguments must agree exactly. Postgres only complains
+  // when it needs MORE values than were supplied, so a query with too few
+  // placeholders (the classic cause being a bare jsonb `?` operator, which the
+  // scanner counts as one) would otherwise run happily against the wrong shape.
+  if (rewritten.params !== params.length) {
+    throw new SqlRewriteError(
+      `SQL expects ${rewritten.params} placeholder(s) but ${params.length} argument(s) were supplied. ` +
+        (rewritten.params > params.length
+          ? 'A bare jsonb `?` operator is counted as a placeholder — use jsonb_exists() instead.'
+          : 'Check for a missing ? in the statement.'),
+    );
   }
-  return { sql: rewritePlaceholders(stmt.sql), params: normalizeArgs(stmt.args) };
+
+  return { sql: rewritten.sql, params };
 }
 
 async function runOn(

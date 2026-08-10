@@ -53,19 +53,44 @@ describe('rate limiter', () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it('resolves a real key to its tier and a key-scoped bucket', async () => {
+  it('resolves a real key to its tier and an OWNER-scoped bucket', async () => {
     const setup = await setupTestServer();
     app = setup.app;
-    const issued = await setup.deps.apiKeys.issue(Keypair.random().publicKey(), 'rl-test');
+    const owner = Keypair.random().publicKey();
+    const issued = await setup.deps.apiKeys.issue(owner, 'rl-test');
     const res = await app.inject({
       method: 'GET',
       url: '/v1/markets',
-      headers: { authorization: `Bearer ${issued.keyId}:${issued.secret}` },
+      headers: { authorization: `Bearer ${issued.keyId}:${issued.secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-ratelimit-tier']).toBe('standard');
     const buckets = await setup.db.execute('SELECT key_id FROM rate_limit_buckets');
-    expect(buckets.rows.map((r) => String(r.key_id))).toEqual([`key:${issued.keyId}`]);
+    expect(buckets.rows.map((r) => String(r.key_id))).toEqual([`owner:${owner}`]);
+  });
+
+  // The reason the bucket is owner-scoped: a per-key bucket would let one
+  // wallet multiply its quota simply by holding more keys.
+  it('shares one bucket across every key the same wallet holds', async () => {
+    const setup = await setupTestServer();
+    app = setup.app;
+    const owner = Keypair.random().publicKey();
+    const first = await setup.deps.apiKeys.issue(owner, 'key-a');
+    const second = await setup.deps.apiKeys.issue(owner, 'key-b');
+
+    for (const key of [first, second]) {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/v1/markets',
+        headers: { authorization: `Bearer ${key.keyId}:${key.secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+
+    const buckets = await setup.db.execute('SELECT key_id, count FROM rate_limit_buckets');
+    expect(buckets.rows).toHaveLength(1);
+    expect(String(buckets.rows[0]!.key_id)).toBe(`owner:${owner}`);
+    expect(Number(buckets.rows[0]!.count)).toBe(2); // both keys consumed the same quota
   });
 
   it('keeps invalid credentials on the public tier', async () => {
@@ -74,7 +99,7 @@ describe('rate limiter', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/v1/markets',
-      headers: { authorization: 'Bearer nk_bogus:not-a-secret' },
+      headers: { authorization: 'Bearer nk_bogus:not-a-secret', 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-ratelimit-tier']).toBe('public');

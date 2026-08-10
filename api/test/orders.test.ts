@@ -82,7 +82,7 @@ describe('POST /v1/orders/prepare', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/orders/prepare',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
       payload: { op: 'open_position', asset: 'BTC', collateral: '1000000000', leverage: 5, direction: 'Long' },
     });
     expect(res.statusCode).toBe(200);
@@ -101,7 +101,7 @@ describe('POST /v1/orders/prepare', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/orders/prepare',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
       payload: { op: 'open_position', asset: 'PEPE', collateral: '100', leverage: 5, direction: 'Long' },
     });
     expect(res.statusCode).toBe(400);
@@ -115,7 +115,7 @@ describe('POST /v1/orders/prepare', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/orders/prepare',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
       payload: { op: 'open_position', asset: 'BTC', collateral: '100', leverage: 99, direction: 'Long' },
     });
     expect(res.statusCode).toBe(400);
@@ -127,7 +127,7 @@ describe('POST /v1/orders/prepare', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/orders/prepare',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
       payload: { op: 'open_position', asset: 'BTC', collateral: '-1', leverage: 5, direction: 'Long' },
     });
     expect(res.statusCode).toBe(400);
@@ -166,7 +166,7 @@ describe('POST /v1/orders/prepare', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/orders/prepare',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
       payload: {
         op: 'place_limit_order',
         asset: 'ETH',
@@ -218,7 +218,7 @@ describe('POST /v1/orders/prepare', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/orders/prepare',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
       payload: { op: 'cancel_order', orderId: '42' },
     });
     expect(res.statusCode).toBe(200);
@@ -255,7 +255,7 @@ describe('POST /v1/tx/submit', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/v1/tx/submit',
-      headers: { authorization: `Bearer ${keyId}:${secret}` },
+      headers: { authorization: `Bearer ${keyId}:${secret}`, 'x-timestamp': String(Math.floor(Date.now() / 1000)) },
       payload: { signedXdr: 'AAAAAg==signed' },
     });
     expect(res.statusCode).toBe(200);

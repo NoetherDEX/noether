@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
@@ -78,6 +78,34 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
     logger: { level: config.logLevel },
     trustProxy: 1,
     requestIdHeader: 'x-request-id',
+  });
+
+  /**
+   * Fastify's default handler serialises `err.message` straight into the 500
+   * body. An unhandled Postgres error therefore hands the caller our schema,
+   * DB username, host and Supabase project ref — and because any route can
+   * induce one, that is a free schema-fingerprinting primitive.
+   *
+   * Deliberate 4xx responses keep their message: those strings are ours and
+   * are what makes the API usable. Everything 5xx is logged in full server
+   * side and reduced to an opaque body carrying only the request id, so a
+   * report can still be traced back to its log line.
+   */
+  app.setErrorHandler((err: FastifyError, request, reply) => {
+    const status = err.statusCode ?? 500;
+    if (status < 500) {
+      return reply.code(status).send({
+        error: err.code ?? 'bad_request',
+        message: err.message,
+        ...(err.validation ? { validation: err.validation } : {}),
+      });
+    }
+    request.log.error({ err, reqId: request.id }, 'unhandled error');
+    return reply.code(500).send({
+      error: 'internal_error',
+      message: 'The request could not be completed.',
+      requestId: request.id,
+    });
   });
 
   await app.register(cors, { origin: config.corsOrigin });

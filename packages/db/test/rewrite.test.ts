@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { rewritePlaceholders } from '../src/rewrite.js';
+import { rewritePlaceholders, rewriteWithCount } from '../src/rewrite.js';
 
 describe('rewritePlaceholders', () => {
   it('numbers placeholders left to right', () => {
@@ -49,5 +49,32 @@ describe('rewritePlaceholders', () => {
       'INSERT INTO candles (asset, interval, bucket_ts) VALUES ($1, $2, $3) ' +
         'ON CONFLICT (asset, interval, bucket_ts) DO UPDATE SET open = excluded.open'
     );
+  });
+});
+
+describe('rewritePlaceholders — ambiguity is fatal', () => {
+  // These previously produced VALID SQL with the wrong meaning, which is worse
+  // than an error: Postgres accepts it and there is nothing to notice.
+  it('throws when $n is mixed with ?', () => {
+    expect(() => rewritePlaceholders('SELECT * FROM t WHERE a = $1 AND b = ?')).toThrow(/mixes \$n/i);
+  });
+
+  it('leaves SQL written entirely with $n untouched', () => {
+    const sql = 'INSERT INTO t (a, b) VALUES ($1, $2)';
+    expect(rewritePlaceholders(sql)).toBe(sql);
+  });
+
+  it('throws on the jsonb ?| and ?& operators', () => {
+    expect(() => rewritePlaceholders("SELECT * FROM t WHERE p ?| array['a']")).toThrow(/jsonb operator/i);
+    expect(() => rewritePlaceholders("SELECT * FROM t WHERE p ?& array['a']")).toThrow(/jsonb operator/i);
+  });
+
+  it('treats dollar-quote tags containing digits as quotes, not parameters', () => {
+    expect(rewritePlaceholders('SELECT $tag1$ a ? b $tag1$, ?')).toBe('SELECT $tag1$ a ? b $tag1$, $1');
+  });
+
+  it('reports the placeholder count', () => {
+    expect(rewriteWithCount('SELECT ?, ?, ?').params).toBe(3);
+    expect(rewriteWithCount("SELECT '?'").params).toBe(0);
   });
 });

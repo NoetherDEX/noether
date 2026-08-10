@@ -140,3 +140,102 @@ describe('GET /v1/leaderboard', () => {
     expect(body.updatedAt).toBe(1_783_400_000); // ms → unix seconds
   });
 });
+
+interface Totals {
+  updatedAt: number | null;
+  traders: number;
+  volume: string;
+  trades: number;
+}
+
+describe('GET /v1/leaderboard/totals', () => {
+  it('matches the summed board while every trader fits on one page', async () => {
+    const board = (await app!.inject({ method: 'GET', url: '/v1/leaderboard?sort=volume&limit=200' }))
+      .json() as { leaders: (Leader & { trades: number })[] };
+    const totals = (await app!.inject({ method: 'GET', url: '/v1/leaderboard/totals' })).json() as Totals;
+
+    expect(totals.traders).toBe(board.leaders.length);
+    expect(BigInt(totals.volume)).toBe(board.leaders.reduce((s, l) => s + BigInt(l.volume), 0n));
+    expect(totals.trades).toBe(board.leaders.reduce((s, l) => s + l.trades, 0));
+  });
+
+  it('counts every trader past the page limit (the bug this endpoint exists for)', async () => {
+    if (app) await app.close();
+    const TRADERS = 250; // > MAX_LEADERBOARD_LIMIT (200)
+    const traders = Array.from({ length: TRADERS }, () => Keypair.random().publicKey());
+    const seedEvents = traders.flatMap((t, i) => [
+      {
+        eventId: `o${i}`,
+        topic: 'position_opened',
+        ledger: i + 1,
+        payload: { positionId: i + 1, trader: t, asset: 'BTC', direction: 0, size: '10', entryPrice: '1' },
+      },
+      {
+        eventId: `c${i}`,
+        topic: 'position_closed',
+        ledger: TRADERS + i + 1,
+        payload: { positionId: i + 1, trader: t, pnl: '1', closePrice: '2' },
+      },
+    ]);
+    const setup = await setupTestServer({ seedEvents });
+    app = setup.app;
+
+    const board = (await app.inject({ method: 'GET', url: '/v1/leaderboard?sort=volume&limit=200' }))
+      .json() as { leaders: (Leader & { trades: number })[] };
+    const totals = (await app.inject({ method: 'GET', url: '/v1/leaderboard/totals' })).json() as Totals;
+
+    // The ranked page truncates — that is by design and is exactly why summing
+    // it undercounts.
+    expect(board.leaders).toHaveLength(200);
+    expect(board.leaders.reduce((s, l) => s + BigInt(l.volume), 0n)).toBe(200n * 20n);
+
+    // The aggregate does not.
+    expect(totals.traders).toBe(TRADERS);
+    expect(totals.trades).toBe(TRADERS); // opens only; closes add none
+    expect(BigInt(totals.volume)).toBe(BigInt(TRADERS) * 20n); // open leg + close leg
+  });
+
+  it('folds in the legacy baseline, including traders with no live events', async () => {
+    if (app) await app.close();
+    const setup = await setupTestServer({
+      seedEvents: [
+        { eventId: 'm1', topic: 'position_opened', ledger: 1, payload: { positionId: 1, trader: A, asset: 'BTC', direction: 0, size: '100', entryPrice: '1' } },
+      ],
+    });
+    app = setup.app;
+    await setup.db.execute({
+      sql: `INSERT INTO leaderboard_legacy (address, trade_count, total_volume, total_pnl, liq_count, imported_at)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [B, 5, '900', '42', 1, Date.now()],
+    });
+
+    const totals = (await app.inject({ method: 'GET', url: '/v1/leaderboard/totals' })).json() as Totals;
+    expect(totals.traders).toBe(2); // A live + B legacy-only
+    expect(totals.trades).toBe(6); // 1 live + 5 legacy
+    expect(totals.volume).toBe('1000'); // 100 live + 900 legacy
+  });
+
+  it('scopes to the configured market contract', async () => {
+    if (app) await app.close();
+    const RETIRED = 'CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC';
+    const setup = await setupTestServer({
+      seedEvents: [
+        { eventId: 'live1', topic: 'position_opened', ledger: 1, payload: { positionId: 1, trader: A, asset: 'BTC', direction: 0, size: '100', entryPrice: '1' } },
+        { eventId: 'old1', topic: 'position_opened', ledger: 2, contractId: RETIRED, payload: { positionId: 1, trader: C, asset: 'BTC', direction: 0, size: '999999', entryPrice: '1' } },
+      ],
+    });
+    app = setup.app;
+    const totals = (await app.inject({ method: 'GET', url: '/v1/leaderboard/totals' })).json() as Totals;
+    expect(totals.traders).toBe(1);
+    expect(totals.volume).toBe('100');
+    expect(totals.trades).toBe(1);
+  });
+
+  it('returns zeroes on an empty database', async () => {
+    if (app) await app.close();
+    const setup = await setupTestServer();
+    app = setup.app;
+    const totals = (await app.inject({ method: 'GET', url: '/v1/leaderboard/totals' })).json() as Totals;
+    expect(totals).toMatchObject({ traders: 0, volume: '0', trades: 0 });
+  });
+});

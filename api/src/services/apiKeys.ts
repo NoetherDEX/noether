@@ -129,6 +129,22 @@ export class ApiKeyStore {
     }));
   }
 
+  /**
+   * Active (non-revoked) key count for one wallet.
+   *
+   * Backs the per-owner issuance cap. Rate limiting is keyed on the owner, so
+   * extra keys no longer multiply quota — this bounds unbounded row growth
+   * from a wallet looping the issuance endpoint, and keeps a leaked key's
+   * blast radius reviewable.
+   */
+  async countActiveForOwner(owner: string): Promise<number> {
+    const result = await this.db.execute({
+      sql: 'SELECT COUNT(*) AS n FROM api_keys WHERE owner = ? AND revoked_at IS NULL',
+      args: [owner],
+    });
+    return Number(result.rows[0]?.n ?? 0);
+  }
+
   async revoke(keyId: string, owner: string): Promise<boolean> {
     const result = await this.db.execute({
       sql: `
