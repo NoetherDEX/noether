@@ -7,6 +7,8 @@ import { EventRouter, type HandlerContext } from '../src/router.js';
 import { buildMarketRegistrations } from '../src/handlers/market.js';
 import { buildReferralRegistrations } from '../src/handlers/referral.js';
 import { buildVaultRegistrations } from '../src/handlers/vault.js';
+import { buildLpVaultRegistrations } from '../src/handlers/lpVault.js';
+import { pruneRetiredFactoryRows } from '../src/vaultSync.js';
 import { runMigrations } from '../src/migrations.js';
 import type {
   CrossLiquidatedEvent,
@@ -21,6 +23,7 @@ const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD'
 const FAKE_TRADER = 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
 const FAKE_REFERRAL = 'CAGZXABWTJN6FU7TMCIWL3RH7EC6K4CQLLZJWUFN3CD7YHVDYWJCIG3O';
 const FAKE_FACTORY = 'CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA';
+const FAKE_LP_VAULT = 'CBSWA5P75NGV2LP5KOY7A7LOAX2CENI5OYBSJ5IVLHENKQJF2I3ZBSYE';
 
 const noopLogger: Logger = {
   level: 'silent',
@@ -504,6 +507,197 @@ describe('cross_liq projection cleanup', () => {
     // Only the cross_liq trader's rows were verified on-chain.
     expect(rpc.simulateTransaction).toHaveBeenCalledTimes(2);
 
+    await db.close();
+  });
+});
+
+describe('lp vault handler', () => {
+  function lpEvent(id: string, topic: string, fields: Record<string, unknown>): DecodedMarketEvent {
+    return {
+      id,
+      contractId: FAKE_LP_VAULT,
+      topic,
+      ledger: 400,
+      ledgerCloseTs: 1745923700,
+      txHash: 'ab'.repeat(32),
+      ...fields,
+    } as unknown as DecodedMarketEvent;
+  }
+
+  function makeLpRouter(): EventRouter {
+    const router = new EventRouter();
+    for (const reg of buildLpVaultRegistrations(FAKE_LP_VAULT)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    return router;
+  }
+
+  it('archives a deposit and writes the typed row exactly once', async () => {
+    const db = await setupDb();
+    const bus = new IndexerBus();
+    const router = makeLpRouter();
+    const seenEvent = vi.fn();
+    bus.on('event', seenEvent);
+    const ctx: HandlerContext = { db, rpc: {} as never, bus, log: noopLogger };
+
+    const deposit = lpEvent('evt-lp1', 'deposit', {
+      depositor: FAKE_TRADER,
+      usdcAmount: 1_000_0000000n,
+      noeMinted: 990_0000000n,
+      fee: 10_0000000n,
+    });
+    await router.dispatch(deposit, ctx);
+    await router.dispatch(deposit, ctx);
+
+    const raw = await db.execute("SELECT topic, contract_id, payload_json FROM events_raw WHERE event_id = 'evt-lp1'");
+    expect(raw.rows).toHaveLength(1);
+    expect(raw.rows[0]!.topic).toBe('deposit');
+    expect(raw.rows[0]!.contract_id).toBe(FAKE_LP_VAULT);
+    const payload = JSON.parse(raw.rows[0]!.payload_json as string);
+    expect(payload.depositor).toBe(FAKE_TRADER);
+    expect(payload.usdcAmount).toBe('10000000000');
+
+    const typed = await db.execute('SELECT * FROM lp_vault_deposits');
+    expect(typed.rows).toHaveLength(1);
+    const row = typed.rows[0]!;
+    expect(row.event_id).toBe('evt-lp1');
+    expect(row.depositor).toBe(FAKE_TRADER);
+    expect(String(row.usdc_amount)).toBe('10000000000');
+    expect(String(row.noe_minted)).toBe('9900000000');
+    expect(String(row.fee)).toBe('100000000');
+    expect(row.contract_id).toBe(FAKE_LP_VAULT);
+
+    expect(seenEvent).toHaveBeenCalledOnce();
+
+    await db.close();
+  });
+
+  it('writes withdraw, pnl settlement and buffer flow rows', async () => {
+    const db = await setupDb();
+    const router = makeLpRouter();
+    const ctx: HandlerContext = { db, rpc: {} as never, bus: new IndexerBus(), log: noopLogger };
+
+    await router.dispatch(
+      lpEvent('evt-lp2', 'withdraw', {
+        withdrawer: FAKE_TRADER,
+        noeBurned: 500_0000000n,
+        usdcOut: 495_0000000n,
+        fee: 5_0000000n,
+      }),
+      ctx,
+    );
+    await router.dispatch(lpEvent('evt-lp3', 'pnl_settled', { pnl: -250_0000000n }), ctx);
+    await router.dispatch(
+      lpEvent('evt-lp4', 'buffer_funded', { amount: 100_0000000n, toReserve: 20_0000000n }),
+      ctx,
+    );
+    await router.dispatch(
+      lpEvent('evt-lp5', 'buffer_paid', { to: FAKE_TRADER, amount: 40_0000000n, paid: 30_0000000n }),
+      ctx,
+    );
+
+    const withdraws = await db.execute('SELECT withdrawer, noe_burned, usdc_out FROM lp_vault_withdraws');
+    expect(withdraws.rows).toHaveLength(1);
+    expect(withdraws.rows[0]!.withdrawer).toBe(FAKE_TRADER);
+    expect(String(withdraws.rows[0]!.usdc_out)).toBe('4950000000');
+
+    const pnl = await db.execute('SELECT pnl FROM lp_vault_pnl_settlements');
+    expect(pnl.rows).toHaveLength(1);
+    expect(String(pnl.rows[0]!.pnl)).toBe('-2500000000');
+
+    const flows = await db.execute('SELECT kind, amount, secondary_amount, counterparty FROM lp_vault_buffer_flows ORDER BY id');
+    expect(flows.rows).toHaveLength(2);
+    expect(flows.rows[0]!.kind).toBe('buffer_funded');
+    expect(String(flows.rows[0]!.amount)).toBe('1000000000');
+    expect(String(flows.rows[0]!.secondary_amount)).toBe('200000000');
+    expect(flows.rows[0]!.counterparty).toBeNull();
+    expect(flows.rows[1]!.kind).toBe('buffer_paid');
+    expect(String(flows.rows[1]!.secondary_amount)).toBe('300000000');
+    expect(flows.rows[1]!.counterparty).toBe(FAKE_TRADER);
+
+    await db.close();
+  });
+
+  it('captures config and solvency topics in the archive only', async () => {
+    const db = await setupDb();
+    const router = makeLpRouter();
+    const ctx: HandlerContext = { db, rpc: {} as never, bus: new IndexerBus(), log: noopLogger };
+
+    await router.dispatch(
+      lpEvent('evt-lp6', 'protocol_fee_routed', { amount: 10n, toBuffer: 5n, overflow: 0n }),
+      ctx,
+    );
+    await router.dispatch(lpEvent('evt-lp7', 'paused', {}), ctx);
+
+    const raw = await db.execute({
+      sql: 'SELECT event_id, topic FROM events_raw WHERE contract_id = ? ORDER BY event_id',
+      args: [FAKE_LP_VAULT],
+    });
+    expect(raw.rows.map((r) => r.topic)).toEqual(['protocol_fee_routed', 'paused']);
+
+    for (const table of ['lp_vault_deposits', 'lp_vault_withdraws', 'lp_vault_pnl_settlements', 'lp_vault_buffer_flows']) {
+      const count = await db.execute(`SELECT COUNT(*) AS n FROM ${table}`);
+      expect(Number(count.rows[0]!.n)).toBe(0);
+    }
+
+    await db.close();
+  });
+});
+
+describe('pruneRetiredFactoryRows', () => {
+  it('deletes rows with a NULL or retired contract_id and keeps the live factory rows', async () => {
+    const db = await setupDb();
+    const OLD_FACTORY = 'CAOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLDOLD';
+
+    const seedVault = (id: number, contractId: string | null) =>
+      db.execute({
+        sql: `
+          INSERT INTO vaults (id, leader, name, created_at, updated_at, contract_id)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        args: [id, FAKE_TRADER, `vault-${id}`, 1745900000, Date.now(), contractId],
+      });
+    await seedVault(0, null);
+    await seedVault(12, OLD_FACTORY);
+    await seedVault(3, FAKE_FACTORY);
+
+    const seedDeposit = (eventId: string, contractId: string | null) =>
+      db.execute({
+        sql: `
+          INSERT INTO vault_deposits (vault_id, depositor, amount, shares, ledger, ts, tx_hash, event_id, contract_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: [0, FAKE_TRADER, '1000', '1000', 100, 1745900000, 'c'.repeat(64), eventId, contractId],
+      });
+    await seedDeposit('evt-old-dep', null);
+    await seedDeposit('evt-live-dep', FAKE_FACTORY);
+
+    await pruneRetiredFactoryRows(db, FAKE_FACTORY, noopLogger);
+
+    const vaults = await db.execute('SELECT id, contract_id FROM vaults ORDER BY id');
+    expect(vaults.rows.map((r) => Number(r.id))).toEqual([3]);
+    expect(vaults.rows[0]!.contract_id).toBe(FAKE_FACTORY);
+
+    const deposits = await db.execute('SELECT event_id FROM vault_deposits');
+    expect(deposits.rows.map((r) => r.event_id)).toEqual(['evt-live-dep']);
+
+    await db.close();
+  });
+
+  it('deletes nothing when no factory id is configured', async () => {
+    const db = await setupDb();
+    await db.execute({
+      sql: `INSERT INTO vaults (id, leader, name, created_at, updated_at, contract_id)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [3, FAKE_TRADER, 'vault-3', 1745900000, Date.now(), FAKE_FACTORY],
+    });
+
+    // An empty factory id must be a no-op, never a wipe. With IS DISTINCT FROM
+    // an empty string every row looks retired and the whole projection would go.
+    await pruneRetiredFactoryRows(db, '', noopLogger);
+
+    const vaults = await db.execute('SELECT id FROM vaults');
+    expect(vaults.rows.map((r) => Number(r.id))).toEqual([3]);
     await db.close();
   });
 });

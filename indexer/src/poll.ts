@@ -18,6 +18,7 @@ import type { EventRouter, HandlerContext } from './router.js';
 import { decodeMarketEvent, type RawEvent } from './decoders/market.js';
 import { decodeVaultEvent } from './decoders/vault.js';
 import { decodeReferralEvent } from './decoders/referral.js';
+import { decodeLpVaultEvent } from './decoders/lpVault.js';
 import { fetchEvents, getLatestLedger, getOldestLedger, parseRetentionError, type RpcPool } from './rpc.js';
 import { readCursor, writeCursor, type PollCursor } from './cursor.js';
 
@@ -32,6 +33,8 @@ export interface PollDeps {
   marketContract: string;
   vaultFactoryContract?: string;
   referralContract?: string;
+  /** The LP vault (USDC liquidity pool), distinct from the vault factory. */
+  lpVaultContract?: string;
   pollIntervalMs: number;
   coldStartLedgers: number;
   /** Warn when the cursor is within this many ledgers of the retention edge. */
@@ -148,6 +151,8 @@ export class IndexerPoller {
           decoded = decodeVaultEvent(raw as unknown as RawEvent) as any;
         } else if (contractId === this.deps.referralContract) {
           decoded = decodeReferralEvent(raw as unknown as RawEvent) as any;
+        } else if (contractId === this.deps.lpVaultContract) {
+          decoded = decodeLpVaultEvent(raw as unknown as RawEvent) as any;
         } else {
           decoded = decodeMarketEvent(raw as unknown as RawEvent);
         }

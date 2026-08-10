@@ -26,6 +26,7 @@ import { EventRouter, type HandlerContext } from './router.js';
 import { buildMarketRegistrations } from './handlers/market.js';
 import { buildVaultRegistrations } from './handlers/vault.js';
 import { buildReferralRegistrations } from './handlers/referral.js';
+import { buildLpVaultRegistrations } from './handlers/lpVault.js';
 import { getContract, hasContract } from '@noether/shared';
 import type { DecodedMarketEvent } from './types/events.js';
 
@@ -38,6 +39,10 @@ export const PROJECTION_TABLES = [
   'vault_withdraws',
   'vault_fee_claims',
   'vault_trades',
+  'lp_vault_deposits',
+  'lp_vault_withdraws',
+  'lp_vault_pnl_settlements',
+  'lp_vault_buffer_flows',
   'referrers',
   'referral_bindings',
   'referral_trades',
@@ -114,6 +119,11 @@ if (isDirect) {
     const market = getContract('market', config.contracts);
     for (const reg of buildMarketRegistrations(market)) {
       router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    if (hasContract('vault', config.contracts)) {
+      for (const reg of buildLpVaultRegistrations(getContract('vault', config.contracts))) {
+        router.register(reg.contractId, reg.topic, reg.handler);
+      }
     }
     if (hasContract('vaultFactory', config.contracts)) {
       for (const reg of buildVaultRegistrations(getContract('vaultFactory', config.contracts))) {

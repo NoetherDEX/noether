@@ -129,5 +129,46 @@ export async function reconcileAllVaults(
   }
 }
 
+/**
+ * Delete factory projection rows that do not belong to the live factory.
+ *
+ * Vault ids restart from zero on every factory redeploy, so rows written
+ * for a retired factory collide with the live factory's ids and surface
+ * as phantom vaults in GET /v1/vaults. They also survive the boot time
+ * reconcile above, because view_vault on the live factory fails for an
+ * id it never issued and the row is left untouched with its stale
+ * numbers. Every current write path stamps contract_id, so a row is
+ * provably retired when its contract_id is NULL (written before the
+ * stamping existed, or imported by the Turso copy tool) or names a
+ * factory other than the configured one. IS DISTINCT FROM treats NULL
+ * as a mismatch, which covers both cases in one predicate.
+ */
+export async function pruneRetiredFactoryRows(
+  db: Db,
+  currentFactory: string,
+  log: Logger,
+): Promise<void> {
+  // Never prune without a real factory id. With an empty string the
+  // IS DISTINCT FROM predicate matches every row, including the live ones,
+  // and would wipe the whole projection. Refuse rather than risk that.
+  if (!currentFactory || !currentFactory.trim()) {
+    log.warn('Skipping retired factory prune: no current factory id configured');
+    return;
+  }
+  const tables = ['vaults', 'vault_deposits', 'vault_withdraws', 'vault_fee_claims', 'vault_trades'];
+  for (const table of tables) {
+    const result = await db.execute({
+      sql: `DELETE FROM ${table} WHERE contract_id IS DISTINCT FROM ?`,
+      args: [currentFactory],
+    });
+    if (result.rowsAffected > 0) {
+      log.warn(
+        { table, deleted: result.rowsAffected, currentFactory },
+        'Pruned projection rows belonging to a retired vault factory',
+      );
+    }
+  }
+}
+
 // Side-effect-only helper: ignore the unused Address import.
 void Address;

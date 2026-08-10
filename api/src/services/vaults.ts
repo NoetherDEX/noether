@@ -150,12 +150,20 @@ export class VaultsService {
   async list(opts?: { leader?: string; limit?: number }): Promise<VaultRow[]> {
     const limit = clampLimit(opts?.limit);
     try {
+      const conditions: string[] = [];
       const args: (string | number)[] = [];
-      let where = '';
+      // Scope to the live factory so a leftover row from a retired factory
+      // cannot surface as a phantom vault. The indexer also prunes these, so
+      // this is a second line of defence.
+      if (this.chain?.vaultFactoryId) {
+        conditions.push('contract_id = ?');
+        args.push(this.chain.vaultFactoryId);
+      }
       if (opts?.leader) {
-        where = 'WHERE leader = ?';
+        conditions.push('leader = ?');
         args.push(opts.leader);
       }
+      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
       args.push(limit);
       const result = await this.db.execute({
         sql: `SELECT * FROM vaults ${where} ORDER BY created_at DESC LIMIT ?`,
@@ -170,9 +178,13 @@ export class VaultsService {
 
   async get(id: number): Promise<VaultRow | null> {
     try {
+      const scope = this.chain?.vaultFactoryId ? 'AND contract_id = ?' : '';
+      const args: (string | number)[] = this.chain?.vaultFactoryId
+        ? [id, this.chain.vaultFactoryId]
+        : [id];
       const result = await this.db.execute({
-        sql: 'SELECT * FROM vaults WHERE id = ?',
-        args: [id],
+        sql: `SELECT * FROM vaults WHERE id = ? ${scope}`,
+        args,
       });
       const row = result.rows[0];
       return row ? toRow(row as unknown as Record<string, unknown>) : null;

@@ -2,9 +2,9 @@
  * Indexer entry point.
  *
  * Boots: config → Postgres → migrations → RPC → router → handlers (market
- * + vault + referral, conditional on contracts.json having addresses) →
- * poll loop. Captures every event the protocol emits into events_raw
- * and forwards them to the in-process bus.
+ * + LP vault + vault factory + referral, conditional on contracts.json
+ * having addresses) → poll loop. Captures every event the protocol emits
+ * into events_raw and forwards them to the in process bus.
  */
 
 import pino from 'pino';
@@ -18,9 +18,10 @@ import { EventRouter } from './router.js';
 import { buildMarketRegistrations } from './handlers/market.js';
 import { buildVaultRegistrations } from './handlers/vault.js';
 import { buildReferralRegistrations } from './handlers/referral.js';
+import { buildLpVaultRegistrations } from './handlers/lpVault.js';
 import { IndexerPoller } from './poll.js';
 import { CandleAggregator } from './candles/aggregator.js';
-import { reconcileAllVaults } from './vaultSync.js';
+import { pruneRetiredFactoryRows, reconcileAllVaults } from './vaultSync.js';
 import { getContract, getNetworkPassphrase, hasContract, resolvedContracts } from '@noether/shared';
 
 async function main(): Promise<void> {
@@ -31,7 +32,7 @@ async function main(): Promise<void> {
   // the manifest is baked into the Docker image at build, so overrides are
   // the only way to re-point a running indexer without a rebuild (D-4).
   log.info(
-    { resolved: resolvedContracts(['market', 'vaultFactory', 'referral'], config.contracts) },
+    { resolved: resolvedContracts(['market', 'vault', 'vaultFactory', 'referral'], config.contracts) },
     'Resolved contract addresses',
   );
   const market = getContract('market', config.contracts);
@@ -44,8 +45,15 @@ async function main(): Promise<void> {
   const referral = hasContract('referral', config.contracts)
     ? getContract('referral', config.contracts)
     : undefined;
+  // The LP vault (USDC liquidity pool the market settles against). The
+  // manifest key is `vault`, overridable via CONTRACT_VAULT. Optional for
+  // the same reason as the factory and referral above.
+  const lpVault = hasContract('vault', config.contracts)
+    ? getContract('vault', config.contracts)
+    : undefined;
 
   const contractIds: string[] = [market];
+  if (lpVault) contractIds.push(lpVault);
   if (vaultFactory) contractIds.push(vaultFactory);
   if (referral) contractIds.push(referral);
 
@@ -55,6 +63,7 @@ async function main(): Promise<void> {
       rpcUrls: config.rpcUrls,
       pollIntervalMs: config.pollIntervalMs,
       market,
+      lpVault: lpVault ?? '(not deployed)',
       vaultFactory: vaultFactory ?? '(not deployed)',
       referral: referral ?? '(not deployed)',
     },
@@ -91,11 +100,26 @@ async function main(): Promise<void> {
   for (const reg of buildMarketRegistrations(market)) {
     router.register(reg.contractId, reg.topic, reg.handler);
   }
+  if (lpVault) {
+    for (const reg of buildLpVaultRegistrations(lpVault)) {
+      router.register(reg.contractId, reg.topic, reg.handler);
+    }
+    log.info({ contract: lpVault }, 'LP vault handlers registered');
+  }
   if (vaultFactory) {
     for (const reg of buildVaultRegistrations(vaultFactory)) {
       router.register(reg.contractId, reg.topic, reg.handler);
     }
     log.info({ contract: vaultFactory }, 'Vault factory handlers registered');
+    // Scope the factory projections to the live factory BEFORE the on
+    // chain reconcile: rows from a retired factory would survive it
+    // (view_vault fails for ids the live factory never issued, leaving
+    // the stale row untouched) and keep surfacing as phantom vaults.
+    try {
+      await pruneRetiredFactoryRows(db, vaultFactory, log);
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'Retired factory prune failed');
+    }
     // Boot-time reconcile: rewrite every vaults row from the canonical
     // on-chain state so any projection drift from older codepaths (no
     // leader_open decrement / migration 009's incomplete subtraction)
@@ -123,6 +147,7 @@ async function main(): Promise<void> {
     marketContract: market,
     vaultFactoryContract: vaultFactory,
     referralContract: referral,
+    lpVaultContract: lpVault,
     pollIntervalMs: config.pollIntervalMs,
     coldStartLedgers: config.coldStartLedgers,
     retentionWarnLedgers: config.retentionWarnLedgers,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Address, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import { decodeMarketEvent, type RawEvent } from '../src/decoders/market.js';
 import { decodeVaultEvent } from '../src/decoders/vault.js';
+import { decodeLpVaultEvent } from '../src/decoders/lpVault.js';
 
 const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
 const FAKE_TRADER = 'GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN';
@@ -385,5 +386,111 @@ describe('decodeVaultEvent — Batch-1 factory topics', () => {
     if (decoded?.topic !== 'position_reconciled') throw new Error('wrong topic');
     expect(decoded.positionId).toBe(42n);
     expect(decoded.proceeds).toBe(130_0000000n);
+  });
+});
+
+describe('decodeLpVaultEvent (LP pool topics)', () => {
+  it('decodes deposit (depositor, usdc_amount, noe_minted, fee)', () => {
+    const value = vec(
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal(1_000_0000000n, { type: 'i128' }),
+      nativeToScVal(990_0000000n, { type: 'i128' }),
+      nativeToScVal(10_0000000n, { type: 'i128' }),
+    );
+    const decoded = decodeLpVaultEvent(makeRawEvent('deposit', value));
+    expect(decoded?.topic).toBe('deposit');
+    expect(decoded?.depositor).toBe(FAKE_TRADER);
+    expect(decoded?.usdcAmount).toBe(1_000_0000000n);
+    expect(decoded?.noeMinted).toBe(990_0000000n);
+    expect(decoded?.fee).toBe(10_0000000n);
+    expect(decoded?.contractId).toBe(FAKE_CONTRACT);
+    expect(decoded?.txHash).toBe(FAKE_TX_HASH);
+  });
+
+  it('decodes withdraw (withdrawer, noe_amount, net_usdc, fee)', () => {
+    const value = vec(
+      Address.fromString(FAKE_TRADER).toScVal(),
+      nativeToScVal(500_0000000n, { type: 'i128' }),
+      nativeToScVal(495_0000000n, { type: 'i128' }),
+      nativeToScVal(5_0000000n, { type: 'i128' }),
+    );
+    const decoded = decodeLpVaultEvent(makeRawEvent('withdraw', value));
+    expect(decoded?.topic).toBe('withdraw');
+    expect(decoded?.withdrawer).toBe(FAKE_TRADER);
+    expect(decoded?.noeBurned).toBe(500_0000000n);
+    expect(decoded?.usdcOut).toBe(495_0000000n);
+    expect(decoded?.fee).toBe(5_0000000n);
+  });
+
+  it('decodes pnl_settled as a single value payload with a signed pnl', () => {
+    const value = vec(nativeToScVal(-250_0000000n, { type: 'i128' }));
+    const decoded = decodeLpVaultEvent(makeRawEvent('pnl_settled', value));
+    expect(decoded?.topic).toBe('pnl_settled');
+    expect(decoded?.pnl).toBe(-250_0000000n);
+  });
+
+  it('decodes buffer_drawn (amount, covered) and buffer_paid (to, amount, paid)', () => {
+    const drawn = decodeLpVaultEvent(
+      makeRawEvent(
+        'buffer_drawn',
+        vec(nativeToScVal(100_0000000n, { type: 'i128' }), nativeToScVal(60_0000000n, { type: 'i128' })),
+      ),
+    );
+    expect(drawn?.topic).toBe('buffer_drawn');
+    expect(drawn?.amount).toBe(100_0000000n);
+    expect(drawn?.covered).toBe(60_0000000n);
+
+    const paid = decodeLpVaultEvent(
+      makeRawEvent(
+        'buffer_paid',
+        vec(
+          Address.fromString(FAKE_TRADER).toScVal(),
+          nativeToScVal(40_0000000n, { type: 'i128' }),
+          nativeToScVal(30_0000000n, { type: 'i128' }),
+        ),
+      ),
+    );
+    expect(paid?.topic).toBe('buffer_paid');
+    expect(paid?.to).toBe(FAKE_TRADER);
+    expect(paid?.amount).toBe(40_0000000n);
+    expect(paid?.paid).toBe(30_0000000n);
+  });
+
+  it('decodes exposure_synced with the asset symbol in topic[1]', () => {
+    const value = vec(
+      nativeToScVal(-12_0000000n, { type: 'i128' }),
+      nativeToScVal(-30_0000000n, { type: 'i128' }),
+      nativeToScVal(7_0000000n, { type: 'i128' }),
+    );
+    const decoded = decodeLpVaultEvent(
+      makeRawEvent('exposure_synced', value, 100, [nativeToScVal('BTC', { type: 'symbol' })]),
+    );
+    expect(decoded?.topic).toBe('exposure_synced');
+    expect(decoded?.asset).toBe('BTC');
+    expect(decoded?.assetUnrealizedPnl).toBe(-12_0000000n);
+    expect(decoded?.totalUnrealizedPnl).toBe(-30_0000000n);
+    expect(decoded?.release).toBe(7_0000000n);
+  });
+
+  it('decodes paused with an empty payload and no stray fields', () => {
+    const decoded = decodeLpVaultEvent(makeRawEvent('paused', xdr.ScVal.scvVoid()));
+    expect(decoded?.topic).toBe('paused');
+    expect(decoded?.asset).toBeUndefined();
+    expect(decoded?.extra0).toBeUndefined();
+  });
+
+  it('keeps appended payload values under extra keys instead of dropping them', () => {
+    const value = vec(
+      nativeToScVal(-250_0000000n, { type: 'i128' }),
+      nativeToScVal(1n, { type: 'u64' }),
+    );
+    const decoded = decodeLpVaultEvent(makeRawEvent('pnl_settled', value));
+    expect(decoded?.pnl).toBe(-250_0000000n);
+    expect(decoded?.extra0).toBe(1n);
+  });
+
+  it('returns null for topics the LP vault does not emit', () => {
+    const value = vec(nativeToScVal(1n, { type: 'i128' }));
+    expect(decodeLpVaultEvent(makeRawEvent('something_new', value))).toBeNull();
   });
 });
