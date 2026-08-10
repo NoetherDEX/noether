@@ -144,6 +144,12 @@ export class StatsService {
    */
   async traderVolume14d(address: string, now = nowSec()): Promise<bigint> {
     const since = now - VOLUME_WINDOW_SEC;
+    // Position ids restart at 1 for every market deployment, so a bare
+    // positionId join matches opens from retired markets. Correlating
+    // contract_id on the join is what makes the pairing 1:1; the extra scope
+    // predicate then keeps retired deployments out of the window entirely.
+    const scope = this.marketContractId ? 'AND contract_id = ?' : '';
+    const scopeC = this.marketContractId ? 'AND c.contract_id = ?' : '';
     try {
       const opens = await this.db.execute({
         sql: `
@@ -152,8 +158,11 @@ export class StatsService {
           WHERE topic = 'position_opened'
             AND payload_json ->> 'trader' = ?
             AND ledger_close_ts >= ?
+            ${scope}
         `,
-        args: [address, since],
+        args: this.marketContractId
+          ? [address, since, this.marketContractId]
+          : [address, since],
       });
       const closes = await this.db.execute({
         sql: `
@@ -161,12 +170,16 @@ export class StatsService {
           FROM events_raw c
           JOIN events_raw o
             ON o.topic = 'position_opened'
+           AND o.contract_id = c.contract_id
            AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
           WHERE c.topic = 'position_closed'
             AND c.payload_json ->> 'trader' = ?
             AND c.ledger_close_ts >= ?
+            ${scopeC}
         `,
-        args: [address, since],
+        args: this.marketContractId
+          ? [address, since, this.marketContractId]
+          : [address, since],
       });
       return sumSizes(opens.rows) + sumSizes(closes.rows);
     } catch (err) {
@@ -228,7 +241,15 @@ export class StatsService {
     for (const a of SUPPORTED_ASSETS) bucket(a.symbol);
 
     try {
-      const open = await this.db.execute('SELECT asset, direction, size FROM positions');
+      // Scoped like every other read: the projection keeps rows from retired
+      // deployments, and counting them inflates open interest and the open
+      // position count for assets nobody is trading on this market.
+      const open = this.marketContractId
+        ? await this.db.execute({
+            sql: 'SELECT asset, direction, size FROM positions WHERE contract_id = ?',
+            args: [this.marketContractId],
+          })
+        : await this.db.execute('SELECT asset, direction, size FROM positions');
       for (const row of open.rows) {
         const b = bucket(String(row.asset));
         const size = BigInt(String(row.size));
@@ -242,6 +263,8 @@ export class StatsService {
 
     const since = now - DAY_SEC;
     try {
+      const scope = this.marketContractId ? 'AND contract_id = ?' : '';
+      const scopeC = this.marketContractId ? 'AND c.contract_id = ?' : '';
       const opens = await this.db.execute({
         sql: `
           SELECT payload_json ->> 'asset' AS asset,
@@ -249,8 +272,9 @@ export class StatsService {
           FROM events_raw
           WHERE topic = 'position_opened'
             AND ledger_close_ts >= ?
+            ${scope}
         `,
-        args: [since],
+        args: this.marketContractId ? [since, this.marketContractId] : [since],
       });
       for (const row of opens.rows) bucket(String(row.asset)).volume += BigInt(String(row.size));
       const realized = await this.db.execute({
@@ -260,11 +284,13 @@ export class StatsService {
           FROM events_raw c
           JOIN events_raw o
             ON o.topic = 'position_opened'
+           AND o.contract_id = c.contract_id
            AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
           WHERE c.topic IN ('position_closed', 'position_liquidated')
             AND c.ledger_close_ts >= ?
+            ${scopeC}
         `,
-        args: [since],
+        args: this.marketContractId ? [since, this.marketContractId] : [since],
       });
       for (const row of realized.rows) bucket(String(row.asset)).volume += BigInt(String(row.size));
     } catch (err) {
@@ -305,7 +331,13 @@ export class StatsService {
                c.payload_json AS payload_json, ${openPayload} AS open_payload_json`;
     const branches: string[] = [];
     const args: (string | number)[] = [];
+    // Applied to every branch so the args array stays aligned with the
+    // placeholders each branch contributes, in branch order.
     const sharedConditions = (out: string[], list: (string | number)[]) => {
+      if (this.marketContractId) {
+        out.push(`c.contract_id = ?`);
+        list.push(this.marketContractId);
+      }
       if (opts.trader) {
         out.push(`c.payload_json ->> 'trader' = ?`);
         list.push(opts.trader);
@@ -326,10 +358,14 @@ export class StatsService {
         conditions.push(`o.payload_json ->> 'asset' = ?`);
         args.push(opts.asset);
       }
+      // Correlating contract_id is what stops one close matching opens from
+      // several deployments, which duplicated the row once per match and
+      // showed the retired market's asset, size and entry price.
       branches.push(`${branchColumns('o.payload_json')}
         FROM events_raw c
         LEFT JOIN events_raw o
           ON o.topic = 'position_opened'
+         AND o.contract_id = c.contract_id
          AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
         WHERE ${conditions.join(' AND ')}`);
     }

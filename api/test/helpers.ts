@@ -50,7 +50,10 @@ import { WalletAuth } from '../src/services/walletAuth.js';
 import { RateLimiter } from '../src/services/rateLimit.js';
 import type { ContractReader } from '../src/services/contractReader.js';
 
-const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
+/** Stands in for every contract id in tests. Exported so seeded projection
+ *  rows can carry the same contract_id the indexer writes in production,
+ *  which is what the market scoped reads filter on. */
+export const FAKE_CONTRACT = 'CCVDWH4ZL4RNVD52CWQ2LABTLUFFF4VLTXIT5LR7AQSLIB7YOZCOFMOD';
 
 export const TEST_CONFIG: ApiConfig = {
   network: 'testnet',
@@ -138,7 +141,8 @@ export async function seedSchema(db: Db): Promise<void> {
       size TEXT NOT NULL,
       entry_price TEXT NOT NULL,
       opened_at BIGINT NOT NULL,
-      opened_tx_hash TEXT NOT NULL
+      opened_tx_hash TEXT NOT NULL,
+      contract_id TEXT
     );
   `);
   await db.execute(`

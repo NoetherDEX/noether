@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { Keypair } from '@stellar/stellar-sdk';
-import { setupTestServer } from './helpers.js';
+import { FAKE_CONTRACT, setupTestServer } from './helpers.js';
 import { SUPPORTED_ASSET_SYMBOLS } from '@noether/shared';
 
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;
@@ -31,9 +31,9 @@ async function seedPosition(
   size: string,
 ): Promise<void> {
   await db.execute({
-    sql: `INSERT INTO positions (position_id, trader, asset, direction, size, entry_price, opened_at, opened_tx_hash)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, trader, asset, direction, size, '600000000000', now, 'tx'],
+    sql: `INSERT INTO positions (position_id, trader, asset, direction, size, entry_price, opened_at, opened_tx_hash, contract_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, trader, asset, direction, size, '600000000000', now, 'tx', FAKE_CONTRACT],
   });
 }
 

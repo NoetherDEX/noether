@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import type { Db } from '@noether/db';
 import { Keypair } from '@stellar/stellar-sdk';
-import { makeTestDb, setupTestServer } from './helpers.js';
+import { FAKE_CONTRACT, makeTestDb, setupTestServer } from './helpers.js';
 
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;
 
@@ -80,9 +80,9 @@ describe('/v1/positions/open hard LIMIT — A-7', () => {
 
     await db.batch(
       Array.from({ length: 505 }, (_, i) => ({
-        sql: `INSERT INTO positions (position_id, trader, asset, direction, size, entry_price, opened_at, opened_tx_hash)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [i + 1, traderA, 'BTC', 0, '1', '1', 1000 + i, 't'],
+        sql: `INSERT INTO positions (position_id, trader, asset, direction, size, entry_price, opened_at, opened_tx_hash, contract_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [i + 1, traderA, 'BTC', 0, '1', '1', 1000 + i, 't', FAKE_CONTRACT],
       })),
     );
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { Address, nativeToScVal, xdr } from '@stellar/stellar-sdk';
 import type { FastifyInstance } from 'fastify';
-import { setupTestServer } from './helpers.js';
+import { FAKE_CONTRACT, setupTestServer } from './helpers.js';
 import {
   rankAdlQueue,
   decodePositionEntry,
@@ -110,9 +110,9 @@ describe('ADL + shortfall routes', () => {
       [2, TRADER_B],
     ] as const) {
       await db.execute({
-        sql: `INSERT INTO positions (position_id, trader, asset, direction, size, entry_price, opened_at, opened_tx_hash)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [id, trader, 'BTC', 0, (1000n * P).toString(), (10n * P).toString(), 1, 't'],
+        sql: `INSERT INTO positions (position_id, trader, asset, direction, size, entry_price, opened_at, opened_tx_hash, contract_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [id, trader, 'BTC', 0, (1000n * P).toString(), (10n * P).toString(), 1, 't', FAKE_CONTRACT],
       });
     }
   };
