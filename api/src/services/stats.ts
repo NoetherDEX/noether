@@ -1,5 +1,12 @@
 import { isMissingTable, type Db, type Row } from '@noether/db';
-import { SUPPORTED_ASSETS } from '@noether/shared';
+import {
+  SUPPORTED_ASSETS,
+  resolveScope,
+  scopeFromEnv,
+  scopeServedByNetwork,
+  type DeploymentScope,
+} from '@noether/shared';
+import type { Network } from '@noether/types';
 import { TtlCache } from './cache.js';
 
 const DAY_SEC = 86_400;
@@ -17,19 +24,31 @@ const DEFAULT_TRADES_LIMIT = 50;
 const MAX_TRADES_LIMIT = 200;
 const DEFAULT_ORDERS_LIMIT = 50;
 const MAX_ORDERS_LIMIT = 200;
-const DEFAULT_LEADERBOARD_LIMIT = 50;
+const DEFAULT_LEADERBOARD_LIMIT = 20;
 const MAX_LEADERBOARD_LIMIT = 200;
+/** Retired board snapshots kept per (scope, sort) so a client mid page walk
+ *  can finish on the immutable rows it started on. */
+const SNAPSHOT_HISTORY_DEPTH = 2;
 const DEFAULT_CANDLES_LIMIT = 500;
 const MAX_CANDLES_LIMIT = 1000;
 const PRICE_SCALE = 10_000_000;
 
 export type LeaderboardSort = 'pnl' | 'volume';
 
+/**
+ * Board availability for a requested scope. 'not_indexed_here' means the
+ * scope belongs to another Stellar network than this gateway serves, so its
+ * rows do not exist in this database at all.
+ */
+export type LeaderboardState = 'ok' | 'empty' | 'not_indexed_here';
+
 export interface LeaderboardEntry {
+  /** Position in the full ranked board, 1 based, stable across pages. */
+  rank: number;
   trader: string;
-  /** Realized PnL, 7-dec USDC (live market + legacy baseline). */
+  /** Realized PnL, 7 decimal USDC (live market + legacy baseline). */
   pnl: string;
-  /** Traded notional, 7-dec (opens + matched closes, + legacy baseline). */
+  /** Traded notional, 7 decimal (opens + matched closes, + legacy baseline). */
   volume: string;
   /** Trade count (position_opened rows, + legacy baseline). */
   trades: number;
@@ -37,18 +56,66 @@ export interface LeaderboardEntry {
   liqCount: number;
 }
 
-export interface LeaderboardBoard {
-  /** poll_cursor.updated_at (unix seconds) — when the index last advanced. */
+/**
+ * One immutable computation of the full ranked board for a (scope, sort)
+ * pair. Pages are slices of `rows`, so ranks never shift and rows never
+ * duplicate or vanish between pages served from the same snapshot.
+ */
+export interface BoardSnapshot {
+  /** `${scope}.${sort}.${cursorLedger}.${total}` */
+  id: string;
+  /** Wall clock at computation (ms). */
+  computedAt: number;
+  /** poll_cursor.last_ledger at computation. */
+  cursorLedger: number;
+  /** poll_cursor.updated_at (unix seconds); null before the first poll. */
   updatedAt: number | null;
+  total: number;
+  rows: LeaderboardEntry[];
+}
+
+export interface LeaderboardPage {
+  scope: string;
+  network: string;
+  state: LeaderboardState;
+  sort: LeaderboardSort;
+  /** poll_cursor.updated_at (unix seconds), when the index last advanced. */
+  updatedAt: number | null;
+  /** Distinct traders on the full board, not just this page. */
+  total: number;
+  limit: number;
+  offset: number;
+  snapshot: string;
+  /** True when the caller asked for a snapshot this service no longer holds
+   *  and was served the current one instead. */
+  snapshotChanged: boolean;
   leaders: LeaderboardEntry[];
 }
 
+export interface LeaderboardRank {
+  scope: string;
+  network: string;
+  state: LeaderboardState;
+  sort: LeaderboardSort;
+  trader: string;
+  /** 1 based rank on the full board; null when the trader is not on it. */
+  rank: number | null;
+  total: number;
+  snapshot: string;
+  updatedAt: number | null;
+  /** The trader's full board row, when present. */
+  entry: LeaderboardEntry | null;
+}
+
 export interface LeaderboardTotals {
-  /** poll_cursor.updated_at (unix seconds) — when the index last advanced. */
+  scope: string;
+  network: string;
+  state: LeaderboardState;
+  /** poll_cursor.updated_at (unix seconds), when the index last advanced. */
   updatedAt: number | null;
   /** Distinct traders across the whole market, NOT just the returned page. */
   traders: number;
-  /** Traded notional, 7-dec (opens + matched closes, + legacy baseline). */
+  /** Traded notional, 7 decimal (opens + matched closes, + legacy baseline). */
   volume: string;
   /** Trade count (position_opened rows, + legacy baseline). */
   trades: number;
@@ -119,15 +186,20 @@ export interface CandlePoint {
  * payloads carry no size or asset, so realized legs join back to their
  * position_opened event by positionId.
  *
- * The leaderboard is scoped to the CURRENT market contract (redeploys used
- * to leak retired-deployment rows into the totals — the exact bug the web
- * cron had) and folds in the one-time `leaderboard_legacy` baseline
- * imported from the retired web pipeline.
+ * The leaderboard is scoped per deployment scope (see the shared scope
+ * registry): a scope names the market contract ids whose events feed its
+ * board plus the leaderboard_legacy baseline slice it may inherit, so a
+ * redeploy cannot leak retired rows and a mainnet scope can never inherit
+ * testnet history. The single market reads (volume, open interest, trades)
+ * stay pinned to the CURRENT market contract as before.
  */
 export class StatsService {
   private readonly cache = new TtlCache<AssetStats[]>(STATS_TTL_MS);
   private readonly solvencyCache = new TtlCache<SolvencyStats>(STATS_TTL_MS);
-  private readonly lbCache = new TtlCache<LeaderboardBoard>(LEADERBOARD_TTL_MS);
+  private readonly snapCache = new TtlCache<BoardSnapshot>(LEADERBOARD_TTL_MS);
+  /** Newest first, most recent SNAPSHOT_HISTORY_DEPTH snapshots per
+   *  `${scope}.${sort}` key (the current one included). */
+  private readonly snapHistory = new Map<string, BoardSnapshot[]>();
   private readonly totalsCache = new TtlCache<LeaderboardTotals>(LEADERBOARD_TTL_MS);
   private readonly candleCache = new TtlCache<CandlePoint[]>(STATS_TTL_MS);
 
@@ -135,6 +207,10 @@ export class StatsService {
     private readonly db: Db,
     /** Current market contract id — leaderboard scans are scoped to it. */
     private readonly marketContractId: string = '',
+    /** Stellar network this gateway serves. A leaderboard request for a
+     *  scope on another network is answered not_indexed_here instead of
+     *  leaking this network's rows into it. */
+    private readonly network: Network = 'testnet',
   ) {}
 
   /**
@@ -476,159 +552,372 @@ export class StatsService {
     }
   }
 
+  /** The scope registry entry for the caller's requested id (or the
+   *  gateway's home scope when omitted), with this service's configured
+   *  market id feeding the testnet default so tests and CONTRACT_MARKET
+   *  overrides resolve consistently. Unknown ids throw; the route schema
+   *  rejects them first with a 400. */
+  private requestScope(id?: string): DeploymentScope {
+    const opts = this.marketContractId ? { currentMarketId: this.marketContractId } : undefined;
+    const scope = id === undefined ? scopeFromEnv(opts) : resolveScope(id, opts);
+    if (!scope) throw new Error(`Unknown leaderboard scope: ${id}`);
+    return scope;
+  }
+
   /**
-   * Trader leaderboard from the indexer projections — the durable
-   * replacement for the web cron that re-scanned Horizon (audit W-5 / P4-26).
-   * Ranks by realized PnL (sum of position_closed pnl) or traded notional
-   * (opens + matched closes, mirroring the fee-tier volume model). Scoped to
-   * the current market deployment, then merged with the one-time
-   * leaderboard_legacy baseline (pre-2026-07-06 history from the retired web
-   * pipeline). Sums are folded in BigInt so large i128 totals stay exact.
-   * Cached briefly to absorb anonymous polling.
+   * One page of the trader leaderboard, the durable replacement for the web
+   * cron that re scanned Horizon (audit W5 / P4 26). Ranking happens in ONE
+   * SQL statement per (scope, sort): events scoped to the scope's market
+   * ids, merged with the leaderboard_legacy baseline slice the scope may
+   * inherit, grouped per trader and ordered by a total order (metric, then
+   * the other metric, then trader) so ranks are unique and page boundaries
+   * are deterministic even through the measured tie groups.
+   *
+   * Pages slice an immutable BoardSnapshot held per (scope, sort) with a
+   * short TTL and a small history, so walking pages never duplicates or
+   * skips a row: either the caller's snapshot is still held and every page
+   * comes from the same computation, or snapshotChanged flags the swap.
    */
-  async leaderboard(
-    opts: { sort?: LeaderboardSort; limit?: number } = {},
-  ): Promise<LeaderboardBoard> {
+  async leaderboardPage(
+    opts: {
+      scope?: string;
+      sort?: LeaderboardSort;
+      limit?: number;
+      offset?: number;
+      snapshot?: string;
+    } = {},
+  ): Promise<LeaderboardPage> {
     const sort: LeaderboardSort = opts.sort === 'volume' ? 'volume' : 'pnl';
     const limit = Math.min(
       MAX_LEADERBOARD_LIMIT,
       Math.max(1, opts.limit ?? DEFAULT_LEADERBOARD_LIMIT),
     );
-    return this.lbCache.getOrLoad(`${sort}:${limit}`, () => this.computeLeaderboard(sort, limit));
-  }
+    const offset = Math.max(0, opts.offset ?? 0);
+    const scope = this.requestScope(opts.scope);
 
-  private async computeLeaderboard(sort: LeaderboardSort, limit: number): Promise<LeaderboardBoard> {
-    const board = new Map<string, { pnl: bigint; volume: bigint; trades: number; liqCount: number }>();
-    const bucket = (trader: string) => {
-      let b = board.get(trader);
-      if (!b) {
-        b = { pnl: 0n, volume: 0n, trades: 0, liqCount: 0 };
-        board.set(trader, b);
-      }
-      return b;
+    if (!scopeServedByNetwork(scope, this.network)) {
+      // Another network's venue. This gateway does not index it, and it must
+      // NEVER answer with this network's rows (a mainnet page proxying the
+      // shared gateway would otherwise show testnet history).
+      return {
+        scope: scope.id,
+        network: scope.network,
+        state: 'not_indexed_here',
+        sort,
+        updatedAt: null,
+        total: 0,
+        limit,
+        offset,
+        snapshot: '',
+        snapshotChanged: false,
+        leaders: [],
+      };
+    }
+
+    const { snap, snapshotChanged } = await this.snapshotFor(scope, sort, opts.snapshot);
+    return {
+      scope: scope.id,
+      network: scope.network,
+      state: snap.total === 0 ? 'empty' : 'ok',
+      sort,
+      updatedAt: snap.updatedAt,
+      total: snap.total,
+      limit,
+      offset,
+      snapshot: snap.id,
+      snapshotChanged,
+      leaders: snap.rows.slice(offset, offset + limit),
     };
-    const market = this.marketContractId;
-
-    try {
-      const pnl = await this.db.execute({
-        sql: `
-          SELECT payload_json ->> 'trader' AS trader,
-                 payload_json ->> 'pnl' AS pnl
-          FROM events_raw
-          WHERE topic = 'position_closed' AND contract_id = ?
-        `,
-        args: [market],
-      });
-      for (const row of pnl.rows) {
-        const trader = row.trader == null ? '' : String(row.trader);
-        if (trader) bucket(trader).pnl += toBigInt(row.pnl);
-      }
-      const opens = await this.db.execute({
-        sql: `
-          SELECT payload_json ->> 'trader' AS trader,
-                 payload_json ->> 'size' AS size
-          FROM events_raw
-          WHERE topic = 'position_opened' AND contract_id = ?
-        `,
-        args: [market],
-      });
-      for (const row of opens.rows) {
-        const trader = row.trader == null ? '' : String(row.trader);
-        if (trader) {
-          const b = bucket(trader);
-          b.volume += toBigInt(row.size);
-          b.trades += 1;
-        }
-      }
-      const closes = await this.db.execute({
-        sql: `
-          SELECT c.payload_json ->> 'trader' AS trader,
-                 o.payload_json ->> 'size' AS size
-          FROM events_raw c
-          JOIN events_raw o
-            ON o.topic = 'position_opened'
-           AND o.contract_id = c.contract_id
-           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
-          WHERE c.topic = 'position_closed' AND c.contract_id = ?
-        `,
-        args: [market],
-      });
-      for (const row of closes.rows) {
-        const trader = row.trader == null ? '' : String(row.trader);
-        if (trader) bucket(trader).volume += toBigInt(row.size);
-      }
-      const liqs = await this.db.execute({
-        sql: `
-          SELECT payload_json ->> 'trader' AS trader
-          FROM events_raw
-          WHERE topic IN ('position_liquidated', 'position_partial_liq', 'cross_liq')
-            AND contract_id = ?
-        `,
-        args: [market],
-      });
-      for (const row of liqs.rows) {
-        const trader = row.trader == null ? '' : String(row.trader);
-        if (trader) bucket(trader).liqCount += 1;
-      }
-    } catch (err) {
-      if (isMissingTable(err)) return { updatedAt: null, leaders: [] };
-      throw err;
-    }
-
-    // One-time baseline from the retired web pipeline (values already in
-    // 7-dec units — the import script scales them). Absent table = no merge.
-    try {
-      const legacy = await this.db.execute(
-        'SELECT address, trade_count, total_volume, total_pnl, liq_count FROM leaderboard_legacy',
-      );
-      for (const row of legacy.rows) {
-        const trader = row.address == null ? '' : String(row.address);
-        if (!trader) continue;
-        const b = bucket(trader);
-        b.pnl += toBigInt(row.total_pnl);
-        b.volume += toBigInt(row.total_volume);
-        b.trades += Number(row.trade_count ?? 0);
-        b.liqCount += Number(row.liq_count ?? 0);
-      }
-    } catch (err) {
-      if (!isMissingTable(err)) throw err;
-    }
-
-    const entries: LeaderboardEntry[] = [...board.entries()].map(([trader, b]) => ({
-      trader,
-      pnl: b.pnl.toString(),
-      volume: b.volume.toString(),
-      trades: b.trades,
-      liqCount: b.liqCount,
-    }));
-    entries.sort((a, b) => {
-      const av = sort === 'volume' ? BigInt(a.volume) : BigInt(a.pnl);
-      const bv = sort === 'volume' ? BigInt(b.volume) : BigInt(b.pnl);
-      return bv > av ? 1 : bv < av ? -1 : 0;
-    });
-
-    return { updatedAt: await this.cursorUpdatedAt(), leaders: entries.slice(0, limit) };
   }
 
   /**
-   * Market-wide headline totals, aggregated in SQL over EVERY trader.
-   *
-   * These deliberately do not reuse `leaderboard()`: that returns a ranked
-   * page (<= MAX_LEADERBOARD_LIMIT rows), so summing it silently undercounts
-   * once distinct traders exceed the limit — the count pins at the limit and
-   * the tail's volume/trades vanish. Same semantics as the per-row board:
-   * volume counts the open leg plus the matched close leg, trades counts
-   * position_opened only, and the legacy baseline is folded in.
+   * A single trader's rank + total for (scope, sort), read from the same
+   * snapshot the pages slice: no extra SQL, and always consistent with
+   * what the board pages show.
    */
-  async leaderboardTotals(): Promise<LeaderboardTotals> {
-    return this.totalsCache.getOrLoad('totals', () => this.computeLeaderboardTotals());
+  async leaderboardRank(opts: {
+    trader: string;
+    scope?: string;
+    sort?: LeaderboardSort;
+  }): Promise<LeaderboardRank> {
+    const sort: LeaderboardSort = opts.sort === 'volume' ? 'volume' : 'pnl';
+    const scope = this.requestScope(opts.scope);
+    if (!scopeServedByNetwork(scope, this.network)) {
+      return {
+        scope: scope.id,
+        network: scope.network,
+        state: 'not_indexed_here',
+        sort,
+        trader: opts.trader,
+        rank: null,
+        total: 0,
+        snapshot: '',
+        updatedAt: null,
+        entry: null,
+      };
+    }
+    const snap = await this.currentSnapshot(scope, sort);
+    const entry = snap.rows.find((r) => r.trader === opts.trader) ?? null;
+    return {
+      scope: scope.id,
+      network: scope.network,
+      state: snap.total === 0 ? 'empty' : 'ok',
+      sort,
+      trader: opts.trader,
+      rank: entry?.rank ?? null,
+      total: snap.total,
+      snapshot: snap.id,
+      updatedAt: snap.updatedAt,
+      entry,
+    };
   }
 
-  private async computeLeaderboardTotals(): Promise<LeaderboardTotals> {
-    const market = this.marketContractId;
+  /** Resolve which snapshot serves this request: the caller's requested one
+   *  when still held (current or history), else the current one with
+   *  snapshotChanged set so the client knows ranks may have moved. */
+  private async snapshotFor(
+    scope: DeploymentScope,
+    sort: LeaderboardSort,
+    requested?: string,
+  ): Promise<{ snap: BoardSnapshot; snapshotChanged: boolean }> {
+    const current = await this.currentSnapshot(scope, sort);
+    if (!requested || requested === current.id) {
+      return { snap: current, snapshotChanged: false };
+    }
+    const held = (this.snapHistory.get(`${scope.id}.${sort}`) ?? []).find(
+      (s) => s.id === requested,
+    );
+    if (held) return { snap: held, snapshotChanged: false };
+    return { snap: current, snapshotChanged: true };
+  }
+
+  /** Current snapshot for (scope, sort). Loads through the shared TtlCache
+   *  so a burst of page requests within the TTL fires one scan; every fresh
+   *  computation is pushed onto the small history ring. */
+  private async currentSnapshot(
+    scope: DeploymentScope,
+    sort: LeaderboardSort,
+  ): Promise<BoardSnapshot> {
+    const key = `${scope.id}.${sort}`;
+    return this.snapCache.getOrLoad(key, async () => {
+      const snap = await this.computeSnapshot(scope, sort);
+      const history = this.snapHistory.get(key) ?? [];
+      if (history[0]?.id !== snap.id) {
+        history.unshift(snap);
+        this.snapHistory.set(key, history.slice(0, SNAPSHOT_HISTORY_DEPTH));
+      } else {
+        history[0] = snap;
+      }
+      return snap;
+    });
+  }
+
+  private async computeSnapshot(
+    scope: DeploymentScope,
+    sort: LeaderboardSort,
+  ): Promise<BoardSnapshot> {
+    const cursor = await this.pollCursor();
+    // A scope with no market ids AND no legacy inheritance is an empty venue
+    // by definition (mainnet before launch): no scan at all.
+    const rows =
+      scope.marketIds.length === 0 && scope.legacyScopeKey === null
+        ? []
+        : await this.queryRankedBoard(scope, sort);
+    return {
+      id: `${scope.id}.${sort}.${cursor.lastLedger}.${rows.length}`,
+      computedAt: Date.now(),
+      cursorLedger: cursor.lastLedger,
+      updatedAt: cursor.updatedAt,
+      total: rows.length,
+      rows,
+    };
+  }
+
+  /** Full ranked board via ONE statement, tolerant of a database that does
+   *  not have the tables yet. 42P01 does not say WHICH table is absent:
+   *  events_raw missing means a pre first poll database and an empty board
+   *  is the truth, but a missing leaderboard_legacy must not hide live
+   *  rows, so retry once without the legacy branch. */
+  private async queryRankedBoard(
+    scope: DeploymentScope,
+    sort: LeaderboardSort,
+  ): Promise<LeaderboardEntry[]> {
+    const withLegacy = scope.legacyScopeKey !== null;
+    try {
+      return await this.execRankedBoard(scope, sort, withLegacy);
+    } catch (err) {
+      if (!isMissingTable(err)) throw err;
+      if (!withLegacy) return [];
+      try {
+        return await this.execRankedBoard(scope, sort, false);
+      } catch (err2) {
+        if (isMissingTable(err2)) return [];
+        throw err2;
+      }
+    }
+  }
+
+  /**
+   * The one ranking statement. Every realized leg becomes a (trader, pnl,
+   * volume, trades, liq_count) row, folded per trader in SQL:
+   *   pnl:    position_closed pnl.
+   *   volume: open size plus the matched close leg. The close leg uses the
+   *           close's own size when the payload carries one, else the
+   *           joined open's size, keeping the same fallback and the same
+   *           o.contract_id = c.contract_id join correlation the trade feed
+   *           uses, so one close can never match opens from several
+   *           deployments.
+   *   trades: position_opened count.
+   *   liq:    full/partial/cross liquidation count.
+   * plus the legacy baseline rows for the scope's scope_key. Ordering is
+   * row_number() over (metric DESC, other metric DESC, trader ASC): a total
+   * order, so ranks are unique and OFFSET pagination cannot duplicate or
+   * skip rows inside tie groups. The market id list travels as a Postgres
+   * array literal string because the Db layer's InValue rejects JS arrays.
+   */
+  private async execRankedBoard(
+    scope: DeploymentScope,
+    sort: LeaderboardSort,
+    withLegacy: boolean,
+  ): Promise<LeaderboardEntry[]> {
+    const metric = sort === 'volume' ? 'volume' : 'pnl';
+    const secondary = sort === 'volume' ? 'pnl' : 'volume';
+    const rankOrder = `${metric} DESC, ${secondary} DESC, trader ASC`;
+    const legacyBranch = withLegacy
+      ? `
+        UNION ALL
+        SELECT address AS trader,
+               total_pnl::numeric AS pnl,
+               total_volume::numeric AS volume,
+               trade_count::bigint AS trades,
+               liq_count::bigint AS liq_count
+        FROM leaderboard_legacy
+        WHERE scope_key = ?`
+      : '';
+    const args: (string | number)[] = [toPgTextArrayLiteral(scope.marketIds)];
+    if (withLegacy) args.push(String(scope.legacyScopeKey));
+
+    const result = await this.db.execute({
+      sql: `
+        WITH scoped AS (
+          SELECT contract_id, topic, payload_json
+          FROM events_raw
+          WHERE contract_id = ANY(?::text[])
+        ),
+        legs AS (
+          SELECT payload_json ->> 'trader' AS trader,
+                 COALESCE((payload_json ->> 'pnl')::numeric, 0) AS pnl,
+                 0::numeric AS volume,
+                 0::bigint AS trades,
+                 0::bigint AS liq_count
+          FROM scoped
+          WHERE topic = 'position_closed'
+          UNION ALL
+          SELECT payload_json ->> 'trader',
+                 0::numeric,
+                 COALESCE((payload_json ->> 'size')::numeric, 0),
+                 1::bigint,
+                 0::bigint
+          FROM scoped
+          WHERE topic = 'position_opened'
+          UNION ALL
+          SELECT c.payload_json ->> 'trader',
+                 0::numeric,
+                 COALESCE((c.payload_json ->> 'size')::numeric,
+                          (o.payload_json ->> 'size')::numeric, 0),
+                 0::bigint,
+                 0::bigint
+          FROM scoped c
+          LEFT JOIN scoped o
+            ON o.topic = 'position_opened'
+           AND o.contract_id = c.contract_id
+           AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
+          WHERE c.topic = 'position_closed'
+          UNION ALL
+          SELECT payload_json ->> 'trader',
+                 0::numeric,
+                 0::numeric,
+                 0::bigint,
+                 1::bigint
+          FROM scoped
+          WHERE topic IN ('position_liquidated', 'position_partial_liq', 'cross_liq')${legacyBranch}
+        ),
+        folded AS (
+          SELECT trader,
+                 SUM(pnl) AS pnl,
+                 SUM(volume) AS volume,
+                 SUM(trades) AS trades,
+                 SUM(liq_count) AS liq_count
+          FROM legs
+          WHERE trader IS NOT NULL AND trader <> ''
+          GROUP BY trader
+        )
+        SELECT trader,
+               pnl::text AS pnl,
+               volume::text AS volume,
+               trades::bigint AS trades,
+               liq_count::bigint AS liq_count,
+               row_number() OVER (ORDER BY ${rankOrder}) AS rank,
+               count(*) OVER () AS total
+        FROM folded
+        ORDER BY rank
+      `,
+      args,
+    });
+    return result.rows.map((row) => ({
+      rank: Number(row.rank),
+      trader: String(row.trader),
+      pnl: toBigIntNumeric(row.pnl).toString(),
+      volume: toBigIntNumeric(row.volume).toString(),
+      trades: Number(row.trades ?? 0),
+      liqCount: Number(row.liq_count ?? 0),
+    }));
+  }
+
+  /**
+   * Market wide headline totals, aggregated in SQL over EVERY trader.
+   *
+   * These deliberately do not reuse the board pages: a page holds at most
+   * MAX_LEADERBOARD_LIMIT rows, so summing pages client side silently
+   * undercounts once distinct traders exceed the limit (the count pins at
+   * the limit and the tail's volume/trades vanish). Same semantics as the
+   * board rows: volume counts the open leg plus the matched close leg,
+   * trades counts position_opened only, and the legacy baseline slice the
+   * scope inherits is folded in. Scoped exactly like the board so the tiles
+   * on a mainnet page can never show testnet aggregates.
+   */
+  async leaderboardTotals(opts: { scope?: string } = {}): Promise<LeaderboardTotals> {
+    const scope = this.requestScope(opts.scope);
+    if (!scopeServedByNetwork(scope, this.network)) {
+      return {
+        scope: scope.id,
+        network: scope.network,
+        state: 'not_indexed_here',
+        updatedAt: null,
+        traders: 0,
+        volume: '0',
+        trades: 0,
+      };
+    }
+    return this.totalsCache.getOrLoad(`totals:${scope.id}`, () =>
+      this.computeLeaderboardTotals(scope),
+    );
+  }
+
+  private async computeLeaderboardTotals(scope: DeploymentScope): Promise<LeaderboardTotals> {
+    const markets = toPgTextArrayLiteral(scope.marketIds);
     const traders = new Set<string>();
     let volume = 0n;
     let trades = 0;
+    const finish = (): LeaderboardTotals => ({
+      scope: scope.id,
+      network: scope.network,
+      state: traders.size === 0 ? 'empty' : 'ok',
+      updatedAt: null,
+      traders: traders.size,
+      volume: volume.toString(),
+      trades,
+    });
 
     try {
       const opens = await this.db.execute({
@@ -636,82 +925,89 @@ export class StatsService {
           SELECT COUNT(*) AS trades,
                  COALESCE(SUM((payload_json ->> 'size')::numeric), 0) AS volume
           FROM events_raw
-          WHERE topic = 'position_opened' AND contract_id = ?
+          WHERE topic = 'position_opened' AND contract_id = ANY(?::text[])
         `,
-        args: [market],
+        args: [markets],
       });
       trades += Number(opens.rows[0]?.trades ?? 0);
       volume += toBigIntNumeric(opens.rows[0]?.volume);
 
-      // Realized close legs carry no size — join back to the open event.
+      // Realized close legs may carry no size: prefer the close's own size,
+      // else the joined open's (same fallback as the board rows).
       const closes = await this.db.execute({
         sql: `
-          SELECT COALESCE(SUM((o.payload_json ->> 'size')::numeric), 0) AS volume
+          SELECT COALESCE(SUM(COALESCE((c.payload_json ->> 'size')::numeric,
+                                       (o.payload_json ->> 'size')::numeric, 0)), 0) AS volume
           FROM events_raw c
-          JOIN events_raw o
+          LEFT JOIN events_raw o
             ON o.topic = 'position_opened'
            AND o.contract_id = c.contract_id
            AND (o.payload_json ->> 'positionId') = (c.payload_json ->> 'positionId')
-          WHERE c.topic = 'position_closed' AND c.contract_id = ?
+          WHERE c.topic = 'position_closed' AND c.contract_id = ANY(?::text[])
         `,
-        args: [market],
+        args: [markets],
       });
       volume += toBigIntNumeric(closes.rows[0]?.volume);
 
-      // Distinct-trader set is small (one row per wallet), so union it here
-      // rather than in SQL — leaderboard_legacy may not exist.
+      // The distinct trader set is small (one row per wallet), so union it
+      // here rather than in SQL, since leaderboard_legacy may not exist.
       const addrs = await this.db.execute({
         sql: `
           SELECT DISTINCT payload_json ->> 'trader' AS trader
           FROM events_raw
-          WHERE contract_id = ?
+          WHERE contract_id = ANY(?::text[])
             AND topic IN ('position_opened', 'position_closed',
                           'position_liquidated', 'position_partial_liq', 'cross_liq')
         `,
-        args: [market],
+        args: [markets],
       });
       for (const row of addrs.rows) {
         const trader = row.trader == null ? '' : String(row.trader);
         if (trader) traders.add(trader);
       }
     } catch (err) {
-      if (isMissingTable(err)) return { updatedAt: null, traders: 0, volume: '0', trades: 0 };
+      if (isMissingTable(err)) return finish();
       throw err;
     }
 
-    try {
-      const legacy = await this.db.execute(
-        'SELECT address, trade_count, total_volume FROM leaderboard_legacy',
-      );
-      for (const row of legacy.rows) {
-        const trader = row.address == null ? '' : String(row.address);
-        if (!trader) continue;
-        traders.add(trader);
-        volume += toBigInt(row.total_volume);
-        trades += Number(row.trade_count ?? 0);
+    if (scope.legacyScopeKey !== null) {
+      try {
+        const legacy = await this.db.execute({
+          sql: 'SELECT address, trade_count, total_volume FROM leaderboard_legacy WHERE scope_key = ?',
+          args: [scope.legacyScopeKey],
+        });
+        for (const row of legacy.rows) {
+          const trader = row.address == null ? '' : String(row.address);
+          if (!trader) continue;
+          traders.add(trader);
+          volume += toBigInt(row.total_volume);
+          trades += Number(row.trade_count ?? 0);
+        }
+      } catch (err) {
+        if (!isMissingTable(err)) throw err;
       }
-    } catch (err) {
-      if (!isMissingTable(err)) throw err;
     }
 
-    return {
-      updatedAt: await this.cursorUpdatedAt(),
-      traders: traders.size,
-      volume: volume.toString(),
-      trades,
-    };
+    return { ...finish(), updatedAt: (await this.pollCursor()).updatedAt };
   }
 
-  /** poll_cursor.updated_at (ms) → unix seconds; null before first poll. */
-  private async cursorUpdatedAt(): Promise<number | null> {
+  /** poll_cursor row: last_ledger for snapshot identity, updated_at (ms)
+   *  mapped to unix seconds; zero/null before the first poll. */
+  private async pollCursor(): Promise<{ lastLedger: number; updatedAt: number | null }> {
     try {
-      const res = await this.db.execute('SELECT updated_at FROM poll_cursor WHERE id = 1');
-      const raw = res.rows[0]?.updated_at;
-      if (raw == null) return null;
-      const ms = Number(raw);
-      return Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : null;
+      const res = await this.db.execute(
+        'SELECT last_ledger, updated_at FROM poll_cursor WHERE id = 1',
+      );
+      const row = res.rows[0];
+      if (!row) return { lastLedger: 0, updatedAt: null };
+      const ledger = Number(row.last_ledger);
+      const ms = Number(row.updated_at);
+      return {
+        lastLedger: Number.isFinite(ledger) && ledger > 0 ? ledger : 0,
+        updatedAt: Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : null,
+      };
     } catch (err) {
-      if (isMissingTable(err)) return null;
+      if (isMissingTable(err)) return { lastLedger: 0, updatedAt: null };
       throw err;
     }
   }
@@ -833,6 +1129,18 @@ function candlePointFromRow(row: Row): CandlePoint {
     low: Number(row.low) / PRICE_SCALE,
     close: Number(row.close) / PRICE_SCALE,
   };
+}
+
+/**
+ * Serialize contract ids for `= ANY(?::text[])`. The Db layer's InValue
+ * type rejects JS arrays, so the parameter travels as a Postgres array
+ * literal string ('{"A","B"}'). Elements are double quoted with backslash
+ * escaping so no id content can change the literal's shape; an empty list
+ * serializes to '{}', which matches nothing.
+ */
+function toPgTextArrayLiteral(ids: readonly string[]): string {
+  const quoted = ids.map((id) => `"${id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+  return `{${quoted.join(',')}}`;
 }
 
 function sumSizes(rows: Row[]): bigint {

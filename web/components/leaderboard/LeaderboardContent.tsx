@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Info, Users, BarChart3, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
@@ -8,12 +8,21 @@ import { Tooltip } from '@/components/ui';
 import { formatNumber, formatUSD, formatRelativeTime, truncateAddress } from '@/lib/utils/format';
 import { STELLAR_EXPERT_BASE } from '@/lib/utils/constants';
 import { useWalletStore } from '@/lib/store';
-import { getLeaderboardData, type LeaderboardTrader } from '@/lib/stellar/leaderboard';
+import {
+  getLeaderboardPage,
+  getLeaderboardRank,
+  getLeaderboardTotals,
+  type LeaderboardPageData,
+  type LeaderboardSelfRank,
+  type LeaderboardSort,
+  type LeaderboardTotals,
+} from '@/lib/stellar/leaderboard';
 
-type SortField = 'totalVolume' | 'pnl';
+/** Server side page size: 20 rows per page with previous/next controls. */
+const PAGE_SIZE = 20;
 
-const SORT_LABELS: Record<SortField, string> = {
-  totalVolume: 'Volume',
+const SORT_LABELS: Record<LeaderboardSort, string> = {
+  volume: 'Volume',
   pnl: 'Realized PnL',
 };
 
@@ -56,6 +65,43 @@ function LiqFlag({ count }: { count: number }) {
   );
 }
 
+function RankCell({ rank }: { rank: number }) {
+  return (
+    <span
+      className={cn(
+        'font-mono tabular-nums text-xs',
+        rank === 1 ? 'text-primary' : rank <= 3 ? 'text-muted-foreground' : 'text-faint'
+      )}
+    >
+      {rank}
+    </span>
+  );
+}
+
+/** Scope aware empty board: the mainnet venue is genuinely empty until
+ *  launch, and inviting people to trade there would be a dead end. */
+function EmptyBoard({ scope }: { scope: string }) {
+  if (scope === 'mainnet') {
+    return (
+      <div className="py-16 text-center">
+        <p className="text-sm text-muted-foreground mb-1.5">Mainnet trading has not started yet.</p>
+        <p className="text-xs text-faint">The mainnet leaderboard starts counting with the first mainnet trade.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="py-16 text-center">
+      <p className="text-sm text-muted-foreground mb-3">No traders yet. Be the first to open a position!</p>
+      <Link
+        href="/trade"
+        className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:opacity-80 transition-colors"
+      >
+        Start trading →
+      </Link>
+    </div>
+  );
+}
+
 function SkeletonRow() {
   return (
     <tr className="border-b border-border">
@@ -68,64 +114,143 @@ function SkeletonRow() {
   );
 }
 
+const PAGE_BUTTON_CLASS =
+  'px-2.5 py-1 rounded-sm text-xs font-medium transition-colors bg-surface-2 text-foreground ' +
+  'hover:bg-surface-3 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-surface-2';
+
+interface PageView {
+  sort: LeaderboardSort;
+  offset: number;
+  snapshot?: string;
+}
+
 export function LeaderboardContent() {
-  const [traders, setTraders] = useState<LeaderboardTrader[]>([]);
+  const [data, setData] = useState<LeaderboardPageData | null>(null);
+  const [totals, setTotals] = useState<LeaderboardTotals | null>(null);
+  const [selfRank, setSelfRank] = useState<LeaderboardSelfRank | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchFailed, setFetchFailed] = useState(false);
-  const [sortBy, setSortBy] = useState<SortField>('pnl');
+  const [sortBy, setSortBy] = useState<LeaderboardSort>('pnl');
   const walletAddress = useWalletStore((s) => s.address);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const data = await getLeaderboardData();
-      setTraders(data);
+  // The current view, readable from the refresh interval without re arming
+  // the timer on every page turn.
+  const viewRef = useRef<PageView>({ sort: 'pnl', offset: 0 });
+
+  const fetchData = useCallback(async (view: PageView, opts?: { showSkeleton?: boolean }) => {
+    if (opts?.showSkeleton) setLoading(true);
+    // The ranked rows and the headline totals are independent reads: the rows
+    // are one server ranked page, the totals are aggregated across every
+    // trader. Fetch both, and let each degrade on its own.
+    const [rows, agg] = await Promise.allSettled([
+      getLeaderboardPage({
+        sort: view.sort,
+        offset: view.offset,
+        limit: PAGE_SIZE,
+        snapshot: view.snapshot,
+      }),
+      getLeaderboardTotals(),
+    ]);
+
+    if (rows.status === 'fulfilled') {
+      setData(rows.value);
+      viewRef.current = {
+        sort: rows.value.sort === 'volume' ? 'volume' : 'pnl',
+        offset: rows.value.offset,
+        snapshot: rows.value.snapshot,
+      };
       setFetchFailed(false);
-    } catch (error) {
-      console.error('[Leaderboard] Failed to fetch:', error);
+    } else {
+      console.error('[Leaderboard] Failed to fetch:', rows.reason);
       // Keep last-good data — a failed refresh shows a stale banner, never a
       // fake-empty board.
       setFetchFailed(true);
-    } finally {
-      setLoading(false);
     }
+
+    if (agg.status === 'fulfilled') {
+      setTotals(agg.value);
+    } else {
+      // Keep last good totals; the tiles fall back to the board total,
+      // which never invents a number.
+      console.error('[Leaderboard] Failed to fetch totals:', agg.reason);
+    }
+
+    setLoading(false);
   }, []);
 
+  // Initial load, and back to page one on every sort change (a new sort is
+  // a new ranking, so a carried offset or snapshot would be meaningless).
   useEffect(() => {
-    fetchData();
+    fetchData({ sort: sortBy, offset: 0 }, { showSkeleton: true });
+  }, [sortBy, fetchData]);
 
-    // Refresh every 60 seconds
-    const interval = setInterval(fetchData, 60_000);
+  // Background refresh every 60 seconds: refetch the current view WITHOUT a
+  // snapshot pin so it adopts the newest board.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const v = viewRef.current;
+      fetchData({ sort: v.sort, offset: v.offset });
+    }, 60_000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  // The wallet's own rank comes from the FULL board via the rank endpoint;
+  // with 20 row pages the wallet's row is usually below the fold.
+  useEffect(() => {
+    if (!walletAddress) {
+      setSelfRank(null);
+      return;
+    }
+    let cancelled = false;
+    getLeaderboardRank(walletAddress, sortBy)
+      .then((r) => {
+        if (!cancelled) setSelfRank(r);
+      })
+      .catch((err) => {
+        console.error('[Leaderboard] Failed to fetch self rank:', err);
+        // Unknown is not "unranked": hide the banner rather than guess.
+        if (!cancelled) setSelfRank(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress, sortBy, data?.snapshot]);
+
   function handleRetry() {
-    setLoading(true);
-    fetchData();
+    const v = viewRef.current;
+    fetchData({ sort: v.sort, offset: v.offset }, { showSkeleton: true });
   }
 
-  const sorted = [...traders].sort((a, b) => {
-    if (sortBy === 'pnl') return b.pnl - a.pnl;
-    return b.totalVolume - a.totalVolume;
-  });
+  // Page moves carry the current snapshot id so ranks stay stable and rows
+  // never duplicate or vanish across the boundary.
+  function goToOffset(offset: number) {
+    fetchData({ sort: sortBy, offset, snapshot: data?.snapshot }, { showSkeleton: true });
+  }
+
+  const traders = data?.leaders ?? [];
+  const scope = data?.scope ?? 'testnet';
+  const offset = data?.offset ?? 0;
+  const total = data?.total ?? 0;
+  const hasPrev = offset > 0;
+  const hasNext = offset + traders.length < total;
 
   // Error with nothing to show: totals are unknown, not zero.
-  const errorNoData = fetchFailed && traders.length === 0;
-  const staleData = fetchFailed && traders.length > 0;
+  const errorNoData = fetchFailed && !data;
+  // Tiles only go blank when neither source can answer: server totals survive a
+  // failed row fetch, since they are an independent read.
+  const totalsUnknown = errorNoData && !totals;
+  const staleData = fetchFailed && data !== null;
 
-  // Cron-sync freshness: rankings update via a background sync, not live.
-  // Show WHEN they were computed; amber past 10 minutes (B2).
-  const syncedAtMs = traders.reduce(
-    (max, t) => (t.lastUpdated ? Math.max(max, t.lastUpdated * 1000) : max),
-    0
-  );
+  // Index freshness: rankings update via the indexer, not live. Show WHEN
+  // they were computed; amber past 10 minutes (B2).
+  const syncedAtMs = (data?.updatedAt ?? 0) * 1000;
   const syncIsStale = syncedAtMs > 0 && Date.now() - syncedAtMs > 10 * 60 * 1000;
 
-  const selfIdx = walletAddress ? sorted.findIndex((t) => t.address === walletAddress) : -1;
-  const self = selfIdx >= 0 ? sorted[selfIdx] : null;
-
-  const totalTraders = traders.length;
-  const totalVolume = traders.reduce((sum, t) => sum + t.totalVolume, 0);
-  const totalTrades = traders.reduce((sum, t) => sum + t.tradeCount, 0);
+  // Prefer the server side aggregate: the rows are one page of the board,
+  // so summing them undercounts everything beyond it.
+  const totalTraders = totals?.traders ?? total;
+  const totalVolume = totals?.volume ?? traders.reduce((sum, t) => sum + t.totalVolume, 0);
+  const totalTrades = totals?.trades ?? traders.reduce((sum, t) => sum + t.tradeCount, 0);
 
   return (
     <div className="space-y-6">
@@ -139,7 +264,7 @@ export function LeaderboardContent() {
             <span className="text-[11px] text-faint uppercase tracking-wide">Traders</span>
           </div>
           <div className="text-xl font-medium font-mono tabular-nums">
-            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatNumber(totalTraders, 0)}
+            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : totalsUnknown ? '—' : formatNumber(totalTraders, 0)}
           </div>
         </div>
         <div className="rounded-lg border border-border bg-surface p-5">
@@ -150,7 +275,7 @@ export function LeaderboardContent() {
             <span className="text-[11px] text-faint uppercase tracking-wide">Total Volume</span>
           </div>
           <div className="text-xl font-medium font-mono tabular-nums">
-            {loading ? <div className="h-7 w-24 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatUSD(totalVolume, 0)}
+            {loading ? <div className="h-7 w-24 bg-surface-2 rounded-sm animate-pulse" /> : totalsUnknown ? '—' : formatUSD(totalVolume, 0)}
           </div>
         </div>
         <div className="rounded-lg border border-border bg-surface p-5">
@@ -161,48 +286,54 @@ export function LeaderboardContent() {
             <span className="text-[11px] text-faint uppercase tracking-wide">Total Trades</span>
           </div>
           <div className="text-xl font-medium font-mono tabular-nums">
-            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : errorNoData ? '—' : formatNumber(totalTrades, 0)}
+            {loading ? <div className="h-7 w-12 bg-surface-2 rounded-sm animate-pulse" /> : totalsUnknown ? '—' : formatNumber(totalTrades, 0)}
           </div>
         </div>
       </div>
 
-      {/* Self-rank summary (A22): sticks below the fixed header while the
-          table scrolls; hidden while loading or when rankings are unknown. */}
-      {walletAddress && !loading && !errorNoData && (
+      {/* Self rank summary (A22): resolved against the FULL board, so it is
+          right even when the connected wallet is not on the visible page.
+          Hidden while loading, on error, and when the rank read failed. */}
+      {walletAddress && !loading && !errorNoData && selfRank && (
         <div className="sticky top-16 z-20 rounded-lg bg-background">
           {/* Quiet primary-tinted highlight marks the connected trader's own row */}
           <div className="rounded-lg border border-primary/40 bg-primary/5 px-5 py-3.5 flex flex-wrap items-center gap-x-5 gap-y-2">
-            {self ? (
+            {selfRank.rank !== null && selfRank.entry ? (
               <>
                 <div className="flex items-baseline gap-2">
                   <span className="text-[10px] font-medium uppercase tracking-wide text-faint">
                     Your rank
                   </span>
                   <span className="font-mono text-lg font-medium tabular-nums text-foreground leading-none">
-                    #{selfIdx + 1}
+                    #{selfRank.rank}
+                  </span>
+                  <span className="font-mono text-xs tabular-nums text-faint">
+                    of {formatNumber(selfRank.total, 0)}
                   </span>
                 </div>
                 <span className="hidden sm:block h-5 w-px bg-border" aria-hidden="true" />
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs text-faint">Volume</span>
                   <span className="font-mono text-xs font-medium tabular-nums text-foreground">
-                    {formatUSD(self.totalVolume, 0)}
+                    {formatUSD(selfRank.entry.totalVolume, 0)}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs text-faint">PnL</span>
-                  <PnlCell value={self.pnl} className="text-xs font-medium" />
+                  <PnlCell value={selfRank.entry.pnl} className="text-xs font-medium" />
                 </div>
               </>
             ) : (
               <>
                 <span className="text-sm font-medium text-foreground">You&apos;re not ranked yet</span>
-                <Link
-                  href="/trade"
-                  className="text-sm font-medium text-primary hover:opacity-80 transition-opacity"
-                >
-                  Make your first trade →
-                </Link>
+                {scope !== 'mainnet' && (
+                  <Link
+                    href="/trade"
+                    className="text-sm font-medium text-primary hover:opacity-80 transition-opacity"
+                  >
+                    Make your first trade →
+                  </Link>
+                )}
               </>
             )}
           </div>
@@ -216,7 +347,7 @@ export function LeaderboardContent() {
           <h3 className="text-[13px] font-medium">Rankings</h3>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">Ranked by:</span>
-            {(['totalVolume', 'pnl'] as const).map((field) => (
+            {(['volume', 'pnl'] as const).map((field) => (
               <button
                 key={field}
                 onClick={() => setSortBy(field)}
@@ -234,7 +365,7 @@ export function LeaderboardContent() {
           </div>
         </div>
 
-        {/* Sync freshness: rankings are cron-computed, not live (B2) */}
+        {/* Sync freshness: rankings come from the indexer, not live (B2) */}
         {!loading && !errorNoData && syncedAtMs > 0 && (
           <div
             className={cn(
@@ -319,20 +450,14 @@ export function LeaderboardContent() {
             <tbody>
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)
-              ) : sorted.length === 0 ? (
+              ) : traders.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-16 text-center">
-                    <p className="text-sm text-muted-foreground mb-3">No traders yet. Be the first to open a position!</p>
-                    <Link
-                      href="/trade"
-                      className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:opacity-80 transition-colors"
-                    >
-                      Start trading →
-                    </Link>
+                  <td colSpan={5}>
+                    <EmptyBoard scope={scope} />
                   </td>
                 </tr>
               ) : (
-                sorted.map((trader, idx) => (
+                traders.map((trader) => (
                     <tr
                       key={trader.address}
                       className={cn(
@@ -343,7 +468,7 @@ export function LeaderboardContent() {
                       )}
                     >
                       <td className="py-2 px-4">
-                        <span className={cn('font-mono tabular-nums text-xs', idx === 0 ? 'text-primary' : idx < 3 ? 'text-muted-foreground' : 'text-faint')}>{idx + 1}</span>
+                        <RankCell rank={trader.rank} />
                       </td>
                       <td className="py-2 px-4">
                         <a
@@ -385,19 +510,11 @@ export function LeaderboardContent() {
                 <div key={i} className="h-20 bg-surface-2 rounded-lg animate-pulse" />
               ))}
             </div>
-          ) : sorted.length === 0 ? (
-            <div className="py-16 text-center">
-              <p className="text-sm text-muted-foreground mb-3">No traders yet. Be the first to open a position!</p>
-              <Link
-                href="/trade"
-                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:opacity-80 transition-colors"
-              >
-                Start trading →
-              </Link>
-            </div>
+          ) : traders.length === 0 ? (
+            <EmptyBoard scope={scope} />
           ) : (
             <div className="p-3 space-y-2">
-              {sorted.map((trader, idx) => (
+              {traders.map((trader) => (
                 <div
                   key={trader.address}
                   className={cn(
@@ -407,8 +524,8 @@ export function LeaderboardContent() {
                       : 'bg-surface-2 border border-border'
                   )}
                 >
-                  <span className={cn('font-mono tabular-nums text-xs w-6 text-center flex-shrink-0', idx === 0 ? 'text-primary' : idx < 3 ? 'text-muted-foreground' : 'text-faint')}>
-                    {idx + 1}
+                  <span className="w-6 text-center flex-shrink-0">
+                    <RankCell rank={trader.rank} />
                   </span>
                   <div className="flex-1 min-w-0">
                     <a
@@ -436,6 +553,33 @@ export function LeaderboardContent() {
             </div>
           )}
         </div>
+
+        {/* Pagination: previous/next over the server ranked board */}
+        {!loading && total > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-border">
+            <span className="text-xs text-faint font-mono tabular-nums">
+              Showing {formatNumber(offset + 1, 0)} to {formatNumber(offset + traders.length, 0)} of {formatNumber(total, 0)}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => goToOffset(Math.max(0, offset - PAGE_SIZE))}
+                disabled={!hasPrev}
+                aria-label="Previous page"
+                className={PAGE_BUTTON_CLASS}
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => goToOffset(offset + PAGE_SIZE)}
+                disabled={!hasNext}
+                aria-label="Next page"
+                className={PAGE_BUTTON_CLASS}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
         </>
         )}
       </div>

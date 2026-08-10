@@ -212,7 +212,10 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const referral = new ReferralReadService(db);
   // Scope leaderboard scans to the live market so retired deployments
   // never leak into the totals (resolves via CONTRACT_MARKET override).
-  const stats = new StatsService(db, config.contracts.contracts.market);
+  // The network feeds the deployment scope gate: a leaderboard request for
+  // another network's scope is answered not_indexed_here, never with this
+  // network's rows.
+  const stats = new StatsService(db, config.contracts.contracts.market, config.network);
   // L0-1/L0-3 (Batch-1 surfaces, fail-soft against today's chain).
   const adlQueue = new AdlQueueService({
     db,

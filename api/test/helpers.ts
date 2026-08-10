@@ -161,7 +161,8 @@ export async function seedSchema(db: Db): Promise<void> {
       total_pnl NUMERIC NOT NULL DEFAULT 0,
       liq_count BIGINT NOT NULL DEFAULT 0,
       source TEXT NOT NULL DEFAULT 'test',
-      imported_at BIGINT NOT NULL
+      imported_at BIGINT NOT NULL,
+      scope_key TEXT NOT NULL DEFAULT 'testnet'
     );
   `);
 }
@@ -189,6 +190,9 @@ export async function setupTestServer(opts?: {
   /** L0-3: vault shortfall view values; absent = the reader throws like a
    *  pre-Batch-1 vault (supported:false path). */
   shortfall?: { owed: bigint; reserve: bigint };
+  /** Stellar network the gateway serves (leaderboard scope gate); defaults
+   *  to the TEST_CONFIG testnet. */
+  network?: import('@noether/types').Network;
 }) {
   const reader = {
     async read<T>(_contractId: string, method: string, args: unknown[] = []): Promise<T> {
@@ -264,9 +268,14 @@ export async function setupTestServer(opts?: {
     submitService: { submit: stubSubmit },
   };
 
+  const network = opts?.network ?? TEST_CONFIG.network;
   const vaults = new (await import('../src/services/vaults.js')).VaultsService(db);
   const referral = new (await import('../src/services/referral.js')).ReferralReadService(db);
-  const stats = new (await import('../src/services/stats.js')).StatsService(db, FAKE_CONTRACT);
+  const stats = new (await import('../src/services/stats.js')).StatsService(
+    db,
+    FAKE_CONTRACT,
+    network,
+  );
   const adlQueue = new (await import('../src/services/adlQueue.js')).AdlQueueService({
     db,
     oracle,
@@ -285,7 +294,7 @@ export async function setupTestServer(opts?: {
     adlQueue, shortfall,
   };
   const app = await buildServer(
-    { ...TEST_CONFIG, keeperHeartbeatSecret: opts?.keeperHeartbeatSecret },
+    { ...TEST_CONFIG, network, keeperHeartbeatSecret: opts?.keeperHeartbeatSecret },
     deps,
   );
   return { app, db, deps };

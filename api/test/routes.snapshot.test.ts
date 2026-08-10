@@ -30,6 +30,7 @@ const EXPECTED_ROUTES = [
   'GET /v1/keys',
   'GET /v1/keys/beta-status',
   'GET /v1/leaderboard',
+  'GET /v1/leaderboard/rank',
   'GET /v1/leaderboard/totals',
   'GET /v1/markets',
   'GET /v1/markets/:asset',

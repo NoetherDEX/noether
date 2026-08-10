@@ -2,6 +2,29 @@ import { describe, expect, it, afterEach, beforeEach } from 'vitest';
 import { Keypair } from '@stellar/stellar-sdk';
 import { setupTestServer } from './helpers.js';
 
+interface PageLeader {
+  rank: number;
+  trader: string;
+  pnl: string;
+  volume: string;
+  trades: number;
+  liqCount: number;
+}
+
+interface PageBody {
+  sort: string;
+  scope: string;
+  network: string;
+  state: string;
+  updatedAt: number | null;
+  total: number;
+  limit: number;
+  offset: number;
+  snapshot: string;
+  snapshotChanged: boolean;
+  leaders: PageLeader[];
+}
+
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;
 
 afterEach(async () => {
@@ -141,6 +164,200 @@ describe('GET /v1/leaderboard', () => {
   });
 });
 
+describe('GET /v1/leaderboard pagination', () => {
+  it('concatenated pages of 20 equal the full board with unique consecutive ranks', async () => {
+    if (app) await app.close();
+    const N = 47;
+    const traders = Array.from({ length: N }, () => Keypair.random().publicKey());
+    // Distinct volumes so the primary sort alone is already a total order.
+    const seedEvents = traders.map((t, i) => ({
+      eventId: `o${i}`,
+      topic: 'position_opened',
+      ledger: i + 1,
+      payload: { positionId: i + 1, trader: t, asset: 'BTC', direction: 0, size: String((i + 1) * 10), entryPrice: '1' },
+    }));
+    const setup = await setupTestServer({ seedEvents });
+    app = setup.app;
+
+    const pages: PageBody[] = [];
+    let snapshot = '';
+    for (let offset = 0; offset < N; offset += 20) {
+      const url = `/v1/leaderboard?sort=volume&limit=20&offset=${offset}${snapshot ? `&snapshot=${snapshot}` : ''}`;
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as PageBody;
+      expect(body.total).toBe(N);
+      expect(body.snapshotChanged).toBe(false);
+      if (snapshot) expect(body.snapshot).toBe(snapshot);
+      snapshot = body.snapshot;
+      pages.push(body);
+    }
+
+    expect(pages.map((p) => p.leaders.length)).toEqual([20, 20, 7]);
+    const all = pages.flatMap((p) => p.leaders);
+    // Ranks are 1..N with no gap and no duplicate.
+    expect(all.map((l) => l.rank)).toEqual(Array.from({ length: N }, (_, i) => i + 1));
+    // The union of the pages is exactly the seeded trader set.
+    expect(new Set(all.map((l) => l.trader)).size).toBe(N);
+    expect(new Set(all.map((l) => l.trader))).toEqual(new Set(traders));
+    // Highest volume first.
+    expect(all[0]!.volume).toBe(String(N * 10));
+  });
+
+  it('keeps a page boundary stable inside a group of pnl ties', async () => {
+    if (app) await app.close();
+    // 3 winners with distinct positive pnl, then 30 traders at exactly pnl 0
+    // whose volumes ALSO tie, so the boundary at rank 20/21 falls inside a
+    // group only the trader tiebreak can order.
+    const winners = Array.from({ length: 3 }, () => Keypair.random().publicKey());
+    const zeros = Array.from({ length: 30 }, () => Keypair.random().publicKey());
+    const seedEvents = [
+      ...winners.flatMap((t, i) => [
+        {
+          eventId: `wo${i}`,
+          topic: 'position_opened',
+          ledger: i + 1,
+          payload: { positionId: i + 1, trader: t, asset: 'BTC', direction: 0, size: '100', entryPrice: '1' },
+        },
+        {
+          eventId: `wc${i}`,
+          topic: 'position_closed',
+          ledger: 100 + i,
+          payload: { positionId: i + 1, trader: t, pnl: String((i + 1) * 100), closePrice: '2' },
+        },
+      ]),
+      ...zeros.map((t, i) => ({
+        eventId: `z${i}`,
+        topic: 'position_opened',
+        ledger: 200 + i,
+        payload: { positionId: 100 + i, trader: t, asset: 'BTC', direction: 0, size: '50', entryPrice: '1' },
+      })),
+    ];
+    const setup = await setupTestServer({ seedEvents });
+    app = setup.app;
+
+    const page1 = (await app.inject({ method: 'GET', url: '/v1/leaderboard?sort=pnl&limit=20&offset=0' }))
+      .json() as PageBody;
+    const page2 = (await app.inject({
+      method: 'GET',
+      url: `/v1/leaderboard?sort=pnl&limit=20&offset=20&snapshot=${page1.snapshot}`,
+    })).json() as PageBody;
+
+    expect(page1.leaders).toHaveLength(20);
+    expect(page2.leaders).toHaveLength(13);
+    const all = [...page1.leaders, ...page2.leaders];
+    expect(all.map((l) => l.rank)).toEqual(Array.from({ length: 33 }, (_, i) => i + 1));
+    const seen = new Set(all.map((l) => l.trader));
+    expect(seen.size).toBe(33);
+    expect(seen).toEqual(new Set([...winners, ...zeros]));
+    // Inside the all tied zero group the order is trader ascending, which is
+    // what makes the boundary deterministic across requests.
+    const zeroGroup = all.slice(3).map((l) => l.trader);
+    expect(zeroGroup).toEqual([...zeros].sort());
+  });
+
+  it('answers an evicted snapshot id with the current snapshot and snapshotChanged', async () => {
+    const res = await app!.inject({
+      method: 'GET',
+      url: '/v1/leaderboard?limit=20&offset=0&snapshot=testnet.pnl.0.999',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as PageBody;
+    expect(body.snapshotChanged).toBe(true);
+    expect(body.snapshot).not.toBe('testnet.pnl.0.999');
+    expect(body.leaders.length).toBeGreaterThan(0);
+  });
+
+  it('a mainnet scope request on this testnet gateway is not indexed here', async () => {
+    const res = await app!.inject({ method: 'GET', url: '/v1/leaderboard?scope=mainnet' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as PageBody;
+    expect(body.scope).toBe('mainnet');
+    expect(body.network).toBe('public');
+    expect(body.state).toBe('not_indexed_here');
+    expect(body.total).toBe(0);
+    expect(body.leaders).toEqual([]);
+  });
+
+  it('rejects an unknown scope', async () => {
+    const res = await app!.inject({ method: 'GET', url: '/v1/leaderboard?scope=devnet' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('a mainnet gateway serves an empty mainnet board even over a database full of testnet rows', async () => {
+    if (app) await app.close();
+    const setup = await setupTestServer({
+      network: 'mainnet',
+      seedEvents: [
+        { eventId: 'o1', topic: 'position_opened', ledger: 1, payload: { positionId: 1, trader: A, asset: 'BTC', direction: 0, size: '100', entryPrice: '1' } },
+        { eventId: 'c1', topic: 'position_closed', ledger: 2, payload: { positionId: 1, trader: A, pnl: '500', closePrice: '2' } },
+      ],
+    });
+    app = setup.app;
+    // The legacy baseline is testnet history and must not leak either.
+    await setup.db.execute({
+      sql: `INSERT INTO leaderboard_legacy (address, trade_count, total_volume, total_pnl, liq_count, imported_at)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [B, 5, '900', '42', 1, Date.now()],
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/v1/leaderboard?scope=mainnet' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as PageBody;
+    expect(body.scope).toBe('mainnet');
+    expect(body.state).toBe('empty');
+    expect(body.total).toBe(0);
+    expect(body.leaders).toEqual([]);
+
+    // And the testnet scope is the one this mainnet gateway does not serve.
+    const other = (await app.inject({ method: 'GET', url: '/v1/leaderboard?scope=testnet' }))
+      .json() as PageBody;
+    expect(other.state).toBe('not_indexed_here');
+    expect(other.leaders).toEqual([]);
+  });
+});
+
+describe('GET /v1/leaderboard/rank', () => {
+  interface RankBody {
+    trader: string;
+    sort: string;
+    scope: string;
+    state: string;
+    rank: number | null;
+    total: number;
+    snapshot: string;
+    entry: PageLeader | null;
+  }
+
+  it('returns the same rank the board pages show', async () => {
+    const board = (await app!.inject({ method: 'GET', url: '/v1/leaderboard?sort=pnl&limit=20' }))
+      .json() as PageBody;
+    const res = await app!.inject({ method: 'GET', url: `/v1/leaderboard/rank?trader=${A}&sort=pnl` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as RankBody;
+    const onBoard = board.leaders.find((l) => l.trader === A)!;
+    expect(body.rank).toBe(onBoard.rank);
+    expect(body.total).toBe(board.total);
+    expect(body.snapshot).toBe(board.snapshot);
+    expect(body.entry).toEqual(onBoard);
+  });
+
+  it('returns a null rank for a trader who is not on the board', async () => {
+    const stranger = Keypair.random().publicKey();
+    const res = await app!.inject({ method: 'GET', url: `/v1/leaderboard/rank?trader=${stranger}` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as RankBody;
+    expect(body.rank).toBeNull();
+    expect(body.entry).toBeNull();
+    expect(body.total).toBe(3);
+  });
+
+  it('rejects a malformed trader address', async () => {
+    const res = await app!.inject({ method: 'GET', url: '/v1/leaderboard/rank?trader=notawallet' });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 interface Totals {
   updatedAt: number | null;
   traders: number;
@@ -237,5 +454,49 @@ describe('GET /v1/leaderboard/totals', () => {
     app = setup.app;
     const totals = (await app.inject({ method: 'GET', url: '/v1/leaderboard/totals' })).json() as Totals;
     expect(totals).toMatchObject({ traders: 0, volume: '0', trades: 0 });
+  });
+
+  it('equals the sum over every page of the paginated board', async () => {
+    if (app) await app.close();
+    const N = 26;
+    const traders = Array.from({ length: N }, () => Keypair.random().publicKey());
+    const seedEvents = traders.map((t, i) => ({
+      eventId: `o${i}`,
+      topic: 'position_opened',
+      ledger: i + 1,
+      payload: { positionId: i + 1, trader: t, asset: 'BTC', direction: 0, size: String((i + 1) * 7), entryPrice: '1' },
+    }));
+    const setup = await setupTestServer({ seedEvents });
+    app = setup.app;
+    // One legacy only trader too, so the invariant covers the merged board.
+    await setup.db.execute({
+      sql: `INSERT INTO leaderboard_legacy (address, trade_count, total_volume, total_pnl, liq_count, imported_at)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [Keypair.random().publicKey(), 4, '800', '13', 0, Date.now()],
+    });
+
+    const seen = new Set<string>();
+    let volume = 0n;
+    let trades = 0;
+    let offset = 0;
+    let snapshot = '';
+    for (;;) {
+      const url = `/v1/leaderboard?sort=volume&limit=10&offset=${offset}${snapshot ? `&snapshot=${snapshot}` : ''}`;
+      const body = (await app.inject({ method: 'GET', url })).json() as PageBody;
+      snapshot = body.snapshot;
+      for (const l of body.leaders) {
+        seen.add(l.trader);
+        volume += BigInt(l.volume);
+        trades += l.trades;
+      }
+      offset += 10;
+      if (offset >= body.total) break;
+    }
+
+    const totals = (await app.inject({ method: 'GET', url: '/v1/leaderboard/totals' })).json() as Totals;
+    expect(totals.traders).toBe(seen.size);
+    expect(totals.traders).toBe(N + 1);
+    expect(BigInt(totals.volume)).toBe(volume);
+    expect(totals.trades).toBe(trades);
   });
 });
