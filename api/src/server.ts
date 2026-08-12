@@ -67,6 +67,9 @@ export interface ServerDeps {
   shortfall: ShortfallService;
   /** L0-15 pause-state probe for /v1/health — optional in test setups. */
   pauseState?: PauseStateService;
+  /** Chain reader for the /v1/health open-count drift alarm (Phase 4) —
+   *  optional in test setups. */
+  reader?: ContractReader;
 }
 
 const PKG = JSON.parse(
@@ -144,6 +147,10 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
       db: deps.db,
       contracts: config.contracts,
       pauseState: deps.pauseState,
+      openCounts: deps.reader
+        ? () => deps.reader!.readOpenCounts(config.contracts.contracts.market ?? '')
+        : undefined,
+      marketId: config.contracts.contracts.market,
     }),
   );
   await app.register((instance) => registerMarketsRoutes(instance, deps.markets, deps.stats));
@@ -224,5 +231,5 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
     rpcUrl: config.rpcUrl,
   });
   const shortfall = new ShortfallService(reader, config.contracts.contracts.vault);
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall, pauseState };
+  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall, pauseState, reader };
 }

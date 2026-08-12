@@ -76,7 +76,7 @@ async function main() {
   const nowS = Math.floor(Date.now() / 1000);
   console.log(`\n[freshness] attestation age at fetch: ${nowS - b0.timestamp}s  (BTC $${b0.price_human}, round ${b0.round_id})`);
 
-  console.log('\n[before] positions:', await read('get_all_position_ids', []));
+  console.log('\n[before] positions:', await read('get_trader_position_ids', [new Address(ADMIN).toScVal()]));
 
   // ── TEST 1: open via router (atomic verify-then-trade) ──
   console.log('\n[TEST 1] router.open_with_price …');
@@ -93,7 +93,7 @@ async function main() {
   console.log(`     → position id=${pos.id} entry=$${Number(pos.entry_price)/1e7} size=$${Number(pos.size)/1e7} collateral=$${Number(pos.collateral)/1e7}`);
 
   // ── read position back ──
-  const ids = await read('get_all_position_ids', []);
+  const ids = await read('get_trader_position_ids', [new Address(ADMIN).toScVal()]);
   console.log('\n[after open] positions:', ids);
 
   // ── TEST 3: close via router ──
@@ -110,7 +110,7 @@ async function main() {
   const pnl: any = await send('close_with_price', ROUTER, 'close_with_price', closeArgs);
   console.log(`     → realized PnL = $${Number(pnl)/1e7}`);
 
-  console.log('\n[after close] positions:', await read('get_all_position_ids', []));
+  console.log('\n[after close] positions:', await read('get_trader_position_ids', [new Address(ADMIN).toScVal()]));
   console.log('\n' + '═'.repeat(60));
   console.log('  ✅ ALL TESTS PASSED — no #30, router open+close on Noeracle price');
   console.log('═'.repeat(60));

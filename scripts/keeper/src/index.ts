@@ -62,6 +62,7 @@ import { getReferencePrice } from './reference';
 import { getStorkPrice, getStorkStatus, ingestStorkPrice, storkEnabled } from './stork';
 import { StorkFastClient, STORK_DEFAULT_ID_SYMBOLS, type FastFrame } from './storkFast';
 import { sendHeartbeat } from './heartbeat';
+import { ChainDiscovery, DiscoverySnapshot, emptyDiscoveryState, setDiff } from './discovery';
 
 // Type-only imports — the @noeracle/sdk package is ESM-only, so the runtime
 // load happens via dynamic import() inside getNoeracle().
@@ -220,11 +221,19 @@ class KeeperBot {
   private lastFullPnlSyncAt = 0;
   private throttledLogAt: Map<string, number> = new Map();
   private nextTtlBumpAt: number = 0; // P3-9
+  /** Chain-walk discovery (Phase 4) — undefined in legacy mode. */
+  private discovery?: ChainDiscovery;
 
   constructor() {
     this.config = loadConfig();
     this.stellar = new StellarClient(this.config);
     this.state = loadKeeperState(this.config.stateFilePath);
+    // Constructed in every mode: legacy/shadow keep it as the emergency
+    // fall-forward path for a market whose get_all_* views were deleted
+    // before KEEPER_DISCOVERY was flipped — liquidations must never
+    // silently stop over an env var.
+    this.state.discovery ??= emptyDiscoveryState();
+    this.discovery = new ChainDiscovery(this.stellar, this.state.discovery);
     this.stats = {
       startTime: new Date(),
       oracleUpdates: 0,
@@ -303,6 +312,7 @@ class KeeperBot {
     console.log(`  Stork relay:       ${storkEnabled(this.config) && this.config.storkRelaySecretKey ? `every ${Math.round(this.config.storkRelayIntervalMs / 1000)}s via Fast WS (${this.config.storkAssetIds.length} ids)` : storkEnabled(this.config) ? 'key set but STORK_RELAY_SECRET_KEY missing — relay OFF, cross-val only' : 'disabled (no STORK_API_KEY)'}`);
     console.log(`  Healthcheck:       ${this.config.healthcheckUrl ? 'enabled' : 'disabled'}`);
     console.log(`  State File:        ${this.config.stateFilePath}`);
+    console.log(`  Discovery:         ${this.config.discoveryMode}${this.config.discoveryMode === 'shadow' ? ' (legacy authoritative, chain walk parity-compared)' : ''}`);
     console.log(`  Assets:            ${this.config.assets.map(a => `${a.symbol} (±${a.maxMovePct}%, $${a.minPrice}-$${a.maxPrice})`).join(', ')}`);
     console.log('');
 
@@ -951,6 +961,83 @@ class KeeperBot {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
+   * Resolve live position/order ids per the discovery mode (Phase 4).
+   * legacy: the pre-upgrade get_all_* views. chain: the ledger-entry walk,
+   * checksummed against the on-chain open counters. shadow: legacy stays
+   * authoritative while the walk runs alongside and any set divergence is
+   * alerted — this is the 1h parity gate that clears the mode for promotion.
+   * Floors advance inside the walk; persist them so a restart resumes
+   * instead of re-walking from id 1.
+   */
+  private async discoverIds(): Promise<DiscoverySnapshot> {
+    if (this.config.discoveryMode === 'chain') {
+      const snapshot = await this.discovery!.discover();
+      saveKeeperState(this.config.stateFilePath, this.state);
+      return snapshot;
+    }
+
+    let positionIds: bigint[];
+    let orderIds: bigint[];
+    try {
+      positionIds = await this.stellar.getAllPositionIds();
+      orderIds = await this.stellar.getAllOrderIds();
+    } catch (error) {
+      // Emergency fall-forward: a Phase 4 upgraded market has DELETED the
+      // get_all_* views, so legacy/shadow discovery fails every cycle from
+      // the moment of the upgrade until KEEPER_DISCOVERY is flipped. That
+      // failure mode is the worst kind — prices keep pushing while nothing
+      // gets liquidated — so instead of dying on the env var, run the chain
+      // walk and scream. The alert repeats through dedupe every 10 minutes
+      // for as long as the misconfiguration persists.
+      await sendAlert(
+        'critical',
+        'discovery legacy views unavailable, chain walk engaged',
+        `KEEPER_DISCOVERY=${this.config.discoveryMode} but the market no longer answers ` +
+          `get_all_position_ids (${error instanceof Error ? error.message : error}). ` +
+          `Falling forward to the chain walk this cycle — set KEEPER_DISCOVERY=chain.`,
+      );
+      const snapshot = await this.discovery!.discover();
+      saveKeeperState(this.config.stateFilePath, this.state);
+      return snapshot;
+    }
+
+    if (this.config.discoveryMode === 'shadow') {
+      // Shadow failures alert but never take the authoritative path down.
+      // The legacy sets double as the walk's checksum while the on-chain
+      // counters do not exist yet (pre-upgrade market).
+      try {
+        const walked = await this.discovery!.discover({ positionIds, orderIds });
+        saveKeeperState(this.config.stateFilePath, this.state);
+        const positions = setDiff(positionIds, walked.positionIds);
+        const orders = setDiff(orderIds, walked.orderIds);
+        const clean =
+          positions.onlyA.length === 0 && positions.onlyB.length === 0 &&
+          orders.onlyA.length === 0 && orders.onlyB.length === 0;
+        if (clean) {
+          console.log(
+            `🔎 [discovery] shadow parity ok (positions=${positionIds.length}, orders=${orderIds.length})`,
+          );
+        } else {
+          await sendAlert(
+            'warn',
+            'discovery shadow parity divergence',
+            `positions legacyOnly=[${positions.onlyA}] walkOnly=[${positions.onlyB}] ` +
+              `orders legacyOnly=[${orders.onlyA}] walkOnly=[${orders.onlyB}]`,
+          );
+        }
+      } catch (error) {
+        await sendAlert(
+          'warn',
+          'discovery shadow walk failed',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
+    return { positionIds, orderIds };
+  }
+
+  /**
    * Fetch all positions + orders ONCE per cycle. Distinguishes errored
    * reads from empty markets: on failure returns null (scans are skipped),
    * counts the failure streak, alerts at the threshold, and backs off —
@@ -958,8 +1045,7 @@ class KeeperBot {
    */
   private async buildSnapshot(): Promise<CycleSnapshot | null> {
     try {
-      const positionIds = await this.stellar.getAllPositionIds();
-      const orderIds = await this.stellar.getAllOrderIds();
+      const { positionIds, orderIds } = await this.discoverIds();
 
       const positions: Position[] = [];
       const orders: Order[] = [];

@@ -504,8 +504,42 @@ export class StellarClient {
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * Get all position IDs. THROWS on read failure — an error is not an
-   * empty market (K-4).
+   * Batch-read PERSISTENT contract-data entries under the market contract,
+   * straight from the ledger — no simulation, no view function (Phase 4
+   * chain-walk discovery). Returns a map keyed by each requested ScVal key's
+   * base64 XDR; absent keys are simply missing from the map, which for a
+   * Position(id) key means closed (or, rarely, an archived entry — the
+   * OpenPositionCount checksum exists to catch exactly that). Chunks of 200
+   * per request (RPC limit), with endpoint failover. THROWS on transport
+   * failure — an error is not an empty market (K-4).
+   */
+  async getMarketDataEntries(scKeys: xdr.ScVal[]): Promise<Map<string, xdr.ScVal>> {
+    const contract = Address.fromString(this.config.marketContractId).toScAddress();
+    const found = new Map<string, xdr.ScVal>();
+    for (let start = 0; start < scKeys.length; start += 200) {
+      const chunk = scKeys.slice(start, start + 200).map((key) =>
+        xdr.LedgerKey.contractData(
+          new xdr.LedgerKeyContractData({
+            contract,
+            key,
+            durability: xdr.ContractDataDurability.persistent(),
+          }),
+        ),
+      );
+      const response = await this.withRpc((server) => server.getLedgerEntries(...chunk));
+      for (const entry of response.entries ?? []) {
+        const data = entry.val.contractData();
+        found.set(data.key().toXDR('base64'), data.val());
+      }
+    }
+    return found;
+  }
+
+  /**
+   * Get all position IDs via the legacy contract view. Pre-upgrade markets
+   * only — the upgraded market deletes get_all_position_ids, and discovery
+   * switches to the chain walk (KEEPER_DISCOVERY=chain). THROWS on read
+   * failure — an error is not an empty market (K-4).
    */
   async getAllPositionIds(): Promise<bigint[]> {
     const result = await this.invokeContractRead<unknown>(

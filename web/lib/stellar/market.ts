@@ -413,42 +413,44 @@ export async function getPositionsByIds(
 
 /**
  * Get all positions for a trader (read-only).
- * Uses get_all_position_ids + get_position (per-ID) since get_positions was
- * removed from the contract to stay under the 64KB WASM limit.
+ * Primary path: get_trader_position_ids — the per-trader index the contract
+ * keeps for cross-margin anyway, bounded at 32 ids, added by the Phase 4
+ * counter upgrade. Fallback path: the pre-upgrade global scan
+ * (get_all_position_ids + filter), kept so the web build and the contract
+ * upgrade stay deployable in either order — whichever view the deployed
+ * market actually has answers, the other fails simulation and is skipped.
+ * Both views failing is a real error and throws.
  */
 export async function getPositions(traderPublicKey: string): Promise<Position[]> {
   try {
-    // 1. Fetch all position IDs
+    // 1. This trader's ids: per-trader view first, global-scan fallback.
+    let ids: number[];
     const idsResult = await sorobanRpc.simulateTransaction(
-      await buildSimulateTransaction(traderPublicKey, 'get_all_position_ids', [])
+      await buildSimulateTransaction(traderPublicKey, 'get_trader_position_ids', [
+        new Address(traderPublicKey).toScVal(),
+      ])
     );
-
-    if (!rpc.Api.isSimulationSuccess(idsResult) || !idsResult.result?.retval) {
-      // A failed read is NOT an empty account — throw so callers can keep
-      // last-good rows and show an error instead of "No open positions".
-      throw new Error('get_all_position_ids simulation failed');
-    }
-
-    const allIds = (scValToNative(idsResult.result.retval) as (number | bigint)[]).map(Number);
-
-    // 2. Fetch each position and filter by trader
-    const positions: Position[] = [];
-    for (const id of allIds) {
-      try {
-        const args = [toScVal(id, 'u64')];
-        const posResult = await sorobanRpc.simulateTransaction(
-          await buildSimulateTransaction(traderPublicKey, 'get_position', args)
-        );
-        if (rpc.Api.isSimulationSuccess(posResult) && posResult.result?.retval) {
-          const raw = scValToNative(posResult.result.retval) as RawPosition | null;
-          if (raw && raw.trader === traderPublicKey) {
-            positions.push(parsePosition(raw));
-          }
-        }
-      } catch {
-        // Position might have been closed between ID fetch and detail fetch
+    if (rpc.Api.isSimulationSuccess(idsResult) && idsResult.result?.retval) {
+      ids = (scValToNative(idsResult.result.retval) as (number | bigint)[]).map(Number);
+    } else {
+      // Pre-upgrade market: the per-trader view does not exist yet. Scan the
+      // legacy global index; if THAT is also gone (post-upgrade market, so
+      // the failure above was transport, not a missing view), throw — a
+      // failed read is NOT an empty account.
+      const legacyResult = await sorobanRpc.simulateTransaction(
+        await buildSimulateTransaction(traderPublicKey, 'get_all_position_ids', [])
+      );
+      if (!rpc.Api.isSimulationSuccess(legacyResult) || !legacyResult.result?.retval) {
+        throw new Error('position id read failed on both trader and legacy views');
       }
+      ids = (scValToNative(legacyResult.result.retval) as (number | bigint)[]).map(Number);
     }
+
+    // 2. Hydrate (≤ 32 ids on the trader view; legacy path may carry the
+    // whole market's ids, which the trader filter below narrows). Reuses the
+    // shared per-id hydration so batching/retry fixes land in one place.
+    const hydrated = await getPositionsByIds(traderPublicKey, ids);
+    const positions = hydrated.filter((p) => p.trader === traderPublicKey);
 
     return positions;
   } catch (error) {
@@ -1265,6 +1267,11 @@ export async function getOrdersByIds(source: string, orderIds: number[]): Promis
  * FALLBACK path — the order book prefers /v1/orders/open id-hints +
  * getOrdersByIds and only lands here when the gateway can't speak for
  * this market (see gatewayServesThisMarket).
+ * NOTE: a Phase 4 upgraded market has no get_all_order_ids at all —
+ * market-wide order enumeration is the indexer's job there, so against
+ * such a market this fallback yields [] and the orderbook simply leans on
+ * the gateway path. Per-trader flows (getOrders) throw instead, keeping
+ * failure distinguishable from empty.
  */
 export async function getAllPendingOrders(publicKey: string): Promise<Order[]> {
   try {

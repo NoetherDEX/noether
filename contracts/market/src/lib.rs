@@ -181,7 +181,14 @@ impl MarketContract {
         set_total_short_size(&env, 0);
         set_last_funding_time(&env, env.ledger().timestamp());
         set_cumulative_funding_rate(&env, 0);
-        init_position_index(&env);
+        // Fresh markets start their live counters at zero and latch
+        // seed_open_counts shut — seeding is only for a market upgraded in
+        // place, where neither the counters nor the latch exist yet.
+        set_open_position_count(&env, 0);
+        set_open_order_count(&env, 0);
+        env.storage()
+            .persistent()
+            .set(&crate::storage::DataKey::OpenCountsSeeded, &true);
 
         // Initialize fee tiers with defaults
         let default_tiers = trading::default_fee_tiers(&env);
@@ -514,7 +521,6 @@ impl MarketContract {
                 token_client.transfer(&trader, &env.current_contract_address(), &shortfall);
                 let new_pool = pool_balance.checked_add(shortfall).ok_or(NoetherError::Overflow)?;
                 set_cross_margin_balance(&env, &trader, new_pool);
-                add_cross_margin_trader(&env, &trader);
             }
 
             // Free margin check (Binance-style): equity - used_margin must
@@ -1416,9 +1422,44 @@ impl MarketContract {
 
     // get_market_stats removed for WASM size - frontend reads storage directly
 
-    /// Get all position IDs (for keeper iteration).
-    pub fn get_all_position_ids(env: Env) -> Vec<u64> {
-        get_all_position_ids(&env)
+    // get_all_position_ids removed — the AllPositions Vec it read was
+    // rewritten in full on every open and close. Discovery now walks
+    // Position(id) ledger entries off chain (keeper chain walk / indexer)
+    // and checks completeness against OpenPositionCount, which is a plain
+    // persistent entry readable via getLedgerEntries with no view function.
+
+    /// A trader's open position ids — the per-trader index the contract
+    /// keeps anyway for cross-margin aggregation. This is the point-read
+    /// replacement for the deleted global scan: a wallet lists ITS
+    /// positions in one bounded call (MAX_OPEN_POSITIONS_PER_TRADER)
+    /// instead of walking every id on the market, and it works against any
+    /// market without a gateway in the middle.
+    pub fn get_trader_position_ids(env: Env, trader: Address) -> Vec<u64> {
+        get_trader_position_ids(&env, &trader)
+    }
+
+    /// One-shot bootstrap of the live counters for a market upgraded in
+    /// place: the counter keys do not exist in pre-upgrade storage, so
+    /// decrements would saturate at zero and the counts would under-report
+    /// forever. Admin derives the true open totals (a ledger-entry walk of
+    /// Position/Order ids — the same walk the keeper runs) and writes them
+    /// here, exactly once. The latch is a DEDICATED marker, NOT the counter
+    /// key: closes and liquidations run even while paused and their
+    /// saturating decrement CREATES the counter key at zero, which must not
+    /// lock the admin out of seeding. Seeding overwrites whatever phantom
+    /// value such an early transaction left behind. initialize() sets the
+    /// marker, so a freshly deployed market can never be re-seeded.
+    pub fn seed_open_counts(env: Env, positions: u32, orders: u32) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        let latch = crate::storage::DataKey::OpenCountsSeeded;
+        if env.storage().persistent().get::<_, bool>(&latch).unwrap_or(false) {
+            return Err(NoetherError::AlreadyInitialized);
+        }
+        env.storage().persistent().set(&latch, &true);
+        set_open_position_count(&env, positions);
+        set_open_order_count(&env, orders);
+        extend_instance_ttl(&env);
+        Ok(())
     }
 
     // get_price removed - frontend queries oracle contract directly
@@ -1538,8 +1579,6 @@ impl MarketContract {
             .ok_or(NoetherError::Overflow)?;
         set_cross_margin_balance(&env, &trader, new_balance);
 
-        // Track trader in cross-margin list (for keeper scanning)
-        add_cross_margin_trader(&env, &trader);
         extend_instance_ttl(&env);
         Ok(())
     }
@@ -1597,11 +1636,6 @@ impl MarketContract {
         let usdc_token = get_usdc_token(&env);
         let token_client = token::Client::new(&env, &usdc_token);
         token_client.transfer(&env.current_contract_address(), &trader, &amount);
-
-        // If balance is 0 and no positions, remove from tracker
-        if new_balance == 0 && position_ids.is_empty() {
-            remove_cross_margin_trader(&env, &trader);
-        }
 
         extend_instance_ttl(&env);
         Ok(())
@@ -2042,9 +2076,6 @@ impl MarketContract {
                 (trader.clone(), 0u64, final_balance, total_penalty),
             );
             remove_cross_partial_liq_ts(&env, &trader);
-            if final_balance == 0 {
-                remove_cross_margin_trader(&env, &trader);
-            }
         } else {
             // Survivors keep trading under the grace period.
             set_cross_partial_liq_ts(&env, &trader, now);
@@ -2946,10 +2977,9 @@ impl MarketContract {
         get_order(&env, order_id)
     }
 
-    /// Get all pending order IDs (for keeper).
-    pub fn get_all_order_ids(env: Env) -> Vec<u64> {
-        get_all_order_ids(&env)
-    }
+    // get_all_order_ids removed with the AllOrders Vec — the keeper's order
+    // walk reads Order(id) ledger entries directly (terminal status counts
+    // as absent) and reconciles against OpenOrderCount.
 
     // get_position_orders removed for WASM size - frontend reads SL/TP from trader orders
 
@@ -3050,6 +3080,16 @@ impl MarketContract {
 
         save_order(&env, &order);
         extend_instance_ttl(&env);
+
+        // L1-8: stop-limit orders emitted nothing, so they existed ONLY in the
+        // on-chain AllOrders index — invisible to the indexer, absent from
+        // Postgres, and undiscoverable by anything that is not scanning the
+        // chain. Same tuple as every other order_placed emitter.
+        env.events().publish(
+            (Symbol::new(&env, "order_placed"),),
+            (order_id, trader, trigger_price),
+        );
+
         Ok(order)
     }
 
@@ -3126,6 +3166,15 @@ impl MarketContract {
         save_order(&env, &order);
         set_position_trailing_stop(&env, position_id, order_id);
         extend_instance_ttl(&env);
+
+        // L1-8: as with stop-limit above. A trailing stop carries no trigger
+        // price of its own until the peak moves, so the current mark is the
+        // meaningful third field — it is what the trail is measured from.
+        env.events().publish(
+            (Symbol::new(&env, "order_placed"),),
+            (order_id, trader, current_price),
+        );
+
         Ok(order)
     }
 
@@ -4096,6 +4145,18 @@ mod tests {
         let usdc_admin = StellarAssetClient::new(&test.env, &test.usdc_token);
         usdc_admin.mint(&trader, &amount);
         trader
+    }
+
+    /// Live-market checksums, read the way off-chain consumers read them:
+    /// straight from storage, no view function.
+    fn open_position_count(test: &TestEnv) -> u32 {
+        test.env
+            .as_contract(&test.market_id, || crate::storage::get_open_position_count(&test.env))
+    }
+
+    fn open_order_count(test: &TestEnv) -> u32 {
+        test.env
+            .as_contract(&test.market_id, || crate::storage::get_open_order_count(&test.env))
     }
 
     // Inline test oracle — a minimal SEP-40 price source the market reads via
@@ -5532,12 +5593,12 @@ mod tests {
         let tp = test.market.set_take_profit(
             &trader, &pos.id, &(PRECISION * 12 / 100), &500, &0,
         );
-        assert_eq!(test.market.get_all_order_ids().len(), 2);
+        assert_eq!(open_order_count(&test), 2);
 
         // Manual close must cancel both attached orders — no zombies
         test.market.close_position(&trader, &pos.id, &0);
 
-        assert_eq!(test.market.get_all_order_ids().len(), 0);
+        assert_eq!(open_order_count(&test), 0);
         let sl_after = test.market.get_order(&sl.id).unwrap();
         let tp_after = test.market.get_order(&tp.id).unwrap();
         assert_eq!(sl_after.status, OrderStatus::Cancelled);
@@ -5568,7 +5629,7 @@ mod tests {
         test.market.liquidate(&keeper, &pos.id);
 
         // The attached SL must not survive as a pending zombie
-        assert_eq!(test.market.get_all_order_ids().len(), 0);
+        assert_eq!(open_order_count(&test), 0);
         let sl_after = test.market.get_order(&sl.id).unwrap();
         assert_eq!(sl_after.status, OrderStatus::Cancelled);
     }
@@ -5598,7 +5659,7 @@ mod tests {
 
         // Closing the position cancels the attached trailing stop
         test.market.close_position(&trader, &pos.id, &0);
-        assert_eq!(test.market.get_all_order_ids().len(), 0);
+        assert_eq!(open_order_count(&test), 0);
         assert_eq!(
             test.market.get_order(&ts2.id).unwrap().status,
             OrderStatus::Cancelled
@@ -5788,7 +5849,7 @@ mod tests {
         // The contract at the market address now runs vault code: a market
         // entry point no longer exists, which is exactly what proves the
         // WASM was swapped in place.
-        let res = test.market.try_get_all_position_ids();
+        let res = test.market.try_get_position(&0);
         assert!(res.is_err());
     }
 
@@ -6015,7 +6076,7 @@ mod tests {
 
         // The opposing long is CLOSED — and no opposite short was opened
         assert!(test.market.get_position(&pos.id).is_none());
-        assert_eq!(test.market.get_all_position_ids().len(), 0);
+        assert_eq!(open_position_count(&test), 0);
         // Trader got the order's locked collateral back plus the close payout
         assert!(usdc.balance(&trader) > wallet_before + 100 * PRECISION);
     }
@@ -6980,9 +7041,8 @@ mod tests {
         );
 
         assert!(test.market.get_position(&long.id).is_none(), "long must be netted out");
-        let ids = test.market.get_all_position_ids();
-        assert_eq!(ids.len(), 1, "exactly one remainder position");
-        assert_eq!(ids.get(0).unwrap(), short.id);
+        assert_eq!(open_position_count(&test), 1, "exactly one remainder position");
+        assert!(test.market.get_position(&short.id).is_some(), "the remainder is the short");
         assert_eq!(short.direction, Direction::Short);
         assert_eq!(short.size, 250 * PRECISION, "remainder = S - G = 750 - 500");
         assert_eq!(short.leverage, 5, "leverage unchanged");
@@ -7009,7 +7069,7 @@ mod tests {
         ));
         // Untouched: long still open, single position, wallet balance flat.
         assert!(test.market.get_position(&long.id).is_some());
-        assert_eq!(test.market.get_all_position_ids().len(), 1);
+        assert_eq!(open_position_count(&test), 1);
         assert_eq!(usdc.balance(&trader), bal_before);
     }
 
@@ -7047,7 +7107,7 @@ mod tests {
             test.market.try_open_position(&trader, &xlm, &(200 * PRECISION), &5, &Direction::Short, &0),
             Err(Ok(NoetherError::NetsToZero))
         ));
-        assert_eq!(test.market.get_all_position_ids().len(), 5, "all legs survive the reject");
+        assert_eq!(open_position_count(&test), 5, "all legs survive the reject");
     }
 
     #[test]
@@ -8099,8 +8159,7 @@ mod tests {
             ids.push_back(pos.id);
         }
 
-        let all_before = test.market.get_all_position_ids();
-        assert_eq!(all_before.len(), 6);
+        assert_eq!(open_position_count(&test), 6);
         let buffer_before = vault.get_buffer_balance();
 
         // Crash 12% — every 10x long is deep underwater and liquidatable.
@@ -8114,7 +8173,7 @@ mod tests {
 
         // At a 12% crash even the large positions are bankrupt (equity gone),
         // so the whole book is fully liquidated in one sweep — no survivors.
-        assert_eq!(test.market.get_all_position_ids().len(), 0);
+        assert_eq!(open_position_count(&test), 0);
         // The insurance buffer took its cut from the cascade.
         assert!(vault.get_buffer_balance() > buffer_before);
     }
@@ -8388,18 +8447,13 @@ mod tests {
         let test = setup();
         let trader = fund_trader(&test, 1_000 * PRECISION);
 
-        // Pre-fill the global index to the cap with synthetic ids; the next
-        // real open passes the (empty) per-trader check and must hit the
-        // AllPositions cap.
+        // Push the live counter to the cap; the next real open passes the
+        // (empty) per-trader check and must hit the market-wide cap.
         test.env.as_contract(&test.market_id, || {
-            let mut ids: Vec<u64> = Vec::new(&test.env);
-            for i in 0..(crate::storage::MAX_OPEN_POSITIONS_TOTAL as u64) {
-                ids.push_back(1_000_000 + i);
-            }
-            test.env
-                .storage()
-                .persistent()
-                .set(&crate::storage::DataKey::AllPositions, &ids);
+            crate::storage::set_open_position_count(
+                &test.env,
+                crate::storage::MAX_OPEN_POSITIONS_TOTAL,
+            );
         });
 
         test.market.open_position(
@@ -8450,14 +8504,10 @@ mod tests {
         let trader = fund_trader(&test, 1_000 * PRECISION);
 
         test.env.as_contract(&test.market_id, || {
-            let mut ids: Vec<u64> = Vec::new(&test.env);
-            for i in 0..(crate::storage::MAX_OPEN_ORDERS_TOTAL as u64) {
-                ids.push_back(1_000_000 + i);
-            }
-            test.env
-                .storage()
-                .persistent()
-                .set(&crate::storage::DataKey::AllOrders, &ids);
+            crate::storage::set_open_order_count(
+                &test.env,
+                crate::storage::MAX_OPEN_ORDERS_TOTAL,
+            );
         });
 
         test.market.place_limit_order(
@@ -8473,50 +8523,180 @@ mod tests {
         );
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // Open-count checksums (Phase 4)
+    // ═══════════════════════════════════════════════════════════════════
+
     #[test]
-    #[should_panic(expected = "Error(Contract, #82)")] // OpenInterestCapExceeded
-    fn test_cross_trader_registry_cap() {
+    fn test_seed_open_counts_latch() {
+        let test = setup();
+
+        // A freshly initialized market sets the latch marker, so seeding is
+        // shut from birth.
+        assert!(matches!(
+            test.market.try_seed_open_counts(&10, &10),
+            Err(Ok(NoetherError::AlreadyInitialized))
+        ));
+
+        // Simulate the upgraded-in-place market: pre-upgrade storage has
+        // neither the counters nor the latch. Seeding then works exactly once.
+        test.env.as_contract(&test.market_id, || {
+            test.env
+                .storage()
+                .persistent()
+                .remove(&crate::storage::DataKey::OpenPositionCount);
+            test.env
+                .storage()
+                .persistent()
+                .remove(&crate::storage::DataKey::OpenOrderCount);
+            test.env
+                .storage()
+                .persistent()
+                .remove(&crate::storage::DataKey::OpenCountsSeeded);
+        });
+        test.market.seed_open_counts(&46, &3);
+        assert_eq!(open_position_count(&test), 46);
+        assert_eq!(open_order_count(&test), 3);
+        assert!(matches!(
+            test.market.try_seed_open_counts(&1, &1),
+            Err(Ok(NoetherError::AlreadyInitialized))
+        ));
+    }
+
+    #[test]
+    fn test_seed_open_counts_survives_pre_seed_activity() {
+        // The race the marker latch exists for: liquidations and closes run
+        // even while paused, and the FIRST one after an in-place upgrade
+        // creates the counter key via its saturating decrement (at zero).
+        // Seeding must still be possible and must overwrite that phantom
+        // value — a presence-based latch would lock the admin out here.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        // Upgraded-market storage: no counters, no latch…
+        test.env.as_contract(&test.market_id, || {
+            test.env
+                .storage()
+                .persistent()
+                .remove(&crate::storage::DataKey::OpenPositionCount);
+            test.env
+                .storage()
+                .persistent()
+                .remove(&crate::storage::DataKey::OpenOrderCount);
+            test.env
+                .storage()
+                .persistent()
+                .remove(&crate::storage::DataKey::OpenCountsSeeded);
+        });
+
+        // …and a close lands BEFORE the admin seeds. Open + close nets the
+        // phantom counter back to zero via saturating math, but the key now
+        // EXISTS — the exact state that used to slam the old latch shut.
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0,
+        );
+        test.market.close_position(&trader, &pos.id, &0);
+        assert_eq!(open_position_count(&test), 0);
+
+        // Seeding still works and installs the walk-derived truth.
+        test.market.seed_open_counts(&46, &3);
+        assert_eq!(open_position_count(&test), 46);
+        assert_eq!(open_order_count(&test), 3);
+    }
+
+    #[test]
+    fn test_order_count_decrements_exactly_once() {
+        // The counter tracks Pending-edge transitions, so a member of the
+        // position's linked-order set that was ALREADY cancelled by hand must
+        // not decrement again when close_position bulk-cancels the rest.
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0,
+        );
+        let sl = test.market.set_stop_loss(&trader, &pos.id, &(PRECISION * 9 / 100), &500);
+        test.market.set_take_profit(&trader, &pos.id, &(PRECISION * 12 / 100), &500, &0);
+        assert_eq!(open_order_count(&test), 2);
+
+        // Manual cancel takes the SL out of the pending set once.
+        test.market.cancel_order(&trader, &sl.id);
+        assert_eq!(open_order_count(&test), 1);
+
+        // Close cancels the TP and walks the (stale) SL link too — the SL's
+        // second pass over a terminal status must be a no-op.
+        test.market.close_position(&trader, &pos.id, &0);
+        assert_eq!(open_order_count(&test), 0);
+        assert_eq!(open_position_count(&test), 0);
+    }
+
+    /// The legacy Vec indexes this upgrade orphans, re-declared with the
+    /// same variant names so they encode to the same ledger keys.
+    #[soroban_sdk::contracttype]
+    #[derive(Clone)]
+    enum LegacyIndexKey {
+        AllPositions,
+        AllOrders,
+    }
+
+    #[test]
+    fn test_upgraded_market_ignores_legacy_index_entries() {
+        // An upgraded-in-place market still carries the old AllPositions /
+        // AllOrders entries in its ledger. New code must neither read nor
+        // rewrite them: trading proceeds on counters alone and the orphans
+        // just sit there until their TTL runs out.
         let test = setup();
         let trader = fund_trader(&test, 1_000 * PRECISION);
 
         test.env.as_contract(&test.market_id, || {
-            let mut traders: Vec<Address> = Vec::new(&test.env);
-            for _ in 0..crate::storage::MAX_CROSS_MARGIN_TRADERS {
-                traders.push_back(Address::generate(&test.env));
-            }
-            test.env
-                .storage()
-                .persistent()
-                .set(&crate::storage::DataKey::AllCrossMarginTraders, &traders);
+            let mut stale: Vec<u64> = Vec::new(&test.env);
+            stale.push_back(777);
+            stale.push_back(778);
+            test.env.storage().persistent().set(&LegacyIndexKey::AllPositions, &stale);
+            test.env.storage().persistent().set(&LegacyIndexKey::AllOrders, &stale);
         });
 
-        test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
-    }
+        let pos = test.market.open_position(
+            &trader,
+            &Symbol::new(&test.env, "XLM"),
+            &(100 * PRECISION),
+            &5,
+            &Direction::Long,
+            &0,
+        );
+        assert_eq!(open_position_count(&test), 1);
+        test.market.close_position(&trader, &pos.id, &0);
+        assert_eq!(open_position_count(&test), 0);
 
-    #[test]
-    fn test_cross_trader_cap_dedup_and_prune() {
-        let test = setup();
-        let trader = fund_trader(&test, 1_000 * PRECISION);
-        let newcomer = fund_trader(&test, 1_000 * PRECISION);
-
-        // Registry at cap WITH the trader already registered: a repeat
-        // deposit dedups and must not reject.
-        test.env.as_contract(&test.market_id, || {
-            let mut traders: Vec<Address> = Vec::new(&test.env);
-            traders.push_back(trader.clone());
-            for _ in 1..crate::storage::MAX_CROSS_MARGIN_TRADERS {
-                traders.push_back(Address::generate(&test.env));
-            }
-            test.env
+        // The orphaned entries are byte-for-byte untouched.
+        let (legacy_positions, legacy_orders) = test.env.as_contract(&test.market_id, || {
+            let p: Vec<u64> = test
+                .env
                 .storage()
                 .persistent()
-                .set(&crate::storage::DataKey::AllCrossMarginTraders, &traders);
+                .get(&LegacyIndexKey::AllPositions)
+                .unwrap();
+            let o: Vec<u64> = test
+                .env
+                .storage()
+                .persistent()
+                .get(&LegacyIndexKey::AllOrders)
+                .unwrap();
+            (p, o)
         });
-
-        test.market.deposit_cross_margin(&trader, &(100 * PRECISION));
-
-        // Full withdrawal prunes the registry entry, freeing a slot
-        test.market.withdraw_cross_margin(&trader, &(100 * PRECISION));
-        test.market.deposit_cross_margin(&newcomer, &(50 * PRECISION));
+        assert_eq!(legacy_positions.len(), 2);
+        assert_eq!(legacy_positions.get(0).unwrap(), 777);
+        assert_eq!(legacy_orders.len(), 2);
     }
+
 }

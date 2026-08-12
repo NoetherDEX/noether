@@ -55,16 +55,32 @@ pub enum DataKey {
     Position(u64),
     /// Position IDs for a trader
     TraderPositions(Address),
-    /// Global position index (all position IDs)
-    AllPositions,
+    /// Count of live Position rows (u32). Replaces the AllPositions Vec:
+    /// the global index was rewritten in full on every open and close, so a
+    /// busy market paid O(open positions) per trade and every transaction
+    /// raced every other on one shared entry. Off-chain discovery walks
+    /// Position(id) ledger entries directly and uses this count as its
+    /// completeness checksum. Unit key — encodes as scvVec([scvSymbol]).
+    OpenPositionCount,
     /// Order by ID
     Order(u64),
     /// Order counter (for ID generation)
     OrderCounter,
-    /// Order IDs for a trader
-    TraderOrders(Address),
-    /// Global order index (all pending order IDs)
-    AllOrders,
+    /// Count of Pending Order rows (u32). Replaces the AllOrders Vec — same
+    /// story as OpenPositionCount. Orders are status updated rather than
+    /// deleted, so "counted" means status == Pending, and the off-chain walk
+    /// treats any terminal status as absent.
+    OpenOrderCount,
+    /// Count of Pending orders per trader (u32). Replaces the TraderOrders
+    /// Vec, which existed only to bound MAX_OPEN_ORDERS_PER_TRADER — nothing
+    /// on or off chain ever enumerated it.
+    OrderCountOf(Address),
+    /// One-shot latch for seed_open_counts. A DEDICATED marker rather than
+    /// "does OpenPositionCount exist": liquidations run even while paused,
+    /// and the very first close/liquidation after an in-place upgrade
+    /// CREATES the counter key (saturating 0), which would slam a
+    /// presence-based latch shut before the admin ever seeded.
+    OpenCountsSeeded,
     /// Stop-loss order ID attached to a position
     PositionStopLoss(u64),
     /// Take-profit order ID attached to a position
@@ -77,8 +93,6 @@ pub enum DataKey {
     CrossMarginBalance(Address),
     /// Cross-margin position IDs per trader (Vec<u64>)
     CrossMarginPositions(Address),
-    /// All traders with cross-margin accounts (Vec<Address>) - for keeper scanning
-    AllCrossMarginTraders,
     /// Peak price tracked for trailing stop orders (order_id -> i128)
     TrailingStopPeak(u64),
     /// Trailing-stop order ID attached to a position
@@ -347,29 +361,63 @@ pub fn set_cumulative_funding_rate(env: &Env, rate: i128) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Index growth caps (M-5)
 // ═══════════════════════════════════════════════════════════════════════════
-// The Vec-based indexes are rewritten in full on every insert/delete, so
-// their length bounds the cost of every open, close and liquidation that
-// touches them — and a ledger entry has a hard size ceiling. These caps turn
-// unbounded growth into a graceful "market at capacity" rejection until
-// paginated buckets replace the Vecs (planned post-launch). Deletes and
-// in-place updates are never gated: closing and liquidating always work at
-// cap. All sites reuse NoetherError::OpenInterestCapExceeded (#82) — the
-// error enum is at its 50-variant budget, and "at capacity" is the message.
+// The market-wide caps are enforced against O(1) counters
+// (OpenPositionCount / OpenOrderCount / OrderCountOf) — the global Vec
+// indexes they used to gate were rewritten in full on every insert/delete,
+// which made every open pay O(n) and race every concurrent trade on one
+// shared entry. Deletes and in-place updates are never gated: closing and
+// liquidating always work at cap. All sites reuse
+// NoetherError::OpenInterestCapExceeded (#82) — the error enum is at its
+// 50-variant budget, and "at capacity" is the message.
 
-/// Max open positions market-wide (AllPositions).
+/// Max open positions market-wide (OpenPositionCount).
 pub const MAX_OPEN_POSITIONS_TOTAL: u32 = 1000;
 /// Max open positions per trader, isolated + cross combined (TraderPositions).
 /// Transitively bounds CrossMarginPositions — a subset filled on the same
 /// insert path — and with it the staged cross-liquidation loop.
 pub const MAX_OPEN_POSITIONS_PER_TRADER: u32 = 32;
-/// Max pending orders market-wide (AllOrders).
+/// Max pending orders market-wide (OpenOrderCount).
 pub const MAX_OPEN_ORDERS_TOTAL: u32 = 2000;
-/// Max pending orders per trader (TraderOrders): 32 positions × 3 protective
+/// Max pending orders per trader (OrderCountOf): 32 positions × 3 protective
 /// orders (SL/TP/trailing) leaves 32 slots for resting entries.
 pub const MAX_OPEN_ORDERS_PER_TRADER: u32 = 128;
-/// Max distinct ACTIVE cross-margin accounts (AllCrossMarginTraders — the
-/// entry is pruned when an account's balance and positions reach zero).
-pub const MAX_CROSS_MARGIN_TRADERS: u32 = 512;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Open counters
+// ═══════════════════════════════════════════════════════════════════════════
+// Live-market checksums, not id generators (those are PositionCounter and
+// OrderCounter, which only ever grow). A contract upgraded in place starts
+// with these keys ABSENT while real positions are open, so getters default
+// to 0 and every decrement saturates — seed_open_counts must run immediately
+// after upgrade() or the counts under-report forever.
+
+pub fn get_open_position_count(env: &Env) -> u32 {
+    env.storage().persistent().get(&DataKey::OpenPositionCount).unwrap_or(0)
+}
+
+pub fn set_open_position_count(env: &Env, count: u32) {
+    env.storage().persistent().set(&DataKey::OpenPositionCount, &count);
+    extend_persistent_ttl(env, &DataKey::OpenPositionCount);
+}
+
+pub fn get_open_order_count(env: &Env) -> u32 {
+    env.storage().persistent().get(&DataKey::OpenOrderCount).unwrap_or(0)
+}
+
+pub fn set_open_order_count(env: &Env, count: u32) {
+    env.storage().persistent().set(&DataKey::OpenOrderCount, &count);
+    extend_persistent_ttl(env, &DataKey::OpenOrderCount);
+}
+
+pub fn get_order_count_of(env: &Env, trader: &Address) -> u32 {
+    env.storage().persistent().get(&DataKey::OrderCountOf(trader.clone())).unwrap_or(0)
+}
+
+pub fn set_order_count_of(env: &Env, trader: &Address, count: u32) {
+    let key = DataKey::OrderCountOf(trader.clone());
+    env.storage().persistent().set(&key, &count);
+    extend_persistent_ttl(env, &key);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Position Storage
@@ -380,51 +428,42 @@ pub fn get_position(env: &Env, id: u64) -> Option<Position> {
 }
 
 pub fn save_position(env: &Env, position: &Position) {
-    // Save position
-    env.storage().persistent().set(&DataKey::Position(position.id), position);
-    extend_position_ttl(env, &DataKey::Position(position.id));
+    // A row that already exists is an in-place update (add_collateral,
+    // partial liquidation): the id is already in TraderPositions and already
+    // counted, so only the row itself is rewritten. A position id enters the
+    // trader list and the counter on exactly the save that creates its row,
+    // and leaves both on exactly the delete that removes it — the row's
+    // existence IS the membership test, which is what lets the O(n) global
+    // dedup scan disappear.
+    let row_key = DataKey::Position(position.id);
+    let is_new = !env.storage().persistent().has(&row_key);
+    env.storage().persistent().set(&row_key, position);
+    extend_position_ttl(env, &row_key);
+    if !is_new {
+        return;
+    }
 
-    // Add to trader's position list
+    // Add to trader's position list (kept: cross-margin aggregation and the
+    // staged cross-liquidation loop genuinely read it, and per-trader length
+    // is bounded small)
     let trader_key = DataKey::TraderPositions(position.trader.clone());
     let mut trader_positions: Vec<u64> = env.storage()
         .persistent()
         .get(&trader_key)
         .unwrap_or(Vec::new(env));
+    if trader_positions.len() >= MAX_OPEN_POSITIONS_PER_TRADER {
+        panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
+    }
+    trader_positions.push_back(position.id);
+    env.storage().persistent().set(&trader_key, &trader_positions);
+    extend_persistent_ttl(env, &trader_key);
 
-    // Only add if not already in list
-    let mut found = false;
-    for i in 0..trader_positions.len() {
-        if trader_positions.get(i).unwrap() == position.id {
-            found = true;
-            break;
-        }
+    // Market-wide cap via the O(1) counter (replaces the AllPositions Vec)
+    let open = get_open_position_count(env);
+    if open >= MAX_OPEN_POSITIONS_TOTAL {
+        panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
     }
-    if !found {
-        if trader_positions.len() >= MAX_OPEN_POSITIONS_PER_TRADER {
-            panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
-        }
-        trader_positions.push_back(position.id);
-        env.storage().persistent().set(&trader_key, &trader_positions);
-        extend_persistent_ttl(env, &trader_key);
-    }
-
-    // Add to global position index
-    let mut all_positions = get_all_position_ids(env);
-    let mut found_global = false;
-    for i in 0..all_positions.len() {
-        if all_positions.get(i).unwrap() == position.id {
-            found_global = true;
-            break;
-        }
-    }
-    if !found_global {
-        if all_positions.len() >= MAX_OPEN_POSITIONS_TOTAL {
-            panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
-        }
-        all_positions.push_back(position.id);
-        env.storage().persistent().set(&DataKey::AllPositions, &all_positions);
-        extend_persistent_ttl(env, &DataKey::AllPositions);
-    }
+    set_open_position_count(env, open + 1);
 }
 
 pub fn get_partial_liq_ts(env: &Env, position_id: u64) -> Option<u64> {
@@ -503,8 +542,13 @@ pub fn set_skew_integral(env: &Env, asset: &Symbol, v: &(i128, u64)) {
 }
 
 pub fn delete_position(env: &Env, id: u64, trader: &Address) {
-    // Remove from storage (incl. any partial-liquidation grace marker)
-    env.storage().persistent().remove(&DataKey::Position(id));
+    // Remove from storage (incl. any partial-liquidation grace marker). The
+    // counter decrements only when the row actually existed: no-op deletes
+    // are common because auto-netting deletes legs a prior arm already
+    // removed, and decrementing on those would drift the count low.
+    let row_key = DataKey::Position(id);
+    let existed = env.storage().persistent().has(&row_key);
+    env.storage().persistent().remove(&row_key);
     env.storage().persistent().remove(&DataKey::PartialLiqTs(id));
 
     // Remove from trader's list
@@ -514,6 +558,12 @@ pub fn delete_position(env: &Env, id: u64, trader: &Address) {
         .get(&trader_key)
         .unwrap_or(Vec::new(env));
 
+    // The write below is skipped when the id was not in the list — the
+    // rewrite re-serializes the WHOLE Vec, so an unconditional set made every
+    // no-op delete pay full price. NOTE: TraderPositions holds BOTH isolated
+    // and cross positions (finalize_open calls save_position for every
+    // position), and MAX_OPEN_POSITIONS_PER_TRADER is what bounds the cross
+    // set — do not assume cross positions live only in CrossMarginPositions.
     let mut new_list = Vec::new(env);
     for i in 0..trader_positions.len() {
         let pos_id = trader_positions.get(i).unwrap();
@@ -521,40 +571,24 @@ pub fn delete_position(env: &Env, id: u64, trader: &Address) {
             new_list.push_back(pos_id);
         }
     }
-    env.storage().persistent().set(&trader_key, &new_list);
-    extend_persistent_ttl(env, &trader_key);
-
-    // Remove from global index
-    let all_positions = get_all_position_ids(env);
-    let mut new_all = Vec::new(env);
-    for i in 0..all_positions.len() {
-        let pos_id = all_positions.get(i).unwrap();
-        if pos_id != id {
-            new_all.push_back(pos_id);
-        }
+    if new_list.len() != trader_positions.len() {
+        env.storage().persistent().set(&trader_key, &new_list);
+        extend_persistent_ttl(env, &trader_key);
     }
-    env.storage().persistent().set(&DataKey::AllPositions, &new_all);
-    extend_persistent_ttl(env, &DataKey::AllPositions);
+
+    if existed {
+        set_open_position_count(env, get_open_position_count(env).saturating_sub(1));
+    }
 }
 
-// get_trader_positions removed for WASM size - use get_all_position_ids + get_position
-
-pub fn init_position_index(env: &Env) {
-    let empty: Vec<u64> = Vec::new(env);
-    env.storage().persistent().set(&DataKey::AllPositions, &empty);
-}
+// get_trader_positions removed for WASM size - per-trader reads use
+// get_trader_position_ids + get_position; market-wide discovery walks
+// Position(id) ledger entries off chain with OpenPositionCount as checksum
 
 pub fn get_trader_position_ids(env: &Env, trader: &Address) -> Vec<u64> {
     env.storage()
         .persistent()
         .get(&DataKey::TraderPositions(trader.clone()))
-        .unwrap_or(Vec::new(env))
-}
-
-pub fn get_all_position_ids(env: &Env) -> Vec<u64> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::AllPositions)
         .unwrap_or(Vec::new(env))
 }
 
@@ -631,65 +665,59 @@ pub fn get_order(env: &Env, id: u64) -> Option<Order> {
 }
 
 pub fn save_order(env: &Env, order: &Order) {
-    // Save order
-    env.storage().persistent().set(&DataKey::Order(order.id), order);
-    extend_position_ttl(env, &DataKey::Order(order.id));
+    // The counters track "row exists AND status == Pending", and the write
+    // path maintains that invariant by watching the edge between the
+    // previous stored status and the incoming one. That makes the accounting
+    // structural: a double cancel or an execute after cancel sees
+    // was_counted == false and cannot decrement twice, no matter which entry
+    // point drove the transition.
+    let was_counted = env
+        .storage()
+        .persistent()
+        .get::<DataKey, Order>(&DataKey::Order(order.id))
+        .map(|prev| prev.status == OrderStatus::Pending)
+        .unwrap_or(false);
+    save_order_with_prev(env, order, was_counted);
+}
 
-    // Add to trader's order list if pending
-    if order.status == OrderStatus::Pending {
-        let trader_key = DataKey::TraderOrders(order.trader.clone());
-        let mut trader_orders: Vec<u64> = env.storage()
-            .persistent()
-            .get(&trader_key)
-            .unwrap_or(Vec::new(env));
+/// The write half of save_order for callers that ALREADY hold the previous
+/// row (update_order_status): re-reading a full Order just to learn its old
+/// status would double the decode work on the hottest transaction — a close
+/// or liquidation bulk-cancelling its attached SL/TP/trailing orders.
+fn save_order_with_prev(env: &Env, order: &Order, was_counted: bool) {
+    let row_key = DataKey::Order(order.id);
+    let now_counted = order.status == OrderStatus::Pending;
 
-        // Only add if not already in list
-        let mut found = false;
-        for i in 0..trader_orders.len() {
-            if trader_orders.get(i).unwrap() == order.id {
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            if trader_orders.len() >= MAX_OPEN_ORDERS_PER_TRADER {
-                panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
-            }
-            trader_orders.push_back(order.id);
-            env.storage().persistent().set(&trader_key, &trader_orders);
-            extend_persistent_ttl(env, &trader_key);
-        }
+    env.storage().persistent().set(&row_key, order);
+    extend_position_ttl(env, &row_key);
 
-        // Add to global order index
-        let mut all_orders = get_all_order_ids(env);
-        let mut found_global = false;
-        for i in 0..all_orders.len() {
-            if all_orders.get(i).unwrap() == order.id {
-                found_global = true;
-                break;
-            }
+    if now_counted && !was_counted {
+        // Entering the pending set: both caps gate here, reusing #82.
+        let per_trader = get_order_count_of(env, &order.trader);
+        if per_trader >= MAX_OPEN_ORDERS_PER_TRADER {
+            panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
         }
-        if !found_global {
-            if all_orders.len() >= MAX_OPEN_ORDERS_TOTAL {
-                panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
-            }
-            all_orders.push_back(order.id);
-            env.storage().persistent().set(&DataKey::AllOrders, &all_orders);
-            extend_persistent_ttl(env, &DataKey::AllOrders);
+        let total = get_open_order_count(env);
+        if total >= MAX_OPEN_ORDERS_TOTAL {
+            panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
         }
+        set_order_count_of(env, &order.trader, per_trader + 1);
+        set_open_order_count(env, total + 1);
+    } else if was_counted && !now_counted {
+        // Leaving the pending set (executed, cancelled, slippage, expired).
+        set_order_count_of(env, &order.trader, get_order_count_of(env, &order.trader).saturating_sub(1));
+        set_open_order_count(env, get_open_order_count(env).saturating_sub(1));
     }
 }
 
 pub fn update_order_status(env: &Env, order_id: u64, status: OrderStatus) {
+    // Single decode: the row read here supplies both the mutated order and
+    // its previous counted-ness, so the Pending-edge accounting still has
+    // exactly one owner without a second read inside the save.
     if let Some(mut order) = get_order(env, order_id) {
+        let was_counted = order.status == OrderStatus::Pending;
         order.status = status;
-        env.storage().persistent().set(&DataKey::Order(order_id), &order);
-        extend_position_ttl(env, &DataKey::Order(order_id));
-
-        // Remove from active lists if no longer pending
-        if status != OrderStatus::Pending {
-            remove_order_from_lists(env, order_id, &order.trader);
-        }
+        save_order_with_prev(env, &order, was_counted);
     }
 }
 
@@ -734,51 +762,14 @@ pub fn set_order_position_id(env: &Env, order_id: u64, position_id: u64) {
     }
 }
 
-pub fn remove_order_from_lists(env: &Env, order_id: u64, trader: &Address) {
-    // Remove from trader's list
-    let trader_key = DataKey::TraderOrders(trader.clone());
-    let trader_orders: Vec<u64> = env.storage()
-        .persistent()
-        .get(&trader_key)
-        .unwrap_or(Vec::new(env));
-
-    let mut new_list = Vec::new(env);
-    for i in 0..trader_orders.len() {
-        let id = trader_orders.get(i).unwrap();
-        if id != order_id {
-            new_list.push_back(id);
-        }
-    }
-    env.storage().persistent().set(&trader_key, &new_list);
-    extend_persistent_ttl(env, &trader_key);
-
-    // Remove from global index
-    let all_orders = get_all_order_ids(env);
-    let mut new_all = Vec::new(env);
-    for i in 0..all_orders.len() {
-        let id = all_orders.get(i).unwrap();
-        if id != order_id {
-            new_all.push_back(id);
-        }
-    }
-    env.storage().persistent().set(&DataKey::AllOrders, &new_all);
-    extend_persistent_ttl(env, &DataKey::AllOrders);
-}
+// remove_order_from_lists removed with the order Vec indexes — save_order
+// owns the Pending-edge counter accounting, and update_order_status routes
+// through it
 
 // delete_order removed for WASM size - orders are status-updated, not deleted
 
-// get_trader_orders removed for WASM size - use get_all_order_ids + get_order
-
-// init_order_index removed - orders auto-create their index via save_order
-
-pub fn get_all_order_ids(env: &Env) -> Vec<u64> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::AllOrders)
-        .unwrap_or(Vec::new(env))
-}
-
-// get_order_count removed for WASM size
+// get_trader_orders removed - off-chain discovery walks Order(id) ledger
+// entries with OpenOrderCount as checksum; terminal statuses read as absent
 
 // Position SL/TP attachment helpers
 pub fn get_position_stop_loss(env: &Env, position_id: u64) -> Option<u64> {
@@ -910,31 +901,7 @@ pub fn remove_cross_margin_position(env: &Env, trader: &Address, position_id: u6
     extend_persistent_ttl(env, &key);
 }
 
-pub fn get_all_cross_margin_traders(env: &Env) -> Vec<Address> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::AllCrossMarginTraders)
-        .unwrap_or(Vec::new(env))
-}
 
-pub fn add_cross_margin_trader(env: &Env, trader: &Address) {
-    let mut traders = get_all_cross_margin_traders(env);
-    let mut found = false;
-    for i in 0..traders.len() {
-        if traders.get(i).unwrap() == *trader {
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        if traders.len() >= MAX_CROSS_MARGIN_TRADERS {
-            panic_with_error!(env, NoetherError::OpenInterestCapExceeded);
-        }
-        traders.push_back(trader.clone());
-        env.storage().persistent().set(&DataKey::AllCrossMarginTraders, &traders);
-        extend_persistent_ttl(env, &DataKey::AllCrossMarginTraders);
-    }
-}
 
 pub fn get_trailing_stop_peak(env: &Env, order_id: u64) -> Option<i128> {
     env.storage().persistent().get(&DataKey::TrailingStopPeak(order_id))
@@ -950,14 +917,3 @@ pub fn remove_trailing_stop_peak(env: &Env, order_id: u64) {
     env.storage().persistent().remove(&DataKey::TrailingStopPeak(order_id));
 }
 
-pub fn remove_cross_margin_trader(env: &Env, trader: &Address) {
-    let traders = get_all_cross_margin_traders(env);
-    let mut new_list = Vec::new(env);
-    for i in 0..traders.len() {
-        let t = traders.get(i).unwrap();
-        if t != *trader {
-            new_list.push_back(t);
-        }
-    }
-    env.storage().persistent().set(&DataKey::AllCrossMarginTraders, &new_list);
-}

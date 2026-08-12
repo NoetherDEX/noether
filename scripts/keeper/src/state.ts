@@ -13,7 +13,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { KeeperState, PersistedPrice } from './types';
+import { EntityWalkState, KeeperState, PersistedPrice } from './types';
 
 export function emptyKeeperState(): KeeperState {
   return { lastPushedPrices: {} };
@@ -38,6 +38,15 @@ export function loadKeeperState(filePath: string): KeeperState {
     }
     if (typeof parsed.lastFundingSubmitTime === 'number' && parsed.lastFundingSubmitTime > 0) {
       state.lastFundingSubmitTime = parsed.lastFundingSubmitTime;
+    }
+    // Chain-walk discovery memory (Phase 4). Without restoring this, every
+    // restart re-walks the entire id space from zero — the exact first-cycle
+    // cost the watermark exists to amortize.
+    if (isValidWalkState(parsed.discovery?.positions) && isValidWalkState(parsed.discovery?.orders)) {
+      state.discovery = {
+        positions: parsed.discovery!.positions,
+        orders: parsed.discovery!.orders,
+      };
     }
 
     const symbols = Object.keys(state.lastPushedPrices);
@@ -71,6 +80,17 @@ export function saveKeeperState(filePath: string, state: KeeperState): void {
       }`,
     );
   }
+}
+
+function isValidWalkState(entry: unknown): entry is EntityWalkState {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const candidate = entry as Record<string, unknown>;
+  return (
+    typeof candidate.watermark === 'string' &&
+    /^\d+$/.test(candidate.watermark) &&
+    Array.isArray(candidate.live) &&
+    candidate.live.every((id) => typeof id === 'string' && /^\d+$/.test(id))
+  );
 }
 
 function isValidPersistedPrice(entry: unknown): entry is PersistedPrice {

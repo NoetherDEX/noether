@@ -199,6 +199,10 @@ export interface KeeperConfig {
   // Publish-path defenses (K-2)
   /** File the circuit-breaker state (last pushed prices) persists to. */
   stateFilePath: string;
+  /** Position/order discovery mode (KEEPER_DISCOVERY, Phase 4).
+   *  legacy = pre-upgrade get_all_* views; shadow = legacy authoritative
+   *  with the chain walk parity-compared alongside; chain = walk only. */
+  discoveryMode: DiscoveryMode;
   /** Independent public ticker endpoint (Binance-style ?symbol=BTCUSDT). */
   referenceTickerUrl: string;
   /** Skip the push when attestation vs reference diverges more than this %. */
@@ -255,9 +259,30 @@ export interface PersistedPrice {
   timestamp: number;
 }
 
+/** How the keeper discovers live position/order ids (Phase 4). */
+export type DiscoveryMode = 'legacy' | 'shadow' | 'chain';
+
+/** One id-space's walk memory (strings: JSON-safe u64). Ids are never
+ *  reused, so every id ≤ watermark that is not in `live` is dead forever —
+ *  this is what keeps each cycle O(open + new) instead of O(total ever). */
+export interface EntityWalkState {
+  /** Highest id the walk has ever examined. */
+  watermark: string;
+  /** Ids at/below the watermark that were live on the last trusted cycle. */
+  live: string[];
+}
+
+/** Chain-walk discovery memory, persisted across restarts. */
+export interface DiscoveryState {
+  positions: EntityWalkState;
+  orders: EntityWalkState;
+}
+
 /** On-disk keeper state (KEEPER_STATE_FILE). */
 export interface KeeperState {
   lastPushedPrices: Record<string, PersistedPrice>;
   /** ms epoch of the last apply_funding submit that landed (K-7). */
   lastFundingSubmitTime?: number;
+  /** Chain-walk discovery memory; absent until the first shadow/chain cycle. */
+  discovery?: DiscoveryState;
 }

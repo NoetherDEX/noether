@@ -5,7 +5,7 @@
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
-import { KeeperConfig, AssetConfig, KeySource } from './types';
+import { KeeperConfig, AssetConfig, KeySource, DiscoveryMode } from './types';
 import { STORK_DEFAULT_ID_SYMBOLS } from './storkFast';
 
 // Load .env - try local first, then project root (for monorepo)
@@ -41,6 +41,12 @@ function parseStorkAssetIds(raw: string | undefined): number[] {
     .map((s) => parseInt(s.trim(), 10))
     .filter((n) => Number.isInteger(n) && n >= 0);
   return ids.length > 0 ? ids : STORK_DEFAULT_ID_SYMBOLS.map(([id]) => id);
+}
+
+function parseDiscoveryMode(raw: string | undefined): DiscoveryMode {
+  const mode = (raw || 'legacy').trim().toLowerCase();
+  if (mode === 'legacy' || mode === 'shadow' || mode === 'chain') return mode;
+  throw new Error(`KEEPER_DISCOVERY must be legacy, shadow or chain (got "${raw}")`);
 }
 
 function envInt(name: string, fallback: number): number {
@@ -242,6 +248,9 @@ export function loadConfig(): KeeperConfig {
 
     // Publish-path defenses (K-2)
     stateFilePath: path.resolve(process.cwd(), process.env.KEEPER_STATE_FILE || './keeper-state.json'),
+    // Phase 4 discovery: legacy until the market upgrade lands, shadow for
+    // the parity gate, chain once get_all_* no longer exists on the market.
+    discoveryMode: parseDiscoveryMode(process.env.KEEPER_DISCOVERY),
     referenceTickerUrl:
       process.env.REFERENCE_TICKER_URL || 'https://api.binance.com/api/v3/ticker/price',
     referenceDivergencePct: envFloat('REFERENCE_DIVERGENCE_PCT', 5),

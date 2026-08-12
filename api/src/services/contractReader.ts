@@ -13,6 +13,7 @@
 
 import {
   Account,
+  Address,
   BASE_FEE,
   Contract,
   TransactionBuilder,
@@ -46,6 +47,45 @@ export class ContractReader {
     this.server = new rpc.Server(opts.rpcUrl, { allowHttp: opts.rpcUrl.startsWith('http://') });
     this.networkPassphrase = getNetworkPassphrase(opts.network);
     this.sourceAccount = opts.sourceAccount;
+  }
+
+  /**
+   * Read the market's live open counters straight from ledger storage
+   * (Phase 4 drift alarm). The counters are plain persistent entries with
+   * unit DataKeys — scvVec([scvSymbol(name)]) — so no view function and no
+   * simulation is involved. Null per counter when the key does not exist,
+   * which is exactly the pre-upgrade market: the caller renders null rather
+   * than a fabricated zero.
+   */
+  async readOpenCounts(
+    marketId: StellarAddress,
+  ): Promise<{ chainOpenPositions: number | null; chainOpenOrders: number | null }> {
+    const contract = Address.fromString(marketId).toScAddress();
+    const keyFor = (name: string) =>
+      xdr.LedgerKey.contractData(
+        new xdr.LedgerKeyContractData({
+          contract,
+          key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(name)]),
+          durability: xdr.ContractDataDurability.persistent(),
+        }),
+      );
+    const positionKey = keyFor('OpenPositionCount');
+    const orderKey = keyFor('OpenOrderCount');
+    const response = await this.server.getLedgerEntries(positionKey, orderKey);
+
+    let chainOpenPositions: number | null = null;
+    let chainOpenOrders: number | null = null;
+    for (const entry of response.entries ?? []) {
+      const data = entry.val.contractData();
+      const keyXdr = data.key().toXDR('base64');
+      const value = Number(scValToNative(data.val()));
+      if (keyXdr === positionKey.contractData().key().toXDR('base64')) {
+        chainOpenPositions = value;
+      } else if (keyXdr === orderKey.contractData().key().toXDR('base64')) {
+        chainOpenOrders = value;
+      }
+    }
+    return { chainOpenPositions, chainOpenOrders };
   }
 
   /**
