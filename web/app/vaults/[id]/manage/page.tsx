@@ -12,7 +12,7 @@ export const revalidate = 0;
  * redirects there.
  */
 export default function VaultManagePage({ params }: { params: { id: string } }) {
-  const id = Number(params.id);
-  if (!Number.isInteger(id) || id < 0) notFound();
-  redirect(`/trade?vault=${id}`);
+  // Canonical digit string only — see the note in ../page.tsx.
+  if (!/^\d+$/.test(params.id)) notFound();
+  redirect(`/trade?vault=${Number(params.id)}`);
 }
