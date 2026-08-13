@@ -4992,7 +4992,7 @@ mod tests {
             .is_err());
         assert!(test.market.try_close_position(&trader, &pos.id, &0).is_err());
         assert!(test.market.try_deposit_cross_margin(&trader, &(100 * PRECISION)).is_err());
-        assert!(test.market.try_withdraw_cross_margin(&trader, &(1 * PRECISION)).is_err());
+        assert!(test.market.try_withdraw_cross_margin(&trader, &PRECISION).is_err());
         assert!(test.market.try_cancel_order(&trader, &order.id).is_err());
 
         // Keeper-authed (require_auth precedes the liquidatable check).
