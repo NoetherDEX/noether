@@ -979,7 +979,10 @@ function TradePage() {
       id: 'orderbook',
       label: 'Open Orders',
       content: (
-        <div className="max-w-2xl">
+        // Full width like the sibling tabs — the old max-w-2xl cap was a
+        // relic of the left-sidebar era these panels were lifted from, and
+        // on wide monitors it pinned them to the left half of the screen.
+        <div>
           {/* B10: oracle transparency instead of a fake book */}
           <OraclePriceCard
             asset={selectedAsset}
@@ -988,7 +991,7 @@ function TradePage() {
             fundingRate={fundingRate}
             stale={pricesStale}
           />
-          <p className="mb-3 text-[11px] text-faint">
+          <p className="mb-3 max-w-prose text-[11px] text-faint">
             Noether fills at the oracle price — there is no order book. These
             are the venue&apos;s resting limit/trigger orders awaiting execution.
           </p>
@@ -999,11 +1002,7 @@ function TradePage() {
     {
       id: 'trades',
       label: 'Recent Trades',
-      content: (
-        <div className="max-w-2xl">
-          <RecentTrades />
-        </div>
-      ),
+      content: <RecentTrades />,
     },
   ];
 

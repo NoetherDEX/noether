@@ -355,8 +355,11 @@ export function RecentTrades() {
                   </div>
                 </>
               );
+              // px without the old -mx bleed: the negative margin made every
+              // row 16px wider than its container, which is exactly the
+              // phantom horizontal scrollbar under the list.
               const rowClass =
-                'flex items-center justify-between py-2 px-2 -mx-2 rounded-sm transition-colors hover:bg-surface-3/50';
+                'flex items-center justify-between py-2 px-2 rounded-sm transition-colors hover:bg-surface-3/50';
               // No href="#" affordances: rows without a tx hash are plain rows (A13).
               return trade.txHash ? (
                 <a
