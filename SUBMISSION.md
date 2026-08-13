@@ -6,7 +6,7 @@ one entry, click two links, and verify everything end-to-end.
 
 > **Live URLs**
 > - Frontend: <https://noether.exchange>
-> - API gateway: <https://noetherapi-production.up.railway.app>
+> - API gateway: <https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io>
 > - Repository: <https://github.com/NoetherDEX/noether>
 > - Stellar Expert (vault_factory): <https://stellar.expert/explorer/testnet/contract/CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA>
 
@@ -90,9 +90,9 @@ test_get_cross_margin_traders.1.json
 Quick smoke from your terminal:
 
 ```bash
-curl -s https://noetherapi-production.up.railway.app/v1/health
-curl -s https://noetherapi-production.up.railway.app/v1/markets | jq
-curl -s https://noetherapi-production.up.railway.app/v1/vaults | jq
+curl -s https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/health
+curl -s https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/markets | jq
+curl -s https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/vaults | jq
 ```
 
 ### TypeScript SDK
@@ -106,7 +106,7 @@ npm i noether-sdk
 End-to-end example (`sdk-ts/examples/demo.ts`):
 
 ```bash
-npx tsx sdk-ts/examples/demo.ts https://noetherapi-production.up.railway.app
+npx tsx sdk-ts/examples/demo.ts https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io
 ```
 
 ### Python SDK
@@ -121,12 +121,12 @@ pip install noether-sdk
 
 ## 2. WebSocket API for Real-Time Data
 
-- WebSocket gateway deployed alongside REST: `wss://noetherapi-production.up.railway.app/v1/ws`
+- WebSocket gateway deployed alongside REST: `wss://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/ws`
 - Channels: `ticker.<ASSET>`, `events`, per-key `account.events.<owner>`
 - TypeScript SDK example: `sdk-ts/examples/ws-ticker.ts`
 
 ```bash
-npx tsx sdk-ts/examples/ws-ticker.ts https://noetherapi-production.up.railway.app
+npx tsx sdk-ts/examples/ws-ticker.ts https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io
 ```
 
 Connecting subscribes you to live BTC oracle ticks within the same
@@ -175,7 +175,7 @@ Source: [`web/components/vault/VaultCard.tsx`](https://github.com/NoetherDEX/noe
 API contract:
 
 ```bash
-curl -s https://noetherapi-production.up.railway.app/v1/vaults | jq '.vaults[] | {id, name, totalUsdc, apyBps, drawdownBps, depositorCount, openPositions}'
+curl -s https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/vaults | jq '.vaults[] | {id, name, totalUsdc, apyBps, drawdownBps, depositorCount, openPositions}'
 ```
 
 ### Comprehensive per-vault page — PnL history, open positions, trade history
@@ -262,7 +262,7 @@ open https://noether.exchange/vaults
 open https://noether.exchange/vaults/0   # any deployed vault id
 
 # 4. Live API
-curl -s https://noetherapi-production.up.railway.app/v1/vaults | jq
+curl -s https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/vaults | jq
 
 # 5. Vault factory on-chain
 open https://stellar.expert/explorer/testnet/contract/CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA

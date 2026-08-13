@@ -138,9 +138,9 @@ The protocol is funded by [Stellar Community Fund #41](https://communityfund.ste
 - **Public REST + WebSocket API** — [Fastify](https://fastify.dev/) gateway, OpenAPI auto-served at `/docs`. Wallet-challenge authentication issues bearer keys (currently closed-beta — see [Security](#security))
 - **TypeScript SDK** — [`noether-sdk` on npm](https://www.npmjs.com/package/noether-sdk) ships every endpoint plus `WsClient` with auto-reconnect and subscription replay
 - **Python SDK** — [`noether-sdk` on PyPI](https://pypi.org/project/noether-sdk/) mirrors the TS surface (httpx + websockets)
-- **Soroban event indexer** — captures every contract event into a [Postgres (Supabase)](https://supabase.com/) projection table, ready for analytics
+- **Soroban event indexer** — captures every contract event into a Postgres projection table, ready for analytics
 - **Shared `@noether/tx-builders`** — single source of truth for Soroban transaction assembly across api + sdk-ts
-- **Fully open source** (MIT) — npm-workspace monorepo (`api/`, `indexer/`, `sdk-ts/`, `packages/*`) with vitest, CI, and Docker images for Railway
+- **Fully open source** (MIT) — npm-workspace monorepo (`api/`, `indexer/`, `sdk-ts/`, `packages/*`) with vitest, CI, and Docker images for Azure Container Apps
 - **Blue-green testnet deploys** via `scripts/deploy_staging.sh` (deploy → verify → promote)
 - **On-chain events** — documented schemas matched exactly by the frontend parser
 - **Optimized WASM** — `opt-level = "z"`, LTO, panic = abort, stripped symbols
@@ -188,9 +188,9 @@ Noether consists of six Soroban smart contracts on Stellar, a Next.js trading fr
                           ▼                                    ▼
                 ┌──────────────────┐                ┌──────────────────────┐
                 │   Keeper Bot     │                │      Indexer         │
-                │    (Railway)     │                │     (Railway)        │
-                │ Oracle / Liq /   │                │  decode → libSQL     │
-                │ Orders / Funding │                │      / Supabase      │
+                │     (Azure)      │                │      (Azure)         │
+                │ Oracle / Liq /   │                │  decode → Postgres   │
+                │ Orders / Funding │                │   (Azure Postgres)   │
                 └──────────────────┘                └──────────┬───────────┘
                                                                │
                                                                ▼
@@ -198,7 +198,7 @@ Noether consists of six Soroban smart contracts on Stellar, a Next.js trading fr
                                                     │     API Gateway      │
                                                     │  Fastify REST + WS   │
                                                     │    (closed beta)     │
-                                                    │      (Railway)       │
+                                                    │       (Azure)        │
                                                     └──────────┬───────────┘
                                                                │
                               ┌────────────────────────────────┼────────────────────┐
@@ -568,12 +568,12 @@ Node.js · TypeScript · `@stellar/stellar-sdk` · publishes Ed25519-signed Noer
 ### API Gateway (Tranche 2)
 [![Node.js][node-shield]][node-url] [![TypeScript][typescript-shield]][typescript-url]
 
-[Fastify](https://fastify.dev/) · `@fastify/swagger` (OpenAPI at `/docs`) · `@fastify/websocket` · Postgres (Supabase) via `@noether/db` · HMAC-peppered bearer keys · tiered rate limiting · vitest · Dockerised for Railway.
+[Fastify](https://fastify.dev/) · `@fastify/swagger` (OpenAPI at `/docs`) · `@fastify/websocket` · Postgres (Azure) via `@noether/db` · HMAC-peppered bearer keys · tiered rate limiting · vitest · Dockerised for Azure Container Apps.
 
 ### Indexer (Tranche 2)
 [![Node.js][node-shield]][node-url] [![TypeScript][typescript-shield]][typescript-url]
 
-Soroban `getEvents` polling · per-contract decoders → Postgres (Supabase) projections · persistent ledger cursor · vitest · Dockerised for Railway.
+Soroban `getEvents` polling · per-contract decoders → Postgres (Azure) projections · persistent ledger cursor · vitest · Dockerised for Azure Container Apps.
 
 ### SDKs (Tranche 2)
 
@@ -582,7 +582,7 @@ Soroban `getEvents` polling · per-contract decoders → Postgres (Supabase) pro
 
 ### Infrastructure
 
-Vercel (frontend) · Railway (keeper + api + indexer) · Stellar Testnet (RPC + Horizon) · Supabase (managed Postgres).
+Azure Container Apps (web, api, indexer, keepers) · Azure Database for PostgreSQL · Stellar Testnet (RPC + Horizon).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -592,7 +592,7 @@ Vercel (frontend) · Railway (keeper + api + indexer) · Stellar Testnet (RPC + 
 
 Current testnet deployment (**2026-07-06**) — canonical source is
 [`contracts.json`](./contracts.json). A running gateway echoes the addresses it
-actually serves at [`GET /v1/health`](https://noetherapi-production.up.railway.app/v1/health),
+actually serves at [`GET /v1/health`](https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/health),
 and the always-current table lives at
 [docs.noether.exchange/protocol/contracts](https://docs.noether.exchange/protocol/contracts):
 
@@ -780,8 +780,8 @@ npx tsx web/scripts/referral-set-min-volume.ts      # set on-chain min_code_volu
 > `setup_and_deploy.sh`) are retired under [`scripts/legacy/`](./scripts/legacy/)
 > behind exit guards — they predate the Noeracle cutover.
 
-Addresses are written to `contracts.json` automatically. Update `.env`, Vercel,
-and Railway env vars (keeper + api + indexer) manually so they match.
+Addresses are written to `contracts.json` automatically. Update `.env` and the
+Azure container app env vars (web, api, indexer, keepers) manually so they match.
 
 ### Environment Variables
 
