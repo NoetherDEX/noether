@@ -1177,9 +1177,16 @@ export async function cancelOrder(
  */
 export async function getOrders(traderPublicKey: string): Promise<Order[]> {
   try {
-    const allIds = await getAllOrderIds(traderPublicKey, true);
-    const orders: Order[] = [];
+    let allIds: number[];
+    try {
+      allIds = await getAllOrderIds(traderPublicKey, true);
+    } catch {
+      // Upgraded market: the id view is gone. Walk the ledger instead —
+      // it returns whole rows, so no per-id read is needed after it.
+      return (await walkPendingOrders()).filter((o) => o.trader === traderPublicKey);
+    }
 
+    const orders: Order[] = [];
     for (const id of allIds) {
       try {
         const order = await getOrderById(traderPublicKey, id);
@@ -1197,6 +1204,61 @@ export async function getOrders(traderPublicKey: string): Promise<Order[]> {
     // Propagate: failure must stay distinguishable from "no orders".
     throw error instanceof Error ? error : new Error('Failed to fetch orders');
   }
+}
+
+/**
+ * How far back the ledger walk looks when the market has no order-id view.
+ * Orders are status-updated rather than deleted, so ids accumulate; a
+ * pending order older than this many ids behind the newest is not reachable
+ * this way. The bound keeps a browser read to a couple of batched requests.
+ */
+const ORDER_WALK_BOUND = 600;
+
+/**
+ * Read pending orders straight from ledger storage, no view function.
+ *
+ * The Phase 4 counter upgrade deletes get_all_order_ids along with the
+ * AllOrders Vec it read, so on an upgraded market this walk IS the chain
+ * path: read OrderCounter, then batch-read Order(id) entries down from it
+ * and keep the ones still Pending. Each entry carries the whole Order, so
+ * this returns full rows without the per-id simulate the old path paid.
+ * Mirrors the keeper's discovery walk — same unit/tuple DataKey encoding.
+ */
+async function walkPendingOrders(): Promise<Order[]> {
+  const contract = Address.fromString(CONTRACTS.MARKET).toScAddress();
+  const ledgerKey = (key: xdr.ScVal) =>
+    xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract,
+        key,
+        durability: xdr.ContractDataDurability.persistent(),
+      }),
+    );
+  const counterKey = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('OrderCounter')]);
+
+  const counterRes = await sorobanRpc.getLedgerEntries(ledgerKey(counterKey));
+  const counterEntry = counterRes.entries?.[0];
+  if (!counterEntry) return []; // no orders have ever been placed
+  const counter = Number(scValToNative(counterEntry.val.contractData().val()));
+  if (!Number.isFinite(counter) || counter < 1) return [];
+
+  const lowest = Math.max(1, counter - ORDER_WALK_BOUND + 1);
+  const keys: xdr.ScVal[] = [];
+  for (let id = lowest; id <= counter; id++) {
+    keys.push(xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Order'), toScVal(id, 'u64')]));
+  }
+
+  const orders: Order[] = [];
+  for (let start = 0; start < keys.length; start += 200) {
+    const batch = keys.slice(start, start + 200).map(ledgerKey);
+    const res = await sorobanRpc.getLedgerEntries(...batch);
+    for (const entry of res.entries ?? []) {
+      const raw = scValToNative(entry.val.contractData().val()) as RawOrder | null;
+      // Terminal statuses keep their row; only Pending is a live order.
+      if (raw && Number(raw.status) === 0) orders.push(parseOrder(raw));
+    }
+  }
+  return orders;
 }
 
 /**
@@ -1275,7 +1337,12 @@ export async function getOrdersByIds(source: string, orderIds: number[]): Promis
  */
 export async function getAllPendingOrders(publicKey: string): Promise<Order[]> {
   try {
-    const orderIds = await getAllOrderIds(publicKey);
+    let orderIds: number[];
+    try {
+      orderIds = await getAllOrderIds(publicKey, true);
+    } catch {
+      return await walkPendingOrders(); // upgraded market — see getOrders
+    }
     debugLog('[DEBUG] All order IDs:', orderIds);
 
     if (orderIds.length === 0) return [];
