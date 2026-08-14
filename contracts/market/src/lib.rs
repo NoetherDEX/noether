@@ -528,8 +528,9 @@ impl MarketContract {
             // liquidation cannot lever up further.
             let existing_cross_positions = get_cross_margin_position_ids(&env, &trader);
             if !existing_cross_positions.is_empty() {
-                // On oracle failure → 0 → aggregate values the leg at -size,
-                // so a dead feed blocks the (risk-increasing) open (theme 2).
+                // Same refuse-on-unreadable rule as withdraw: an open adds
+                // risk, and the -size floor under-covers dead-feed SHORTS.
+                Self::require_cross_legs_readable(&env, &trader)?;
                 let get_price = |asset: &Symbol| -> i128 {
                     Self::get_oracle_price(&env, asset, false).unwrap_or(0)
                 };
@@ -1239,9 +1240,13 @@ impl MarketContract {
             };
             let (mut cum, prev_rate, last_ts) = get_funding_state(&env, &asset);
 
-            // First touch: seed last_ts so the window starts here.
+            // First touch: seed last_ts so the window starts here, and reset
+            // the skew integral to the same instant so its accumulation can
+            // never span more than the funding window it will be averaged
+            // over (trades can predate the seed on a fresh asset).
             if last_ts == 0 {
                 set_funding_state(&env, &asset, &(cum, prev_rate, now));
+                set_skew_integral(&env, &asset, &(0, now));
                 progressed = true;
                 continue;
             }
@@ -1253,7 +1258,7 @@ impl MarketContract {
             // velocity (dt_eff caps the STEP). The average skew is still
             // fair over the real window; a keeper outage under-accrues.
             let dt_eff = if now - last_ts > 3600 { 3600 } else { now - last_ts };
-            let avg_skew = Self::close_skew_window(&env, &asset, now);
+            let avg_skew = Self::close_skew_window(&env, &asset, now, last_ts);
 
             // SIP-279 velocity (PRECISION-scaled bps) → fraction-units, then
             // clamp the RATE (not the step) to ±funding_clamp_bps/h.
@@ -1351,6 +1356,24 @@ impl MarketContract {
         Ok(())
     }
 
+    /// Refuse-on-incomplete-information gate for risk-increasing cross
+    /// actions (withdraw and open free-margin checks). The aggregate's
+    /// -size fallback is a true worst case for LONGS only — a short's loss
+    /// is unbounded, so during a feed outage the floor can OVERSTATE a
+    /// short-heavy account's equity and let it free margin its real losses
+    /// no longer cover. Every leg's price must be readable before the
+    /// free-margin math runs; the -size fallback stays behind this gate as
+    /// defense in depth. Liquidation keeps its own refuse logic.
+    fn require_cross_legs_readable(env: &Env, trader: &Address) -> Result<(), NoetherError> {
+        let ids = get_cross_margin_position_ids(env, trader);
+        for i in 0..ids.len() {
+            if let Some(pos) = get_position(env, ids.get(i).unwrap()) {
+                Self::get_oracle_price(env, &pos.asset, false)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Accrue the skew integral for the window since the last touch, using
     /// the skew that held over it (L0-13). Called by adjust_oi before every
     /// exposure mutation.
@@ -1365,23 +1388,29 @@ impl MarketContract {
         set_skew_integral(env, asset, &(integral + skew_now * dt, now));
     }
 
-    /// Close the skew window: fold the final sub-interval and return the
-    /// time-weighted average skew over the integral's OWN window
-    /// [last_touch → now] (NOT dt_eff — dividing by dt_eff would inflate a
-    /// multi-hour window's average). Resets the integral. Falls back to the
-    /// instantaneous skew when the window is empty (fresh deploy first hour).
-    fn close_skew_window(env: &Env, asset: &Symbol, now: u64) -> i128 {
+    /// Close the skew window: fold the final untraded slice and return the
+    /// time-weighted average skew over the WHOLE funding window
+    /// [window_start → now]. The integral has been accumulating since the
+    /// previous funding tick reset it, with per-trade segments folded in by
+    /// accrue_skew_integral — so the divisor must be the full window. The
+    /// old code divided by the slice since the LAST TRADE, which inflated
+    /// |avg| by window/slice (a trade one second before the tick: ~3600x,
+    /// contained only by the velocity and rate clamps) and a trade sharing
+    /// the tick's timestamp zeroed the divisor and discarded the window
+    /// entirely. Resets the integral. Falls back to the instantaneous skew
+    /// on a fresh or degenerate window.
+    fn close_skew_window(env: &Env, asset: &Symbol, now: u64, window_start: u64) -> i128 {
         let (lk, ls, sk, ss) = get_asset_exposure(env, asset);
         let _ = (lk, sk);
         let inst = ls - ss;
         let (integral, last) = get_skew_integral(env, asset);
         set_skew_integral(env, asset, &(0, now));
-        let window = if last == 0 { 0 } else { (now - last) as i128 };
-        if window == 0 {
+        if last == 0 || window_start == 0 || now <= window_start {
             return inst;
         }
-        let total = integral + inst * window;
-        total / window
+        let tail = now.saturating_sub(last) as i128;
+        let window = (now - window_start) as i128;
+        (integral + inst * tail) / window
     }
 
     // get_funding_rate removed - use get_market_stats().funding_rate instead
@@ -1607,11 +1636,12 @@ impl MarketContract {
         let position_ids = get_cross_margin_position_ids(&env, &trader);
 
         if !position_ids.is_empty() {
-            // Calculate equity AFTER withdrawal. On oracle failure the closure
-            // returns 0, which aggregate_cross_positions treats as a -size
-            // (deep-loss) leg — understating equity so a dead feed can only
-            // BLOCK the withdrawal, never enable it. (Pre-fix this understated
-            // longs but fabricated +size profit for shorts; audit theme 2.)
+            // A withdraw frees margin, so every leg's price must be READABLE:
+            // the -size floor below is a worst case for longs only, and a
+            // short's unbounded loss could exceed it during a feed outage.
+            Self::require_cross_legs_readable(&env, &trader)?;
+            // Calculate equity AFTER withdrawal. The closure's 0-on-failure →
+            // -size treatment stays as defense in depth behind the gate.
             let get_price = |asset: &Symbol| -> i128 {
                 Self::get_oracle_price(&env, asset, false).unwrap_or(0)
             };
@@ -7338,7 +7368,7 @@ mod tests {
         oracle.set_price(&xlm, &0);
         assert!(matches!(
             test.market.try_withdraw_cross_margin(&trader, &(5 * PRECISION)),
-            Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
+            Err(Ok(NoetherError::InvalidPrice))
         ));
     }
 
@@ -7364,7 +7394,7 @@ mod tests {
         oracle.set_price(&xlm, &0);
         assert!(matches!(
             test.market.try_withdraw_cross_margin(&trader, &(5 * PRECISION)),
-            Err(Ok(NoetherError::CrossMarginInsufficientFreeMargin))
+            Err(Ok(NoetherError::InvalidPrice))
         ));
     }
 
@@ -8647,6 +8677,69 @@ mod tests {
     enum LegacyIndexKey {
         AllPositions,
         AllOrders,
+    }
+
+    /// One funding window on XLM with a $10k base long held throughout, an
+    /// optional late touch (extra open `secs_before_tick` before the tick),
+    /// and the cumulative index read back through a probe open.
+    fn skew_window_cum(late: Option<(u64, i128, u32)>) -> i128 {
+        let test = setup();
+        let xlm = Symbol::new(&test.env, "XLM");
+        test.market.set_asset_risk(&xlm, &AssetRiskParams {
+            max_leverage: 10, im_bps: 1_000, mm_bps: 500, close_out_bps: 333,
+            max_position_size: 100_000 * PRECISION,
+            max_funding_velocity_bps: 3_600, funding_clamp_bps: 50,
+            skew_scale: 200_000 * PRECISION,
+        });
+        let vault = vault::Client::new(&test.env, &test.vault_id);
+        vault.set_skew_cap(&xlm, &10_000);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        let base = fund_trader(&test, 2_000 * PRECISION);
+        test.market.open_position(&base, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0);
+        test.market.apply_funding(); // seed: window opens, integral resets
+
+        let gap = late.map(|(s, _, _)| s).unwrap_or(0);
+        test.env.ledger().with_mut(|li| li.timestamp += 3_600 - gap);
+        oracle.set_price(&xlm, &(PRECISION / 10));
+        if let Some((_, collateral, lev)) = late {
+            let toucher = fund_trader(&test, 2_000 * PRECISION);
+            test.market.open_position(&toucher, &xlm, &(collateral * PRECISION), &lev, &Direction::Long, &0);
+            if gap > 0 {
+                test.env.ledger().with_mut(|li| li.timestamp += gap);
+                oracle.set_price(&xlm, &(PRECISION / 10));
+            }
+        }
+        test.market.apply_funding(); // tick: close the window
+
+        let probe = fund_trader(&test, 100 * PRECISION);
+        let p = test.market.open_position(&probe, &xlm, &(10 * PRECISION), &2, &Direction::Long, &0);
+        p.entry_cumulative_funding
+    }
+
+    #[test]
+    fn test_skew_average_weights_trades_across_the_whole_window() {
+        // A tiny $20 open one second before the tick barely moves the true
+        // time-weighted average, so funding must match the trade-free window
+        // almost exactly. The old close divided the FULL window's integral by
+        // that one-second slice, inflating |avg| ~3600x and slamming the rate
+        // into the clamp on every window that contained a trade.
+        let quiet = skew_window_cum(None);
+        let touched = skew_window_cum(Some((1, 10, 2)));
+        let clamp_ceiling = 50_000; // 0.5%/h in fraction-units
+        assert!(quiet > 0 && quiet < clamp_ceiling, "base window under the clamp");
+        assert!(touched < clamp_ceiling, "late touch must not saturate the clamp");
+        assert!((touched - quiet).abs() <= 50, "a $20 second must be invisible in the average");
+    }
+
+    #[test]
+    fn test_skew_average_survives_trade_at_tick_timestamp() {
+        // A $5k open sharing the tick's ledger timestamp contributes a
+        // ZERO-length segment: the average must equal the trade-free window
+        // exactly. The old close saw a zero-width slice and discarded the
+        // whole integral for the instantaneous ($15k) skew instead.
+        let quiet = skew_window_cum(None);
+        let at_tick = skew_window_cum(Some((0, 500, 10)));
+        assert_eq!(at_tick, quiet, "zero length segment must not change the average");
     }
 
     #[test]
