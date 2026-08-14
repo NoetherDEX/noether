@@ -1304,6 +1304,9 @@ impl MarketContract {
         for (sym, _) in noether_common::assets::PAIR_TAGS {
             let asset = Symbol::new(&env, sym);
             set_funding_state(&env, &asset, &(legacy, 0, now));
+            // Window start moved: reset the skew integral with it so the
+            // integral can never span more than the window it averages over.
+            set_skew_integral(&env, &asset, &(0, now));
             env.events().publish(
                 (Symbol::new(&env, "funding_migrated"),),
                 (asset, legacy),
@@ -1368,6 +1371,11 @@ impl MarketContract {
         let ids = get_cross_margin_position_ids(env, trader);
         for i in 0..ids.len() {
             if let Some(pos) = get_position(env, ids.get(i).unwrap()) {
+                // Lenient: rejects dead (nonpositive) prints. A frozen but
+                // positive STALE print still passes — the right refinement is
+                // a freshness-only check, because a full strict read drags in
+                // the deviation veto and would freeze withdrawals on every
+                // sharp real move of any other leg. Tracked as a follow up.
                 Self::get_oracle_price(env, &pos.asset, false)?;
             }
         }
@@ -1404,10 +1412,13 @@ impl MarketContract {
         let _ = (lk, sk);
         let inst = ls - ss;
         let (integral, last) = get_skew_integral(env, asset);
-        set_skew_integral(env, asset, &(0, now));
         if last == 0 || window_start == 0 || now <= window_start {
+            // Guard BEFORE the reset: a degenerate window must not silently
+            // discard accumulated skew time it never consumed.
+            set_skew_integral(env, asset, &(0, now));
             return inst;
         }
+        set_skew_integral(env, asset, &(0, now));
         let tail = now.saturating_sub(last) as i128;
         let window = (now - window_start) as i128;
         (integral + inst * tail) / window
