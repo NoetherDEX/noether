@@ -37,7 +37,7 @@
 // Soroban order entry points legitimately exceed clippy's 7-arg heuristic
 #![allow(clippy::too_many_arguments)]
 
-use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Symbol, Vec, IntoVal};
+use soroban_sdk::{contract, contractimpl, token, Address, BytesN, Env, Map, Symbol, Vec, IntoVal};
 use noether_common::{
     NoetherError, Position, Direction, MarketConfig, AssetRiskParams,
     Order, OrderType, OrderStatus, TriggerCondition, FEE_PRECISION,
@@ -528,12 +528,10 @@ impl MarketContract {
             // liquidation cannot lever up further.
             let existing_cross_positions = get_cross_margin_position_ids(&env, &trader);
             if !existing_cross_positions.is_empty() {
-                // Same refuse-on-unreadable rule as withdraw: an open adds
-                // risk, and the -size floor under-covers dead-feed SHORTS.
-                Self::require_cross_legs_readable(&env, &trader)?;
-                let get_price = |asset: &Symbol| -> i128 {
-                    Self::get_oracle_price(&env, asset, false).unwrap_or(0)
-                };
+                // Same fresh-prices rule as withdraw: an open adds risk, and
+                // the -size floor under-covers frozen-feed SHORTS.
+                let prices = Self::collect_fresh_cross_prices(&env, &trader)?;
+                let get_price = |asset: &Symbol| -> i128 { prices.get(asset.clone()).unwrap_or(0) };
                 let equity = position::calculate_cross_equity(&env, &trader, &get_price);
                 // L1-5: gate on INITIAL margin. The new position's own IM
                 // equals its collateral (size/leverage == collateral), so this
@@ -1359,27 +1357,43 @@ impl MarketContract {
         Ok(())
     }
 
-    /// Refuse-on-incomplete-information gate for risk-increasing cross
-    /// actions (withdraw and open free-margin checks). The aggregate's
-    /// -size fallback is a true worst case for LONGS only — a short's loss
-    /// is unbounded, so during a feed outage the floor can OVERSTATE a
-    /// short-heavy account's equity and let it free margin its real losses
-    /// no longer cover. Every leg's price must be readable before the
-    /// free-margin math runs; the -size fallback stays behind this gate as
-    /// defense in depth. Liquidation keeps its own refuse logic.
-    fn require_cross_legs_readable(env: &Env, trader: &Address) -> Result<(), NoetherError> {
+    /// FRESH prices for every asset a trader's cross book touches, deduped,
+    /// read once. The gate for risk-increasing cross actions (withdraw and
+    /// open free-margin checks): a dead print refuses with InvalidPrice and
+    /// a stale one with PriceStale — freshness ONLY, deliberately without
+    /// the deviation veto, which judges the traded asset's entry price and
+    /// would freeze withdrawals on every sharp real move of any other leg.
+    /// Rationale: the aggregate's -size fallback is a true worst case for
+    /// LONGS only — a short's loss is unbounded, so a frozen feed could
+    /// overstate a short-heavy account's equity and let it free margin its
+    /// real losses no longer cover. The returned map feeds the equity
+    /// closure directly, so each asset costs ONE shim invoke instead of one
+    /// per gate pass plus one per leg. Liquidation keeps its own lenient
+    /// refuse logic — it must keep working on stale-clamped prices.
+    fn collect_fresh_cross_prices(
+        env: &Env,
+        trader: &Address,
+    ) -> Result<Map<Symbol, i128>, NoetherError> {
+        let staleness = get_config(env).max_price_staleness;
+        let now = env.ledger().timestamp();
         let ids = get_cross_margin_position_ids(env, trader);
+        let mut prices: Map<Symbol, i128> = Map::new(env);
         for i in 0..ids.len() {
             if let Some(pos) = get_position(env, ids.get(i).unwrap()) {
-                // Lenient: rejects dead (nonpositive) prints. A frozen but
-                // positive STALE print still passes — the right refinement is
-                // a freshness-only check, because a full strict read drags in
-                // the deviation veto and would freeze withdrawals on every
-                // sharp real move of any other leg. Tracked as a follow up.
-                Self::get_oracle_price(env, &pos.asset, false)?;
+                if prices.contains_key(pos.asset.clone()) {
+                    continue;
+                }
+                let (price, timestamp) = Self::read_price_raw(env, &pos.asset);
+                if price <= 0 {
+                    return Err(NoetherError::InvalidPrice);
+                }
+                if now > timestamp && now - timestamp > staleness {
+                    return Err(NoetherError::PriceStale);
+                }
+                prices.set(pos.asset.clone(), price);
             }
         }
-        Ok(())
+        Ok(prices)
     }
 
     /// Accrue the skew integral for the window since the last touch, using
@@ -1647,15 +1661,13 @@ impl MarketContract {
         let position_ids = get_cross_margin_position_ids(&env, &trader);
 
         if !position_ids.is_empty() {
-            // A withdraw frees margin, so every leg's price must be READABLE:
-            // the -size floor below is a worst case for longs only, and a
-            // short's unbounded loss could exceed it during a feed outage.
-            Self::require_cross_legs_readable(&env, &trader)?;
-            // Calculate equity AFTER withdrawal. The closure's 0-on-failure →
-            // -size treatment stays as defense in depth behind the gate.
-            let get_price = |asset: &Symbol| -> i128 {
-                Self::get_oracle_price(&env, asset, false).unwrap_or(0)
-            };
+            // A withdraw frees margin, so every leg needs a FRESH price: the
+            // -size floor behind the closure is a worst case for longs only,
+            // and a short's unbounded loss could exceed it while a feed is
+            // frozen. The collected map also means zero extra shim invokes
+            // inside the equity aggregation.
+            let prices = Self::collect_fresh_cross_prices(&env, &trader)?;
+            let get_price = |asset: &Symbol| -> i128 { prices.get(asset.clone()).unwrap_or(0) };
             let equity_before = position::calculate_cross_equity(&env, &trader, &get_price);
             let equity_after = equity_before - amount;
             // L1-5: gate on INITIAL margin (Σ size/leverage), not maintenance.
@@ -1896,9 +1908,12 @@ impl MarketContract {
         let scan_ids = get_cross_margin_position_ids(&env, &trader);
         for i in 0..scan_ids.len() {
             if let Some(pos) = get_position(&env, scan_ids.get(i).unwrap()) {
-                match Self::get_oracle_price(&env, &pos.asset, false) {
-                    Ok(p) if p > 0 => {}
-                    _ => return Err(NoetherError::CrossMarginNotLiquidatable),
+                // Lenient on purpose (unlike the withdraw/open freshness
+                // gate): liquidation must keep working on stale-clamped
+                // prices. get_oracle_price already rejects nonpositive
+                // prints, so is_err() is the whole readability test.
+                if Self::get_oracle_price(&env, &pos.asset, false).is_err() {
+                    return Err(NoetherError::CrossMarginNotLiquidatable);
                 }
             }
         }
@@ -3282,14 +3297,17 @@ impl MarketContract {
     /// The band is skipped when the last-good price is older than
     /// 10x the staleness window (nothing traded for a while — a large
     /// legitimate move must not brick the market).
-    fn get_oracle_price(env: &Env, asset: &Symbol, strict: bool) -> Result<i128, NoetherError> {
+    /// Raw shim read: (price, timestamp) exactly as the oracle reports them.
+    /// No validation, no staleness handling, no last-good writes — callers
+    /// own the policy.
+    fn read_price_raw(env: &Env, asset: &Symbol) -> (i128, u64) {
         let oracle_address = get_oracle_adapter(env);
         let args: Vec<soroban_sdk::Val> = (asset.clone(),).into_val(env);
-        let (price, timestamp): (i128, u64) = env.invoke_contract(
-            &oracle_address,
-            &Symbol::new(env, "lastprice"),
-            args,
-        );
+        env.invoke_contract(&oracle_address, &Symbol::new(env, "lastprice"), args)
+    }
+
+    fn get_oracle_price(env: &Env, asset: &Symbol, strict: bool) -> Result<i128, NoetherError> {
+        let (price, timestamp) = Self::read_price_raw(env, asset);
 
         if price <= 0 {
             return Err(NoetherError::InvalidPrice);
@@ -8567,6 +8585,34 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════
     // Open-count checksums (Phase 4)
     // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_stale_price_blocks_cross_withdraw_allows_close() {
+        // The realistic feed outage is a FROZEN but positive print. A short
+        // heavy cross account must not free margin against it (PriceStale),
+        // while closing — a risk reducing action on the lenient clamped
+        // path — keeps working. One sided by design.
+        let test = setup();
+        let trader = fund_trader(&test, 10_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+
+        test.market.deposit_cross_margin(&trader, &(200 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &trader, &xlm, &(100 * PRECISION), &5, &Direction::Short, &0,
+        );
+
+        // Freeze the feed: time passes, no price update lands.
+        test.env.ledger().with_mut(|li| li.timestamp += 120);
+
+        assert!(matches!(
+            test.market.try_withdraw_cross_margin(&trader, &(5 * PRECISION)),
+            Err(Ok(NoetherError::PriceStale))
+        ));
+
+        // De-risking still works on the stale clamped path.
+        test.market.close_position_cross(&trader, &pos.id, &0);
+        assert!(test.market.get_position(&pos.id).is_none());
+    }
 
     #[test]
     fn test_seed_open_counts_latch() {
