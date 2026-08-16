@@ -27,12 +27,17 @@ describe('rate limiter', () => {
     const setup = await setupTestServer();
     app = setup.app;
     // Force the bucket past the limit by directly inserting a high count.
+    // Seed the CURRENT and the NEXT minute window: on a slow runner the
+    // request can land after the boundary rolls, and a fresh window read as
+    // "no bucket yet" made this test flake 200-instead-of-429.
     const nowSec = Math.floor(Date.now() / 1000);
     const window = nowSec - (nowSec % 60);
-    await setup.db.execute({
-      sql: `INSERT INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?) ON CONFLICT (key_id, window_start) DO UPDATE SET count = EXCLUDED.count`,
-      args: [`ip:127.0.0.1`, window, RATE_LIMIT_TIERS.public.perMinute + 1],
-    });
+    for (const w of [window, window + 60]) {
+      await setup.db.execute({
+        sql: `INSERT INTO rate_limit_buckets (key_id, window_start, count) VALUES (?, ?, ?) ON CONFLICT (key_id, window_start) DO UPDATE SET count = EXCLUDED.count`,
+        args: [`ip:127.0.0.1`, w, RATE_LIMIT_TIERS.public.perMinute + 1],
+      });
+    }
     const res = await app.inject({ method: 'GET', url: '/v1/markets' });
     expect(res.statusCode).toBe(429);
     expect(res.headers['retry-after']).toBeDefined();
