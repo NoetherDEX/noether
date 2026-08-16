@@ -1,10 +1,14 @@
 # Tranche 2 — Implementation Status
 
-This document tracks deliverable-level completion at the close of the
+**STATUS 2026-08-16: EVERY DELIVERABLE COMPLETE, INCLUDING ALL OPERATOR
+STEPS.** Both SDKs are published (npm and PyPI, 0.1.2), and the on chain
+referral discount hook is live and configured on both markets — it shipped
+through the market's in place upgrade path, so no redeploy was ever needed.
+The sections below are the historical deliverable breakdown.
+
+This document tracked deliverable-level completion at the close of the
 local build session. All artifacts are reviewed by typecheck + unit
-tests; deployment-time work (testnet contract redeploys, GitHub
-branch protection rules, npm/PyPI publishing) remains for the human
-operator.
+tests.
 
 ## Deliverable Status
 

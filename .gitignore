@@ -128,3 +128,8 @@ KNOWN_ISSUES.md
 /docs/plans/operator/L0-18-audit-bank-form-answers.md
 /docs/security/scout-disposition-2026-07-19.md
 /docs/security/scout-report-2026-07-19.md
+
+# Local agent tooling noise
+.agents/
+noeracle_events.json
+skills-lock.json

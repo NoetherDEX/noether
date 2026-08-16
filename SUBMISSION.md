@@ -8,7 +8,7 @@ one entry, click two links, and verify everything end-to-end.
 > - Frontend: <https://noether.exchange>
 > - API gateway: <https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io>
 > - Repository: <https://github.com/NoetherDEX/noether>
-> - Stellar Expert (vault_factory): <https://stellar.expert/explorer/testnet/contract/CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA>
+> - Stellar Expert (vault_factory): <https://stellar.expert/explorer/testnet/contract/CAG5E6IM32GFEXGZOXWLFHNVRMDOYGPRZKZSBFXXHVJ5Q5MNJUSNQKT7>
 
 ---
 
@@ -140,9 +140,9 @@ Connecting subscribes you to live BTC oracle ticks within the same
 
 | Field | Value |
 |---|---|
-| Contract ID | `CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA` |
+| Contract ID | `CAG5E6IM32GFEXGZOXWLFHNVRMDOYGPRZKZSBFXXHVJ5Q5MNJUSNQKT7` |
 | Network | Stellar Testnet |
-| Stellar Expert | <https://stellar.expert/explorer/testnet/contract/CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA> |
+| Stellar Expert | <https://stellar.expert/explorer/testnet/contract/CAG5E6IM32GFEXGZOXWLFHNVRMDOYGPRZKZSBFXXHVJ5Q5MNJUSNQKT7> |
 | Source | [`contracts/vault_factory`](https://github.com/NoetherDEX/noether/tree/main/contracts/vault_factory) |
 | Init signature | `initialize(admin, market, usdc)` |
 | Public view fns | `vault_count() -> u32`, `view_vault(id) -> VaultInfo`, `shares_of(id, addr)` |
@@ -152,7 +152,7 @@ Reproduce the read functions directly via Soroban RPC:
 ```bash
 stellar contract invoke \
   --network testnet \
-  --id CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA \
+  --id CAG5E6IM32GFEXGZOXWLFHNVRMDOYGPRZKZSBFXXHVJ5Q5MNJUSNQKT7 \
   -- vault_count
 ```
 
@@ -228,8 +228,8 @@ Source: [`web/lib/stellar/walletKit.ts`](https://github.com/NoetherDEX/noether/b
 
 | Field | Value |
 |---|---|
-| Contract ID | `CAGZXABWTJN6FU7TMCIWL3RH7EC6K4CQLLZJWUFN3CD7YHVDYWJCIG3O` |
-| Stellar Expert | <https://stellar.expert/explorer/testnet/contract/CAGZXABWTJN6FU7TMCIWL3RH7EC6K4CQLLZJWUFN3CD7YHVDYWJCIG3O> |
+| Contract ID | `CB4A2OHP6BKKF2RC532PPRE7K4X3UOZEVASEQTTTWMRSZGUN2AV2REND` |
+| Stellar Expert | <https://stellar.expert/explorer/testnet/contract/CB4A2OHP6BKKF2RC532PPRE7K4X3UOZEVASEQTTTWMRSZGUN2AV2REND> |
 
 Frontend: <https://noether.exchange/referrals>
 
@@ -265,7 +265,7 @@ open https://noether.exchange/vaults/0   # any deployed vault id
 curl -s https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/vaults | jq
 
 # 5. Vault factory on-chain
-open https://stellar.expert/explorer/testnet/contract/CCEQJKB3WVADOSCLCMFXL3VBZ4RKYEGFCG4SJVPERLFEWSIFMIWROLZA
+open https://stellar.expert/explorer/testnet/contract/CAG5E6IM32GFEXGZOXWLFHNVRMDOYGPRZKZSBFXXHVJ5Q5MNJUSNQKT7
 ```
 
 All four feedback items are now reproducible, linkable, and visible

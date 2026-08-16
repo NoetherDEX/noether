@@ -590,23 +590,25 @@ Azure Container Apps (web, api, indexer, keepers) · Azure Database for PostgreS
 
 ## Contract Addresses
 
-Current testnet deployment (**2026-07-06**) — canonical source is
-[`contracts.json`](./contracts.json). A running gateway echoes the addresses it
-actually serves at [`GET /v1/health`](https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/health),
+Current testnet deployment: the **Batch-1 stack, deployed 2026-07-21** and
+upgraded in place since — addresses are stable across code upgrades because
+the market swaps WASM via `upgrade()` rather than redeploying. Canonical
+source is [`contracts.json`](./contracts.json). A running gateway echoes the
+addresses it actually serves at [`GET /v1/health`](https://noether-api.proudmeadow-533cf0d8.germanywestcentral.azurecontainerapps.io/v1/health),
 and the always-current table lives at
 [docs.noether.exchange/protocol/contracts](https://docs.noether.exchange/protocol/contracts):
 
 | Contract | Address |
 |----------|---------|
-| **Market** | `CAE3U7JKESRWZHPEQ72DVNGOQ6WPA7HSPQZL5YV46NPCE4TMUPAGYMEC` |
-| **Vault** | `CBLVZZ557ALB342GBQIMC2E3IYXJ5AEL7XSVMPX36CVLKRDQGDH22UL6` |
-| **Noether Router** (verify-then-trade) | `CDH4CY3XMUZ7H73LC3WJYR3AG56U4MTIBMR2WHNORXDTWLLBOQII44S4` |
-| **Noeracle Shim** | `CBY4YLPYEN5GMV4JMVZGCSU433SO5JTEGCS66GIT3EZOUG2CN2TWT6UK` |
-| **Noeracle** (signed price source) | `CAYIP67UDVX5UPXGN3XDAWVIEFBAVG6G7LUESEOU3NUQKTWN55W34YBG` |
-| **Vault Factory** (T2) | `CAZPVI2PLDQJGDDGULG7FSVNYO3B7BTWTTK5OWVH5SSWN7SJ4ZCBTVP5` |
-| **Referral** (T2) | `CCV5NWLGQTCRFFOTHJDQVFOOLAEUPQTWMPTNNHR2EU64BULV77W5GXEE` |
+| **Market** | `CBHHWFAYLB3SXJCE232DC6WNSK74IBEOROAGCI2AFBA2H5NQOH2KYKNN` |
+| **Vault** | `CBSWA5P75NGV2LP5KOY7A7LOAX2CENI5OYBSJ5IVLHENKQJF2I3ZBSYE` |
+| **Noether Router** (verify-then-trade) | `CBDVQKYEN6QMRGQZC77DFYEQXQHDMCVJ3TPBJKNERJVMIESA6GQT44LG` |
+| **Noeracle Shim** | `CDRQJDCZ2EKIVAM6D6U2YFTE7VNMN3TFUUJGZ5SKAFB5TCLMSHSSWU6N` |
+| **Noeracle** (signed price source) | `CBTO5K2NLG2KYHQDL5ME4SWFQ5GRR7GVU4DFATOXGVS3OUJJDFF2YYNS` |
+| **Vault Factory** (T2) | `CAG5E6IM32GFEXGZOXWLFHNVRMDOYGPRZKZSBFXXHVJ5Q5MNJUSNQKT7` |
+| **Referral** (T2) | `CB4A2OHP6BKKF2RC532PPRE7K4X3UOZEVASEQTTTWMRSZGUN2AV2REND` |
 | **USDC Token** | `CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4` |
-| **NOE Token** | `CD7VRBXIDYP2C2F2AZZL242GY4PRDVDH2BG3LAN2ASXYUXCPHWQJTDP5` |
+| **NOE Token** | `CADEAZ3TT5SIGJVBIWMMWC4TFZKPKGPGGJ6O4JGAAZTLR6MIBDRBQ4H5` |
 | **Admin** | `GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN` |
 
 **NOE asset:** code `NOE`, issuer = Admin address. Addresses rotate on testnet
@@ -771,14 +773,12 @@ npm test
 ./scripts/deploy_noether_router.sh
 
 # Tranche 2 contracts
-npx tsx web/scripts/deploy-tranche2.ts              # vault_factory + referral
-npx tsx web/scripts/deploy-vault-factory-only.ts    # vault_factory alone
 npx tsx web/scripts/referral-set-min-volume.ts      # set on-chain min_code_volume
 ```
 
-> The older one-shot scripts (`market.sh`, `vault.sh`, `deploy_testnet.sh`,
-> `setup_and_deploy.sh`) are retired under [`scripts/legacy/`](./scripts/legacy/)
-> behind exit guards — they predate the Noeracle cutover.
+> One-shot deploy and repair scripts from earlier stack generations were
+> removed once their work shipped — git history keeps them if archaeology
+> is ever needed.
 
 Addresses are written to `contracts.json` automatically. Update `.env` and the
 Azure container app env vars (web, api, indexer, keepers) manually so they match.

@@ -30,7 +30,7 @@ issues are in scope and gate mainnet.
 
 Out of scope: findings requiring a compromised user device or wallet; social
 engineering; spam/DoS of the public testnet RPC; anything already listed as a
-known issue in `docs/AUDIT-2026-06.md` or `TASKS.md` (e.g. the pre-hardening
+known issue in `docs/AUDIT-2026-06.md` (e.g. the pre-hardening
 Noeracle write path, O-1 — being fixed).
 
 ## Rewards (interim policy, pre-audit)
