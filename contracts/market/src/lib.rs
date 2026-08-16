@@ -1387,6 +1387,14 @@ impl MarketContract {
                 if price <= 0 {
                     return Err(NoetherError::InvalidPrice);
                 }
+                // Freshness is bounded on BOTH sides: a stamp ahead of ledger
+                // time would otherwise read as fresh forever, letting a
+                // misconfigured or hostile publisher freeze a price by
+                // stamping it in the future — the exact hole this gate
+                // exists to close. Mirrors the router's Stork skew bound.
+                if timestamp > now + 60 {
+                    return Err(NoetherError::PriceStale);
+                }
                 if now > timestamp && now - timestamp > staleness {
                     return Err(NoetherError::PriceStale);
                 }
@@ -3287,16 +3295,6 @@ impl MarketContract {
         margin < pos.size * (mm_bps as i128) / (BASIS_POINTS as i128)
     }
 
-    /// Fetch price from the oracle adapter.
-    ///
-    /// `strict` is set on risk-INCREASING paths (opens, trailing peaks):
-    /// they reject stale prices AND moves beyond max_oracle_deviation_bps
-    /// vs the stored last-good price. Risk-reducing paths (closes,
-    /// liquidations) pass strict=false — they are never blocked by
-    /// staleness or the deviation band (M-2 halt-open/allow-close).
-    /// The band is skipped when the last-good price is older than
-    /// 10x the staleness window (nothing traded for a while — a large
-    /// legitimate move must not brick the market).
     /// Raw shim read: (price, timestamp) exactly as the oracle reports them.
     /// No validation, no staleness handling, no last-good writes — callers
     /// own the policy.
@@ -3306,6 +3304,16 @@ impl MarketContract {
         env.invoke_contract(&oracle_address, &Symbol::new(env, "lastprice"), args)
     }
 
+    /// Fetch price from the oracle adapter, with policy.
+    ///
+    /// `strict` is set on risk-INCREASING paths (opens, trailing peaks):
+    /// they reject stale prices AND moves beyond max_oracle_deviation_bps
+    /// vs the stored last-good price. Risk-reducing paths (closes,
+    /// liquidations) pass strict=false — they are never blocked by
+    /// staleness or the deviation band (M-2 halt-open/allow-close).
+    /// The band is skipped when the last-good price is older than
+    /// 10x the staleness window (nothing traded for a while — a large
+    /// legitimate move must not brick the market).
     fn get_oracle_price(env: &Env, asset: &Symbol, strict: bool) -> Result<i128, NoetherError> {
         let (price, timestamp) = Self::read_price_raw(env, asset);
 
