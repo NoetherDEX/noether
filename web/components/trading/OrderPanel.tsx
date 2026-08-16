@@ -770,10 +770,22 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       const bal = await getCrossMarginBalance(publicKey);
       setCrossBalance(bal == null ? null : Number(bal) / 10_000_000);
     } catch (err: any) {
+      // Errors reach here PRE DECODED to prose (client.ts maps #NN through
+      // contractErrors), so match the decoded copy AND the raw #NN form —
+      // matching enum names like 'PriceStale' never fires on either surface.
       const msg = err?.message || '';
-      if (msg.includes('CrossMarginInsufficientFreeMargin')) {
+      if (
+        msg.includes('#77') ||
+        msg.includes('insufficient free margin') ||
+        msg.includes('CrossMarginInsufficientFreeMargin')
+      ) {
         toast.error('Insufficient free margin — reduce positions first');
-      } else if (msg.includes('InvalidPrice') || msg.includes('PriceStale')) {
+      } else if (
+        msg.includes('#30') ||
+        msg.includes('#31') ||
+        msg.includes('Price feed stale') ||
+        msg.includes('Invalid oracle price')
+      ) {
         // The withdraw gate refuses while ANY leg's oracle price is dead or
         // stale — retrying cannot succeed until the feed recovers, so say so
         // instead of the generic "please retry".
