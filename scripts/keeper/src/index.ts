@@ -92,7 +92,11 @@ const NOERACLE_FETCH_TIMEOUT_MS = 10_000;
 /** Delay between per-asset oracle pushes (sequence-conflict avoidance). */
 const ORACLE_INTER_ASSET_DELAY_MS = 1_500;
 /** Sync every asset's NAV at least this often even without price moves. */
-const FULL_PNL_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+// Half the market's 10x staleness band-disable window (600s), NOT equal to
+// it: at exactly 600s the last-good anchor on quiet assets routinely aged
+// past the boundary and the deviation band plus lenient clamp silently
+// switched off until the next trade refreshed it.
+const FULL_PNL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 /** NAV sync triggers when an asset moved at least this many bps since its
  *  last sync (0.1%) — most cycles sync 0-2 assets instead of all 14, which
  *  is what restores the 30s oracle push target (was ~150s effective). */
