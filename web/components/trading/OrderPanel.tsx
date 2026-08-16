@@ -773,6 +773,13 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       const msg = err?.message || '';
       if (msg.includes('CrossMarginInsufficientFreeMargin')) {
         toast.error('Insufficient free margin — reduce positions first');
+      } else if (msg.includes('InvalidPrice') || msg.includes('PriceStale')) {
+        // The withdraw gate refuses while ANY leg's oracle price is dead or
+        // stale — retrying cannot succeed until the feed recovers, so say so
+        // instead of the generic "please retry".
+        toast.error(
+          'Withdrawals are paused while an oracle feed for one of your positions is stale — closing positions still works',
+        );
       } else {
         toast.error(decodeContractError(err) || 'Failed to withdraw');
       }
