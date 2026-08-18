@@ -1,4 +1,4 @@
-import { vaultContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
+import { vaultContract, buildTransaction, simulateCallResult, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
 import type { PoolInfo } from '@/types';
 import { Contract, rpc, scValToNative } from '@stellar/stellar-sdk';
 import { NETWORK, CONTRACTS, NULL_ACCOUNT } from '@/lib/utils/constants';
@@ -9,17 +9,37 @@ import { NETWORK, CONTRACTS, NULL_ACCOUNT } from '@/lib/utils/constants';
 // read itself fails — treat false as "not confirmed", not proof of absence.
 export { hasNoeTrustline } from './trustline';
 
+// R-6: LP slippage tolerance for the on-chain min-out bounds. The contract
+// reverts (#66) instead of filling below quote − tolerance.
+const LP_SLIPPAGE_BPS = 50n; // 0.50%
+const BPS = 10_000n;
+
+function minOut(quoted: bigint): bigint {
+  return (quoted * (BPS - LP_SLIPPAGE_BPS)) / BPS;
+}
+
 /**
- * Deposit USDC and receive NOE tokens
+ * Deposit USDC and receive NOE tokens. Pre-quotes the mint via simulation
+ * and bounds the real call 0.5% below it (R-6).
  */
 export async function deposit(
   signerPublicKey: string,
   signTransaction: (xdr: string) => Promise<string>,
   amount: bigint
 ): Promise<bigint> {
+  const probeArgs = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(amount, 'i128'),
+    toScVal(0n, 'i128'),
+  ];
+  const quoted = await simulateCallResult<bigint>(
+    signerPublicKey, vaultContract, 'deposit', probeArgs
+  );
+
   const args = [
     toScVal(signerPublicKey, 'address'),
     toScVal(amount, 'i128'),
+    toScVal(minOut(quoted), 'i128'),
   ];
 
   const xdr = await buildTransaction(signerPublicKey, vaultContract, 'deposit', args);
@@ -78,9 +98,20 @@ export async function withdraw(
   signTransaction: (xdr: string) => Promise<string>,
   noeAmount: bigint
 ): Promise<bigint> {
+  // R-6: pre-quote the payout, bound the real call 0.5% below it.
+  const probeArgs = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(noeAmount, 'i128'),
+    toScVal(0n, 'i128'),
+  ];
+  const quoted = await simulateCallResult<bigint>(
+    signerPublicKey, vaultContract, 'withdraw', probeArgs
+  );
+
   const args = [
     toScVal(signerPublicKey, 'address'),
     toScVal(noeAmount, 'i128'),
+    toScVal(minOut(quoted), 'i128'),
   ];
 
   const xdr = await buildTransaction(signerPublicKey, vaultContract, 'withdraw', args);
