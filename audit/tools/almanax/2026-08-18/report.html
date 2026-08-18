@@ -1,0 +1,77 @@
+<meta charset="utf-8">
+<title>Almanax Scan Report — Noether contracts — 2026-08-18</title>
+<style>
+  body { font: 14px/1.55 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color:#1a1a1a; background:#fff; max-width: 820px; margin: 2rem auto; padding: 0 1.2rem; }
+  h1 { font-size: 1.5rem; margin-bottom:.2rem } h2 { font-size:1.1rem; border-bottom:1px solid #ddd; padding-bottom:.25rem; margin-top:2rem }
+  .sub { color:#555 } code { background:#f2f2f2; padding:.08em .3em; border-radius:3px; font-size:.92em }
+  table { border-collapse: collapse; width:100%; margin:1rem 0; font-size:.92em }
+  th, td { border:1px solid #ddd; padding:.35rem .5rem; text-align:left; vertical-align:top }
+  th { background:#f7f7f7 }
+  .card { border:1px solid #ddd; border-radius:6px; padding: .7rem .9rem; margin: .7rem 0; page-break-inside: avoid; }
+  .pill { display:inline-block; font-size:.75em; font-weight:700; padding:.1em .5em; border-radius:9px; margin-right:.4em; vertical-align:1px }
+  .high { background:#ffe3c2; color:#8a4b00 } .medium { background:#fff3bf; color:#7a6400 } .low { background:#e6e6e6; color:#444 } .info { background:#e0ecff; color:#1b4b91 }
+  .v-confirmed { background:#ffd6d6; color:#8f1d1d } .v-latent { background:#ffe9d6; color:#8a4b00 } .v-proc { background:#e8dcff; color:#4b2c8f }
+  .v-fp { background:#d9f2dc; color:#1d6b2a } .v-acc { background:#e2eef0; color:#2a5d66 } .v-dup { background:#eee; color:#555 }
+  .meta { font-size:.9em; color:#555; margin:.15rem 0 .45rem }
+  @media print { body { margin:0.5cm auto } .card { border-color:#bbb } }
+</style>
+
+<h1>Almanax Security Scan — Noether Contracts</h1>
+<p class="sub"><b>Tool report (AI-assisted static analysis) — not an audit.</b> Findings triaged and verified against source by the Noether team; the remediation register (<code>audit/remediation/REGISTER.md</code>) is the authoritative state.</p>
+
+<table>
+  <tr><th>Tool</th><td>Almanax — Stellar agent, Default scan mode</td></tr>
+  <tr><th>Target</th><td><code>NoetherDEX/noether</code> @ <code>01dfdea</code> (branch <code>staging</code>), scanned 2026-08-18</td></tr>
+  <tr><th>Scope</th><td><code>contracts/</code> — market, vault, vault_factory, referral, risk, noeracle_shim, noether_router, noether_common (23 files)</td></tr>
+  <tr><th>Result</th><td><b>24 findings</b> — 0 critical · 8 high · 8 medium · 7 low · 1 info</td></tr>
+  <tr><th>Triage outcome</th><td>10 root causes: 4 confirmed actions (1 code-latent, 1 code-improvement, 1 ceremony decision, 1 config), 1 procedural, 1 hardening, <b>10 findings false-positive as stated</b> (9 from one systematic Soroban state-archival misread + 2 from a false silent-overflow premise), rest accepted with rationale.</td></tr>
+</table>
+
+<h2>Verdict overview</h2>
+<table>
+  <tr><th>ID</th><th>Sev</th><th>Finding</th><th>Verdict</th><th>Register</th></tr>
+  <tr><td>ALX-01</td><td>High</td><td>Unbounded VaultList Vec can brick contract</td><td>Confirmed (config-gated)</td><td>R-2</td></tr>
+  <tr><td>ALX-02</td><td>High</td><td>Instance TTL expiry enables reinit takeover</td><td>False positive (archival)</td><td>R-1</td></tr>
+  <tr><td>ALX-03</td><td>High</td><td>SEP-40 TWAP reports “now”, masking staleness</td><td>Confirmed (latent)</td><td>R-7</td></tr>
+  <tr><td>ALX-04</td><td>High</td><td>Persistent state can expire, locking funds</td><td>False positive (archival)</td><td>R-1</td></tr>
+  <tr><td>ALX-05</td><td>High</td><td>Instance TTL not refreshed (referral)</td><td>Confirmed (availability)</td><td>R-1</td></tr>
+  <tr><td>ALX-06</td><td>High</td><td>Anyone can seize admin via initialize</td><td>Procedural</td><td>R-3</td></tr>
+  <tr><td>ALX-07</td><td>High</td><td>Loss accounting inflatable without transfer</td><td>Accepted + hardening</td><td>R-4</td></tr>
+  <tr><td>ALX-08</td><td>High</td><td>NOE supply tracking can desync from token</td><td>Confirmed (ceremony)</td><td>R-5</td></tr>
+  <tr><td>ALX-09</td><td>Med</td><td>Unbounded vault list (create_vault view)</td><td>Duplicate of ALX-01</td><td>R-2</td></tr>
+  <tr><td>ALX-10</td><td>Med</td><td>Shim instance TTL not maintained</td><td>Confirmed (availability)</td><td>R-1</td></tr>
+  <tr><td>ALX-11</td><td>Med</td><td>Unbounded vault list (append view)</td><td>Duplicate of ALX-01</td><td>R-2</td></tr>
+  <tr><td>ALX-12</td><td>Med</td><td>Router instance TTL only at init</td><td>Confirmed (availability)</td><td>R-1</td></tr>
+  <tr><td>ALX-13</td><td>Med</td><td>Deposit cap resets after TTL expiry</td><td>False positive (archival)</td><td>R-1</td></tr>
+  <tr><td>ALX-14</td><td>Med</td><td>Shortfall claims lost to TTL</td><td>False positive (archival)</td><td>R-1</td></tr>
+  <tr><td>ALX-15</td><td>Med</td><td>Unchecked math wraps silently</td><td>False positive (premise)</td><td>R-8</td></tr>
+  <tr><td>ALX-16</td><td>Med</td><td>LP actions lack slippage bounds</td><td>Confirmed (pre-freeze)</td><td>R-6</td></tr>
+  <tr><td>ALX-17</td><td>Low</td><td>ID counters can overflow silently</td><td>False positive</td><td>R-8</td></tr>
+  <tr><td>ALX-18</td><td>Low</td><td>Risk contract TTL not maintained on reads</td><td>Confirmed (availability)</td><td>R-1</td></tr>
+  <tr><td>ALX-19</td><td>Low</td><td>Negative trade size corrupts volume tiers</td><td>False positive (unreachable)</td><td>R-8</td></tr>
+  <tr><td>ALX-20</td><td>Low</td><td>Overflow traps can DoS fee/volume updates</td><td>Accepted (theoretical)</td><td>R-8</td></tr>
+  <tr><td>ALX-21</td><td>Low</td><td>Withdraw cooldown bypass via TTL</td><td>False positive (archival)</td><td>R-1</td></tr>
+  <tr><td>ALX-22</td><td>Low</td><td>Position value addition overflows silently</td><td>False positive (premise)</td><td>R-8</td></tr>
+  <tr><td>ALX-23</td><td>Low</td><td>Per-user persistent keys grow unbounded</td><td>Accepted</td><td>R-9</td></tr>
+  <tr><td>ALX-24</td><td>Info</td><td>Day-0 sentinel mishandles real day 0</td><td>Accepted (test-env only)</td><td>R-10</td></tr>
+</table>
+
+<h2>Key verification notes</h2>
+<div class="card"><b>Soroban state archival (drives 9 verdicts).</b> Expired persistent/instance entries are <i>archived, not deleted</i>: any transaction whose footprint touches an archived entry fails until the entry is restored (<code>RestoreFootprintOp</code> — anyone can pay), and restoration returns the original value. Contract code never observes an archived entry as missing, so <code>unwrap_or</code>-based “takeover / funds lost / cap reset / claim erased” scenarios do not occur. The genuine residual is availability, addressed by a hot-path TTL-extension sweep, a keeper re-pin duty, and a restore runbook (R-1).</div>
+<div class="card"><b>Overflow posture (drives 5 verdicts).</b> <code>contracts/Cargo.toml</code> sets <code>overflow-checks&nbsp;=&nbsp;true</code> for release builds: arithmetic overflow traps and reverts — it never wraps. Two findings asserted silent wrapping while a third (from the same scan) correctly stated the opposite. Trap reachability is bounded far below i128 range by min-collateral, leverage, position-size and deposit caps.</div>
+<div class="card"><b>Existing mitigations the scan under-weighted.</b> The vault factory ships a tested launch gate (leader allowlist + max-vaults cap) that closes the unbounded-list findings via ceremony config; market entrypoints enforce positive collateral and bounded size at every path feeding volume recording; the shim's deployed backend mode is Noeracle-native, making the SEP-40 TWAP issue latent until an admin flips modes.</div>
+
+<h2>Scheduled actions (summary)</h2>
+<table>
+  <tr><th>Ref</th><th>Action</th><th>Phase</th></tr>
+  <tr><td>R-1</td><td>TTL extension sweep across all 7 contracts; keeper TTL re-pin duty + monitoring; restore runbook; initial pin at deploy</td><td>Pre-freeze + runbook</td></tr>
+  <tr><td>R-2</td><td>Set nonzero <code>max_vaults</code> / leader allowlist at mainnet ceremony; structural paging post-v1</td><td>Ceremony</td></tr>
+  <tr><td>R-3</td><td>Deploy + initialize back-to-back; verify admin == multisig before funding</td><td>Ceremony runbook</td></tr>
+  <tr><td>R-4</td><td>Solvency assert on vault inflow endpoints (defense-in-depth)</td><td>Pre-freeze</td></tr>
+  <tr><td>R-5</td><td>NOE issuer: pre-mint full supply then lock issuer (recommended) or multisig custody</td><td>Ceremony (decision)</td></tr>
+  <tr><td>R-6</td><td>Add <code>min_noe_out</code>/<code>min_usdc_out</code> slippage bounds to vault deposit/withdraw</td><td>Pre-freeze</td></tr>
+  <tr><td>R-7</td><td>SEP-40 twap: propagate real backend timestamp or return None; add staleness test</td><td>Pre-freeze</td></tr>
+  <tr><td>R-8</td><td>Optional: checked-math optics cleanup + <code>size&nbsp;&gt;&nbsp;0</code> guard</td><td>Pre-freeze (optional)</td></tr>
+</table>
+
+<p class="sub">Full normalized findings with descriptions and per-finding triage: <code>audit/tools/almanax/2026-08-18/findings.md</code> · machine-readable: <code>findings.json</code> · authoritative state: <code>audit/remediation/REGISTER.md</code>.</p>
