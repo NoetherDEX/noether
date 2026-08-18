@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 672" role="img" aria-labelledby="noether-oracle-light-title noether-oracle-light-desc" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">
+<title id="noether-oracle-light-title">Noeracle price chain</title>
+<desc id="noether-oracle-light-desc">Data-flow diagram: the Noeracle service signs price rounds off-chain; the keeper publishes attestations to the Noeracle contract; the SEP-40 shim exposes lastprice to the market. For user trades the Noether router relays a fresh signed price and calls the market in the same transaction, so the market's 60-second staleness gate never trips.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4d5766"/></marker>
+<marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#a16207"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2563eb"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4d5766" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f6f7f9"/>
+<line x1="304" y1="128" x2="304" y2="176" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="304" y1="240" x2="304" y2="288" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="304" y1="352" x2="304" y2="400" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="304" y1="464" x2="304" y2="512" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="720" y1="240" x2="720" y2="304" stroke="#a16207" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+<line x1="616" y1="336" x2="408" y2="336" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 720,368 L 720,536 Q 720,544 712,544 L 408,544" fill="none" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="316" y="146" width="116" height="12" rx="2" fill="#f6f7f9"/>
+<text x="320" y="155" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">SIGNED ROUNDS · ~500MS</text>
+<rect x="316" y="258" width="80" height="12" rx="2" fill="#f6f7f9"/>
+<text x="320" y="267" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">UPDATE_ED25519</text>
+<rect x="316" y="370" width="80" height="12" rx="2" fill="#f6f7f9"/>
+<text x="320" y="379" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">GET_PRICE_PERS</text>
+<rect x="316" y="482" width="92" height="12" rx="2" fill="#f6f7f9"/>
+<text x="320" y="491" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">LASTPRICE · 7-DEC</text>
+<rect x="732" y="266" width="140" height="12" rx="2" fill="#f6f7f9"/>
+<text x="736" y="275" fill="#a16207" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">OPEN · CLOSE + SIGNED PRICE</text>
+<rect x="470" y="316" width="92" height="12" rx="2" fill="#f6f7f9"/>
+<text x="516" y="325" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">RELAY FRESH PRICE</text>
+<rect x="514" y="524" width="84" height="12" rx="2" fill="#f6f7f9"/>
+<text x="556" y="533" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">TRADE · SAME TX</text>
+<rect x="200" y="64" width="208" height="64" rx="6" fill="#f6f7f9"/>
+<rect x="200" y="64" width="208" height="64" rx="6" fill="rgba(28,33,39,0.03)" stroke="rgba(28,33,39,0.30)" stroke-width="1"/>
+<rect x="208" y="72" width="28" height="12" rx="2" fill="transparent" stroke="rgba(28,33,39,0.22)" stroke-width="0.8"/>
+<text x="222" y="81" fill="#707a89" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">OFF</text>
+<text x="304" y="100" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Noeracle Service</text>
+<text x="304" y="116" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">api.noeracle.org · CEX median</text>
+<rect x="200" y="176" width="208" height="64" rx="6" fill="#f6f7f9"/>
+<rect x="200" y="176" width="208" height="64" rx="6" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<rect x="208" y="184" width="28" height="12" rx="2" fill="transparent" stroke="rgba(28,33,39,0.22)" stroke-width="0.8"/>
+<text x="222" y="193" fill="#4d5766" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">BOT</text>
+<text x="304" y="212" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Keeper</text>
+<text x="304" y="228" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">relays ed25519 attestations</text>
+<rect x="200" y="288" width="208" height="64" rx="6" fill="#f6f7f9"/>
+<rect x="200" y="288" width="208" height="64" rx="6" fill="rgba(28,33,39,0.03)" stroke="rgba(28,33,39,0.30)" stroke-width="1"/>
+<rect x="208" y="296" width="32" height="12" rx="2" fill="transparent" stroke="rgba(28,33,39,0.22)" stroke-width="0.8"/>
+<text x="224" y="305" fill="#707a89" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">ORCL</text>
+<text x="304" y="324" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Noeracle</text>
+<text x="304" y="340" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">verify sig · staleness · store</text>
+<rect x="200" y="400" width="208" height="64" rx="6" fill="#f6f7f9"/>
+<rect x="200" y="400" width="208" height="64" rx="6" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<rect x="208" y="408" width="28" height="12" rx="2" fill="transparent" stroke="rgba(28,33,39,0.22)" stroke-width="0.8"/>
+<text x="222" y="417" fill="#4d5766" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">S40</text>
+<text x="304" y="436" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Noeracle Shim</text>
+<text x="304" y="452" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">SEP-40 · 7-decimal scaling</text>
+<rect x="200" y="512" width="208" height="64" rx="6" fill="#f6f7f9"/>
+<rect x="200" y="512" width="208" height="64" rx="6" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<rect x="208" y="520" width="32" height="12" rx="2" fill="transparent" stroke="rgba(28,33,39,0.22)" stroke-width="0.8"/>
+<text x="224" y="529" fill="#4d5766" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">CORE</text>
+<text x="304" y="548" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Market</text>
+<text x="304" y="564" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">60s staleness gate</text>
+<rect x="616" y="176" width="208" height="64" rx="6" fill="#f6f7f9"/>
+<rect x="616" y="176" width="208" height="64" rx="6" fill="rgba(77,87,102,0.10)" stroke="#707a89" stroke-width="1"/>
+<rect x="624" y="184" width="32" height="12" rx="2" fill="transparent" stroke="rgba(28,33,39,0.22)" stroke-width="0.8"/>
+<text x="640" y="193" fill="#707a89" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">USER</text>
+<text x="720" y="212" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Trader</text>
+<text x="720" y="228" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">web · SDK · API</text>
+<rect x="616" y="304" width="208" height="64" rx="6" fill="#f6f7f9"/>
+<rect x="616" y="304" width="208" height="64" rx="6" fill="rgba(234,179,8,0.10)" stroke="#a16207" stroke-width="1"/>
+<rect x="624" y="312" width="24" height="12" rx="2" fill="transparent" stroke="rgba(161,98,7,0.50)" stroke-width="0.8"/>
+<text x="636" y="321" fill="#a16207" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">TX</text>
+<text x="720" y="340" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Noether Router</text>
+<text x="720" y="356" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">verify-then-trade</text>
+<text x="736" y="432" fill="#707a89" font-size="14" font-style="italic" font-family="'Instrument Serif', Georgia, serif" text-anchor="start">one atomic transaction —</text>
+<text x="736" y="452" fill="#707a89" font-size="14" font-style="italic" font-family="'Instrument Serif', Georgia, serif" text-anchor="start">the staleness gate never trips</text>
+<line x1="40" y1="600" x2="920" y2="600" stroke="rgba(28,33,39,0.10)" stroke-width="0.8"/>
+<text x="40" y="616" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="628" width="14" height="10" rx="2" fill="rgba(234,179,8,0.10)" stroke="#a16207" stroke-width="1"/>
+<text x="60" y="636" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Router (atomic)</text>
+<rect x="164" y="628" width="14" height="10" rx="2" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<text x="184" y="636" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Noether</text>
+<rect x="244" y="628" width="14" height="10" rx="2" fill="rgba(28,33,39,0.03)" stroke="rgba(28,33,39,0.30)" stroke-width="1"/>
+<text x="264" y="636" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Noeracle</text>
+<rect x="332" y="628" width="14" height="10" rx="2" fill="rgba(77,87,102,0.10)" stroke="#707a89" stroke-width="1"/>
+<text x="352" y="636" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">User</text>
+<line x1="396" y1="634" x2="424" y2="634" stroke="#a16207" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<text x="432" y="636" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">User trade</text>
+<line x1="508" y1="634" x2="536" y2="634" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="544" y="636" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Price flow</text>
+</svg>

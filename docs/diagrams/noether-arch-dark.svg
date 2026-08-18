@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 792" role="img" aria-labelledby="noether-arch-dark-title noether-arch-dark-desc" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">
+<title id="noether-arch-dark-title">Noether system architecture</title>
+<desc id="noether-arch-dark-desc">Architecture diagram: six Soroban contracts on Stellar testnet (router, market, vault, vault factory, referral, Noeracle oracle), fed by an Azure keeper bot and indexed into Postgres for a Fastify API gateway that serves the Next.js frontend and the TypeScript and Python SDKs. User trades enter through the router, which relays a signed Noeracle price and calls the market in the same transaction.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#9ba1a8"/></marker>
+<marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eab308"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5b9bf8"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#9ba1a8" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#0b0d10"/>
+<rect x="40" y="56" width="1040" height="224" rx="8" fill="rgba(232,234,237,0.025)" stroke="rgba(232,234,237,0.10)" stroke-width="0.8"/>
+<rect x="64" y="60" width="120" height="12" rx="2" fill="#0b0d10"/>
+<text x="124" y="69" fill="rgba(232,234,237,0.40)" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.14em">STELLAR TESTNET · SOROBAN</text>
+<rect x="40" y="336" width="1040" height="136" rx="8" fill="rgba(232,234,237,0.025)" stroke="rgba(232,234,237,0.10)" stroke-width="0.8"/>
+<rect x="64" y="340" width="152" height="12" rx="2" fill="#0b0d10"/>
+<text x="140" y="349" fill="rgba(232,234,237,0.40)" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.14em">OFF-CHAIN · AZURE CONTAINER APPS</text>
+<rect x="40" y="552" width="1040" height="136" rx="8" fill="rgba(232,234,237,0.025)" stroke="rgba(232,234,237,0.10)" stroke-width="0.8"/>
+<rect x="64" y="556" width="44" height="12" rx="2" fill="#0b0d10"/>
+<text x="86" y="565" fill="rgba(232,234,237,0.40)" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.14em">CLIENTS</text>
+<path d="M 120,616 L 96,616 Q 88,616 88,608 L 88,136 Q 88,128 96,128 L 120,128" fill="none" stroke="#eab308" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+<line x1="296" y1="128" x2="360" y2="128" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="552" y1="128" x2="616" y2="128" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="208" y1="160" x2="208" y2="192" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 384,160 L 384,170 Q 384,176 378,176 L 294,176 Q 288,176 288,182 L 288,192" fill="none" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 480,160 L 480,260 Q 480,268 488,268 L 928,268 Q 936,268 936,260 L 936,256" fill="none" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 720,192 L 720,190 Q 720,184 714,184 L 534,184 Q 528,184 528,178 L 528,160" fill="none" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="176" y1="376" x2="176" y2="256" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 256,376 L 256,320 Q 256,312 264,312 L 424,312 Q 432,312 432,304 L 432,160" fill="none" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<line x1="656" y1="280" x2="656" y2="376" stroke="#9ba1a8" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow-open)"/>
+<line x1="744" y1="408" x2="880" y2="408" stroke="#9ba1a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 896,440 L 896,504 Q 896,512 888,512 L 272,512 Q 264,512 264,520 L 264,592" fill="none" stroke="#5b9bf8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<line x1="976" y1="440" x2="976" y2="592" stroke="#5b9bf8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<rect x="310" y="108" width="36" height="12" rx="2" fill="#0b0d10"/>
+<text x="328" y="117" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">TRADE</text>
+<rect x="566" y="108" width="36" height="12" rx="2" fill="#0b0d10"/>
+<text x="584" y="117" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">PNL ±</text>
+<rect x="220" y="170" width="36" height="12" rx="2" fill="#0b0d10"/>
+<text x="224" y="179" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">RELAY</text>
+<rect x="308" y="156" width="32" height="12" rx="2" fill="#0b0d10"/>
+<text x="324" y="165" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">READ</text>
+<rect x="554" y="248" width="68" height="12" rx="2" fill="#0b0d10"/>
+<text x="588" y="257" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">RECORD TRADE</text>
+<rect x="550" y="164" width="68" height="12" rx="2" fill="#0b0d10"/>
+<text x="584" y="173" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">LEADER TRADE</text>
+<rect x="188" y="304" width="44" height="12" rx="2" fill="#0b0d10"/>
+<text x="192" y="313" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">PUBLISH</text>
+<rect x="290" y="292" width="60" height="12" rx="2" fill="#0b0d10"/>
+<text x="320" y="301" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">LIQ · FUND</text>
+<rect x="668" y="320" width="40" height="12" rx="2" fill="#0b0d10"/>
+<text x="672" y="329" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">EVENTS</text>
+<rect x="786" y="388" width="28" height="12" rx="2" fill="#0b0d10"/>
+<text x="800" y="397" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">SQL</text>
+<rect x="552" y="492" width="56" height="12" rx="2" fill="#0b0d10"/>
+<text x="580" y="501" fill="#5b9bf8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">REST · WS</text>
+<rect x="988" y="508" width="56" height="12" rx="2" fill="#0b0d10"/>
+<text x="992" y="517" fill="#5b9bf8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">REST · WS</text>
+<rect x="100" y="516" width="68" height="12" rx="2" fill="#0b0d10"/>
+<text x="104" y="525" fill="#eab308" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">OPEN · CLOSE</text>
+<rect x="120" y="96" width="176" height="64" rx="6" fill="#0b0d10"/>
+<rect x="120" y="96" width="176" height="64" rx="6" fill="#14181e" stroke="#e8eaed" stroke-width="1"/>
+<rect x="128" y="104" width="24" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="140" y="113" fill="#9ba1a8" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">TX</text>
+<text x="208" y="132" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Noether Router</text>
+<text x="208" y="148" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">verify-then-trade</text>
+<rect x="360" y="96" width="192" height="64" rx="6" fill="#0b0d10"/>
+<rect x="360" y="96" width="192" height="64" rx="6" fill="rgba(234,179,8,0.10)" stroke="#eab308" stroke-width="1"/>
+<rect x="368" y="104" width="32" height="12" rx="2" fill="transparent" stroke="rgba(234,179,8,0.50)" stroke-width="0.8"/>
+<text x="384" y="113" fill="#eab308" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">CORE</text>
+<text x="456" y="132" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Market</text>
+<text x="456" y="148" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">positions · orders · liq</text>
+<rect x="616" y="96" width="176" height="64" rx="6" fill="#0b0d10"/>
+<rect x="616" y="96" width="176" height="64" rx="6" fill="rgba(232,234,237,0.05)" stroke="#9ba1a8" stroke-width="1"/>
+<rect x="624" y="104" width="24" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="636" y="113" fill="#9ba1a8" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">LP</text>
+<text x="704" y="132" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Vault</text>
+<text x="704" y="148" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">USDC pool · NOE</text>
+<rect x="120" y="192" width="176" height="64" rx="6" fill="#0b0d10"/>
+<rect x="120" y="192" width="176" height="64" rx="6" fill="rgba(232,234,237,0.03)" stroke="rgba(232,234,237,0.30)" stroke-width="1"/>
+<rect x="128" y="200" width="32" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="144" y="209" fill="#7d858e" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">ORCL</text>
+<text x="208" y="228" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Noeracle</text>
+<text x="208" y="244" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">SEP-40 shim · ed25519</text>
+<rect x="632" y="192" width="176" height="64" rx="6" fill="#0b0d10"/>
+<rect x="632" y="192" width="176" height="64" rx="6" fill="#14181e" stroke="#e8eaed" stroke-width="1"/>
+<rect x="640" y="200" width="24" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="652" y="209" fill="#9ba1a8" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">T2</text>
+<text x="720" y="228" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Vault Factory</text>
+<text x="720" y="244" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">user-created vaults</text>
+<rect x="864" y="192" width="176" height="64" rx="6" fill="#0b0d10"/>
+<rect x="864" y="192" width="176" height="64" rx="6" fill="#14181e" stroke="#e8eaed" stroke-width="1"/>
+<rect x="872" y="200" width="24" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="884" y="209" fill="#9ba1a8" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">T2</text>
+<text x="952" y="228" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Referral</text>
+<text x="952" y="244" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">codes · fee share</text>
+<rect x="120" y="376" width="176" height="64" rx="6" fill="#0b0d10"/>
+<rect x="120" y="376" width="176" height="64" rx="6" fill="#14181e" stroke="#e8eaed" stroke-width="1"/>
+<rect x="128" y="384" width="28" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="142" y="393" fill="#9ba1a8" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">BOT</text>
+<text x="208" y="412" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Keeper</text>
+<text x="208" y="428" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">oracle · liq · funding</text>
+<rect x="568" y="376" width="176" height="64" rx="6" fill="#0b0d10"/>
+<rect x="568" y="376" width="176" height="64" rx="6" fill="#14181e" stroke="#e8eaed" stroke-width="1"/>
+<rect x="576" y="384" width="28" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="590" y="393" fill="#9ba1a8" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">ETL</text>
+<text x="656" y="412" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Indexer</text>
+<text x="656" y="428" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">getEvents → Postgres</text>
+<rect x="856" y="376" width="176" height="64" rx="6" fill="#0b0d10"/>
+<rect x="856" y="376" width="176" height="64" rx="6" fill="#14181e" stroke="#e8eaed" stroke-width="1"/>
+<rect x="864" y="384" width="28" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="878" y="393" fill="#9ba1a8" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+<text x="944" y="412" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Gateway</text>
+<text x="944" y="428" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">Fastify REST + WS</text>
+<rect x="120" y="592" width="192" height="64" rx="6" fill="#0b0d10"/>
+<rect x="120" y="592" width="192" height="64" rx="6" fill="rgba(155,161,168,0.10)" stroke="#7d858e" stroke-width="1"/>
+<rect x="128" y="600" width="28" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="142" y="609" fill="#7d858e" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">WEB</text>
+<text x="216" y="628" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Frontend</text>
+<text x="216" y="644" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">Next.js · wallets</text>
+<rect x="856" y="592" width="192" height="64" rx="6" fill="#0b0d10"/>
+<rect x="856" y="592" width="192" height="64" rx="6" fill="rgba(155,161,168,0.10)" stroke="#7d858e" stroke-width="1"/>
+<rect x="864" y="600" width="28" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.22)" stroke-width="0.8"/>
+<text x="878" y="609" fill="#7d858e" font-size="7" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">SDK</text>
+<text x="952" y="628" fill="#e8eaed" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">SDKs</text>
+<text x="952" y="644" fill="#9ba1a8" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">noether-sdk · npm + PyPI</text>
+<line x1="40" y1="712" x2="1080" y2="712" stroke="rgba(232,234,237,0.10)" stroke-width="0.8"/>
+<text x="40" y="728" fill="#9ba1a8" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="740" width="14" height="10" rx="2" fill="rgba(234,179,8,0.10)" stroke="#eab308" stroke-width="1"/>
+<text x="60" y="748" fill="#9ba1a8" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Core engine</text>
+<rect x="144" y="740" width="14" height="10" rx="2" fill="#14181e" stroke="#e8eaed" stroke-width="1"/>
+<text x="164" y="748" fill="#9ba1a8" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Contract / service</text>
+<rect x="284" y="740" width="14" height="10" rx="2" fill="rgba(232,234,237,0.05)" stroke="#9ba1a8" stroke-width="1"/>
+<text x="304" y="748" fill="#9ba1a8" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Store</text>
+<rect x="356" y="740" width="14" height="10" rx="2" fill="rgba(232,234,237,0.03)" stroke="rgba(232,234,237,0.30)" stroke-width="1"/>
+<text x="376" y="748" fill="#9ba1a8" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Oracle (external)</text>
+<rect x="488" y="740" width="14" height="10" rx="2" fill="rgba(155,161,168,0.10)" stroke="#7d858e" stroke-width="1"/>
+<text x="508" y="748" fill="#9ba1a8" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Client</text>
+<line x1="564" y1="746" x2="592" y2="746" stroke="#eab308" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<text x="600" y="748" fill="#9ba1a8" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Primary trade flow</text>
+<line x1="720" y1="746" x2="748" y2="746" stroke="#5b9bf8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<text x="756" y="748" fill="#9ba1a8" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">REST / WS</text>
+<line x1="828" y1="746" x2="856" y2="746" stroke="#9ba1a8" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow-open)"/>
+<text x="864" y="748" fill="#9ba1a8" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Event stream</text>
+</svg>
