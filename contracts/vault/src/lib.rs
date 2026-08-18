@@ -441,12 +441,32 @@ impl VaultContract {
         // right after moving USDC (losses, funding) into the vault, so
         // accounting can never exceed real assets (V-3 tail)
         set_total_usdc(&env, get_total_usdc(&env) + amount);
+        Self::require_cash_covers_buckets(&env)?;
 
         env.events().publish(
             (Symbol::new(&env, "loss_received"),),
             (amount,),
         );
 
+        Ok(())
+    }
+
+    /// R-4: fail-closed receipt check for market-credited inflows. The
+    /// market transfers USDC BEFORE calling a credit endpoint, so after
+    /// crediting, the physical balance must cover every cash-backed
+    /// bucket. A violation means the transfer never happened (or the
+    /// accounting drifted) — refuse to book phantom assets.
+    fn require_cash_covers_buckets(env: &Env) -> Result<(), NoetherError> {
+        let usdc_token = get_usdc_token(env);
+        let balance =
+            token::Client::new(env, &usdc_token).balance(&env.current_contract_address());
+        let backed = get_total_usdc(env)
+            + get_total_fees(env)
+            + get_buffer_balance(env)
+            + storage::get_shortfall_reserve(env);
+        if balance < backed {
+            return Err(NoetherError::InsufficientBalance);
+        }
         Ok(())
     }
 
@@ -508,6 +528,7 @@ impl VaultContract {
                 &overflow,
             );
         }
+        Self::require_cash_covers_buckets(&env)?;
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_routed"),),
             (amount, to_buffer, overflow),
@@ -856,6 +877,7 @@ impl VaultContract {
         }
         let to_reserve = Self::route_shortfall_share(&env, amount);
         set_buffer_balance(&env, get_buffer_balance(&env) + (amount - to_reserve));
+        Self::require_cash_covers_buckets(&env)?;
         env.events().publish((Symbol::new(&env, "buffer_funded"),), (amount, to_reserve));
         Ok(())
     }
@@ -1379,6 +1401,12 @@ mod tests {
         VaultTest { env, vault_id, vault, usdc, noe, market, admin, lp }
     }
 
+    /// R-4: the real market transfers USDC into the vault BEFORE calling a
+    /// credit endpoint; tests must mirror that or the receipt check trips.
+    fn market_inflow(t: &VaultTest, amount: i128) {
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &amount);
+    }
+
     /// NOE withdrawals use transfer_from — the LP must approve the vault.
     fn approve_noe(t: &VaultTest, amount: i128) {
         soroban_sdk::token::Client::new(&t.env, &t.noe).approve(
@@ -1499,6 +1527,7 @@ mod tests {
         assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
 
         // receive_loss credits exactly the transferred amount
+        market_inflow(&t, 40 * PRECISION);
         t.vault.receive_loss(&(40 * PRECISION));
         assert_eq!(t.vault.get_total_usdc(), 140 * PRECISION);
     }
@@ -1647,16 +1676,19 @@ mod tests {
         assert_eq!(t.vault.get_shortfall(), 20 * PRECISION);
 
         // 50% of a 30 inflow = 15 → reserve; 15 → buffer.
+        market_inflow(&t, 30 * PRECISION);
         t.vault.fund_buffer(&(30 * PRECISION));
         assert_eq!(t.vault.get_shortfall_reserve(), 15 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 15 * PRECISION);
 
         // Next inflow: unreserved owed is only 5 — the split caps there.
+        market_inflow(&t, 30 * PRECISION);
         t.vault.fund_buffer(&(30 * PRECISION));
         assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 40 * PRECISION);
 
         // Fully reserved: everything flows to the buffer now.
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 50 * PRECISION);
@@ -1681,6 +1713,7 @@ mod tests {
         t.vault.settle_pnl(&w, &(30 * PRECISION)); // paid 10, owed 20
 
         // Inflow 20: reserve 10, buffer 10.
+        market_inflow(&t, 20 * PRECISION);
         t.vault.fund_buffer(&(20 * PRECISION));
         // The inflow is accounting-only here; back it with real USDC so the
         // claim transfer can settle (market transfers land separately).
@@ -1713,6 +1746,7 @@ mod tests {
         t.vault.settle_pnl(&w, &(30 * PRECISION)); // owed 20
 
         // First inflow 10 → reserve 5, buffer 5: partial claim of 10.
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(10 * PRECISION));
         let first = t.vault.claim_shortfall(&w);
@@ -1721,6 +1755,7 @@ mod tests {
         assert_eq!(t.vault.get_shortfall(), 10 * PRECISION);
 
         // Next inflow amortizes the rest.
+        market_inflow(&t, 20 * PRECISION);
         t.vault.fund_buffer(&(20 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
         let second = t.vault.claim_shortfall(&w);
@@ -1743,12 +1778,16 @@ mod tests {
         // Refill the drained pool the realistic way — a trader loss lands 100
         // USDC back in — so the LP's existing shares regain value. (A fresh
         // deposit is intentionally NOT used here: the dead-pool guard blocks
-        // minting 1:1 while AUM is 0.) Then an inflow of 40 reserves 20 for the
-        // claim, deliberately accounting-only (no backing mint) so the earmark
-        // must bind against the SAME USDC the LP wants to withdraw.
+        // minting 1:1 while AUM is 0.) Then fabricate the earmark DIRECTLY in
+        // storage, deliberately unbacked: R-4 blocks building this drifted
+        // state through fund_buffer, but the withdraw floor must still bind
+        // against the SAME USDC the LP wants to withdraw if books ever drift.
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(100 * PRECISION));
         t.vault.receive_loss(&(100 * PRECISION));
-        t.vault.fund_buffer(&(40 * PRECISION));
+        t.env.as_contract(&t.vault_id, || {
+            storage::set_shortfall_reserve(&t.env, 20 * PRECISION);
+            set_buffer_balance(&t.env, get_buffer_balance(&t.env) + 20 * PRECISION);
+        });
         assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
 
         // Withdrawing EVERYTHING would strip the earmarked 20 — blocked.
@@ -1763,11 +1802,31 @@ mod tests {
         assert!(small > 0);
     }
 
+    /// R-4: crediting without a matching USDC transfer must fail closed —
+    /// the receipt check refuses to book phantom assets.
+    #[test]
+    fn unbacked_market_credits_are_refused() {
+        let t = setup(100 * PRECISION);
+        // No transfer precedes either call → InsufficientBalance.
+        assert!(matches!(
+            t.vault.try_receive_loss(&(10 * PRECISION)),
+            Err(Ok(NoetherError::InsufficientBalance))
+        ));
+        assert!(matches!(
+            t.vault.try_fund_buffer(&(10 * PRECISION)),
+            Err(Ok(NoetherError::InsufficientBalance))
+        ));
+        // A backed credit still lands.
+        market_inflow(&t, 10 * PRECISION);
+        t.vault.receive_loss(&(10 * PRECISION));
+    }
+
     #[test]
     fn claim_works_while_paused() {
         let t = setup(10 * PRECISION);
         let w = Address::generate(&t.env);
         t.vault.settle_pnl(&w, &(30 * PRECISION)); // owed 20
+        market_inflow(&t, 20 * PRECISION);
         t.vault.fund_buffer(&(20 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
 
@@ -1783,6 +1842,7 @@ mod tests {
     #[test]
     fn draw_buffer_moves_buffer_into_lp_accounting() {
         let t = setup(100 * PRECISION);
+        market_inflow(&t, 50 * PRECISION);
         t.vault.fund_buffer(&(50 * PRECISION));
         let aum_before = t.vault.get_aum();
 
@@ -1799,6 +1859,7 @@ mod tests {
     #[test]
     fn draw_buffer_partial_cover_returns_actual() {
         let t = setup(100 * PRECISION);
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
 
         let covered = t.vault.draw_buffer(&(35 * PRECISION));
@@ -1811,6 +1872,7 @@ mod tests {
     #[test]
     fn pay_from_buffer_market_only_auth() {
         let t = setup(100 * PRECISION);
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         let someone = Address::generate(&t.env);
         t.env.set_auths(&[]);
@@ -1822,6 +1884,7 @@ mod tests {
         let t = setup(100 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
         let to = Address::generate(&t.env);
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(10 * PRECISION));
 
@@ -1835,6 +1898,7 @@ mod tests {
     #[test]
     fn draw_buffer_market_only_auth() {
         let t = setup(100 * PRECISION);
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         t.env.set_auths(&[]);
         assert!(t.vault.try_draw_buffer(&PRECISION).is_err());
@@ -1854,6 +1918,7 @@ mod tests {
         );
 
         // Repay some of w1 and re-check the invariant at every step.
+        market_inflow(&t, 20 * PRECISION);
         t.vault.fund_buffer(&(20 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
         t.vault.claim_shortfall(&w1);
@@ -1894,6 +1959,7 @@ mod tests {
     fn fund_buffer_is_market_only() {
         let t = setup(100 * PRECISION);
         // Market-authed (mock_all_auths) works.
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         assert_eq!(t.vault.get_buffer_balance(), 10 * PRECISION);
         // Without auth, rejected.
@@ -2101,8 +2167,12 @@ mod tests {
 
         // Winner takes 30 against a 10 pool → 10 paid, 20 booked as shortfall.
         t.vault.settle_pnl(&w, &(30 * PRECISION));
-        // Fund the buffer; 50% earmarks into the ShortfallReserve (accounting).
-        t.vault.fund_buffer(&(30 * PRECISION)); // reserve 15, buffer 15
+        // Fabricate the drifted buffer/reserve DIRECTLY (R-4 blocks building
+        // an unbacked state through fund_buffer): reserve 15, buffer 15.
+        t.env.as_contract(&t.vault_id, || {
+            storage::set_shortfall_reserve(&t.env, 15 * PRECISION);
+            set_buffer_balance(&t.env, get_buffer_balance(&t.env) + 15 * PRECISION);
+        });
         // Back only 20 USDC of it physically. Spendable-for-bounty = 20 − 15 = 5,
         // even though the buffer accounting shows 15.
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
@@ -2128,14 +2198,20 @@ mod tests {
         // Large outstanding shortfall so the earmarked reserve can exceed the
         // small physical balance rebuilt below.
         t.vault.settle_pnl(&w, &(1_000 * PRECISION)); // owed 1000, paid 0
-        t.vault.fund_buffer(&(2_000 * PRECISION)); // reserve 1000, buffer 1000
-        assert_eq!(t.vault.get_shortfall_reserve(), 1_000 * PRECISION);
 
         // Rebuild a small real balance / AUM via a trader loss (not a deposit,
         // which the dead-pool guard would now block): 100 USDC in.
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(100 * PRECISION));
         t.vault.receive_loss(&(100 * PRECISION)); // total_usdc 100, AUM 100
         t.vault.set_asset_cap(&btc(&t.env), &10_000); // lift OI cap out of the way
+
+        // Fabricate the drifted earmark DIRECTLY (R-4 blocks building an
+        // unbacked state through fund_buffer): reserve 1000, buffer 1000.
+        t.env.as_contract(&t.vault_id, || {
+            storage::set_shortfall_reserve(&t.env, 1_000 * PRECISION);
+            set_buffer_balance(&t.env, get_buffer_balance(&t.env) + 1_000 * PRECISION);
+        });
+        assert_eq!(t.vault.get_shortfall_reserve(), 1_000 * PRECISION);
 
         // Physical balance is 100 but 1000 is earmarked for shortfall claimants,
         // so ZERO is available to back a new reservation. Even a 10-USDC reserve
