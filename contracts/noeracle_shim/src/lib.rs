@@ -243,6 +243,10 @@ impl NoeracleShimContract {
     pub fn set_noeracle_oracle(env: Env, new_oracle: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::NoeracleOracle, &new_oracle);
+        env.events().publish(
+            (Symbol::new(&env, "oracle_rotated"),),
+            (new_oracle,),
+        );
         Ok(())
     }
 
@@ -268,6 +272,10 @@ impl NoeracleShimContract {
         env.storage().instance().set(&DataKey::NoeracleOracle, &oracle);
         env.storage().instance().set(&DataKey::BackendMode, &mode);
         env.storage().instance().set(&DataKey::BackendDecimals, &decimals);
+        env.events().publish(
+            (Symbol::new(&env, "backend_set"),),
+            (mode, oracle, decimals),
+        );
         Ok(())
     }
 
@@ -275,7 +283,16 @@ impl NoeracleShimContract {
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         new_admin.require_auth();
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NoetherError::NotInitialized)?;
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_rotated"),),
+            (old_admin, new_admin),
+        );
         Ok(())
     }
 

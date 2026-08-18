@@ -73,11 +73,15 @@ impl RiskContract {
         if !config.is_valid() {
             return Err(NoetherError::InvalidParameter);
         }
-        let key = DataKey::Config(asset);
+        let key = DataKey::Config(asset.clone());
         env.storage().persistent().set(&key, &config);
         env.storage()
             .persistent()
             .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.events().publish(
+            (Symbol::new(&env, "config_set"),),
+            (asset, config),
+        );
         Ok(())
     }
 
@@ -189,7 +193,16 @@ impl RiskContract {
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         new_admin.require_auth();
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NoetherError::NotInitialized)?;
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_rotated"),),
+            (old_admin, new_admin),
+        );
         Ok(())
     }
 

@@ -278,6 +278,10 @@ impl MarketContract {
         }
         set_treasury(&env, &treasury);
         set_protocol_fee_bps(&env, bps);
+        env.events().publish(
+            (Symbol::new(&env, "fee_split_set"),),
+            (treasury, bps),
+        );
         Ok(())
     }
 
@@ -288,6 +292,10 @@ impl MarketContract {
     pub fn set_referral(env: Env, referral: Address) -> Result<(), NoetherError> {
         require_admin(&env)?;
         set_referral_addr(&env, &referral);
+        env.events().publish(
+            (Symbol::new(&env, "referral_set"),),
+            (referral,),
+        );
         Ok(())
     }
 

@@ -301,6 +301,10 @@ impl ReferralContract {
             return Err(ReferralError::InvalidParameter);
         }
         storage::set_discount_bps(&env, bps);
+        env.events().publish(
+            (Symbol::new(&env, "discount_bps_set"),),
+            (bps,),
+        );
         Ok(())
     }
 
@@ -310,6 +314,10 @@ impl ReferralContract {
             return Err(ReferralError::InvalidParameter);
         }
         storage::set_referrer_share_bps(&env, bps);
+        env.events().publish(
+            (Symbol::new(&env, "ref_share_bps_set"),),
+            (bps,),
+        );
         Ok(())
     }
 
@@ -319,6 +327,10 @@ impl ReferralContract {
             return Err(ReferralError::InvalidParameter);
         }
         storage::set_min_code_volume(&env, volume);
+        env.events().publish(
+            (Symbol::new(&env, "min_code_volume_set"),),
+            (volume,),
+        );
         Ok(())
     }
 
@@ -370,12 +382,20 @@ impl ReferralContract {
     pub fn set_market(env: Env, market: Address) -> Result<(), ReferralError> {
         storage::require_admin(&env)?;
         storage::set_market(&env, &market);
+        env.events().publish(
+            (Symbol::new(&env, "market_rotated"),),
+            (market,),
+        );
         Ok(())
     }
 
     pub fn set_usdc_token(env: Env, usdc: Address) -> Result<(), ReferralError> {
         storage::require_admin(&env)?;
         storage::set_usdc_token(&env, &usdc);
+        env.events().publish(
+            (Symbol::new(&env, "usdc_rotated"),),
+            (usdc,),
+        );
         Ok(())
     }
 

@@ -1015,6 +1015,10 @@ impl VaultContract {
             return Err(NoetherError::InvalidParameter);
         }
         storage::set_shortfall_inflow_bps(&env, bps);
+        env.events().publish(
+            (Symbol::new(&env, "shortfall_bps_set"),),
+            (bps,),
+        );
         Ok(())
     }
 
@@ -1136,6 +1140,10 @@ impl VaultContract {
             return Err(NoetherError::InvalidParameter);
         }
         storage::set_reserve_cap_bps(&env, bps);
+        env.events().publish(
+            (Symbol::new(&env, "reserve_cap_set"),),
+            (bps,),
+        );
         Ok(())
     }
 
@@ -1146,6 +1154,10 @@ impl VaultContract {
             return Err(NoetherError::InvalidParameter);
         }
         storage::set_asset_cap_bps(&env, &asset, bps);
+        env.events().publish(
+            (Symbol::new(&env, "asset_cap_set"),),
+            (asset, bps),
+        );
         Ok(())
     }
 

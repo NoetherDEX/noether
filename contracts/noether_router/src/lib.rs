@@ -548,6 +548,10 @@ impl NoetherRouterContract {
             return Err(NoetherError::InvalidParameter);
         }
         env.storage().instance().set(&DataKey::Stork, &config);
+        env.events().publish(
+            (Symbol::new(&env, "stork_cfg_set"),),
+            (config,),
+        );
         Ok(())
     }
 
@@ -567,6 +571,10 @@ impl NoetherRouterContract {
             map.push_back((ids.get_unchecked(i), tags.get_unchecked(i)));
         }
         env.storage().instance().set(&DataKey::StorkAssets, &map);
+        env.events().publish(
+            (Symbol::new(&env, "stork_assets_set"),),
+            (ids, tags),
+        );
         Ok(())
     }
 
@@ -582,6 +590,10 @@ impl NoetherRouterContract {
         env.storage()
             .instance()
             .set(&DataKey::StorkStrictAssets, &assets);
+        env.events().publish(
+            (Symbol::new(&env, "stork_strict_set"),),
+            (assets,),
+        );
         Ok(())
     }
 
@@ -599,6 +611,10 @@ impl NoetherRouterContract {
             return Err(NoetherError::InvalidParameter);
         }
         env.storage().instance().set(&DataKey::Reflector, &config);
+        env.events().publish(
+            (Symbol::new(&env, "reflector_cfg_set"),),
+            (config,),
+        );
         Ok(())
     }
 
@@ -619,6 +635,10 @@ impl NoetherRouterContract {
     pub fn set_market(env: Env, new_market: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Market, &new_market);
+        env.events().publish(
+            (Symbol::new(&env, "market_rotated"),),
+            (new_market,),
+        );
         Ok(())
     }
 
@@ -626,6 +646,10 @@ impl NoetherRouterContract {
     pub fn set_noeracle(env: Env, new_noeracle: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Noeracle, &new_noeracle);
+        env.events().publish(
+            (Symbol::new(&env, "oracle_rotated"),),
+            (new_noeracle,),
+        );
         Ok(())
     }
 
@@ -640,7 +664,16 @@ impl NoetherRouterContract {
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         new_admin.require_auth();
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NoetherError::NotInitialized)?;
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_rotated"),),
+            (old_admin, new_admin),
+        );
         Ok(())
     }
 

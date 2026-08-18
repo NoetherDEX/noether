@@ -847,6 +847,10 @@ impl VaultFactoryContract {
         storage::require_admin(&env)?;
         storage::set_leader_allowlist(&env, &leaders);
         storage::extend_instance_ttl(&env);
+        env.events().publish(
+            (Symbol::new(&env, "allowlist_set"),),
+            (leaders,),
+        );
         Ok(())
     }
 
@@ -855,6 +859,10 @@ impl VaultFactoryContract {
         storage::require_admin(&env)?;
         storage::set_max_vaults(&env, max);
         storage::extend_instance_ttl(&env);
+        env.events().publish(
+            (Symbol::new(&env, "max_vaults_set"),),
+            (max,),
+        );
         Ok(())
     }
 
