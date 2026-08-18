@@ -84,10 +84,20 @@ impl RiskContract {
     /// Fetch a market's risk config. Errors if unset (a pair with no config
     /// must not trade — fail closed).
     pub fn get_config(env: Env, asset: Symbol) -> Result<RiskConfig, NoetherError> {
+        let key = DataKey::Config(asset);
+        let cfg: RiskConfig = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(NoetherError::NotInitialized)?;
+        // R-1: reads ARE the hot path here (every liquidation-health pass
+        // routes through a config view), so a live market re-arms both the
+        // config entry and the instance rent on each read.
         env.storage()
             .persistent()
-            .get(&DataKey::Config(asset))
-            .ok_or(NoetherError::NotInitialized)
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(cfg)
     }
 
     /// Maintenance-margin bps for a market (keeper liquidation-health calc).
@@ -231,6 +241,32 @@ mod tests {
         let got = client.get_config(&btc);
         assert_eq!(got.mm_bps, 200);
         assert_eq!(client.maintenance_margin_bps(&btc), 200);
+    }
+
+    /// R-1: config reads are the hot path — a read inside the re-extend
+    /// window must re-arm both the instance and the config entry's rent.
+    #[test]
+    fn config_read_rearms_ttls() {
+        use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
+        use soroban_sdk::testutils::Ledger as _;
+
+        let (env, _admin, client) = setup();
+        let btc = Symbol::new(&env, "BTC");
+        client.set_config(&btc, &RiskConfig::major(2_500));
+        let id = client.address.clone();
+
+        env.ledger().with_mut(|li| li.sequence_number += TTL_EXTEND_TO - 1_000);
+        let before = env.as_contract(&id, || env.storage().instance().get_ttl());
+        assert!(before < TTL_THRESHOLD, "precondition: inside the re-extend window");
+
+        client.get_config(&btc);
+
+        let inst = env.as_contract(&id, || env.storage().instance().get_ttl());
+        let key = env.as_contract(&id, || {
+            env.storage().persistent().get_ttl(&DataKey::Config(btc.clone()))
+        });
+        assert_eq!(inst, TTL_EXTEND_TO, "read must re-arm the instance TTL");
+        assert_eq!(key, TTL_EXTEND_TO, "read must re-arm the config entry TTL");
     }
 
     #[test]

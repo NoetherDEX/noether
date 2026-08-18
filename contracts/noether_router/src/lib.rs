@@ -430,6 +430,9 @@ impl NoetherRouterContract {
         if !cfg.enabled {
             return Err(NoetherError::Unauthorized);
         }
+        // R-1: relay_stork skips require_initialized (Stork config is its own
+        // gate), so it re-arms the instance rent itself.
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let len = payload.len();
         if len < STORK_HEADER_LEN + STORK_ENTRY_LEN
@@ -914,6 +917,10 @@ impl NoetherRouterContract {
         if !env.storage().instance().has(&DataKey::Initialized) {
             return Err(NoetherError::NotInitialized);
         }
+        // R-1: every live call re-arms the instance rent (no-op above the
+        // threshold), so an actively-used router can never archive out from
+        // under the verify-then-trade path.
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(())
     }
 
@@ -1315,6 +1322,44 @@ mod tests {
         // L0-10: the close bound reached the market too.
         let market = mock_market::MockMarketClient::new(&f.env, &f.market_id);
         assert_eq!(market.last_acceptable(), acceptable);
+    }
+
+    /// R-1: every verify-then-trade call routes through require_initialized,
+    /// which must re-arm the instance rent so the router can't archive.
+    #[test]
+    fn trade_path_rearms_instance_ttl() {
+        use soroban_sdk::testutils::storage::Instance as _;
+        use soroban_sdk::testutils::Ledger as _;
+
+        let f = setup();
+        let id = f.client.address.clone();
+
+        // Keep the MOCKS alive across the jump — only the router's own TTL
+        // behaviour is under test here.
+        for mock in [&f.market_id, &f.noeracle_id] {
+            f.env.as_contract(mock, || {
+                f.env
+                    .storage()
+                    .instance()
+                    .extend_ttl(TTL_EXTEND_TO * 2, TTL_EXTEND_TO * 2);
+            });
+        }
+
+        f.env
+            .ledger()
+            .with_mut(|li| li.sequence_number += TTL_EXTEND_TO - 1_000);
+        let before = f.env.as_contract(&id, || f.env.storage().instance().get_ttl());
+        assert!(before < TTL_THRESHOLD, "precondition: inside the re-extend window");
+
+        f.client.close_with_price(
+            &Address::generate(&f.env),
+            &99u64,
+            &340_000_000_000i128,
+            &att(&f.env, "ETH", 350_000_000_000i128, 1_700_000_000, 7),
+        );
+
+        let after = f.env.as_contract(&id, || f.env.storage().instance().get_ttl());
+        assert_eq!(after, TTL_EXTEND_TO, "trade path must re-arm the instance TTL");
     }
 
     #[test]

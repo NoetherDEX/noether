@@ -443,6 +443,27 @@ mod tests {
         (env, admin, market, id)
     }
 
+    /// R-1: any initialized-gated call (all hot paths route through
+    /// require_initialized) must re-arm the instance rent.
+    #[test]
+    fn initialized_gate_rearms_instance_ttl() {
+        use soroban_sdk::testutils::storage::Instance as _;
+        use soroban_sdk::testutils::Ledger as _;
+        use noether_common::ttl::{TTL_EXTEND_TO, TTL_THRESHOLD};
+
+        let (env, _admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+
+        env.ledger().with_mut(|li| li.sequence_number += TTL_EXTEND_TO - 1_000);
+        let before = env.as_contract(&id, || env.storage().instance().get_ttl());
+        assert!(before < TTL_THRESHOLD, "precondition: inside the re-extend window");
+
+        client.get_admin();
+
+        let after = env.as_contract(&id, || env.storage().instance().get_ttl());
+        assert_eq!(after, TTL_EXTEND_TO, "gated call must re-arm the instance TTL");
+    }
+
     #[test]
     fn version_returns_marker() {
         let env = Env::default();

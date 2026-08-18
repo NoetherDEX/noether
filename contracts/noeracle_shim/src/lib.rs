@@ -335,6 +335,13 @@ impl NoeracleShimContract {
         if !env.storage().instance().has(&DataKey::Initialized) {
             panic_with_error!(env, NoetherError::NotInitialized);
         }
+        // R-1: every price read re-arms the instance rent (no-op above the
+        // threshold) — an archived shim would halt all trading, so the hot
+        // path itself keeps it alive.
+        env.storage().instance().extend_ttl(
+            noether_common::ttl::TTL_THRESHOLD,
+            noether_common::ttl::TTL_EXTEND_TO,
+        );
     }
 
     /// Rescale a backend price to Noether's 7-decimal fixed point. A wrong
@@ -457,6 +464,44 @@ mod tests {
         let (_, admin, noeracle, client) = setup();
         assert_eq!(client.get_admin(), admin);
         assert_eq!(client.get_noeracle(), noeracle);
+    }
+
+    /// R-1: every price read must re-arm the instance rent — an archived
+    /// shim would halt all trading.
+    #[test]
+    fn lastprice_rearms_instance_ttl() {
+        use soroban_sdk::testutils::storage::Instance as _;
+        use soroban_sdk::testutils::Ledger as _;
+
+        let (env, _admin, noeracle, client) = setup();
+        let id = client.address.clone();
+
+        // Keep the MOCK backend alive across the jump — only the shim's own
+        // TTL behaviour is under test here.
+        env.as_contract(&noeracle, || {
+            env.storage().instance().extend_ttl(
+                noether_common::ttl::TTL_EXTEND_TO * 2,
+                noether_common::ttl::TTL_EXTEND_TO * 2,
+            );
+        });
+
+        env.ledger().with_mut(|li| {
+            li.sequence_number += noether_common::ttl::TTL_EXTEND_TO - 1_000
+        });
+        let before = env.as_contract(&id, || env.storage().instance().get_ttl());
+        assert!(
+            before < noether_common::ttl::TTL_THRESHOLD,
+            "precondition: inside the re-extend window"
+        );
+
+        client.lastprice(&Symbol::new(&env, "BTC"));
+
+        let after = env.as_contract(&id, || env.storage().instance().get_ttl());
+        assert_eq!(
+            after,
+            noether_common::ttl::TTL_EXTEND_TO,
+            "price read must re-arm the instance TTL"
+        );
     }
 
     #[test]

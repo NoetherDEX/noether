@@ -64,10 +64,10 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "u32": 30
+                  "u32": 0
                 },
                 {
-                  "u32": 30
+                  "u32": 0
                 }
               ]
             }
@@ -628,7 +628,7 @@
                           ]
                         },
                         "val": {
-                          "u32": 30
+                          "u32": 0
                         }
                       },
                       {
@@ -700,7 +700,7 @@
                           ]
                         },
                         "val": {
-                          "u32": 30
+                          "u32": 0
                         }
                       }
                     ]
@@ -1380,10 +1380,10 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "u32": 30
+                  "u32": 0
                 },
                 {
-                  "u32": 30
+                  "u32": 0
                 }
               ]
             }
