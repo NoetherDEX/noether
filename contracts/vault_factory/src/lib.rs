@@ -847,6 +847,22 @@ impl VaultFactoryContract {
         Ok(())
     }
 
+    /// Rotate the admin (R-11: the multisig migration path). Both current
+    /// and new admin must sign — mirrors the vault/router pattern so a
+    /// mistyped address can't brick the admin role.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), FactoryError> {
+        storage::require_admin(&env)?;
+        new_admin.require_auth();
+        let old_admin = storage::get_admin(&env);
+        storage::set_admin(&env, &new_admin);
+        storage::extend_instance_ttl(&env);
+        env.events().publish(
+            (Symbol::new(&env, "admin_rotated"),),
+            (old_admin, new_admin),
+        );
+        Ok(())
+    }
+
     /// Admin in-place upgrade (the factory finally gets a migration path,
     /// mirroring market/vault/router). A disclosed admin power.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), FactoryError> {
@@ -981,6 +997,46 @@ mod tests {
         let client = VaultFactoryContractClient::new(&env, &id);
         client.initialize(&admin, &market, &usdc);
         (env, admin, market, usdc, id)
+    }
+
+    /// R-11: admin rotation is two-side-signed — one-sided rotations fail,
+    /// and after a rotation the old admin is fully powerless.
+    #[test]
+    fn set_admin_requires_both_signatures_and_rotates() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal as _;
+
+        let (env, admin, _market, _usdc, id) = setup();
+        let client = VaultFactoryContractClient::new(&env, &id);
+        let new_admin = Address::generate(&env);
+
+        // Only the current admin signs → the new admin's require_auth bites.
+        env.mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &id,
+                fn_name: "set_admin",
+                args: (new_admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_set_admin(&new_admin).is_err());
+
+        // Both sign → rotation lands.
+        env.mock_all_auths();
+        client.set_admin(&new_admin);
+
+        // Old admin alone can no longer rotate back.
+        env.mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &id,
+                fn_name: "set_admin",
+                args: (admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_set_admin(&admin).is_err());
     }
 
     /// Variant of `setup` that wires a real Stellar Asset Contract for USDC,

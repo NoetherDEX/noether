@@ -379,6 +379,21 @@ impl ReferralContract {
         Ok(())
     }
 
+    /// Rotate the admin (R-11: the multisig migration path). Both current
+    /// and new admin must sign — mirrors the vault/router pattern so a
+    /// mistyped address can't brick the admin role.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), ReferralError> {
+        storage::require_admin(&env)?;
+        new_admin.require_auth();
+        let old_admin = storage::get_admin(&env);
+        storage::set_admin(&env, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_rotated"),),
+            (old_admin, new_admin),
+        );
+        Ok(())
+    }
+
     /// Swap the running WASM in place; codes, bindings and balances are
     /// preserved (mirrors the market/vault/router upgrade pattern).
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ReferralError> {
@@ -559,6 +574,47 @@ mod tests {
         // Admin-authed (require_admin).
         assert!(client.try_revoke_code(&code).is_err());
         assert!(client.try_set_discount_bps(&500u32).is_err());
+    }
+
+    /// R-11: admin rotation is two-side-signed — one-sided rotations fail,
+    /// and after a rotation the old admin is fully powerless.
+    #[test]
+    fn set_admin_requires_both_signatures_and_rotates() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal as _;
+
+        let (env, admin, _market, id) = setup();
+        let client = ReferralContractClient::new(&env, &id);
+        let new_admin = Address::generate(&env);
+
+        // Only the current admin signs → the new admin's require_auth bites.
+        env.mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &id,
+                fn_name: "set_admin",
+                args: (new_admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_set_admin(&new_admin).is_err());
+
+        // Both sign → rotation lands and the view reflects it.
+        env.mock_all_auths();
+        client.set_admin(&new_admin);
+        assert_eq!(client.get_admin(), new_admin);
+
+        // Old admin alone can no longer rotate back.
+        env.mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &id,
+                fn_name: "set_admin",
+                args: (admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_set_admin(&admin).is_err());
     }
 
     #[test]

@@ -304,6 +304,21 @@ impl MarketContract {
         Ok(())
     }
 
+    /// Rotate the admin (R-11: the multisig migration path). Both current
+    /// and new admin must sign — a one-sided rotation to a mistyped
+    /// address would brick every admin power forever.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        new_admin.require_auth();
+        let old_admin = get_admin(&env);
+        set_admin(&env, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_rotated"),),
+            (old_admin, new_admin),
+        );
+        Ok(())
+    }
+
     /// Overwrite the stored `MarketConfig` WITHOUT reading the old value.
     ///
     /// A Soroban struct is stored as an exact field map, so after an
@@ -4124,6 +4139,46 @@ mod tests {
 
     fn setup() -> TestEnv {
         setup_with_vault_deposit(10_000_000 * PRECISION)
+    }
+
+    /// R-11: admin rotation is two-side-signed — one-sided rotations fail,
+    /// and after a rotation the old admin is fully powerless.
+    #[test]
+    fn set_admin_requires_both_signatures_and_rotates() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal as _;
+
+        let t = setup();
+        let new_admin = Address::generate(&t.env);
+
+        // Only the current admin signs → the new admin's require_auth bites.
+        t.env.mock_auths(&[MockAuth {
+            address: &t.admin,
+            invoke: &MockAuthInvoke {
+                contract: &t.market_id,
+                fn_name: "set_admin",
+                args: (new_admin.clone(),).into_val(&t.env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(t.market.try_set_admin(&new_admin).is_err());
+
+        // Both sign (mock_all_auths) → rotation lands.
+        t.env.mock_all_auths();
+        t.market.set_admin(&new_admin);
+
+        // Old admin alone can no longer rotate back — the stored admin is
+        // new_admin, whose signature is absent here.
+        t.env.mock_auths(&[MockAuth {
+            address: &t.admin,
+            invoke: &MockAuthInvoke {
+                contract: &t.market_id,
+                fn_name: "set_admin",
+                args: (t.admin.clone(),).into_val(&t.env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(t.market.try_set_admin(&t.admin).is_err());
     }
 
     fn setup_with_vault_deposit(vault_deposit: i128) -> TestEnv {
