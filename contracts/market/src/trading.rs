@@ -94,6 +94,12 @@ pub fn rotate_volume_window(env: &Env, record: &mut VolumeRecord, current_day: u
 
 /// Record a trade's volume in the 14-day rolling window.
 pub fn record_trade_volume(env: &Env, record: &mut VolumeRecord, size: i128, current_day: u64) {
+    // ALX-19 boundary hardening: every caller derives size from validated
+    // positive collateral × bounded leverage, so a non-positive value here
+    // is a bug upstream — never let it deflate the rolling window.
+    if size <= 0 {
+        return;
+    }
     rotate_volume_window(env, record, current_day);
 
     let slot = (current_day % VOLUME_WINDOW_DAYS) as u32;
@@ -166,6 +172,18 @@ mod tests {
 
     // Removed tests for deleted functions: calculate_effective_leverage, calculate_margin_ratio,
     // has_sufficient_margin, calculate_partial_close
+
+    /// ALX-19: non-positive sizes must never touch the rolling window.
+    #[test]
+    fn record_trade_volume_ignores_non_positive_size() {
+        let env = Env::default();
+        let mut record = create_empty_volume_record(&env);
+        record_trade_volume(&env, &mut record, 500, 10);
+        assert_eq!(sum_rolling_volume(&record), 500);
+        record_trade_volume(&env, &mut record, -400, 10);
+        record_trade_volume(&env, &mut record, 0, 10);
+        assert_eq!(sum_rolling_volume(&record), 500, "negative/zero size must be ignored");
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     // Fee Tier Tests
