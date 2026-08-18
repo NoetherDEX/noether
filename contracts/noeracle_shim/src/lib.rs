@@ -185,8 +185,9 @@ impl NoeracleShimContract {
     /// liveness. (Upstream `twap` returns the bare mean; the newest entry
     /// comes from `prices(feed, 1)` — the oldest-used timestamp is not
     /// exposed upstream, and ring liveness is the operative bound.)
-    /// Mode 1 (SEP-40) delegates twap to the vendor and reports "now" —
-    /// age governance is the vendor's, documented divergence.
+    /// Mode 1 (SEP-40) delegates twap to the vendor and age-bounds it with
+    /// the feed's newest `lastprice` tick (R-7) — a fabricated "now" would
+    /// defeat the market's `twap_max_age_secs` staleness gate.
     /// None whenever the backend/ring cannot answer (<2 entries, unknown
     /// pair) — callers degrade to spot, never trap on None.
     pub fn twap(env: Env, asset: Symbol, records: u32) -> Option<(i128, u64)> {
@@ -206,9 +207,16 @@ impl NoeracleShimContract {
                 (Sep40Asset::Other(asset.clone()), records).into_val(&env);
             let mean: Option<i128> =
                 env.invoke_contract(&backend, &Symbol::new(&env, "twap"), args);
-            return mean
-                .filter(|value| *value > 0)
-                .map(|value| (Self::rescale(&env, value), env.ledger().timestamp()));
+            let mean = mean.filter(|value| *value > 0)?;
+            // R-7/ALX-03: never fabricate freshness. The vendor twap carries
+            // no timestamp, so age-bound it with the feed's newest lastprice
+            // tick; if that can't be read, return None and let callers
+            // degrade to spot rather than trust a mean of unknown age.
+            let lp_args: Vec<soroban_sdk::Val> = (Sep40Asset::Other(asset),).into_val(&env);
+            let tick: Option<Sep40PriceData> =
+                env.invoke_contract(&backend, &Symbol::new(&env, "lastprice"), lp_args);
+            let newest_ts = tick?.timestamp;
+            return Some((Self::rescale(&env, mean), newest_ts));
         }
 
         let tag = noether_common::assets::symbol_to_tag(&env, &asset).ok()?;
@@ -605,10 +613,15 @@ mod tests {
             }
 
             /// L0-9 mode-1 passthrough target: $69,000 mean at 14 decimals.
+            /// ETH answers twap but has NO lastprice — the R-7 unknown-age
+            /// surface.
             pub fn twap(env: Env, asset: Sep40Asset, _records: u32) -> Option<i128> {
                 match asset {
                     Sep40Asset::Other(sym) if sym == Symbol::new(&env, "BTC") => {
                         Some(6_900_000_000_000_000_000)
+                    }
+                    Sep40Asset::Other(sym) if sym == Symbol::new(&env, "ETH") => {
+                        Some(1_000_000_000_000_000_000)
                     }
                     _ => None,
                 }
@@ -630,11 +643,22 @@ mod tests {
         assert_eq!(ts, 1_700_000_100);
         assert_eq!(client.get_backend(), (BACKEND_SEP40, sep40_id, 14u32));
 
-        // L0-9: mode-1 twap rescales the vendor mean the same way; the
-        // timestamp is "now" (age governance is the vendor's).
+        // L0-9/R-7: mode-1 twap rescales the vendor mean the same way; the
+        // timestamp is the feed's newest lastprice tick — never "now".
         let twap = client.twap(&Symbol::new(&env, "BTC"), &4).unwrap();
         assert_eq!(twap.0, 690_000_000_000);
-        assert_eq!(twap.1, env.ledger().timestamp());
+        assert_eq!(twap.1, 1_700_000_100);
+    }
+
+    /// R-7: a vendor mean without a readable lastprice tick has unknown
+    /// age — the shim must return None so callers degrade to spot.
+    #[test]
+    fn sep40_twap_without_lastprice_tick_returns_none() {
+        let (env, _, _, client) = setup();
+        let sep40_id = env.register_contract(None, mock_sep40::MockSep40Contract);
+        client.set_backend(&BACKEND_SEP40, &sep40_id, &14u32);
+        // Mock: ETH has a twap mean but NO lastprice.
+        assert_eq!(client.twap(&Symbol::new(&env, "ETH"), &4), None);
     }
 
     #[test]
