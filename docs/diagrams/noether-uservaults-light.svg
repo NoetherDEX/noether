@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 568" role="img" aria-labelledby="noether-uservaults-light-title noether-uservaults-light-desc" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">
+<title id="noether-uservaults-light-title">User-created vaults</title>
+<desc id="noether-uservaults-light-desc">Sequence diagram: a leader creates a vault via the vault factory, depositors receive shares priced at NAV, the leader trades the shared collateral through proxied calls to the market, and withdrawals pay pro-rata NAV minus the leader's profit share above the high-water mark; a 5 percent leader minimum holding is enforced on every withdraw.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4d5766"/></marker>
+<marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#a16207"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2563eb"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4d5766" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f6f7f9"/>
+<rect x="48" y="24" width="160" height="48" rx="6" fill="#f6f7f9"/>
+<rect x="48" y="24" width="160" height="48" rx="6" fill="rgba(77,87,102,0.10)" stroke="#707a89" stroke-width="1"/>
+<text x="128" y="45" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Leader</text>
+<text x="128" y="61" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">runs the strategy</text>
+<rect x="304" y="24" width="160" height="48" rx="6" fill="#f6f7f9"/>
+<rect x="304" y="24" width="160" height="48" rx="6" fill="rgba(77,87,102,0.10)" stroke="#707a89" stroke-width="1"/>
+<text x="384" y="45" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Depositor</text>
+<text x="384" y="61" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">holds shares</text>
+<rect x="536" y="24" width="160" height="48" rx="6" fill="#f6f7f9"/>
+<rect x="536" y="24" width="160" height="48" rx="6" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<text x="616" y="45" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Vault Factory</text>
+<text x="616" y="61" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">shares · NAV · HWM</text>
+<rect x="752" y="24" width="160" height="48" rx="6" fill="#f6f7f9"/>
+<rect x="752" y="24" width="160" height="48" rx="6" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<text x="832" y="45" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Market</text>
+<text x="832" y="61" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">positions</text>
+<line x1="128" y1="72" x2="128" y2="432" stroke="rgba(28,33,39,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="384" y1="72" x2="384" y2="432" stroke="rgba(28,33,39,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="616" y1="72" x2="616" y2="432" stroke="rgba(28,33,39,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="832" y1="72" x2="832" y2="432" stroke="rgba(28,33,39,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="612" y="120" width="8" height="80" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<rect x="612" y="232" width="8" height="48" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<rect x="828" y="264" width="8" height="16" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<rect x="612" y="312" width="8" height="96" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<line x1="132" y1="120" x2="612" y2="120" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="374" y="100" width="124" height="12" rx="2" fill="#f6f7f9"/>
+<text x="436" y="109" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">CREATE_VAULT(SHARE_BPS)</text>
+<line x1="388" y1="152" x2="612" y2="152" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="462" y="132" width="76" height="12" rx="2" fill="#f6f7f9"/>
+<text x="500" y="141" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">DEPOSIT(USDC)</text>
+<line x1="612" y1="184" x2="388" y2="184" stroke="#4d5766" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="466" y="164" width="68" height="12" rx="2" fill="#f6f7f9"/>
+<text x="500" y="173" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">SHARES @ NAV</text>
+<line x1="132" y1="232" x2="612" y2="232" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="390" y="212" width="92" height="12" rx="2" fill="#f6f7f9"/>
+<text x="436" y="221" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">LEADER_TRADE(...)</text>
+<line x1="620" y1="264" x2="828" y2="264" stroke="#a16207" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+<rect x="666" y="244" width="116" height="12" rx="2" fill="#f6f7f9"/>
+<text x="724" y="253" fill="#a16207" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">OPEN · CLOSE (PROXIED)</text>
+<line x1="388" y1="312" x2="612" y2="312" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="456" y="292" width="88" height="12" rx="2" fill="#f6f7f9"/>
+<text x="500" y="301" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">WITHDRAW(SHARES)</text>
+<path d="M 620,344 L 648,344 Q 656,344 656,352 L 656,352 Q 656,360 648,360 L 624,360" fill="none" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="668" y="355" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.06em">CHECK 5% LEADER MIN-HOLD</text>
+<line x1="612" y1="408" x2="388" y2="408" stroke="#4d5766" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="434" y="388" width="132" height="12" rx="2" fill="#f6f7f9"/>
+<text x="500" y="397" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">USDC · NAV − PROFIT SHARE</text>
+<text x="912" y="456" fill="#707a89" font-size="14" font-style="italic" font-family="'Instrument Serif', Georgia, serif" text-anchor="end">profit share accrues only above the high-water mark</text>
+<line x1="40" y1="488" x2="920" y2="488" stroke="rgba(28,33,39,0.10)" stroke-width="0.8"/>
+<text x="40" y="504" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.18em">LEGEND</text>
+<line x1="40" y1="522" x2="68" y2="522" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="76" y="524" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Call</text>
+<line x1="120" y1="522" x2="148" y2="522" stroke="#4d5766" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+<text x="156" y="524" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Return</text>
+<line x1="212" y1="522" x2="240" y2="522" stroke="#a16207" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<text x="248" y="524" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Proxied trade</text>
+<rect x="340" y="516" width="14" height="10" rx="2" fill="rgba(77,87,102,0.10)" stroke="#707a89" stroke-width="1"/>
+<text x="360" y="524" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">User</text>
+<rect x="404" y="516" width="14" height="10" rx="2" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<text x="424" y="524" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Contract</text>
+</svg>

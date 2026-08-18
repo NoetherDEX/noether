@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 528" role="img" aria-labelledby="noether-referral-light-title noether-referral-light-desc" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">
+<title id="noether-referral-light-title">On-chain referral flow</title>
+<desc id="noether-referral-light-desc">Sequence diagram: a referrer registers a code, a referee binds to it, and on every trade the market's fee path calls record_trade on the referral contract — the referee pays 4 percent less and 10 percent of the fee accrues to the referrer, claimable as USDC.</desc>
+<defs>
+<marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4d5766"/></marker>
+<marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#a16207"/></marker>
+<marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2563eb"/></marker>
+<marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4d5766" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f6f7f9"/>
+<rect x="48" y="24" width="160" height="48" rx="6" fill="#f6f7f9"/>
+<rect x="48" y="24" width="160" height="48" rx="6" fill="rgba(77,87,102,0.10)" stroke="#707a89" stroke-width="1"/>
+<text x="128" y="45" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Referrer</text>
+<text x="128" y="61" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">owns a code</text>
+<rect x="304" y="24" width="160" height="48" rx="6" fill="#f6f7f9"/>
+<rect x="304" y="24" width="160" height="48" rx="6" fill="rgba(77,87,102,0.10)" stroke="#707a89" stroke-width="1"/>
+<text x="384" y="45" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Referee</text>
+<text x="384" y="61" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">?ref=CODE</text>
+<rect x="536" y="24" width="160" height="48" rx="6" fill="#f6f7f9"/>
+<rect x="536" y="24" width="160" height="48" rx="6" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<text x="616" y="45" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Referral</text>
+<text x="616" y="61" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">referral contract</text>
+<rect x="752" y="24" width="160" height="48" rx="6" fill="#f6f7f9"/>
+<rect x="752" y="24" width="160" height="48" rx="6" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<text x="832" y="45" fill="#1c2127" font-size="12" font-weight="600" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Market</text>
+<text x="832" y="61" fill="#4d5766" font-size="9" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle">fee path</text>
+<line x1="128" y1="72" x2="128" y2="400" stroke="rgba(28,33,39,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="384" y1="72" x2="384" y2="400" stroke="rgba(28,33,39,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="616" y1="72" x2="616" y2="400" stroke="rgba(28,33,39,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="832" y1="72" x2="832" y2="400" stroke="rgba(28,33,39,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="612" y="120" width="8" height="16" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<rect x="612" y="152" width="8" height="16" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<rect x="828" y="200" width="8" height="48" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<rect x="612" y="232" width="8" height="16" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<rect x="612" y="328" width="8" height="56" fill="rgba(28,33,39,0.06)" stroke="#4d5766" stroke-width="0.8"/>
+<line x1="132" y1="120" x2="612" y2="120" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="382" y="100" width="108" height="12" rx="2" fill="#f6f7f9"/>
+<text x="436" y="109" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">REGISTER_CODE("NOE")</text>
+<line x1="388" y1="152" x2="612" y2="152" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="448" y="132" width="104" height="12" rx="2" fill="#f6f7f9"/>
+<text x="500" y="141" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">SET_REFERRER("NOE")</text>
+<line x1="388" y1="200" x2="828" y2="200" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="514" y="180" width="108" height="12" rx="2" fill="#f6f7f9"/>
+<text x="568" y="189" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">TRADE · OPEN / CLOSE</text>
+<line x1="828" y1="232" x2="620" y2="232" stroke="#a16207" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+<rect x="678" y="212" width="92" height="12" rx="2" fill="#f6f7f9"/>
+<text x="724" y="221" fill="#a16207" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">RECORD_TRADE(FEE)</text>
+<text x="724" y="252" fill="#707a89" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">4% DISCOUNT · 10% TO REFERRER</text>
+<line x1="132" y1="328" x2="612" y2="328" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<rect x="414" y="308" width="44" height="12" rx="2" fill="#f6f7f9"/>
+<text x="436" y="317" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">CLAIM()</text>
+<line x1="612" y1="384" x2="132" y2="384" stroke="#4d5766" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+<rect x="318" y="364" width="108" height="12" rx="2" fill="#f6f7f9"/>
+<text x="372" y="373" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">USDC · ACCRUED SHARE</text>
+<text x="912" y="416" fill="#707a89" font-size="14" font-style="italic" font-family="'Instrument Serif', Georgia, serif" text-anchor="end">the discount hook runs on-chain, inside the market fee path</text>
+<line x1="40" y1="448" x2="920" y2="448" stroke="rgba(28,33,39,0.10)" stroke-width="0.8"/>
+<text x="40" y="464" fill="#4d5766" font-size="8" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" letter-spacing="0.18em">LEGEND</text>
+<line x1="40" y1="482" x2="68" y2="482" stroke="#4d5766" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="76" y="484" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Call</text>
+<line x1="120" y1="482" x2="148" y2="482" stroke="#4d5766" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+<text x="156" y="484" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Return</text>
+<line x1="212" y1="482" x2="240" y2="482" stroke="#a16207" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+<text x="248" y="484" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">On-chain fee hook</text>
+<rect x="360" y="476" width="14" height="10" rx="2" fill="rgba(77,87,102,0.10)" stroke="#707a89" stroke-width="1"/>
+<text x="380" y="484" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">User</text>
+<rect x="424" y="476" width="14" height="10" rx="2" fill="#ffffff" stroke="#1c2127" stroke-width="1"/>
+<text x="444" y="484" fill="#4d5766" font-size="8.5" font-family="Inter, 'Geist', 'Helvetica Neue', Arial, sans-serif">Contract</text>
+</svg>
