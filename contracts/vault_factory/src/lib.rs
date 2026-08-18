@@ -137,10 +137,11 @@ impl VaultFactoryContract {
         depositor: Address,
         vault_id: u32,
         amount: i128,
+        min_shares_out: i128,
     ) -> Result<i128, FactoryError> {
         storage::require_initialized(&env)?;
         depositor.require_auth();
-        if amount <= 0 {
+        if amount <= 0 || min_shares_out < 0 {
             return Err(FactoryError::AmountMustBePositive);
         }
         let mut info = storage::load_vault(&env, vault_id)?;
@@ -154,6 +155,11 @@ impl VaultFactoryContract {
         let shares = math::shares_for_deposit(amount, nav, info.circulating_shares)?;
         if shares <= 0 {
             return Err(FactoryError::AmountMustBePositive);
+        }
+        // R-6/ALX-16: caller-declared slippage bound — full NAV moves with
+        // the leader's open positions between signing and inclusion. 0 = off.
+        if shares < min_shares_out {
+            return Err(FactoryError::MinOutputNotMet);
         }
 
         // Move USDC into the factory contract — the factory holds vault
@@ -208,10 +214,11 @@ impl VaultFactoryContract {
         depositor: Address,
         vault_id: u32,
         shares: i128,
+        min_usdc_out: i128,
     ) -> Result<i128, FactoryError> {
         storage::require_initialized(&env)?;
         depositor.require_auth();
-        if shares <= 0 {
+        if shares <= 0 || min_usdc_out < 0 {
             return Err(FactoryError::AmountMustBePositive);
         }
         let mut info = storage::load_vault(&env, vault_id)?;
@@ -232,6 +239,10 @@ impl VaultFactoryContract {
         let usdc_out = math::usdc_for_withdraw(shares, nav, info.circulating_shares)?;
         if usdc_out > info.total_usdc {
             return Err(FactoryError::LiquidityDeployed);
+        }
+        // R-6/ALX-16: caller-declared slippage bound (0 = off).
+        if usdc_out < min_usdc_out {
+            return Err(FactoryError::MinOutputNotMet);
         }
 
         let usdc_addr = storage::get_usdc(&env);
@@ -1123,8 +1134,8 @@ mod tests {
         assert!(client
             .try_create_vault(&Address::generate(&env), &String::from_str(&env, "v2"))
             .is_err());
-        assert!(client.try_deposit(&Address::generate(&env), &vid, &100i128).is_err());
-        assert!(client.try_withdraw(&Address::generate(&env), &vid, &1i128).is_err());
+        assert!(client.try_deposit(&Address::generate(&env), &vid, &100i128, &0).is_err());
+        assert!(client.try_withdraw(&Address::generate(&env), &vid, &1i128, &0).is_err());
         // Admin-authed (require_admin).
         assert!(client.try_set_max_vaults(&10u32).is_err());
         assert!(client.try_set_paused(&vid, &true).is_err());
@@ -1165,7 +1176,7 @@ mod tests {
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
 
         let usdc_token = soroban_sdk::token::Client::new(&env, &usdc);
-        let shares = client.deposit(&leader, &vault_id, &500_0000000);
+        let shares = client.deposit(&leader, &vault_id, &500_0000000, &0);
         assert_eq!(shares, 500_0000000); // first deposit = 1:1
 
         assert_eq!(usdc_token.balance(&leader), 500_0000000);
@@ -1178,14 +1189,38 @@ mod tests {
         assert_eq!(client.shares_of(&vault_id, &leader), 500_0000000);
     }
 
+    /// R-6: follower slippage bounds on leader-vault deposit/withdraw.
+    #[test]
+    fn min_out_bounds_enforced() {
+        let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
+        let client = VaultFactoryContractClient::new(&env, &factory);
+        let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
+
+        // First deposit mints 1:1 — demanding more shares than that bounces.
+        assert!(matches!(
+            client.try_deposit(&leader, &vault_id, &500_0000000, &500_0000001),
+            Err(Ok(FactoryError::MinOutputNotMet))
+        ));
+        let shares = client.deposit(&leader, &vault_id, &500_0000000, &500_0000000);
+        assert_eq!(shares, 500_0000000);
+
+        // Par NAV: burning 100 shares returns 100 USDC — demanding 101 bounces.
+        assert!(matches!(
+            client.try_withdraw(&leader, &vault_id, &100_0000000, &100_0000001),
+            Err(Ok(FactoryError::MinOutputNotMet))
+        ));
+        let out = client.withdraw(&leader, &vault_id, &100_0000000, &100_0000000);
+        assert_eq!(out, 100_0000000);
+    }
+
     #[test]
     fn second_deposit_at_par_nav_mints_one_to_one() {
         let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(2_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&leader, &vault_id, &1_000_0000000);
+        client.deposit(&leader, &vault_id, &1_000_0000000, &0);
         // NAV is still 1.0; second deposit mints 1:1.
-        let shares2 = client.deposit(&leader, &vault_id, &500_0000000);
+        let shares2 = client.deposit(&leader, &vault_id, &500_0000000, &0);
         assert_eq!(shares2, 500_0000000);
     }
 
@@ -1194,7 +1229,7 @@ mod tests {
         let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        let res = client.try_deposit(&leader, &vault_id, &0);
+        let res = client.try_deposit(&leader, &vault_id, &0, &0);
         assert_eq!(res, Err(Ok(FactoryError::AmountMustBePositive)));
     }
 
@@ -1202,7 +1237,7 @@ mod tests {
     fn deposit_rejects_unknown_vault() {
         let (env, _admin, _market, _usdc, factory, wallet) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
-        let res = client.try_deposit(&wallet, &999, &100_0000000);
+        let res = client.try_deposit(&wallet, &999, &100_0000000, &0);
         assert_eq!(res, Err(Ok(FactoryError::VaultNotFound)));
     }
 
@@ -1211,11 +1246,11 @@ mod tests {
         let (env, _admin, _market, usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&leader, &vault_id, &1_000_0000000);
+        client.deposit(&leader, &vault_id, &1_000_0000000, &0);
         let usdc_token = soroban_sdk::token::Client::new(&env, &usdc);
         assert_eq!(usdc_token.balance(&leader), 0);
 
-        let usdc_back = client.withdraw(&leader, &vault_id, &400_0000000);
+        let usdc_back = client.withdraw(&leader, &vault_id, &400_0000000, &0);
         assert_eq!(usdc_back, 400_0000000);
         assert_eq!(usdc_token.balance(&leader), 400_0000000);
         assert_eq!(usdc_token.balance(&factory), 600_0000000);
@@ -1231,8 +1266,8 @@ mod tests {
         let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&leader, &vault_id, &100_0000000);
-        let res = client.try_withdraw(&leader, &vault_id, &500_0000000);
+        client.deposit(&leader, &vault_id, &100_0000000, &0);
+        let res = client.try_withdraw(&leader, &vault_id, &500_0000000, &0);
         assert_eq!(res, Err(Ok(FactoryError::InsufficientShares)));
     }
 
@@ -1242,7 +1277,7 @@ mod tests {
         let client = VaultFactoryContractClient::new(&env, &factory);
         // Setup: leader doubles as depositor (skin in the game).
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&leader, &vault_id, &500_0000000);
+        client.deposit(&leader, &vault_id, &500_0000000, &0);
         let _ = usdc;
         // NAV is exactly HWM (1.0); leader has no profit to claim.
         let res = client.try_claim_leader_fees(&vault_id);
@@ -1256,7 +1291,7 @@ mod tests {
         let client = VaultFactoryContractClient::new(&env, &factory);
         let leader = Address::generate(&env);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        let res = client.try_deposit(&depositor, &vault_id, &100_0000000);
+        let res = client.try_deposit(&depositor, &vault_id, &100_0000000, &0);
         assert_eq!(res, Err(Ok(FactoryError::LeaderMinimumViolated)));
     }
 
@@ -1280,12 +1315,12 @@ mod tests {
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
 
         // Leader seeds 100 USDC.
-        client.deposit(&leader, &vault_id, &100_0000000);
+        client.deposit(&leader, &vault_id, &100_0000000, &0);
         // Outsider can deposit up to 19× = 1900 USDC.
-        let ok = client.deposit(&outsider, &vault_id, &1_900_0000000);
+        let ok = client.deposit(&outsider, &vault_id, &1_900_0000000, &0);
         assert!(ok > 0);
         // One more USDC violates 5%.
-        let too_much = client.try_deposit(&outsider, &vault_id, &1_0000000);
+        let too_much = client.try_deposit(&outsider, &vault_id, &1_0000000, &0);
         assert_eq!(too_much, Err(Ok(FactoryError::LeaderMinimumViolated)));
     }
 
@@ -1307,10 +1342,10 @@ mod tests {
         let client = VaultFactoryContractClient::new(&env, &factory_id);
         client.initialize(&admin, &market, &usdc_id);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&leader, &vault_id, &100_0000000);
-        client.deposit(&outsider, &vault_id, &1_000_0000000);
+        client.deposit(&leader, &vault_id, &100_0000000, &0);
+        client.deposit(&outsider, &vault_id, &1_000_0000000, &0);
         // Leader has 100/1100 = 9.09%. Withdrawing 60 leaves 40/1040 = 3.85% — fails.
-        let res = client.try_withdraw(&leader, &vault_id, &60_0000000);
+        let res = client.try_withdraw(&leader, &vault_id, &60_0000000, &0);
         assert_eq!(res, Err(Ok(FactoryError::LeaderMinimumViolated)));
     }
 
@@ -1321,12 +1356,12 @@ mod tests {
         let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&leader, &vault_id, &200_0000000);
+        client.deposit(&leader, &vault_id, &200_0000000, &0);
         client.set_paused(&vault_id, &true);
 
         // Deposits blocked …
         assert_eq!(
-            client.try_deposit(&leader, &vault_id, &100_0000000),
+            client.try_deposit(&leader, &vault_id, &100_0000000, &0),
             Err(Ok(FactoryError::Paused))
         );
         // … leader trading blocked (require_leader_call) …
@@ -1337,10 +1372,10 @@ mod tests {
             Err(Ok(FactoryError::Paused))
         );
         // … but withdraw ALWAYS works (empty vault → NAV fast path).
-        assert!(client.withdraw(&leader, &vault_id, &50_0000000) > 0);
+        assert!(client.withdraw(&leader, &vault_id, &50_0000000, &0) > 0);
 
         client.set_paused(&vault_id, &false);
-        assert!(client.deposit(&leader, &vault_id, &100_0000000) > 0);
+        assert!(client.deposit(&leader, &vault_id, &100_0000000, &0) > 0);
     }
 
     /// Stub market contract used by leader_* tests. Records the calls it
@@ -1586,7 +1621,7 @@ mod tests {
         market.init(&usdc_id);
 
         let vault_id = factory.create_vault(&leader, &String::from_str(&env, "alpha"));
-        factory.deposit(&leader, &vault_id, &1_000_0000000);
+        factory.deposit(&leader, &vault_id, &1_000_0000000, &0);
 
         let position_id = factory.leader_open_position(
             &leader,
@@ -1624,7 +1659,7 @@ mod tests {
         let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
         usdc_admin.mint(&leader, &1_000_0000000);
         let vault_id = factory.create_vault(&leader, &String::from_str(&env, "alpha"));
-        factory.deposit(&leader, &vault_id, &500_0000000);
+        factory.deposit(&leader, &vault_id, &500_0000000, &0);
 
         let stranger = Address::generate(&env);
         let res = factory.try_leader_open_position(
@@ -1655,7 +1690,7 @@ mod tests {
         let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
         usdc_admin.mint(&leader, &1_000_0000000);
         let vault_id = factory.create_vault(&leader, &String::from_str(&env, "alpha"));
-        factory.deposit(&leader, &vault_id, &100_0000000);
+        factory.deposit(&leader, &vault_id, &100_0000000, &0);
 
         let res = factory.try_leader_open_position(
             &leader,
@@ -1685,7 +1720,7 @@ mod tests {
         let usdc_admin = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_id);
         usdc_admin.mint(&leader, &10_000_0000000);
         let vault_id = factory.create_vault(&leader, &String::from_str(&env, "alpha"));
-        factory.deposit(&leader, &vault_id, &1_000_0000000);
+        factory.deposit(&leader, &vault_id, &1_000_0000000, &0);
         let position_id = factory.leader_open_position(
             &leader,
             &vault_id,
@@ -1710,7 +1745,7 @@ mod tests {
         let (env, _admin, _market, _usdc, factory, leader) = setup_with_usdc(1_000_0000000);
         let client = VaultFactoryContractClient::new(&env, &factory);
         let vault_id = client.create_vault(&leader, &String::from_str(&env, "alpha"));
-        client.deposit(&leader, &vault_id, &200_0000000);
+        client.deposit(&leader, &vault_id, &200_0000000, &0);
         client.admin_pause(&vault_id, &true);
         let info = client.get_vault(&vault_id);
         assert!(info.paused);
@@ -1761,8 +1796,8 @@ mod tests {
         mint(&env, &usdc_id, &b, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
         let vb = factory.create_vault(&b, &String::from_str(&env, "B"));
-        factory.deposit(&a, &va, &1_000_0000000);
-        factory.deposit(&b, &vb, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
+        factory.deposit(&b, &vb, &1_000_0000000, &0);
 
         factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
 
@@ -1780,8 +1815,8 @@ mod tests {
         mint(&env, &usdc_id, &b, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
         let vb = factory.create_vault(&b, &String::from_str(&env, "B"));
-        factory.deposit(&a, &va, &1_000_0000000);
-        factory.deposit(&b, &vb, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
+        factory.deposit(&b, &vb, &1_000_0000000, &0);
         let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
 
         // Leader B cannot close A's position.
@@ -1804,8 +1839,8 @@ mod tests {
         mint(&env, &usdc_id, &b, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
         let vb = factory.create_vault(&b, &String::from_str(&env, "B"));
-        factory.deposit(&a, &va, &1_000_0000000);
-        factory.deposit(&b, &vb, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
+        factory.deposit(&b, &vb, &1_000_0000000, &0);
         let oid = factory.leader_place_limit_order(
             &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
             &50_000_0000000, &false, &100u32, &0u32,
@@ -1828,7 +1863,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
         let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
 
         assert_eq!(factory.get_full_nav(&va), 1_000_0000000, "liquid 800 + equity 200");
@@ -1848,12 +1883,12 @@ mod tests {
         mint(&env, &usdc_id, &a, 2_000_0000000);
         mint(&env, &usdc_id, &b, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000); // 1000 shares
+        factory.deposit(&a, &va, &1_000_0000000, &0); // 1000 shares
         let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &800_0000000, &5u32, &0u32);
         market.set_equity(&pid, &1_000_0000000); // +200 uPnL → full NAV 200 liquid + 1000 = 1200
 
         // 600 deposit at NAV 1.2 mints 600*1000/1200 = 500 shares (NOT 3000 at liquid-only).
-        let shares = factory.deposit(&b, &va, &600_0000000);
+        let shares = factory.deposit(&b, &va, &600_0000000, &0);
         assert_eq!(shares, 500_0000000);
     }
 
@@ -1864,12 +1899,12 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
         factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &900_0000000, &5u32, &0u32); // liquid 100
 
         // 500 shares priced at NAV 1.0 = 500 USDC > liquid 100 → #17, not a haircut.
         assert!(matches!(
-            factory.try_withdraw(&a, &va, &500_0000000),
+            factory.try_withdraw(&a, &va, &500_0000000, &0),
             Err(Ok(FactoryError::LiquidityDeployed))
         ));
     }
@@ -1882,7 +1917,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
         let oid = factory.leader_place_limit_order(
             &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
             &50_000_0000000, &false, &100u32, &0u32,
@@ -1907,7 +1942,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
         let oid = factory.leader_place_limit_order(
             &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
             &50_000_0000000, &false, &100u32, &0u32,
@@ -1933,8 +1968,8 @@ mod tests {
         mint(&env, &usdc_id, &b, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
         let vb = factory.create_vault(&b, &String::from_str(&env, "B"));
-        factory.deposit(&a, &va, &1_000_0000000);
-        factory.deposit(&b, &vb, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
+        factory.deposit(&b, &vb, &1_000_0000000, &0);
         factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
 
         let sum = factory.get_vault(&va).total_usdc + factory.get_vault(&vb).total_usdc;
@@ -1950,7 +1985,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000); // 1000 shares, HWM 1.0
+        factory.deposit(&a, &va, &1_000_0000000, &0); // 1000 shares, HWM 1.0
         let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &500_0000000, &5u32, &0u32);
         market.set_equity(&pid, &700_0000000); // +200 uPnL → full NAV 1200, per-share 1.2
 
@@ -1995,7 +2030,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
         let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
 
         let sl_id = factory.leader_set_stop_loss(&a, &va, &pid, &45_000_0000000, &500u32);
@@ -2012,8 +2047,8 @@ mod tests {
         mint(&env, &usdc_id, &b, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
         let vb = factory.create_vault(&b, &String::from_str(&env, "B"));
-        factory.deposit(&a, &va, &1_000_0000000);
-        factory.deposit(&b, &vb, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
+        factory.deposit(&b, &vb, &1_000_0000000, &0);
         let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
 
         // Leader B cannot attach a protective order to A's position.
@@ -2030,7 +2065,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
 
         let oid = factory.leader_place_stop_limit(
             &a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32,
@@ -2049,7 +2084,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
 
         // TIF 1 (IOC) must reach the market, not the old hardcoded GTC.
         let oid = factory.leader_place_limit_order(
@@ -2070,7 +2105,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 2_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
         let pid = factory.leader_open_position(&a, &va, &Symbol::new(&env, "BTC"), &200_0000000, &5u32, &0u32);
         factory.leader_set_stop_loss(&a, &va, &pid, &45_000_0000000, &500u32);
 
@@ -2103,7 +2138,7 @@ mod tests {
         let a = Address::generate(&env);
         mint(&env, &usdc_id, &a, 5_000_0000000);
         let va = factory.create_vault(&a, &String::from_str(&env, "A"));
-        factory.deposit(&a, &va, &1_000_0000000);
+        factory.deposit(&a, &va, &1_000_0000000, &0);
         let btc = Symbol::new(&env, "BTC");
 
         for _ in 0..16 {

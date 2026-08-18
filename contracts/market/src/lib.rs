@@ -4254,7 +4254,7 @@ mod tests {
         // Deposit USDC into vault for liquidity
         let usdc_admin = StellarAssetClient::new(&env, &usdc_token);
         usdc_admin.mint(&admin, &(vault_deposit + 10 * PRECISION));
-        vault_client.deposit(&admin, &vault_deposit);
+        vault_client.deposit(&admin, &vault_deposit, &0);
 
         // Initialize market with the caller-provided config
         market.initialize(&admin, &oracle_id, &vault_id, &usdc_token, &config);
@@ -7743,7 +7743,9 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        // Pre-fund the buffer so part of the debt is covered.
+        // Pre-fund the buffer so part of the debt is covered (real backing —
+        // R-4's receipt check refuses unbacked credits).
+        StellarAssetClient::new(&test.env, &test.usdc_token).mint(&test.vault_id, &(20 * PRECISION));
         vault.fund_buffer(&(20 * PRECISION));
 
         let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
@@ -7857,6 +7859,8 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
+        // Real backing — R-4's receipt check refuses unbacked credits.
+        StellarAssetClient::new(&test.env, &test.usdc_token).mint(&test.vault_id, &(60 * PRECISION));
         vault.fund_buffer(&(60 * PRECISION)); // more than the coming debt
 
         let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
@@ -7925,7 +7929,7 @@ mod tests {
         // Fresh LP capital lifts coverage above the 1.5× clear ratio.
         let whale = fund_trader(&test, 1_000 * PRECISION);
         let vault = vault::Client::new(&test.env, &test.vault_id);
-        vault.deposit(&whale, &(500 * PRECISION));
+        vault.deposit(&whale, &(500 * PRECISION), &0);
         assert!(!test.market.check_adl_trigger(&xlm));
         assert!(!test.market.is_adl_active(&xlm));
     }
