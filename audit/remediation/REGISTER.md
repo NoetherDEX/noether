@@ -15,7 +15,12 @@ at the same commit `01dfdea`.
 
 ---
 
-## R-1 · Storage TTL lifecycle & archival hygiene — OPEN (pre-freeze + runbook)
+> **Remediation sprint 2026-08-19** (commits on `staging`): R-1.1 `e5f2bd4` ·
+> R-11 `e9171ea` · R-4 `4e6d998` · R-8 optics `d0cdfed` · R-6 contracts
+> `b7366bb` + web `da632de` · R-7 `992d693` · R-13 events `973b406`.
+> Full workspace green (426 tests), clippy clean, market WASM 123.7KB.
+
+## R-1 · Storage TTL lifecycle & archival hygiene — CODE CLOSED `e5f2bd4` (runbook items remain)
 
 **Folds in:** ALX-02, ALX-04, ALX-05, ALX-10, ALX-12, ALX-13, ALX-14, ALX-18, ALX-21
 **Severity after triage:** Low–Medium (availability), not fund loss.
@@ -79,7 +84,7 @@ vault) already require **both** old and new admin signatures — the rotation
 path the migration uses is typo-brick-proof where it exists. Where it doesn't
 exist is R-11.
 
-## R-4 · Vault inflow endpoints trust market accounting — OPEN (pre-freeze hardening)
+## R-4 · Vault inflow endpoints trust market accounting — CLOSED `4e6d998`
 
 **Folds in:** ALX-07 (`receive_loss`; same pattern `fund_buffer`,
 `route_protocol_fee`)
@@ -101,7 +106,7 @@ provably immutable, finding fully closed, strong dossier line; (b) keep
 issuer under the 2-of-3 multisig for mint flexibility, document the invariant
 and monitoring. **Recommendation: (a).** Decision owner: Yahya.
 
-## R-6 · LP slippage bounds on deposit/withdraw — OPEN (pre-freeze)
+## R-6 · LP slippage bounds on deposit/withdraw — CLOSED `b7366bb` + `da632de` (scope: both vaults + AUM cap; web derives bounds from simulation pre-quotes)
 
 **Folds in:** ALX-16
 **Severity:** Medium (LP fairness under moving AUM/PnL).
@@ -110,7 +115,7 @@ Add `min_noe_out` to `deposit`, `min_usdc_out` to `withdraw`; revert below
 bound. ABI change → must land before the frozen interface is audited; update
 `packages/tx-builders`, web vault page, sdk-ts, sdk-py together.
 
-## R-7 · Shim SEP-40 TWAP fabricates freshness — OPEN (pre-freeze)
+## R-7 · Shim SEP-40 TWAP fabricates freshness — CLOSED `992d693`
 
 **Folds in:** ALX-03
 **Severity:** Medium latent (deployed mode is Noeracle-native; SEP-40 is one
@@ -154,7 +159,7 @@ file is touched anyway.
 **Folds in:** ALX-24. Only near-epoch timestamps (synthetic test envs) can
 hit it; impossible on live networks.
 
-## R-11 · Admin-rotation entrypoints missing on market, referral, vault_factory — OPEN (pre-freeze)
+## R-11 · Admin-rotation entrypoints missing on market, referral, vault_factory — CLOSED `e9171ea`
 
 **Source:** SCT (by omission — `missing_new_admin_auth` fired only on the four
 contracts that *have* `set_admin`).
@@ -200,15 +205,15 @@ also unlocks constructor-based init, the structural close for R-3.
 
 ## Pre-freeze checklist derived from this register
 
-- [ ] R-1.1 TTL extension sweep across 7 contracts (+ per-entrypoint coverage check)
-- [ ] R-4 vault inflow solvency assert
-- [ ] R-6 `min_noe_out` / `min_usdc_out` (+ tx-builders/web/sdk ripple)
-- [ ] R-7 SEP-40 twap timestamp fix + test
-- [ ] (optional) R-8 checked-math optics cleanup + `size > 0` guard
-- [ ] R-11 `set_admin` (both-sign pattern) on market, referral, vault_factory
-- [ ] (optional) R-13 storage-change events on admin setters
-- [ ] Already on the launch register from the spec: global vault AUM cap,
-      gitleaks history sweep (market `set_admin` superseded by R-11)
+- [x] R-1.1 TTL extension sweep across 7 contracts — `e5f2bd4`
+- [x] R-4 vault inflow solvency assert — `4e6d998`
+- [x] R-6 min-out bounds, both vaults + web pre-quote wiring — `b7366bb`, `da632de`
+- [x] R-7 SEP-40 twap timestamp fix + tests — `992d693`
+- [x] R-8 checked-math optics + `size > 0` guard — `d0cdfed`
+- [x] R-11 `set_admin` (both-sign) on market, referral, vault_factory — `e9171ea`
+- [x] R-13 storage-change events on 24 admin setters — `973b406`
+- [x] Global vault AUM cap (`set_aum_cap`) — in `b7366bb`
+- [ ] gitleaks history sweep (before the public mirror goes live)
 
 ## Ceremony/runbook items derived from this register
 
