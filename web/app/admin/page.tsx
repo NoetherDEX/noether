@@ -159,13 +159,25 @@ export default function AdminPage() {
           {!wallet ? (
             <ConnectButton />
           ) : (
-            <button
-              onClick={signIn}
-              disabled={signingIn}
-              className="rounded-xl bg-[#eab308] px-6 py-3 text-sm font-semibold text-black hover:bg-[#facc15] disabled:opacity-50"
-            >
-              {signingIn ? 'Waiting for wallet…' : `Sign in as ${wallet.slice(0, 4)}…${wallet.slice(-4)}`}
-            </button>
+            <>
+              <button
+                onClick={signIn}
+                disabled={signingIn}
+                className="rounded-xl bg-[#eab308] px-6 py-3 text-sm font-semibold text-black hover:bg-[#facc15] disabled:opacity-50"
+              >
+                {signingIn ? 'Waiting for wallet…' : `Sign in as ${wallet.slice(0, 4)}…${wallet.slice(-4)}`}
+              </button>
+              {/* Stale-session escape hatch: the persisted address can lag a
+                  wallet-extension account switch (the drift guard then blocks
+                  signing) — dropping the session brings ConnectButton back. */}
+              <button
+                type="button"
+                onClick={() => useWalletStore.getState().setDisconnected()}
+                className="text-xs text-white/40 hover:text-white/70"
+              >
+                Not this wallet? Connect a different one
+              </button>
+            </>
           )}
           {error && <p className="text-sm text-red-400">{error}</p>}
         </div>

@@ -202,13 +202,27 @@ export function WaitlistCard() {
               <ConnectButton />
             </div>
           ) : (
-            <button
-              onClick={unlock}
-              disabled={unlocking}
-              className="mt-4 rounded-xl bg-[#eab308] px-6 py-3 text-sm font-semibold text-black hover:bg-[#facc15] disabled:opacity-50"
-            >
-              {unlocking ? 'Waiting for wallet…' : connected ? 'Sign & enter' : 'Connect wallet'}
-            </button>
+            <>
+              <button
+                onClick={unlock}
+                disabled={unlocking}
+                className="mt-4 rounded-xl bg-[#eab308] px-6 py-3 text-sm font-semibold text-black hover:bg-[#facc15] disabled:opacity-50"
+              >
+                {unlocking ? 'Waiting for wallet…' : connected ? 'Sign & enter' : 'Connect wallet'}
+              </button>
+              {connected && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    useWalletStore.getState().setDisconnected();
+                    setShowConnect(true);
+                  }}
+                  className="mt-2 block w-full text-center text-xs text-white/40 hover:text-white/70"
+                >
+                  Wrong wallet? Connect a different one
+                </button>
+              )}
+            </>
           )}
           {message && <p className="mt-3 text-sm text-red-400">{message}</p>}
         </div>
