@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ApiKeyStore } from '../services/apiKeys.js';
+import type { AccessGrantsService } from '../services/accessGrants.js';
 import type { WalletAuth } from '../services/walletAuth.js';
 
 /**
@@ -7,6 +8,10 @@ import type { WalletAuth } from '../services/walletAuth.js';
  * derived from the `API_KEY_ALLOWLIST` env var (comma-separated).
  * If the env var is empty or unset, key issuance is open to anyone —
  * useful for local dev + testnet. Production should always set this.
+ *
+ * Workstream A transition: when the env gate is active, a wallet passes if
+ * it is on the env list OR approved in access_grants (the admin-panel
+ * source of truth). The env var retires once the DB migration is verified.
  */
 function loadAllowlist(): Set<string> | null {
   const raw = process.env.API_KEY_ALLOWLIST?.trim();
@@ -68,7 +73,10 @@ export async function registerKeyRoutes(
   app: FastifyInstance,
   apiKeys: ApiKeyStore,
   wallet: WalletAuth,
+  access: AccessGrantsService,
+  adminWallets: string[] = [],
 ): Promise<void> {
+  const adminSet = new Set(adminWallets);
   app.get(
     '/v1/keys/beta-status',
     {
@@ -95,7 +103,11 @@ export async function registerKeyRoutes(
     async (req, reply) => {
       const address = (req.query as { address?: string }).address;
       const gated = ALLOWLIST !== null;
-      const allowed = !gated || (address ? ALLOWLIST!.has(address) : false);
+      const allowed =
+        !gated ||
+        (address
+          ? ALLOWLIST!.has(address) || adminSet.has(address) || (await access.isApproved(address))
+          : false);
       return reply.send({ gated, allowed });
     },
   );
@@ -168,12 +180,20 @@ export async function registerKeyRoutes(
       // address that isn't on it before doing the (cheaper) signature
       // verification. Returns 403 so the UI can show a "not in beta"
       // message distinct from a bad signature.
-      if (ALLOWLIST && !ALLOWLIST.has(address)) {
+      if (
+        ALLOWLIST &&
+        !ALLOWLIST.has(address) &&
+        // ADMIN_WALLETS are inherently in the beta — without this, an admin
+        // wallet cannot mint the session key that opens the very panel that
+        // approves wallets (chicken-and-egg).
+        !adminSet.has(address) &&
+        !(await access.isApproved(address))
+      ) {
         return reply.code(403).send({
           error: 'not_in_beta',
           message:
             'API key issuance is currently restricted to early-access wallets. ' +
-            'Contact the team to request access.',
+            'Join the waitlist at noether.exchange to request access.',
         });
       }
       const ok = wallet.verify(address, challenge, signature);

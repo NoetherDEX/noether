@@ -1,0 +1,4765 @@
+{
+  "name": "Contracts",
+  "date": "2026-08-19",
+  "summary": {
+    "executed_on": [
+      {
+        "name": "noether_common",
+        "id": "path+file:///Users/yahya/Desktop/Stellar/Noether/contracts/noether_common#0.1.0",
+        "relative_path": "noether_common/Cargo.toml",
+        "absolute_path": "/Users/yahya/Desktop/Stellar/Noether/contracts/noether_common/Cargo.toml"
+      },
+      {
+        "name": "noeracle_shim",
+        "id": "path+file:///Users/yahya/Desktop/Stellar/Noether/contracts/noeracle_shim#0.1.0",
+        "relative_path": "noeracle_shim/Cargo.toml",
+        "absolute_path": "/Users/yahya/Desktop/Stellar/Noether/contracts/noeracle_shim/Cargo.toml"
+      },
+      {
+        "name": "noether_router",
+        "id": "path+file:///Users/yahya/Desktop/Stellar/Noether/contracts/noether_router#0.1.0",
+        "relative_path": "noether_router/Cargo.toml",
+        "absolute_path": "/Users/yahya/Desktop/Stellar/Noether/contracts/noether_router/Cargo.toml"
+      },
+      {
+        "name": "vault",
+        "id": "path+file:///Users/yahya/Desktop/Stellar/Noether/contracts/vault#0.1.0",
+        "relative_path": "vault/Cargo.toml",
+        "absolute_path": "/Users/yahya/Desktop/Stellar/Noether/contracts/vault/Cargo.toml"
+      },
+      {
+        "name": "vault_factory",
+        "id": "path+file:///Users/yahya/Desktop/Stellar/Noether/contracts/vault_factory#0.1.0",
+        "relative_path": "vault_factory/Cargo.toml",
+        "absolute_path": "/Users/yahya/Desktop/Stellar/Noether/contracts/vault_factory/Cargo.toml"
+      },
+      {
+        "name": "referral",
+        "id": "path+file:///Users/yahya/Desktop/Stellar/Noether/contracts/referral#0.1.0",
+        "relative_path": "referral/Cargo.toml",
+        "absolute_path": "/Users/yahya/Desktop/Stellar/Noether/contracts/referral/Cargo.toml"
+      },
+      {
+        "name": "risk",
+        "id": "path+file:///Users/yahya/Desktop/Stellar/Noether/contracts/risk#0.1.0",
+        "relative_path": "risk/Cargo.toml",
+        "absolute_path": "/Users/yahya/Desktop/Stellar/Noether/contracts/risk/Cargo.toml"
+      },
+      {
+        "name": "market",
+        "id": "path+file:///Users/yahya/Desktop/Stellar/Noether/contracts/market#0.1.0",
+        "relative_path": "market/Cargo.toml",
+        "absolute_path": "/Users/yahya/Desktop/Stellar/Noether/contracts/market/Cargo.toml"
+      }
+    ],
+    "total_vulnerabilities": 390,
+    "by_severity": {
+      "critical": 279,
+      "minor": 1,
+      "medium": 91,
+      "enhancement": 19
+    },
+    "table": {
+      "header": {
+        "cells": [
+          {
+            "content": "Crate",
+            "color": {
+              "Importance": "Header"
+            }
+          },
+          {
+            "content": "Status",
+            "color": {
+              "Importance": "Header"
+            }
+          },
+          {
+            "content": "Critical",
+            "color": {
+              "Importance": "Header"
+            }
+          },
+          {
+            "content": "Medium",
+            "color": {
+              "Importance": "Header"
+            }
+          },
+          {
+            "content": "Minor",
+            "color": {
+              "Importance": "Header"
+            }
+          },
+          {
+            "content": "Enhancement",
+            "color": {
+              "Importance": "Header"
+            }
+          }
+        ]
+      },
+      "rows": [
+        {
+          "cells": [
+            {
+              "content": "market",
+              "color": "Default"
+            },
+            {
+              "content": "Analyzed",
+              "color": "Default"
+            },
+            {
+              "content": "163",
+              "color": "Default"
+            },
+            {
+              "content": "43",
+              "color": "Default"
+            },
+            {
+              "content": "1",
+              "color": "Default"
+            },
+            {
+              "content": "6",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "content": "noeracle_shim",
+              "color": "Default"
+            },
+            {
+              "content": "Analyzed",
+              "color": "Default"
+            },
+            {
+              "content": "5",
+              "color": "Default"
+            },
+            {
+              "content": "1",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "2",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "content": "noether_common",
+              "color": "Default"
+            },
+            {
+              "content": "Analyzed",
+              "color": "Default"
+            },
+            {
+              "content": "18",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "1",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "content": "noether_router",
+              "color": "Default"
+            },
+            {
+              "content": "Analyzed",
+              "color": "Default"
+            },
+            {
+              "content": "8",
+              "color": "Default"
+            },
+            {
+              "content": "16",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "4",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "content": "referral",
+              "color": "Default"
+            },
+            {
+              "content": "Analyzed",
+              "color": "Default"
+            },
+            {
+              "content": "1",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "1",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "content": "risk",
+              "color": "Default"
+            },
+            {
+              "content": "Analyzed",
+              "color": "Default"
+            },
+            {
+              "content": "12",
+              "color": "Default"
+            },
+            {
+              "content": "5",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "2",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "content": "vault",
+              "color": "Default"
+            },
+            {
+              "content": "Analyzed",
+              "color": "Default"
+            },
+            {
+              "content": "62",
+              "color": "Default"
+            },
+            {
+              "content": "5",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "2",
+              "color": "Default"
+            }
+          ]
+        },
+        {
+          "cells": [
+            {
+              "content": "vault_factory",
+              "color": "Default"
+            },
+            {
+              "content": "Analyzed",
+              "color": "Default"
+            },
+            {
+              "content": "10",
+              "color": "Default"
+            },
+            {
+              "content": "21",
+              "color": "Default"
+            },
+            {
+              "content": "0",
+              "color": "Default"
+            },
+            {
+              "content": "1",
+              "color": "Default"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "categories": [
+    {
+      "id": "Best Practices",
+      "name": "Soroban Version",
+      "vulnerabilities": [
+        {
+          "id": "soroban_version",
+          "name": "Soroban Version",
+          "short_message": "Use the latest version of Soroban",
+          "long_message": "Using a older version of Soroban can be dangerous, as it may have bugs or security issues. Use the latest version available.",
+          "severity": "Enhancement",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/soroban-version"
+        },
+        {
+          "id": "avoid_vec_map_input",
+          "name": "Avoid Vec Map Input",
+          "short_message": "Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+          "long_message": "Soroban Vec and Map<K, V> parameters arrive as raw Val values. Validate or normalize every element before storing or reusing them so a bad conversion does not halt contract execution.",
+          "severity": "Medium",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/avoid-vec-map-input"
+        },
+        {
+          "id": "storage_change_events",
+          "name": "Storage Change Events",
+          "short_message": "Consider emiting an event when storage is modified",
+          "long_message": "Emiting an event when storage changes is a good practice to make the contracts more transparent and usable to its clients and observers",
+          "severity": "Enhancement",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/storage-change-events"
+        }
+      ]
+    },
+    {
+      "id": "DoS",
+      "name": "Dos Unexpected Revert With Storage",
+      "vulnerabilities": [
+        {
+          "id": "dos_unexpected_revert_with_storage",
+          "name": "Dos Unexpected Revert With Storage",
+          "short_message": "This storage (vector or map) operation is called without access control",
+          "long_message": " It occurs by preventing transactions by other users from being successfully executed forcing the blockchain state to revert to its original state.",
+          "severity": "Medium",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/dos-unexpected-revert-with-storage"
+        },
+        {
+          "id": "dos_unbounded_operation",
+          "name": "Dos Unbounded Operation",
+          "short_message": "In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+          "long_message": "In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided. This includes loops that do not have a bounded number of iterations, and recursive calls.    ",
+          "severity": "Medium",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/dos-unbounded-operation"
+        }
+      ]
+    },
+    {
+      "id": "Arithmetic",
+      "name": "Integer Overflow Or Underflow",
+      "vulnerabilities": [
+        {
+          "id": "integer_overflow_or_underflow",
+          "name": "Integer Overflow Or Underflow",
+          "short_message": "Potential for integer arithmetic overflow/underflow. Consider checked, wrapping or saturating arithmetic.",
+          "long_message": "An overflow/underflow is typically caught and generates an error. When it is not caught, the operation will result in an inexact result which could lead to serious problems.",
+          "severity": "Critical",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/integer-overflow-or-underflow"
+        },
+        {
+          "id": "divide_before_multiply",
+          "name": "Divide Before Multiply",
+          "short_message": "Division before multiplication might result in a loss of precision",
+          "long_message": "Division before multiplication might result in a loss of precision",
+          "severity": "Medium",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/rust/divide-before-multiply"
+        }
+      ]
+    },
+    {
+      "id": "Resource Management",
+      "name": "Dynamic Storage",
+      "vulnerabilities": [
+        {
+          "id": "dynamic_storage",
+          "name": "Dynamic Storage",
+          "short_message": "Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+          "long_message": "Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+          "severity": "Medium",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/dynamic-storage"
+        }
+      ]
+    },
+    {
+      "id": "Authorization",
+      "name": "Missing New Admin Auth",
+      "vulnerabilities": [
+        {
+          "id": "missing_new_admin_auth",
+          "name": "Missing New Admin Auth",
+          "short_message": "New admin/owner address must sign before being stored",
+          "long_message": "When updating admin or owner, the incoming address should also sign to prevent accidental bricking due to a mistaken address.",
+          "severity": "Medium",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/missing-new-admin-auth"
+        },
+        {
+          "id": "unprotected_update_current_contract_wasm",
+          "name": "Unprotected Update Current Contract Wasm",
+          "short_message": "This update_current_contract_wasm is called without access control",
+          "long_message": "If users are allowed to call update_current_contract_wasm, they can intentionally modify the contract behaviour, leading to the loss of all associated data/tokens and functionalities given by this contract or by others that depend on it. To prevent this, the function should be restricted to administrators or authorized users only.",
+          "severity": "Critical",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/unprotected-update-current-contract-wasm"
+        },
+        {
+          "id": "unsafe_map_get",
+          "name": "Unsafe Map Get",
+          "short_message": "Unsafe access on Map, method could panic.",
+          "long_message": "This vulnerability class pertains to the inappropriate usage of the get method for Map in soroban",
+          "severity": "Medium",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/unsafe-map-get"
+        }
+      ]
+    },
+    {
+      "id": "Error Handling",
+      "name": "Unsafe Unwrap",
+      "vulnerabilities": [
+        {
+          "id": "unsafe_unwrap",
+          "name": "Unsafe Unwrap",
+          "short_message": "Unsafe usage of `unwrap`",
+          "long_message": "This vulnerability class pertains to the inappropriate usage of the unwrap method in Rust, which is commonly employed for error handling. The unwrap method retrieves the inner value of an Option or Result, but if an error or None occurs, it triggers a panic and crashes the program.    ",
+          "severity": "Medium",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/rust/unsafe-unwrap"
+        },
+        {
+          "id": "unused_return_enum",
+          "name": "Unused Return Enum",
+          "short_message": "If any of the variants (Ok/Err) is not used, the code could be simplified or it could imply a bug",
+          "long_message": "Soroban functions can return a Result enum with a custom error type. This is useful for the caller to know what went wrong when the message fails. The definition of the Result type enum consists of two variants: Ok and Err. If any of the variants is not used, the code could be simplified or it could imply a bug.    ",
+          "severity": "Minor",
+          "help": "https://coinfabrik.github.io/scout-audit/docs/detectors/soroban/unused-return-enum"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": 0,
+      "occurrence_index": 1,
+      "category_id": "Best Practices",
+      "vulnerability_id": "soroban_version",
+      "error_message": "[ENHANCEMENT] Use the latest version of Soroban",
+      "span": "lib.rs:1:1 - 1:1",
+      "code_snippet": "",
+      "package": "noether_common",
+      "file_path": "noether_common/src/lib.rs"
+    },
+    {
+      "id": 1,
+      "occurrence_index": 1,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This multiplication operation could overflow.",
+      "span": "math.rs:21:5 - 21:36",
+      "code_snippet": "collateral * (leverage as i128)",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 2,
+      "occurrence_index": 2,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:48:25 - 48:94",
+      "code_snippet": "(maintenance_margin_bps as i128) * PRECISION / (BASIS_POINTS as i128)",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 3,
+      "occurrence_index": 3,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "math.rs:54:30 - 54:61",
+      "code_snippet": "leverage_factor - margin_factor",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 4,
+      "occurrence_index": 4,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:55:13 - 55:65",
+      "code_snippet": "entry_price - (entry_price * adjustment / PRECISION)",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 5,
+      "occurrence_index": 5,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "math.rs:60:30 - 60:61",
+      "code_snippet": "leverage_factor - margin_factor",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 6,
+      "occurrence_index": 6,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:61:13 - 61:65",
+      "code_snippet": "entry_price + (entry_price * adjustment / PRECISION)",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 7,
+      "occurrence_index": 7,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "math.rs:85:30 - 85:66",
+      "code_snippet": "current_price - position.entry_price",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 8,
+      "occurrence_index": 8,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "math.rs:91:30 - 91:66",
+      "code_snippet": "position.entry_price - current_price",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 9,
+      "occurrence_index": 9,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:151:5 - 151:82",
+      "code_snippet": "remaining_collateral * (liquidation_fee_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 10,
+      "occurrence_index": 10,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:192:9 - 193:57",
+      "code_snippet": "base_rate * (total_long_size - total_short_size) * PRECISION\n            / (total_long_size * (BASIS_POINTS as i128))",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 11,
+      "occurrence_index": 11,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "math.rs:198:9 - 199:59",
+      "code_snippet": "-(base_rate * (total_short_size - total_long_size) * PRECISION\n            / (total_short_size * (BASIS_POINTS as i128)))",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 12,
+      "occurrence_index": 12,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:198:10 - 199:59",
+      "code_snippet": "(base_rate * (total_short_size - total_long_size) * PRECISION\n            / (total_short_size * (BASIS_POINTS as i128)))",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 13,
+      "occurrence_index": 13,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "math.rs:222:17 - 222:54",
+      "code_snippet": "current_cumulative - entry_cumulative",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 14,
+      "occurrence_index": 14,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:226:15 - 226:48",
+      "code_snippet": "position_size * delta / PRECISION",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 15,
+      "occurrence_index": 15,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "math.rs:229:29 - 229:33",
+      "code_snippet": "-raw",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 16,
+      "occurrence_index": 16,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:248:19 - 248:81",
+      "code_snippet": "(max_velocity_bps as i128) * PRECISION * net_skew / skew_scale",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 17,
+      "occurrence_index": 17,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:249:5 - 249:49",
+      "code_snippet": "per_day * (elapsed_seconds as i128) / 86_400",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 18,
+      "occurrence_index": 18,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "math.rs:341:5 - 341:63",
+      "code_snippet": "position_size * (fee_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "noether_common",
+      "file_path": "noether_common/src/math.rs"
+    },
+    {
+      "id": 19,
+      "occurrence_index": 2,
+      "category_id": "Best Practices",
+      "vulnerability_id": "soroban_version",
+      "error_message": "[ENHANCEMENT] Use the latest version of Soroban",
+      "span": "lib.rs:1:1 - 1:1",
+      "code_snippet": "",
+      "package": "risk",
+      "file_path": "risk/src/lib.rs"
+    },
+    {
+      "id": 20,
+      "occurrence_index": 19,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "risk.rs:139:19 - 139:81",
+      "code_snippet": "(max_velocity_bps as i128) * PRECISION * net_skew / skew_scale",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 21,
+      "occurrence_index": 20,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "risk.rs:141:5 - 141:49",
+      "code_snippet": "per_day * (elapsed_seconds as i128) / 86_400",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 22,
+      "occurrence_index": 21,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This multiplication operation could overflow.",
+      "span": "risk.rs:146:17 - 146:48",
+      "code_snippet": "(clamp_bps as i128) * PRECISION",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 23,
+      "occurrence_index": 22,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "risk.rs:149:22 - 149:28",
+      "code_snippet": "-limit",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 24,
+      "occurrence_index": 23,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "risk.rs:150:9 - 150:15",
+      "code_snippet": "-limit",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 25,
+      "occurrence_index": 24,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "risk.rs:172:9 - 172:82",
+      "code_snippet": "base_fee + (target_fee.saturating_sub(base_fee)) * util / target_util_bps",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 26,
+      "occurrence_index": 25,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "risk.rs:174:20 - 174:50",
+      "code_snippet": "BASIS_POINTS - target_util_bps",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 27,
+      "occurrence_index": 26,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "risk.rs:178:9 - 178:92",
+      "code_snippet": "target_fee + (max_fee.saturating_sub(target_fee)) * (util - target_util_bps) / span",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 28,
+      "occurrence_index": 27,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "risk.rs:191:23 - 191:85",
+      "code_snippet": "position_size * (tranche_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 29,
+      "occurrence_index": 28,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "risk.rs:209:23 - 209:64",
+      "code_snippet": "pnl * (BASIS_POINTS as i128) / collateral",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 30,
+      "occurrence_index": 29,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This multiplication operation could overflow.",
+      "span": "risk.rs:210:5 - 210:37",
+      "code_snippet": "pnl_pct_bps * (leverage as i128)",
+      "package": "risk",
+      "file_path": "risk/src/risk.rs"
+    },
+    {
+      "id": 31,
+      "occurrence_index": 1,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:179:23 - 179:45",
+      "code_snippet": "ranked.get(i).unwrap()",
+      "package": "risk",
+      "file_path": "risk/src/lib.rs"
+    },
+    {
+      "id": 32,
+      "occurrence_index": 2,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:182:28 - 182:54",
+      "code_snippet": "ranked.get(j - 1).unwrap()",
+      "package": "risk",
+      "file_path": "risk/src/lib.rs"
+    },
+    {
+      "id": 33,
+      "occurrence_index": 1,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "lib.rs:168:24 - 168:33",
+      "code_snippet": "push_back",
+      "package": "risk",
+      "file_path": "risk/src/lib.rs"
+    },
+    {
+      "id": 34,
+      "occurrence_index": 1,
+      "category_id": "Best Practices",
+      "vulnerability_id": "avoid_vec_map_input",
+      "error_message": "[MEDIUM] Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+      "span": "lib.rs:163:31 - 163:60",
+      "code_snippet": "candidates: Vec<AdlCandidate>",
+      "package": "risk",
+      "file_path": "risk/src/lib.rs"
+    },
+    {
+      "id": 35,
+      "occurrence_index": 1,
+      "category_id": "Authorization",
+      "vulnerability_id": "missing_new_admin_auth",
+      "error_message": "[MEDIUM] New admin/owner address must sign before being stored",
+      "span": "lib.rs:201:9 - 201:66",
+      "code_snippet": "env.storage().instance().set(&DataKey::Admin, &new_admin)",
+      "package": "risk",
+      "file_path": "risk/src/lib.rs"
+    },
+    {
+      "id": 36,
+      "occurrence_index": 1,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:58:5 - 58:76",
+      "code_snippet": "pub fn initialize(env: Env, admin: Address) -> Result<(), NoetherError>",
+      "package": "risk",
+      "file_path": "risk/src/lib.rs"
+    },
+    {
+      "id": 37,
+      "occurrence_index": 1,
+      "category_id": "Authorization",
+      "vulnerability_id": "unprotected_update_current_contract_wasm",
+      "error_message": "[CRITICAL] This update_current_contract_wasm is called without access control",
+      "span": "lib.rs:219:9 - 219:67",
+      "code_snippet": "env.deployer().update_current_contract_wasm(new_wasm_hash)",
+      "package": "risk",
+      "file_path": "risk/src/lib.rs"
+    },
+    {
+      "id": 38,
+      "occurrence_index": 3,
+      "category_id": "Best Practices",
+      "vulnerability_id": "soroban_version",
+      "error_message": "[ENHANCEMENT] Use the latest version of Soroban",
+      "span": "lib.rs:1:1 - 1:1",
+      "code_snippet": "",
+      "package": "noeracle_shim",
+      "file_path": "noeracle_shim/src/lib.rs"
+    },
+    {
+      "id": 39,
+      "occurrence_index": 30,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This exponentiation operation could overflow.",
+      "span": "lib.rs:388:21 - 388:45",
+      "code_snippet": "10i128.pow(decimals - 7)",
+      "package": "noeracle_shim",
+      "file_path": "noeracle_shim/src/lib.rs"
+    },
+    {
+      "id": 40,
+      "occurrence_index": 31,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:388:32 - 388:44",
+      "code_snippet": "decimals - 7",
+      "package": "noeracle_shim",
+      "file_path": "noeracle_shim/src/lib.rs"
+    },
+    {
+      "id": 41,
+      "occurrence_index": 32,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This exponentiation operation could overflow.",
+      "span": "lib.rs:390:37 - 390:61",
+      "code_snippet": "10i128.pow(7 - decimals)",
+      "package": "noeracle_shim",
+      "file_path": "noeracle_shim/src/lib.rs"
+    },
+    {
+      "id": 42,
+      "occurrence_index": 33,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:390:48 - 390:60",
+      "code_snippet": "7 - decimals",
+      "package": "noeracle_shim",
+      "file_path": "noeracle_shim/src/lib.rs"
+    },
+    {
+      "id": 43,
+      "occurrence_index": 2,
+      "category_id": "Authorization",
+      "vulnerability_id": "missing_new_admin_auth",
+      "error_message": "[MEDIUM] New admin/owner address must sign before being stored",
+      "span": "lib.rs:291:9 - 291:66",
+      "code_snippet": "env.storage().instance().set(&DataKey::Admin, &new_admin)",
+      "package": "noeracle_shim",
+      "file_path": "noeracle_shim/src/lib.rs"
+    },
+    {
+      "id": 44,
+      "occurrence_index": 2,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:116:5 - 120:34",
+      "code_snippet": "pub fn initialize(\n        env: Env,\n        admin: Address,\n        noeracle_oracle: Address,\n    ) -> Result<(), NoetherError>",
+      "package": "noeracle_shim",
+      "file_path": "noeracle_shim/src/lib.rs"
+    },
+    {
+      "id": 45,
+      "occurrence_index": 2,
+      "category_id": "Authorization",
+      "vulnerability_id": "unprotected_update_current_contract_wasm",
+      "error_message": "[CRITICAL] This update_current_contract_wasm is called without access control",
+      "span": "lib.rs:305:9 - 305:67",
+      "code_snippet": "env.deployer().update_current_contract_wasm(new_wasm_hash)",
+      "package": "noeracle_shim",
+      "file_path": "noeracle_shim/src/lib.rs"
+    },
+    {
+      "id": 46,
+      "occurrence_index": 4,
+      "category_id": "Best Practices",
+      "vulnerability_id": "soroban_version",
+      "error_message": "[ENHANCEMENT] Use the latest version of Soroban",
+      "span": "lib.rs:1:1 - 1:1",
+      "code_snippet": "",
+      "package": "referral",
+      "file_path": "referral/src/lib.rs"
+    },
+    {
+      "id": 47,
+      "occurrence_index": 3,
+      "category_id": "Authorization",
+      "vulnerability_id": "unprotected_update_current_contract_wasm",
+      "error_message": "[CRITICAL] This update_current_contract_wasm is called without access control",
+      "span": "lib.rs:421:9 - 421:67",
+      "code_snippet": "env.deployer().update_current_contract_wasm(new_wasm_hash)",
+      "package": "referral",
+      "file_path": "referral/src/lib.rs"
+    },
+    {
+      "id": 48,
+      "occurrence_index": 5,
+      "category_id": "Best Practices",
+      "vulnerability_id": "soroban_version",
+      "error_message": "[ENHANCEMENT] Use the latest version of Soroban",
+      "span": "lib.rs:1:1 - 1:1",
+      "code_snippet": "",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 49,
+      "occurrence_index": 1,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "lib.rs:229:9 - 229:72",
+      "code_snippet": "env.storage().instance().set(&DataKey::Publishers, &publishers)",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 50,
+      "occurrence_index": 34,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:495:15 - 495:43",
+      "code_snippet": "off + STORK_ENTRY_LEN <= len",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 51,
+      "occurrence_index": 1,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:570:9 - 572:10",
+      "code_snippet": "for i in 0..ids.len() {\n            map.push_back((ids.get_unchecked(i), tags.get_unchecked(i)));\n        }",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 52,
+      "occurrence_index": 2,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "lib.rs:571:17 - 571:26",
+      "code_snippet": "push_back",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 53,
+      "occurrence_index": 2,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "lib.rs:573:9 - 573:66",
+      "code_snippet": "env.storage().instance().set(&DataKey::StorkAssets, &map)",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 54,
+      "occurrence_index": 3,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "lib.rs:590:9 - 592:55",
+      "code_snippet": "env.storage()\n            .instance()\n            .set(&DataKey::StorkStrictAssets, &assets)",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 55,
+      "occurrence_index": 4,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "lib.rs:630:9 - 630:72",
+      "code_snippet": "env.storage().instance().set(&DataKey::Publishers, &publishers)",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 56,
+      "occurrence_index": 2,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:787:9 - 793:10",
+      "code_snippet": "for i in 0..n {\n            rounds.push_back(PublisherRound {\n                pubkey: att.pubkeys.get_unchecked(i),\n                prices: soroban_sdk::vec![env, att.prices.get_unchecked(i)],\n                sigs: soroban_sdk::vec![env, att.sigs.get_unchecked(i)],\n            });\n        }",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 57,
+      "occurrence_index": 3,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "lib.rs:788:20 - 788:29",
+      "code_snippet": "push_back",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 58,
+      "occurrence_index": 3,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:842:21 - 842:35",
+      "code_snippet": "entry.unwrap()",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 59,
+      "occurrence_index": 35,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:843:23 - 843:70",
+      "code_snippet": "(noeracle_price - stork).abs() * 10_000 / stork",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 60,
+      "occurrence_index": 36,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:878:25 - 878:41",
+      "code_snippet": "cfg.decimals - 7",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 61,
+      "occurrence_index": 37,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:881:17 - 881:23",
+      "code_snippet": "d -= 1",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 62,
+      "occurrence_index": 38,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:884:25 - 884:41",
+      "code_snippet": "7 - cfg.decimals",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 63,
+      "occurrence_index": 39,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:894:17 - 894:23",
+      "code_snippet": "d -= 1",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 64,
+      "occurrence_index": 40,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:903:29 - 903:54",
+      "code_snippet": "(noeracle_price - vendor)",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 65,
+      "occurrence_index": 2,
+      "category_id": "Best Practices",
+      "vulnerability_id": "avoid_vec_map_input",
+      "error_message": "[MEDIUM] Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+      "span": "lib.rs:562:9 - 562:22",
+      "code_snippet": "ids: Vec<u32>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 66,
+      "occurrence_index": 3,
+      "category_id": "Best Practices",
+      "vulnerability_id": "avoid_vec_map_input",
+      "error_message": "[MEDIUM] Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+      "span": "lib.rs:563:9 - 563:29",
+      "code_snippet": "tags: Vec<BytesN<8>>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 67,
+      "occurrence_index": 4,
+      "category_id": "Best Practices",
+      "vulnerability_id": "avoid_vec_map_input",
+      "error_message": "[MEDIUM] Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+      "span": "lib.rs:402:9 - 402:44",
+      "code_snippet": "attestations: Vec<PriceAttestation>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 68,
+      "occurrence_index": 5,
+      "category_id": "Best Practices",
+      "vulnerability_id": "avoid_vec_map_input",
+      "error_message": "[MEDIUM] Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+      "span": "lib.rs:624:9 - 624:36",
+      "code_snippet": "publishers: Vec<BytesN<32>>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 69,
+      "occurrence_index": 6,
+      "category_id": "Best Practices",
+      "vulnerability_id": "avoid_vec_map_input",
+      "error_message": "[MEDIUM] Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+      "span": "lib.rs:217:9 - 217:36",
+      "code_snippet": "publishers: Vec<BytesN<32>>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 70,
+      "occurrence_index": 7,
+      "category_id": "Best Practices",
+      "vulnerability_id": "avoid_vec_map_input",
+      "error_message": "[MEDIUM] Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+      "span": "lib.rs:587:9 - 587:28",
+      "code_snippet": "assets: Vec<Symbol>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 71,
+      "occurrence_index": 3,
+      "category_id": "Authorization",
+      "vulnerability_id": "missing_new_admin_auth",
+      "error_message": "[MEDIUM] New admin/owner address must sign before being stored",
+      "span": "lib.rs:672:9 - 672:66",
+      "code_snippet": "env.storage().instance().set(&DataKey::Admin, &new_admin)",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 72,
+      "occurrence_index": 3,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:424:5 - 424:78",
+      "code_snippet": "pub fn relay_stork(env: Env, payload: Bytes) -> Result<u32, NoetherError>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 73,
+      "occurrence_index": 4,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:212:5 - 218:34",
+      "code_snippet": "pub fn initialize(\n        env: Env,\n        admin: Address,\n        market: Address,\n        noeracle: Address,\n        publishers: Vec<BytesN<32>>,\n    ) -> Result<(), NoetherError>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 74,
+      "occurrence_index": 5,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:622:5 - 625:34",
+      "code_snippet": "pub fn set_publishers(\n        env: Env,\n        publishers: Vec<BytesN<32>>,\n    ) -> Result<(), NoetherError>",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 75,
+      "occurrence_index": 4,
+      "category_id": "Authorization",
+      "vulnerability_id": "unprotected_update_current_contract_wasm",
+      "error_message": "[CRITICAL] This update_current_contract_wasm is called without access control",
+      "span": "lib.rs:659:9 - 659:67",
+      "code_snippet": "env.deployer().update_current_contract_wasm(new_wasm_hash)",
+      "package": "noether_router",
+      "file_path": "noether_router/src/lib.rs"
+    },
+    {
+      "id": 76,
+      "occurrence_index": 6,
+      "category_id": "Best Practices",
+      "vulnerability_id": "soroban_version",
+      "error_message": "[ENHANCEMENT] Use the latest version of Soroban",
+      "span": "lib.rs:1:1 - 1:1",
+      "code_snippet": "",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 77,
+      "occurrence_index": 1,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "divide_before_multiply",
+      "error_message": "[MEDIUM] Division before multiplication might result in a loss of precision",
+      "span": "math.rs:117:10 - 117:47",
+      "code_snippet": "checked_mul(profit_share_bps as i128)",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/math.rs"
+    },
+    {
+      "id": 78,
+      "occurrence_index": 41,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "math.rs:110:26 - 110:47",
+      "code_snippet": "current_nav - hwm_nav",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/math.rs"
+    },
+    {
+      "id": 79,
+      "occurrence_index": 4,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:150:10 - 150:19",
+      "code_snippet": "push_back",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 80,
+      "occurrence_index": 5,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:151:5 - 151:66",
+      "code_snippet": "env.storage().persistent().set(&StorageKey::VaultList, &list)",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 81,
+      "occurrence_index": 42,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "storage.rs:214:5 - 214:85",
+      "code_snippet": "get_vault_positions(env, vault_id).len() + get_vault_orders(env, vault_id).len()",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 82,
+      "occurrence_index": 5,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:223:10 - 223:19",
+      "code_snippet": "push_back",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 83,
+      "occurrence_index": 6,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:224:5 - 224:48",
+      "code_snippet": "env.storage().persistent().set(&key, &list)",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 84,
+      "occurrence_index": 4,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:234:18 - 234:38",
+      "code_snippet": "list.get(i).unwrap()",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 85,
+      "occurrence_index": 3,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "storage.rs:233:5 - 238:6",
+      "code_snippet": "for i in 0..list.len() {\n        let id = list.get(i).unwrap();\n        if id != position_id {\n            next.push_back(id);\n        }\n    }",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 86,
+      "occurrence_index": 6,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:236:18 - 236:27",
+      "code_snippet": "push_back",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 87,
+      "occurrence_index": 7,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:239:5 - 239:48",
+      "code_snippet": "env.storage().persistent().set(&key, &next)",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 88,
+      "occurrence_index": 7,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:249:10 - 249:19",
+      "code_snippet": "push_back",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 89,
+      "occurrence_index": 8,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:250:5 - 250:48",
+      "code_snippet": "env.storage().persistent().set(&key, &list)",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 90,
+      "occurrence_index": 5,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:260:18 - 260:38",
+      "code_snippet": "list.get(i).unwrap()",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 91,
+      "occurrence_index": 4,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "storage.rs:259:5 - 264:6",
+      "code_snippet": "for i in 0..list.len() {\n        let id = list.get(i).unwrap();\n        if id != order_id {\n            next.push_back(id);\n        }\n    }",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 92,
+      "occurrence_index": 8,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:262:18 - 262:27",
+      "code_snippet": "push_back",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 93,
+      "occurrence_index": 9,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:265:5 - 265:48",
+      "code_snippet": "env.storage().persistent().set(&key, &next)",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 94,
+      "occurrence_index": 10,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:281:5 - 281:69",
+      "code_snippet": "env.storage().instance().set(&StorageKey::LeaderAllowlist, list)",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/storage.rs"
+    },
+    {
+      "id": 95,
+      "occurrence_index": 5,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:97:13 - 102:14",
+      "code_snippet": "for i in 0..allowlist.len() {\n                if allowlist.get(i).unwrap() == leader {\n                    found = true;\n                    break;\n                }\n            }",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 96,
+      "occurrence_index": 43,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:255:9 - 255:36",
+      "code_snippet": "info.total_usdc -= usdc_out",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 97,
+      "occurrence_index": 44,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:256:9 - 256:42",
+      "code_snippet": "info.circulating_shares -= shares",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 98,
+      "occurrence_index": 45,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:258:13 - 258:41",
+      "code_snippet": "info.leader_shares -= shares",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 99,
+      "occurrence_index": 46,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:272:20 - 272:34",
+      "code_snippet": "owned - shares",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 100,
+      "occurrence_index": 47,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:751:9 - 751:32",
+      "code_snippet": "info.total_usdc -= owed",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 101,
+      "occurrence_index": 48,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:757:43 - 757:53",
+      "code_snippet": "nav - owed",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 102,
+      "occurrence_index": 49,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:926:17 - 926:47",
+      "code_snippet": "usdc_balance(env) - bal_before",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 103,
+      "occurrence_index": 6,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:978:57 - 978:82",
+      "code_snippet": "positions.get(i).unwrap()",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 104,
+      "occurrence_index": 6,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:977:5 - 980:6",
+      "code_snippet": "for i in 0..positions.len() {\n        let equity = read_position_equity(env, &market, positions.get(i).unwrap())?;\n        nav = nav.checked_add(equity).ok_or(FactoryError::Overflow)?;\n    }",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 105,
+      "occurrence_index": 7,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:981:5 - 987:6",
+      "code_snippet": "for i in 0..orders.len() {\n        if let Some(order) = read_order(env, &market, orders.get(i).unwrap()) {\n            if order.status == OrderStatus::Pending {\n                nav = nav.checked_add(order.collateral).ok_or(FactoryError::Overflow)?;\n            }\n        }\n    }",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 106,
+      "occurrence_index": 8,
+      "category_id": "Best Practices",
+      "vulnerability_id": "avoid_vec_map_input",
+      "error_message": "[MEDIUM] Avoid accepting soroban_sdk::Vec or Map parameters without validating their contents.",
+      "span": "lib.rs:846:43 - 846:64",
+      "code_snippet": "leaders: Vec<Address>",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 107,
+      "occurrence_index": 5,
+      "category_id": "Authorization",
+      "vulnerability_id": "unprotected_update_current_contract_wasm",
+      "error_message": "[CRITICAL] This update_current_contract_wasm is called without access control",
+      "span": "lib.rs:889:9 - 889:67",
+      "code_snippet": "env.deployer().update_current_contract_wasm(new_wasm_hash)",
+      "package": "vault_factory",
+      "file_path": "vault_factory/src/lib.rs"
+    },
+    {
+      "id": 108,
+      "occurrence_index": 7,
+      "category_id": "Best Practices",
+      "vulnerability_id": "soroban_version",
+      "error_message": "[ENHANCEMENT] Use the latest version of Soroban",
+      "span": "lib.rs:1:1 - 1:1",
+      "code_snippet": "",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 109,
+      "occurrence_index": 7,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:179:5 - 179:59",
+      "code_snippet": "env.storage().instance().get(&DataKey::Admin).unwrap()",
+      "package": "vault",
+      "file_path": "vault/src/storage.rs"
+    },
+    {
+      "id": 110,
+      "occurrence_index": 8,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:187:5 - 187:63",
+      "code_snippet": "env.storage().instance().get(&DataKey::UsdcToken).unwrap()",
+      "package": "vault",
+      "file_path": "vault/src/storage.rs"
+    },
+    {
+      "id": 111,
+      "occurrence_index": 9,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:195:5 - 195:68",
+      "code_snippet": "env.storage().instance().get(&DataKey::MarketContract).unwrap()",
+      "package": "vault",
+      "file_path": "vault/src/storage.rs"
+    },
+    {
+      "id": 112,
+      "occurrence_index": 10,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:203:5 - 203:62",
+      "code_snippet": "env.storage().instance().get(&DataKey::NoeToken).unwrap()",
+      "package": "vault",
+      "file_path": "vault/src/storage.rs"
+    },
+    {
+      "id": 113,
+      "occurrence_index": 50,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "noe.rs:30:36 - 30:56",
+      "code_snippet": "circulating + amount",
+      "package": "vault",
+      "file_path": "vault/src/noe.rs"
+    },
+    {
+      "id": 114,
+      "occurrence_index": 51,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "noe.rs:58:36 - 58:56",
+      "code_snippet": "circulating - amount",
+      "package": "vault",
+      "file_path": "vault/src/noe.rs"
+    },
+    {
+      "id": 115,
+      "occurrence_index": 52,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:173:19 - 173:75",
+      "code_snippet": "usdc_amount * (fee_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 116,
+      "occurrence_index": 53,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:174:26 - 174:43",
+      "code_snippet": "usdc_amount - fee",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 117,
+      "occurrence_index": 54,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:216:30 - 216:63",
+      "code_snippet": "get_total_usdc(&env) + net_amount",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 118,
+      "occurrence_index": 55,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:217:41 - 217:62",
+      "code_snippet": "already + usdc_amount",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 119,
+      "occurrence_index": 56,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:221:30 - 221:56",
+      "code_snippet": "get_total_fees(&env) + fee",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 120,
+      "occurrence_index": 57,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:294:19 - 294:74",
+      "code_snippet": "gross_usdc * (fee_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 121,
+      "occurrence_index": 58,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:295:24 - 295:40",
+      "code_snippet": "gross_usdc - fee",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 122,
+      "occurrence_index": 59,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:317:12 - 317:103",
+      "code_snippet": "vault_balance - net_usdc < get_reserved_payout(&env) + storage::get_shortfall_reserve(&env)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 123,
+      "occurrence_index": 60,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:325:30 - 325:63",
+      "code_snippet": "get_total_usdc(&env) - gross_usdc",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 124,
+      "occurrence_index": 61,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:326:30 - 326:56",
+      "code_snippet": "get_total_fees(&env) + fee",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 125,
+      "occurrence_index": 62,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:395:29 - 395:48",
+      "code_snippet": "buffer + total_usdc",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 126,
+      "occurrence_index": 63,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:401:37 - 401:89",
+      "code_snippet": "vault_balance - storage::get_shortfall_reserve(&env)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 127,
+      "occurrence_index": 64,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:414:46 - 414:66",
+      "code_snippet": "buffer - from_buffer",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 128,
+      "occurrence_index": 65,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:416:31 - 416:49",
+      "code_snippet": "paid - from_buffer",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 129,
+      "occurrence_index": 66,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:418:42 - 418:62",
+      "code_snippet": "total_usdc - from_lp",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 130,
+      "occurrence_index": 67,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:422:29 - 422:39",
+      "code_snippet": "pnl - paid",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 131,
+      "occurrence_index": 68,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:423:60 - 423:110",
+      "code_snippet": "storage::get_shortfall_owed(&env, &trader) + short",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 132,
+      "occurrence_index": 69,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:424:37 - 424:64",
+      "code_snippet": "get_shortfall(&env) + short",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 133,
+      "occurrence_index": 70,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:425:50 - 425:90",
+      "code_snippet": "storage::get_cum_shortfall(&env) + short",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 134,
+      "occurrence_index": 71,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:472:30 - 472:59",
+      "code_snippet": "get_total_usdc(&env) + amount",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 135,
+      "occurrence_index": 72,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:492:22 - 495:50",
+      "code_snippet": "get_total_usdc(env)\n            + get_total_fees(env)\n            + get_buffer_balance(env)\n            + storage::get_shortfall_reserve(env)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 136,
+      "occurrence_index": 73,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:520:25 - 520:67",
+      "code_snippet": "bal - storage::get_shortfall_reserve(&env)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 137,
+      "occurrence_index": 74,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:526:34 - 526:47",
+      "code_snippet": "buffer - paid",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 138,
+      "occurrence_index": 75,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:543:22 - 544:37",
+      "code_snippet": "get_reserved_payout(&env) * (storage::get_buffer_target_bps(&env) as i128)\n            / (BASIS_POINTS as i128)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 139,
+      "occurrence_index": 76,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:546:41 - 546:56",
+      "code_snippet": "target - buffer",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 140,
+      "occurrence_index": 77,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:549:38 - 549:56",
+      "code_snippet": "buffer + to_buffer",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 141,
+      "occurrence_index": 78,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:551:24 - 551:42",
+      "code_snippet": "amount - to_buffer",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 142,
+      "occurrence_index": 79,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:585:21 - 585:80",
+      "code_snippet": "get_unrealized_pnl(&env) - old_asset + asset_unrealized_pnl",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 143,
+      "occurrence_index": 80,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:590:63 - 590:81",
+      "code_snippet": "reserved - release",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 144,
+      "occurrence_index": 81,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:631:27 - 631:74",
+      "code_snippet": "aum * (get_reserve_cap_bps(&env) as i128) / bps",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 145,
+      "occurrence_index": 82,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:632:12 - 632:43",
+      "code_snippet": "reserved + amount > reserve_cap",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 146,
+      "occurrence_index": 83,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:638:27 - 638:89",
+      "code_snippet": "aum * (storage::get_asset_cap_bps(&env, &asset) as i128) / bps",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 147,
+      "occurrence_index": 84,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:648:24 - 648:85",
+      "code_snippet": "aum * (storage::get_skew_cap_bps(&env, &asset) as i128) / bps",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 148,
+      "occurrence_index": 85,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:649:49 - 649:64",
+      "code_snippet": "-net_skew_after",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 149,
+      "occurrence_index": 86,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:650:51 - 650:67",
+      "code_snippet": "-net_skew_before",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 150,
+      "occurrence_index": 87,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:661:12 - 661:84",
+      "code_snippet": "reserved + amount > vault_balance - storage::get_shortfall_reserve(&env)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 151,
+      "occurrence_index": 88,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:665:35 - 665:52",
+      "code_snippet": "reserved + amount",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 152,
+      "occurrence_index": 89,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:910:34 - 910:82",
+      "code_snippet": "get_buffer_balance(&env) + (amount - to_reserve)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 153,
+      "occurrence_index": 90,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:926:34 - 926:82",
+      "code_snippet": "get_buffer_balance(&env) + (amount - to_reserve)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 154,
+      "occurrence_index": 91,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:938:26 - 938:47",
+      "code_snippet": "outstanding - reserve",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 155,
+      "occurrence_index": 92,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:943:30 - 943:67",
+      "code_snippet": "amount * bps / (BASIS_POINTS as i128)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 156,
+      "occurrence_index": 93,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:950:45 - 950:65",
+      "code_snippet": "reserve + to_reserve",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 157,
+      "occurrence_index": 94,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:976:12 - 976:34",
+      "code_snippet": "pay > reserve + buffer",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 158,
+      "occurrence_index": 95,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:977:19 - 977:35",
+      "code_snippet": "reserve + buffer",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 159,
+      "occurrence_index": 96,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:991:50 - 991:72",
+      "code_snippet": "reserve - from_reserve",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 160,
+      "occurrence_index": 97,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:993:27 - 993:45",
+      "code_snippet": "pay - from_reserve",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 161,
+      "occurrence_index": 98,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:995:38 - 995:58",
+      "code_snippet": "buffer - from_buffer",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 162,
+      "occurrence_index": 99,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:998:52 - 998:62",
+      "code_snippet": "owed - pay",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 163,
+      "occurrence_index": 100,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:999:29 - 999:54",
+      "code_snippet": "get_shortfall(&env) - pay",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 164,
+      "occurrence_index": 101,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:1000:49 - 1000:94",
+      "code_snippet": "storage::get_cum_shortfall_repaid(&env) + pay",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 165,
+      "occurrence_index": 102,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1004:35 - 1004:45",
+      "code_snippet": "owed - pay",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 166,
+      "occurrence_index": 103,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1073:38 - 1073:54",
+      "code_snippet": "buffer - covered",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 167,
+      "occurrence_index": 104,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:1074:34 - 1074:64",
+      "code_snippet": "get_total_usdc(&env) + covered",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 168,
+      "occurrence_index": 105,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:1077:19 - 1077:68",
+      "code_snippet": "storage::get_cum_bad_debt_covered(&env) + covered",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 169,
+      "occurrence_index": 106,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1080:19 - 1080:83",
+      "code_snippet": "storage::get_cum_bad_debt_lp_absorbed(&env) + (amount - covered)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 170,
+      "occurrence_index": 107,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1105:33 - 1106:51",
+      "code_snippet": "token_client.balance(&env.current_contract_address())\n            - storage::get_shortfall_reserve(&env)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 171,
+      "occurrence_index": 108,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1114:38 - 1114:50",
+      "code_snippet": "buffer - pay",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 172,
+      "occurrence_index": 109,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1195:23 - 1195:71",
+      "code_snippet": "aum * (cap_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 173,
+      "occurrence_index": 110,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1390:19 - 1390:59",
+      "code_snippet": "total_usdc + total_fees - unrealized_pnl",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 174,
+      "occurrence_index": 4,
+      "category_id": "Authorization",
+      "vulnerability_id": "missing_new_admin_auth",
+      "error_message": "[MEDIUM] New admin/owner address must sign before being stored",
+      "span": "storage.rs:183:5 - 183:57",
+      "code_snippet": "env.storage().instance().set(&DataKey::Admin, admin)",
+      "package": "vault",
+      "file_path": "vault/src/storage.rs"
+    },
+    {
+      "id": 175,
+      "occurrence_index": 6,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:610:5 - 617:34",
+      "code_snippet": "pub fn reserve_for_position(\n        env: Env,\n        asset: Symbol,\n        amount: i128,\n        asset_side_oi_after: i128,\n        net_skew_before: i128,\n        net_skew_after: i128,\n    ) -> Result<(), NoetherError>",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 176,
+      "occurrence_index": 6,
+      "category_id": "Authorization",
+      "vulnerability_id": "unprotected_update_current_contract_wasm",
+      "error_message": "[CRITICAL] This update_current_contract_wasm is called without access control",
+      "span": "lib.rs:1250:9 - 1250:67",
+      "code_snippet": "env.deployer().update_current_contract_wasm(new_wasm_hash)",
+      "package": "vault",
+      "file_path": "vault/src/lib.rs"
+    },
+    {
+      "id": 177,
+      "occurrence_index": 8,
+      "category_id": "Best Practices",
+      "vulnerability_id": "soroban_version",
+      "error_message": "[ENHANCEMENT] Use the latest version of Soroban",
+      "span": "lib.rs:1:1 - 1:1",
+      "code_snippet": "",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 178,
+      "occurrence_index": 11,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:218:5 - 218:59",
+      "code_snippet": "env.storage().instance().get(&DataKey::Admin).unwrap()",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 179,
+      "occurrence_index": 12,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:226:5 - 226:67",
+      "code_snippet": "env.storage().instance().get(&DataKey::OracleAdapter).unwrap()",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 180,
+      "occurrence_index": 13,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:234:5 - 234:59",
+      "code_snippet": "env.storage().instance().get(&DataKey::Vault).unwrap()",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 181,
+      "occurrence_index": 14,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:242:5 - 242:63",
+      "code_snippet": "env.storage().instance().get(&DataKey::UsdcToken).unwrap()",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 182,
+      "occurrence_index": 111,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "storage.rs:272:19 - 272:30",
+      "code_snippet": "counter + 1",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 183,
+      "occurrence_index": 9,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:457:22 - 457:31",
+      "code_snippet": "push_back",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 184,
+      "occurrence_index": 11,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:458:5 - 458:67",
+      "code_snippet": "env.storage().persistent().set(&trader_key, &trader_positions)",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 185,
+      "occurrence_index": 112,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "storage.rs:466:34 - 466:42",
+      "code_snippet": "open + 1",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 186,
+      "occurrence_index": 15,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:569:22 - 569:54",
+      "code_snippet": "trader_positions.get(i).unwrap()",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 187,
+      "occurrence_index": 8,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "storage.rs:568:5 - 573:6",
+      "code_snippet": "for i in 0..trader_positions.len() {\n        let pos_id = trader_positions.get(i).unwrap();\n        if pos_id != id {\n            new_list.push_back(pos_id);\n        }\n    }",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 188,
+      "occurrence_index": 10,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:571:22 - 571:31",
+      "code_snippet": "push_back",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 189,
+      "occurrence_index": 12,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:575:9 - 575:63",
+      "code_snippet": "env.storage().persistent().set(&trader_key, &new_list)",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 190,
+      "occurrence_index": 113,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "storage.rs:661:19 - 661:30",
+      "code_snippet": "counter + 1",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 191,
+      "occurrence_index": 114,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "storage.rs:707:48 - 707:62",
+      "code_snippet": "per_trader + 1",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 192,
+      "occurrence_index": 115,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "storage.rs:708:35 - 708:44",
+      "code_snippet": "total + 1",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 193,
+      "occurrence_index": 13,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:829:5 - 829:62",
+      "code_snippet": "env.storage().persistent().set(&DataKey::FeeTiers, tiers)",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 194,
+      "occurrence_index": 9,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "storage.rs:876:5 - 881:6",
+      "code_snippet": "for i in 0..ids.len() {\n        if ids.get(i).unwrap() == position_id {\n            found = true;\n            break;\n        }\n    }",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 195,
+      "occurrence_index": 11,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:883:13 - 883:22",
+      "code_snippet": "push_back",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 196,
+      "occurrence_index": 14,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:884:9 - 884:51",
+      "code_snippet": "env.storage().persistent().set(&key, &ids)",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 197,
+      "occurrence_index": 16,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "storage.rs:898:18 - 898:37",
+      "code_snippet": "ids.get(i).unwrap()",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 198,
+      "occurrence_index": 10,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "storage.rs:897:5 - 902:6",
+      "code_snippet": "for i in 0..ids.len() {\n        let id = ids.get(i).unwrap();\n        if id != position_id {\n            new_ids.push_back(id);\n        }\n    }",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 199,
+      "occurrence_index": 12,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "storage.rs:900:21 - 900:30",
+      "code_snippet": "push_back",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 200,
+      "occurrence_index": 15,
+      "category_id": "Resource Management",
+      "vulnerability_id": "dynamic_storage",
+      "error_message": "[MEDIUM] Using dynamic types in instance or persistent storage can lead to unnecessary growth or storage-related vulnerabilities.",
+      "span": "storage.rs:903:5 - 903:51",
+      "code_snippet": "env.storage().persistent().set(&key, &new_ids)",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 201,
+      "occurrence_index": 17,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "position.rs:76:18 - 76:46",
+      "code_snippet": "position_ids.get(i).unwrap()",
+      "package": "market",
+      "file_path": "market/src/position.rs"
+    },
+    {
+      "id": 202,
+      "occurrence_index": 11,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "position.rs:75:5 - 111:6",
+      "code_snippet": "for i in 0..position_ids.len() {\n        let id = position_ids.get(i).unwrap();\n        if let Some(pos) = get_position(env, id) {\n            // Collateral in position (must be counted toward equity!)\n            agg.total_collateral = agg.total_collateral.checked_add(pos.collateral).unwrap_or(agg.total_collateral);\n            // PnL. Fail closed on an unreadable/bogus price: value the leg at\n            // -size (deep loss) so equity can only be UNDERSTATED, never\n            // inflated. This is the correct direction for the withdraw/open\n            // free-margin gates — a dead feed blocks risk-increasing actions\n            // instead of fabricating +size profit for shorts\n            // (calculate_pnl(short, 0) = +size). The liquidation path\n            // pre-screens every price, so this branch never fires there (where\n            // -size would be the wrong direction and falsely liquidate).\n            let price = get_price(&pos.asset);\n            let pnl = if price <= 0 {\n                -pos.size\n            } else {\n                calculate_pnl(&pos, price).unwrap_or(-pos.size)\n            };\n            agg.unrealized_pnl = agg.unrealized_pnl.checked_add(pnl).unwrap_or(agg.unrealized_pnl);\n            // Funding from the position's OWN asset index (L0-13 per-market).\n            let current_cumulative = get_funding_state(env, &pos.asset).0;\n            let pos_funding = calculate_cumulative_funding(\n                pos.size, pos.direction,\n                pos.entry_cumulative_funding, current_cumulative,\n            );\n            agg.total_funding = agg.total_funding.checked_add(pos_funding).unwrap_or(agg.total_funding);\n            // Maintenance margin — per-asset once the ladder is live (L0-12),\n            // legacy fallback for grandfathered / pre-ladder positions.\n            let mm_bps = mm_bps_for(env, &pos, maintenance_margin_bps);\n            let mm = pos.size * (mm_bps as i128) / (BASIS_POINTS as i128);\n            agg.maintenance_margin = agg.maintenance_margin.checked_add(mm).unwrap_or(agg.maintenance_margin);\n            // Used margin (initial margin = size / leverage)\n            let im = pos.size / (pos.leverage as i128);\n            agg.used_margin = agg.used_margin.checked_add(im).unwrap_or(agg.used_margin);\n        }\n    }",
+      "package": "market",
+      "file_path": "market/src/position.rs"
+    },
+    {
+      "id": 203,
+      "occurrence_index": 116,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "position.rs:90:17 - 90:26",
+      "code_snippet": "-pos.size",
+      "package": "market",
+      "file_path": "market/src/position.rs"
+    },
+    {
+      "id": 204,
+      "occurrence_index": 117,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "position.rs:92:54 - 92:63",
+      "code_snippet": "-pos.size",
+      "package": "market",
+      "file_path": "market/src/position.rs"
+    },
+    {
+      "id": 205,
+      "occurrence_index": 118,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "position.rs:105:22 - 105:74",
+      "code_snippet": "pos.size * (mm_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "market",
+      "file_path": "market/src/position.rs"
+    },
+    {
+      "id": 206,
+      "occurrence_index": 13,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "trading.rs:47:11 - 47:20",
+      "code_snippet": "push_back",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 207,
+      "occurrence_index": 14,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "trading.rs:81:21 - 81:30",
+      "code_snippet": "push_back",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 208,
+      "occurrence_index": 119,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "trading.rs:87:24 - 87:75",
+      "code_snippet": "((record.last_update_day + i) % VOLUME_WINDOW_DAYS)",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 209,
+      "occurrence_index": 120,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "trading.rs:107:36 - 107:50",
+      "code_snippet": "current + size",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 210,
+      "occurrence_index": 12,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "trading.rs:113:5 - 115:6",
+      "code_snippet": "for i in 0..record.daily_volumes.len() {\n        total += record.daily_volumes.get(i).unwrap_or(0);\n    }",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 211,
+      "occurrence_index": 121,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "trading.rs:114:9 - 114:58",
+      "code_snippet": "total += record.daily_volumes.get(i).unwrap_or(0)",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 212,
+      "occurrence_index": 18,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "trading.rs:129:20 - 129:41",
+      "code_snippet": "tiers.get(i).unwrap()",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 213,
+      "occurrence_index": 13,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "trading.rs:128:5 - 133:6",
+      "code_snippet": "for i in 0..tiers.len() {\n        let tier = tiers.get(i).unwrap();\n        if volume >= tier.min_volume {\n            best = tier;\n        }\n    }",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 214,
+      "occurrence_index": 122,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "trading.rs:150:5 - 150:47",
+      "code_snippet": "size * (fee_units as i128) / FEE_PRECISION",
+      "package": "market",
+      "file_path": "market/src/trading.rs"
+    },
+    {
+      "id": 215,
+      "occurrence_index": 19,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:442:22 - 442:41",
+      "code_snippet": "ids.get(i).unwrap()",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 216,
+      "occurrence_index": 20,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:474:22 - 474:42",
+      "code_snippet": "legs.get(i).unwrap()",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 217,
+      "occurrence_index": 14,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:441:9 - 449:10",
+      "code_snippet": "for i in 0..ids.len() {\n            let id = ids.get(i).unwrap();\n            if let Some(p) = get_position(env, id) {\n                if p.asset == *asset && p.margin_mode == mode && p.direction != *direction {\n                    legs.push_back(id);\n                    gross = gross.checked_add(p.size).unwrap_or(gross);\n                }\n            }\n        }",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 218,
+      "occurrence_index": 15,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:473:9 - 482:10",
+      "code_snippet": "for i in 0..legs.len() {\n            let id = legs.get(i).unwrap();\n            if let Some(p) = get_position(env, id) {\n                if cross {\n                    Self::settle_cross_close(env, &p, entry_price, 0, None, None);\n                } else {\n                    Self::settle_isolated_close(env, &p, entry_price, 0, None, None)?;\n                }\n            }\n        }",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 219,
+      "occurrence_index": 15,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "lib.rs:445:26 - 445:35",
+      "code_snippet": "push_back",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 220,
+      "occurrence_index": 123,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:465:22 - 465:34",
+      "code_snippet": "size - gross",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 221,
+      "occurrence_index": 124,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:541:33 - 541:58",
+      "code_snippet": "collateral - pool_balance",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 222,
+      "occurrence_index": 125,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:566:20 - 566:53",
+      "code_snippet": "equity < used_margin + collateral",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 223,
+      "occurrence_index": 126,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:603:30 - 603:46",
+      "code_snippet": "collateral - fee",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 224,
+      "occurrence_index": 127,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:610:53 - 610:70",
+      "code_snippet": "pool - collateral",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 225,
+      "occurrence_index": 1,
+      "category_id": "Authorization",
+      "vulnerability_id": "unsafe_map_get",
+      "error_message": "[MEDIUM] Unsafe access on Map, method could panic.",
+      "span": "lib.rs:557:60 - 557:85",
+      "code_snippet": "prices.get(asset.clone())",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 226,
+      "occurrence_index": 128,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:738:33 - 738:81",
+      "code_snippet": "position.collateral * close_size / position.size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 227,
+      "occurrence_index": 129,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:739:12 - 739:75",
+      "code_snippet": "position.collateral - collateral_closed < config.min_collateral",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 228,
+      "occurrence_index": 130,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:775:25 - 775:58",
+      "code_snippet": "collateral_closed + pnl - funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 229,
+      "occurrence_index": 131,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:777:91 - 777:101",
+      "code_snippet": "-remaining",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 230,
+      "occurrence_index": 132,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:786:27 - 786:31",
+      "code_snippet": "-pnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 231,
+      "occurrence_index": 133,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:786:65 - 786:69",
+      "code_snippet": "-pnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 232,
+      "occurrence_index": 134,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:787:13 - 787:29",
+      "code_snippet": "to_vault += loss",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 233,
+      "occurrence_index": 135,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:788:13 - 788:30",
+      "code_snippet": "available -= loss",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 234,
+      "occurrence_index": 136,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:792:13 - 792:26",
+      "code_snippet": "to_vault += f",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 235,
+      "occurrence_index": 137,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:793:13 - 793:27",
+      "code_snippet": "available -= f",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 236,
+      "occurrence_index": 138,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:796:9 - 796:30",
+      "code_snippet": "available -= fee_paid",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 237,
+      "occurrence_index": 139,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:807:47 - 807:55",
+      "code_snippet": "-funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 238,
+      "occurrence_index": 140,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:808:25 - 808:58",
+      "code_snippet": "available + paid + earned_funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 239,
+      "occurrence_index": 141,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:820:24 - 820:50",
+      "code_snippet": "position.size - close_size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 240,
+      "occurrence_index": 142,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:821:30 - 821:69",
+      "code_snippet": "position.collateral - collateral_closed",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 241,
+      "occurrence_index": 143,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:860:9 - 860:38",
+      "code_snippet": "position.collateral += amount",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 242,
+      "occurrence_index": 144,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:901:30 - 901:58",
+      "code_snippet": "position.collateral - amount",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 243,
+      "occurrence_index": 145,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:905:12 - 905:74",
+      "code_snippet": "new_collateral < position.size / (config.max_leverage as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 244,
+      "occurrence_index": 146,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:917:18 - 917:75",
+      "code_snippet": "position.size * (mm_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 245,
+      "occurrence_index": 147,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:918:12 - 918:48",
+      "code_snippet": "new_collateral + pnl - funding <= mm",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 246,
+      "occurrence_index": 148,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1000:25 - 1000:60",
+      "code_snippet": "position.collateral + pnl - funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 247,
+      "occurrence_index": 149,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1045:31 - 1045:60",
+      "code_snippet": "position.size * tranche / bps",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 248,
+      "occurrence_index": 150,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1049:38 - 1049:69",
+      "code_snippet": "(funding - pnl) * tranche / bps",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 249,
+      "occurrence_index": 151,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1062:17 - 1062:77",
+      "code_snippet": "closed_size * (config.liquidation_penalty_bps as i128) / bps",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 250,
+      "occurrence_index": 152,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1063:34 - 1063:59",
+      "code_snippet": "remaining * tranche / bps",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 251,
+      "occurrence_index": 153,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1069:16 - 1069:70",
+      "code_snippet": "tranche_penalty > position.collateral - realized_debit",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 252,
+      "occurrence_index": 154,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1070:35 - 1070:71",
+      "code_snippet": "position.collateral - realized_debit",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 253,
+      "occurrence_index": 155,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1075:26 - 1075:91",
+      "code_snippet": "tranche_penalty * (config.penalty_keeper_share_bps as i128) / bps",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 254,
+      "occurrence_index": 156,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1076:34 - 1076:58",
+      "code_snippet": "tranche_penalty - reward",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 255,
+      "occurrence_index": 157,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1078:28 - 1078:55",
+      "code_snippet": "position.size - closed_size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 256,
+      "occurrence_index": 158,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1079:34 - 1079:88",
+      "code_snippet": "position.collateral - realized_debit - tranche_penalty",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 257,
+      "occurrence_index": 159,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:1087:32 - 1087:63",
+      "code_snippet": "realized_debit + tranche_buffer",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 258,
+      "occurrence_index": 160,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1139:31 - 1139:95",
+      "code_snippet": "position.size * (config.liquidation_penalty_bps as i128) / bps_i",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 259,
+      "occurrence_index": 161,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1143:30 - 1143:89",
+      "code_snippet": "penalty * (config.penalty_keeper_share_bps as i128) / bps_i",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 260,
+      "occurrence_index": 162,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1144:30 - 1144:50",
+      "code_snippet": "penalty - keeper_cut",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 261,
+      "occurrence_index": 163,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1145:26 - 1145:45",
+      "code_snippet": "remaining - penalty",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 262,
+      "occurrence_index": 164,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1151:32 - 1151:73",
+      "code_snippet": "position.collateral - keeper_cut - refund",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 263,
+      "occurrence_index": 165,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1158:66 - 1158:87",
+      "code_snippet": "to_vault - buffer_cut",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 264,
+      "occurrence_index": 166,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:1182:74 - 1182:84",
+      "code_snippet": "-remaining",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 265,
+      "occurrence_index": 167,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1188:21 - 1188:89",
+      "code_snippet": "vault_receives * (config.insurance_buffer_share_bps as i128) / bps_i",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 266,
+      "occurrence_index": 168,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1189:66 - 1189:93",
+      "code_snippet": "vault_receives - buffer_cut",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 267,
+      "occurrence_index": 169,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:1206:28 - 1207:114",
+      "code_snippet": "actual_keeper_reward\n            + Self::pay_vault_bounty(&env, &vault_address, &keeper, config.min_liq_bounty - actual_keeper_reward)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 268,
+      "occurrence_index": 170,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1207:69 - 1207:113",
+      "code_snippet": "config.min_liq_bounty - actual_keeper_reward",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 269,
+      "occurrence_index": 171,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1274:16 - 1274:36",
+      "code_snippet": "now < last_ts + 3600",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 270,
+      "occurrence_index": 172,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1281:29 - 1281:49",
+      "code_snippet": "now - last_ts > 3600",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 271,
+      "occurrence_index": 173,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1281:66 - 1281:79",
+      "code_snippet": "now - last_ts",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 272,
+      "occurrence_index": 174,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1290:25 - 1290:96",
+      "code_snippet": "(params.funding_clamp_bps as i128) * PRECISION / (BASIS_POINTS as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 273,
+      "occurrence_index": 175,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:1291:32 - 1291:53",
+      "code_snippet": "prev_rate + step_frac",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 274,
+      "occurrence_index": 176,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:1294:34 - 1294:40",
+      "code_snippet": "-limit",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 275,
+      "occurrence_index": 177,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:1295:28 - 1295:34",
+      "code_snippet": "-limit",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 276,
+      "occurrence_index": 178,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1299:13 - 1299:36",
+      "code_snippet": "cum += new_rate * hours",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 277,
+      "occurrence_index": 16,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:1404:9 - 1426:10",
+      "code_snippet": "for i in 0..ids.len() {\n            if let Some(pos) = get_position(env, ids.get(i).unwrap()) {\n                if prices.contains_key(pos.asset.clone()) {\n                    continue;\n                }\n                let (price, timestamp) = Self::read_price_raw(env, &pos.asset);\n                if price <= 0 {\n                    return Err(NoetherError::InvalidPrice);\n                }\n                // Freshness is bounded on BOTH sides: a stamp ahead of ledger\n                // time would otherwise read as fresh forever, letting a\n                // misconfigured or hostile publisher freeze a price by\n                // stamping it in the future — the exact hole this gate\n                // exists to close. Mirrors the router's Stork skew bound.\n                if timestamp > now + 60 {\n                    return Err(NoetherError::PriceStale);\n                }\n                if now > timestamp && now - timestamp > staleness {\n                    return Err(NoetherError::PriceStale);\n                }\n                prices.set(pos.asset.clone(), price);\n            }\n        }",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 278,
+      "occurrence_index": 16,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unexpected_revert_with_storage",
+      "error_message": "[MEDIUM] This storage (vector or map) operation is called without access control",
+      "span": "lib.rs:1424:24 - 1424:27",
+      "code_snippet": "set",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 279,
+      "occurrence_index": 179,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1418:20 - 1418:40",
+      "code_snippet": "timestamp > now + 60",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 280,
+      "occurrence_index": 180,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1440:18 - 1440:30",
+      "code_snippet": "(now - last)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 281,
+      "occurrence_index": 181,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1441:41 - 1441:65",
+      "code_snippet": "integral + skew_now * dt",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 282,
+      "occurrence_index": 182,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1458:20 - 1458:27",
+      "code_snippet": "ls - ss",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 283,
+      "occurrence_index": 183,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1468:22 - 1468:42",
+      "code_snippet": "(now - window_start)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 284,
+      "occurrence_index": 184,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1469:9 - 1469:42",
+      "code_snippet": "(integral + inst * tail) / window",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 285,
+      "occurrence_index": 185,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:1494:22 - 1494:50",
+      "code_snippet": "p.collateral + pnl - funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 286,
+      "occurrence_index": 21,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:1617:27 - 1617:48",
+      "code_snippet": "tiers.get(0).unwrap()",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 287,
+      "occurrence_index": 186,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This multiplication operation could overflow.",
+      "span": "lib.rs:1610:32 - 1610:59",
+      "code_snippet": "config.trading_fee_bps * 10",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 288,
+      "occurrence_index": 187,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This multiplication operation could overflow.",
+      "span": "lib.rs:1611:32 - 1611:59",
+      "code_snippet": "config.trading_fee_bps * 10",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 289,
+      "occurrence_index": 188,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1624:36 - 1624:64",
+      "code_snippet": "tier.min_volume - volume_14d",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 290,
+      "occurrence_index": 189,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1703:32 - 1703:54",
+      "code_snippet": "equity_before - amount",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 291,
+      "occurrence_index": 190,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1716:27 - 1716:51",
+      "code_snippet": "current_balance - amount",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 292,
+      "occurrence_index": 2,
+      "category_id": "Authorization",
+      "vulnerability_id": "unsafe_map_get",
+      "error_message": "[MEDIUM] Unsafe access on Map, method could panic.",
+      "span": "lib.rs:1701:56 - 1701:81",
+      "code_snippet": "prices.get(asset.clone())",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 293,
+      "occurrence_index": 191,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1801:45 - 1801:75",
+      "code_snippet": "loss_wanted - loss_transferred",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 294,
+      "occurrence_index": 192,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:1820:32 - 1820:53",
+      "code_snippet": "pool_delta - fee_paid",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 295,
+      "occurrence_index": 193,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:1882:13 - 1882:29",
+      "code_snippet": "to_vault += -pnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 296,
+      "occurrence_index": 194,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:1882:25 - 1882:29",
+      "code_snippet": "-pnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 297,
+      "occurrence_index": 195,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:1885:13 - 1885:32",
+      "code_snippet": "to_vault += funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 298,
+      "occurrence_index": 22,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:2018:23 - 2018:51",
+      "code_snippet": "position_ids.get(i).unwrap()",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 299,
+      "occurrence_index": 23,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:2035:23 - 2035:44",
+      "code_snippet": "cands.get(i).unwrap()",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 300,
+      "occurrence_index": 24,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:2038:28 - 2038:53",
+      "code_snippet": "cands.get(j - 1).unwrap()",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 301,
+      "occurrence_index": 25,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unsafe_unwrap",
+      "error_message": "[MEDIUM] Unsafe usage of `unwrap`",
+      "span": "lib.rs:2065:37 - 2065:60",
+      "code_snippet": "cands.get(idx).unwrap()",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 302,
+      "occurrence_index": 17,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:1940:9 - 1950:10",
+      "code_snippet": "for i in 0..scan_ids.len() {\n            if let Some(pos) = get_position(&env, scan_ids.get(i).unwrap()) {\n                // Lenient on purpose (unlike the withdraw/open freshness\n                // gate): liquidation must keep working on stale-clamped\n                // prices. get_oracle_price already rejects nonpositive\n                // prints, so is_err() is the whole readability test.\n                if Self::get_oracle_price(&env, &pos.asset, false).is_err() {\n                    return Err(NoetherError::CrossMarginNotLiquidatable);\n                }\n            }\n        }",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 303,
+      "occurrence_index": 18,
+      "category_id": "DoS",
+      "vulnerability_id": "dos_unbounded_operation",
+      "error_message": "[MEDIUM] In order to prevent a single transaction from consuming all the gas in a block, unbounded operations must be avoided",
+      "span": "lib.rs:2017:9 - 2028:10",
+      "code_snippet": "for i in 0..position_ids.len() {\n            let pid = position_ids.get(i).unwrap();\n            if let Some(pos) = get_position(&env, pid) {\n                match Self::get_oracle_price(&env, &pos.asset, false) {\n                    Ok(p) if p > 0 => {\n                        let pnl = calculate_pnl(&pos, p).unwrap_or(0);\n                        cands.push_back((pid, pnl, pos.size));\n                    }\n                    _ => continue,\n                }\n            }\n        }",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 304,
+      "occurrence_index": 196,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:2080:13 - 2080:56",
+      "code_snippet": "remaining_account_funds -= loss_transferred",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 305,
+      "occurrence_index": 197,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2082:17 - 2082:65",
+      "code_snippet": "total_bad_debt += loss_wanted - loss_transferred",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 306,
+      "occurrence_index": 198,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:2084:13 - 2084:29",
+      "code_snippet": "total_pnl += pnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 307,
+      "occurrence_index": 199,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2091:35 - 2091:94",
+      "code_snippet": "pos.size * (config.liquidation_penalty_bps as i128) / bps_i",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 308,
+      "occurrence_index": 200,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2097:38 - 2097:97",
+      "code_snippet": "penalty * (config.penalty_keeper_share_bps as i128) / bps_i",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 309,
+      "occurrence_index": 201,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:2098:38 - 2098:62",
+      "code_snippet": "penalty - keeper_cut_leg",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 310,
+      "occurrence_index": 202,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:2099:21 - 2099:44",
+      "code_snippet": "running_pool -= penalty",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 311,
+      "occurrence_index": 203,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:2113:21 - 2113:38",
+      "code_snippet": "total_keeper += k",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 312,
+      "occurrence_index": 204,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:2114:21 - 2114:45",
+      "code_snippet": "total_penalty += penalty",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 313,
+      "occurrence_index": 205,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2117:21 - 2117:53",
+      "code_snippet": "remaining_account_funds -= k + b",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 314,
+      "occurrence_index": 206,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2133:31 - 2133:64",
+      "code_snippet": "eq_stored - stored + running_pool",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 315,
+      "occurrence_index": 207,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:2175:9 - 2177:10",
+      "code_snippet": "total_keeper += Self::pay_vault_bounty(\n            &env, &get_vault(&env), &keeper, config.min_liq_bounty - total_keeper,\n        )",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 316,
+      "occurrence_index": 208,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:2176:46 - 2176:82",
+      "code_snippet": "config.min_liq_bounty - total_keeper",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 317,
+      "occurrence_index": 209,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2206:25 - 2206:54",
+      "code_snippet": "(price * lk) / PRECISION - ls",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 318,
+      "occurrence_index": 210,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2207:26 - 2207:55",
+      "code_snippet": "ss - (price * sk) / PRECISION",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 319,
+      "occurrence_index": 211,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:2210:13 - 2210:33",
+      "code_snippet": "payable += long_upnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 320,
+      "occurrence_index": 212,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:2213:13 - 2213:34",
+      "code_snippet": "payable += short_upnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 321,
+      "occurrence_index": 213,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:2224:24 - 2224:35",
+      "code_snippet": "buffer + lp",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 322,
+      "occurrence_index": 214,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2317:12 - 2317:30",
+      "code_snippet": "pnl - funding <= 0",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 323,
+      "occurrence_index": 215,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2324:13 - 2324:85",
+      "code_snippet": "(pnl * (BASIS_POINTS as i128) / pos.collateral) * (pos.leverage as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 324,
+      "occurrence_index": 216,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2337:20 - 2337:93",
+      "code_snippet": "pos.size * (config.adl_compensation_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 325,
+      "occurrence_index": 2,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "divide_before_multiply",
+      "error_message": "[MEDIUM] Division before multiplication might result in a loss of precision",
+      "span": "lib.rs:2324:13 - 2324:60",
+      "code_snippet": "(pnl * (BASIS_POINTS as i128) / pos.collateral)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 326,
+      "occurrence_index": 217,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2414:12 - 2414:38",
+      "code_snippet": "time_in_force & 0x100 != 0",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 327,
+      "occurrence_index": 218,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:2928:13 - 2928:38",
+      "code_snippet": "current_price - ref_price",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 328,
+      "occurrence_index": 219,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:2930:13 - 2930:38",
+      "code_snippet": "ref_price - current_price",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 329,
+      "occurrence_index": 220,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:2933:13 - 2933:46",
+      "code_snippet": "(price_diff * 10_000) / ref_price",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 330,
+      "occurrence_index": 221,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3049:44 - 3049:102",
+      "code_snippet": "peak - peak * (order.trailing_percent_bps as i128) / 10000",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 331,
+      "occurrence_index": 222,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3050:45 - 3050:103",
+      "code_snippet": "peak + peak * (order.trailing_percent_bps as i128) / 10000",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 332,
+      "occurrence_index": 223,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3099:12 - 3099:38",
+      "code_snippet": "time_in_force & 0x100 != 0",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 333,
+      "occurrence_index": 224,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3313:22 - 3313:52",
+      "code_snippet": "pos.collateral + pnl - funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 334,
+      "occurrence_index": 225,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3318:9 - 3318:70",
+      "code_snippet": "margin < pos.size * (mm_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 335,
+      "occurrence_index": 226,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3358:54 - 3358:66",
+      "code_snippet": "price - last",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 336,
+      "occurrence_index": 227,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3358:76 - 3358:88",
+      "code_snippet": "last - price",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 337,
+      "occurrence_index": 228,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3359:28 - 3360:70",
+      "code_snippet": "diff * (BASIS_POINTS as i128) / last\n                            > config.max_oracle_deviation_bps as i128",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 338,
+      "occurrence_index": 229,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3378:29 - 3378:95",
+      "code_snippet": "last * (config.lenient_clamp_bps as i128) / (BASIS_POINTS as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 339,
+      "occurrence_index": 230,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3379:30 - 3379:38",
+      "code_snippet": "last - d",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 340,
+      "occurrence_index": 231,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3380:30 - 3380:38",
+      "code_snippet": "last + d",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 341,
+      "occurrence_index": 232,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3422:27 - 3422:93",
+      "code_snippet": "fee * (get_protocol_fee_bps(env) as i128) / (BASIS_POINTS as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 342,
+      "occurrence_index": 233,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3441:32 - 3441:41",
+      "code_snippet": "cut - pot",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 343,
+      "occurrence_index": 234,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3449:31 - 3449:40",
+      "code_snippet": "fee - cut",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 344,
+      "occurrence_index": 235,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3516:18 - 3516:37",
+      "code_snippet": "gross_fee - clamped",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 345,
+      "occurrence_index": 236,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3548:25 - 3548:60",
+      "code_snippet": "position.collateral + pnl - funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 346,
+      "occurrence_index": 237,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:3550:91 - 3550:101",
+      "code_snippet": "-remaining",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 347,
+      "occurrence_index": 238,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:3562:27 - 3562:31",
+      "code_snippet": "-pnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 348,
+      "occurrence_index": 239,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:3562:65 - 3562:69",
+      "code_snippet": "-pnl",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 349,
+      "occurrence_index": 240,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3563:13 - 3563:29",
+      "code_snippet": "to_vault += loss",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 350,
+      "occurrence_index": 241,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3564:13 - 3564:30",
+      "code_snippet": "available -= loss",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 351,
+      "occurrence_index": 242,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3568:13 - 3568:26",
+      "code_snippet": "to_vault += f",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 352,
+      "occurrence_index": 243,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3569:13 - 3569:27",
+      "code_snippet": "available -= f",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 353,
+      "occurrence_index": 244,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3572:9 - 3572:30",
+      "code_snippet": "available -= fee_paid",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 354,
+      "occurrence_index": 245,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This negation operation could overflow.",
+      "span": "lib.rs:3584:47 - 3584:55",
+      "code_snippet": "-funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 355,
+      "occurrence_index": 246,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3585:25 - 3585:58",
+      "code_snippet": "available + paid + earned_funding",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 356,
+      "occurrence_index": 247,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3624:13 - 3624:25",
+      "code_snippet": "total + size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 357,
+      "occurrence_index": 248,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3626:13 - 3626:25",
+      "code_snippet": "total - size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 358,
+      "occurrence_index": 249,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3639:48 - 3639:55",
+      "code_snippet": "ls - ss",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 359,
+      "occurrence_index": 250,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3641:44 - 3641:74",
+      "code_snippet": "size * PRECISION / entry_price",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 360,
+      "occurrence_index": 251,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3646:21 - 3646:34",
+      "code_snippet": "lk += k_delta",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 361,
+      "occurrence_index": 252,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3647:21 - 3647:31",
+      "code_snippet": "ls += size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 362,
+      "occurrence_index": 253,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3655:21 - 3655:34",
+      "code_snippet": "sk += k_delta",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 363,
+      "occurrence_index": 254,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3656:21 - 3656:31",
+      "code_snippet": "ss += size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 364,
+      "occurrence_index": 255,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3642:53 - 3642:60",
+      "code_snippet": "cur - d",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 365,
+      "occurrence_index": 256,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3679:9 - 3679:68",
+      "code_snippet": "(mark * lk) / PRECISION - ls + ss - (mark * sk) / PRECISION",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 366,
+      "occurrence_index": 257,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3719:32 - 3719:41",
+      "code_snippet": "ls + size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 367,
+      "occurrence_index": 258,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3720:33 - 3720:42",
+      "code_snippet": "ss + size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 368,
+      "occurrence_index": 259,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3724:26 - 3724:33",
+      "code_snippet": "ls - ss",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 369,
+      "occurrence_index": 260,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:3726:32 - 3726:49",
+      "code_snippet": "net_before + size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 370,
+      "occurrence_index": 261,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3727:33 - 3727:50",
+      "code_snippet": "net_before - size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 371,
+      "occurrence_index": 1,
+      "category_id": "Error Handling",
+      "vulnerability_id": "unused_return_enum",
+      "error_message": "[MINOR] If any of the variants (Ok/Err) is not used, the code could be simplified or it could imply a bug",
+      "span": "lib.rs:3732:9 - 3732:15",
+      "code_snippet": "Ok(())",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 372,
+      "occurrence_index": 262,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3837:62 - 3837:78",
+      "code_snippet": "amount - covered",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 373,
+      "occurrence_index": 263,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3851:31 - 3851:60",
+      "code_snippet": "collateral * PRECISION / size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 374,
+      "occurrence_index": 264,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3853:13 - 3853:82",
+      "code_snippet": "(maintenance_margin_bps as i128) * PRECISION / (BASIS_POINTS as i128)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 375,
+      "occurrence_index": 265,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:3854:26 - 3854:57",
+      "code_snippet": "leverage_factor - margin_factor",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 376,
+      "occurrence_index": 266,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3856:32 - 3856:84",
+      "code_snippet": "entry_price - (entry_price * adjustment / PRECISION)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 377,
+      "occurrence_index": 267,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3857:33 - 3857:85",
+      "code_snippet": "entry_price + (entry_price * adjustment / PRECISION)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 378,
+      "occurrence_index": 268,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3889:9 - 3890:83",
+      "code_snippet": "config.keeper_fee_base\n            + position_size * (config.keeper_fee_deci_bps as i128) / FEE_PRECISION",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 379,
+      "occurrence_index": 269,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3908:12 - 3908:44",
+      "code_snippet": "order.time_in_force & 0x100 != 0",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 380,
+      "occurrence_index": 270,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This operation could overflow or underflow.",
+      "span": "lib.rs:3937:45 - 3937:84",
+      "code_snippet": "pos.collateral * reduce_size / pos.size",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 381,
+      "occurrence_index": 271,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This addition operation could overflow.",
+      "span": "lib.rs:4037:26 - 4037:50",
+      "code_snippet": "trading_fee + keeper_fee",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 382,
+      "occurrence_index": 272,
+      "category_id": "Arithmetic",
+      "vulnerability_id": "integer_overflow_or_underflow",
+      "error_message": "[CRITICAL] This subtraction operation could underflow.",
+      "span": "lib.rs:4038:30 - 4038:59",
+      "code_snippet": "order.collateral - total_fees",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 383,
+      "occurrence_index": 5,
+      "category_id": "Authorization",
+      "vulnerability_id": "missing_new_admin_auth",
+      "error_message": "[MEDIUM] New admin/owner address must sign before being stored",
+      "span": "storage.rs:222:5 - 222:57",
+      "code_snippet": "env.storage().instance().set(&DataKey::Admin, admin)",
+      "package": "market",
+      "file_path": "market/src/storage.rs"
+    },
+    {
+      "id": 384,
+      "occurrence_index": 7,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:3270:5 - 3273:36",
+      "code_snippet": "pub fn update_trailing_peak(\n        env: Env,\n        order_id: u64,\n    ) -> Result<bool, NoetherError>",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 385,
+      "occurrence_index": 8,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:338:5 - 338:86",
+      "code_snippet": "pub fn migrate_config(env: Env, config: MarketConfig) -> Result<(), NoetherError>",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 386,
+      "occurrence_index": 9,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:1537:5 - 1537:95",
+      "code_snippet": "pub fn seed_open_counts(env: Env, positions: u32, orders: u32) -> Result<(), NoetherError>",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 387,
+      "occurrence_index": 10,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:350:5 - 350:81",
+      "code_snippet": "pub fn sync_asset_pnl(env: Env, asset: Symbol) -> Result<i128, NoetherError>",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 388,
+      "occurrence_index": 11,
+      "category_id": "Best Practices",
+      "vulnerability_id": "storage_change_events",
+      "error_message": "[ENHANCEMENT] Consider emiting an event when storage is modified",
+      "span": "lib.rs:1487:5 - 1487:89",
+      "code_snippet": "pub fn get_position_equity(env: Env, position_id: u64) -> Result<i128, NoetherError>",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    },
+    {
+      "id": 389,
+      "occurrence_index": 7,
+      "category_id": "Authorization",
+      "vulnerability_id": "unprotected_update_current_contract_wasm",
+      "error_message": "[CRITICAL] This update_current_contract_wasm is called without access control",
+      "span": "lib.rs:311:9 - 311:67",
+      "code_snippet": "env.deployer().update_current_contract_wasm(new_wasm_hash)",
+      "package": "market",
+      "file_path": "market/src/lib.rs"
+    }
+  ]
+}

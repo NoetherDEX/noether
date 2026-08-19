@@ -113,7 +113,11 @@ pub fn calculate_position_value(
     funding: i128,
 ) -> Result<i128, NoetherError> {
     let pnl = calculate_pnl(position, current_price)?;
-    let value = position.collateral + pnl - funding;
+    let value = position
+        .collateral
+        .checked_add(pnl)
+        .and_then(|v| v.checked_sub(funding))
+        .ok_or(NoetherError::Overflow)?;
     Ok(value)
 }
 
@@ -273,7 +277,10 @@ pub fn calculate_glp_for_deposit(usdc_amount: i128, total_glp: i128, aum: i128) 
     }
 
     // Proportional minting
-    Ok(usdc_amount * total_glp / aum)
+    Ok(usdc_amount
+        .checked_mul(total_glp)
+        .ok_or(NoetherError::Overflow)?
+        / aum)
 }
 
 /// Calculate USDC to return for GLP withdrawal.
@@ -293,7 +300,10 @@ pub fn calculate_usdc_for_withdrawal(glp_amount: i128, total_glp: i128, aum: i12
         return Err(NoetherError::DivisionByZero);
     }
 
-    Ok(glp_amount * aum / total_glp)
+    Ok(glp_amount
+        .checked_mul(aum)
+        .ok_or(NoetherError::Overflow)?
+        / total_glp)
 }
 
 /// Calculate current GLP price.
@@ -313,7 +323,10 @@ pub fn calculate_glp_price(total_glp: i128, aum: i128) -> Result<i128, NoetherEr
         return Ok(PRECISION);
     }
 
-    Ok(aum * PRECISION / total_glp)
+    Ok(aum
+        .checked_mul(PRECISION)
+        .ok_or(NoetherError::Overflow)?
+        / total_glp)
 }
 
 /// Calculate trading fee.
@@ -372,6 +385,21 @@ mod tests {
             entry_cumulative_funding: 0,
             margin_mode: 0, // Isolated
         }
+    }
+
+    /// R-8: the share/value math returns typed Overflow instead of trapping.
+    #[test]
+    fn share_math_overflow_is_a_typed_error() {
+        let huge = i128::MAX / 2;
+        assert_eq!(
+            calculate_glp_for_deposit(huge, huge, 1),
+            Err(NoetherError::Overflow)
+        );
+        assert_eq!(
+            calculate_usdc_for_withdrawal(huge, 1, huge),
+            Err(NoetherError::Overflow)
+        );
+        assert_eq!(calculate_glp_price(1, huge), Err(NoetherError::Overflow));
     }
 
     #[test]

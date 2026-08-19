@@ -278,6 +278,10 @@ impl MarketContract {
         }
         set_treasury(&env, &treasury);
         set_protocol_fee_bps(&env, bps);
+        env.events().publish(
+            (Symbol::new(&env, "fee_split_set"),),
+            (treasury, bps),
+        );
         Ok(())
     }
 
@@ -288,6 +292,10 @@ impl MarketContract {
     pub fn set_referral(env: Env, referral: Address) -> Result<(), NoetherError> {
         require_admin(&env)?;
         set_referral_addr(&env, &referral);
+        env.events().publish(
+            (Symbol::new(&env, "referral_set"),),
+            (referral,),
+        );
         Ok(())
     }
 
@@ -301,6 +309,21 @@ impl MarketContract {
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), NoetherError> {
         require_admin(&env)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
+    /// Rotate the admin (R-11: the multisig migration path). Both current
+    /// and new admin must sign — a one-sided rotation to a mistyped
+    /// address would brick every admin power forever.
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        new_admin.require_auth();
+        let old_admin = get_admin(&env);
+        set_admin(&env, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_rotated"),),
+            (old_admin, new_admin),
+        );
         Ok(())
     }
 
@@ -4126,6 +4149,46 @@ mod tests {
         setup_with_vault_deposit(10_000_000 * PRECISION)
     }
 
+    /// R-11: admin rotation is two-side-signed — one-sided rotations fail,
+    /// and after a rotation the old admin is fully powerless.
+    #[test]
+    fn set_admin_requires_both_signatures_and_rotates() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal as _;
+
+        let t = setup();
+        let new_admin = Address::generate(&t.env);
+
+        // Only the current admin signs → the new admin's require_auth bites.
+        t.env.mock_auths(&[MockAuth {
+            address: &t.admin,
+            invoke: &MockAuthInvoke {
+                contract: &t.market_id,
+                fn_name: "set_admin",
+                args: (new_admin.clone(),).into_val(&t.env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(t.market.try_set_admin(&new_admin).is_err());
+
+        // Both sign (mock_all_auths) → rotation lands.
+        t.env.mock_all_auths();
+        t.market.set_admin(&new_admin);
+
+        // Old admin alone can no longer rotate back — the stored admin is
+        // new_admin, whose signature is absent here.
+        t.env.mock_auths(&[MockAuth {
+            address: &t.admin,
+            invoke: &MockAuthInvoke {
+                contract: &t.market_id,
+                fn_name: "set_admin",
+                args: (t.admin.clone(),).into_val(&t.env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(t.market.try_set_admin(&t.admin).is_err());
+    }
+
     fn setup_with_vault_deposit(vault_deposit: i128) -> TestEnv {
         // Default-off in the shared harness for the two settlement-affecting
         // Batch-1 riders so the many exact-PnL/keeper-reward tests stay as-is:
@@ -4199,7 +4262,7 @@ mod tests {
         // Deposit USDC into vault for liquidity
         let usdc_admin = StellarAssetClient::new(&env, &usdc_token);
         usdc_admin.mint(&admin, &(vault_deposit + 10 * PRECISION));
-        vault_client.deposit(&admin, &vault_deposit);
+        vault_client.deposit(&admin, &vault_deposit, &0);
 
         // Initialize market with the caller-provided config
         market.initialize(&admin, &oracle_id, &vault_id, &usdc_token, &config);
@@ -7688,7 +7751,9 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
-        // Pre-fund the buffer so part of the debt is covered.
+        // Pre-fund the buffer so part of the debt is covered (real backing —
+        // R-4's receipt check refuses unbacked credits).
+        StellarAssetClient::new(&test.env, &test.usdc_token).mint(&test.vault_id, &(20 * PRECISION));
         vault.fund_buffer(&(20 * PRECISION));
 
         let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
@@ -7802,6 +7867,8 @@ mod tests {
         let vault = vault::Client::new(&test.env, &test.vault_id);
         let xlm = Symbol::new(&test.env, "XLM");
 
+        // Real backing — R-4's receipt check refuses unbacked credits.
+        StellarAssetClient::new(&test.env, &test.usdc_token).mint(&test.vault_id, &(60 * PRECISION));
         vault.fund_buffer(&(60 * PRECISION)); // more than the coming debt
 
         let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &10, &Direction::Long, &0);
@@ -7870,7 +7937,7 @@ mod tests {
         // Fresh LP capital lifts coverage above the 1.5× clear ratio.
         let whale = fund_trader(&test, 1_000 * PRECISION);
         let vault = vault::Client::new(&test.env, &test.vault_id);
-        vault.deposit(&whale, &(500 * PRECISION));
+        vault.deposit(&whale, &(500 * PRECISION), &0);
         assert!(!test.market.check_adl_trigger(&xlm));
         assert!(!test.market.is_adl_active(&xlm));
     }

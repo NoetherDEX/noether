@@ -52,6 +52,41 @@ function contractErrorContext(contract: Contract): ContractErrorContext | undefi
 }
 
 /**
+ * Simulate a contract call and return its decoded return value WITHOUT
+ * building a signable transaction — used to pre-quote outputs so the R-6
+ * min-out bounds are derived from the same state the user is looking at.
+ */
+export async function simulateCallResult<T>(
+  sourcePublicKey: string,
+  contract: Contract,
+  method: string,
+  args: xdr.ScVal[]
+): Promise<T> {
+  const account = await sorobanRpc.getAccount(sourcePublicKey);
+  const transaction = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK.PASSPHRASE,
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(300)
+    .build();
+
+  const simulated = await sorobanRpc.simulateTransaction(transaction);
+  if (rpc.Api.isSimulationError(simulated)) {
+    throw new Error(
+      decodeContractError(`Simulation failed: ${simulated.error}`, {
+        contract: contractErrorContext(contract),
+      })
+    );
+  }
+  const retval = simulated.result?.retval;
+  if (!retval) {
+    throw new Error('Simulation returned no value');
+  }
+  return scValToNative(retval) as T;
+}
+
+/**
  * Build a transaction for a contract call
  */
 export async function buildTransaction(

@@ -24,6 +24,8 @@ const EXPECTED_ROUTES = [
   'GET /v1/account/shortfall',
   'GET /v1/account/volume',
   'GET /v1/adl/queue',
+  'GET /v1/admin/waitlist',
+  'GET /v1/admin/waitlist/export.csv',
   'GET /v1/candles',
   'GET /v1/events',
   'GET /v1/health',
@@ -52,12 +54,17 @@ const EXPECTED_ROUTES = [
   'GET /v1/vaults/:id/fee-claims',
   'GET /v1/vaults/:id/trades',
   'GET /v1/vaults/:id/withdraws',
+  'GET /v1/waitlist/status',
   'GET /v1/ws',
+  'POST /v1/access/challenge',
+  'POST /v1/access/verify',
+  'POST /v1/admin/waitlist/decide',
   'POST /v1/keys',
   'POST /v1/keys/challenge',
   'POST /v1/oracle/heartbeat',
   'POST /v1/orders/prepare',
   'POST /v1/tx/submit',
+  'POST /v1/waitlist',
 ];
 
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;

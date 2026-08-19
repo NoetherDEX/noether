@@ -600,6 +600,9 @@ pub fn require_initialized(env: &Env) -> Result<(), NoetherError> {
     if !is_initialized(env) {
         return Err(NoetherError::NotInitialized);
     }
+    // R-1: every live call re-arms the instance rent (no-op above the
+    // threshold), so an actively-used contract can never archive.
+    extend_instance_ttl(env);
     Ok(())
 }
 

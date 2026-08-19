@@ -71,6 +71,9 @@ pub enum DataKey {
     Deposited(Address),
     /// Per-account cumulative-deposit cap (7 decimals); 0 = unlimited (P6-6).
     DepositCap,
+    /// R-6: GLOBAL LP-principal cap (7 decimals); 0 = unlimited. Bounds
+    /// total_usdc across all depositors — the guarded-launch wave lever.
+    AumCap,
     /// L1-22: insurance-buffer target as bps of ReservedPayout (default 1000
     /// = 10%). Protocol fees fill the buffer up to target, then overflow to
     /// the treasury; 0 when the book is empty so all fee flow overflows.
@@ -361,6 +364,16 @@ pub fn set_deposit_cap(env: &Env, cap: i128) {
     env.storage().instance().set(&DataKey::DepositCap, &cap);
 }
 
+/// R-6: global LP-principal cap (7 decimals). 0 = unlimited (default, off —
+/// the guarded-launch mainnet config sets it via set_aum_cap).
+pub fn get_aum_cap(env: &Env) -> i128 {
+    env.storage().instance().get(&DataKey::AumCap).unwrap_or(0)
+}
+
+pub fn set_aum_cap(env: &Env, cap: i128) {
+    env.storage().instance().set(&DataKey::AumCap, &cap);
+}
+
 // ── L1-22 insurance-buffer target ──
 /// Default buffer target: 10% of ReservedPayout.
 pub const BUFFER_TARGET_BPS_DEFAULT: u32 = 1_000;
@@ -444,6 +457,9 @@ pub fn require_initialized(env: &Env) -> Result<(), NoetherError> {
     if !is_initialized(env) {
         return Err(NoetherError::NotInitialized);
     }
+    // R-1: every live call re-arms the instance rent (no-op above the
+    // threshold), so an actively-used contract can never archive.
+    extend_instance_ttl(env);
     Ok(())
 }
 

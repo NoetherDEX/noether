@@ -145,11 +145,16 @@ impl VaultContract {
     /// ```
     /// noe_amount = usdc_amount * circulating_noe / aum  (or 1:1 if first deposit)
     /// ```
-    pub fn deposit(env: Env, depositor: Address, usdc_amount: i128) -> Result<i128, NoetherError> {
+    pub fn deposit(
+        env: Env,
+        depositor: Address,
+        usdc_amount: i128,
+        min_noe_out: i128,
+    ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
         require_not_paused(&env)?;
 
-        if usdc_amount <= 0 {
+        if usdc_amount <= 0 || min_noe_out < 0 {
             return Err(NoetherError::InvalidAmount);
         }
 
@@ -168,6 +173,13 @@ impl VaultContract {
         let fee = usdc_amount * (fee_bps as i128) / (BASIS_POINTS as i128);
         let net_amount = usdc_amount - fee;
 
+        // R-6 guarded-launch GLOBAL principal cap (0 = unlimited): bounds
+        // total LP exposure during waves, checked on the net credit.
+        let aum_cap = storage::get_aum_cap(&env);
+        if aum_cap > 0 && get_total_usdc(&env) + net_amount > aum_cap {
+            return Err(NoetherError::DepositCapExceeded);
+        }
+
         // Get current pool state
         let circulating_noe = get_total_noe_circulating(&env);
         let aum = Self::calculate_aum_internal(&env);
@@ -177,6 +189,13 @@ impl VaultContract {
 
         if noe_amount <= 0 {
             return Err(NoetherError::InvalidAmount);
+        }
+
+        // R-6/ALX-16: caller-declared slippage bound — AUM moves between
+        // signing and inclusion (marks, funding, settlements), so the LP
+        // states the worst mint they'll accept. 0 = no bound.
+        if noe_amount < min_noe_out {
+            return Err(NoetherError::InvalidSlippageTolerance);
         }
 
         // Check vault has enough NOE to transfer
@@ -231,13 +250,18 @@ impl VaultContract {
     ///
     /// # Note
     /// User must approve the vault to spend their NOE tokens before calling.
-    pub fn withdraw(env: Env, withdrawer: Address, noe_amount: i128) -> Result<i128, NoetherError> {
+    pub fn withdraw(
+        env: Env,
+        withdrawer: Address,
+        noe_amount: i128,
+        min_usdc_out: i128,
+    ) -> Result<i128, NoetherError> {
         require_initialized(&env)?;
         // L0-15 exit-only: withdrawals are NEVER pause-gated — LPs must always
         // be able to exit. The ReservedPayout solvency floor below is the only
         // gate, so committed trader payouts stay protected.
 
-        if noe_amount <= 0 {
+        if noe_amount <= 0 || min_usdc_out < 0 {
             return Err(NoetherError::InvalidAmount);
         }
 
@@ -272,6 +296,11 @@ impl VaultContract {
 
         if net_usdc <= 0 {
             return Err(NoetherError::InvalidAmount);
+        }
+
+        // R-6/ALX-16: caller-declared slippage bound (0 = no bound).
+        if net_usdc < min_usdc_out {
+            return Err(NoetherError::InvalidSlippageTolerance);
         }
 
         // Check USDC liquidity (actual token balance in vault)
@@ -441,12 +470,32 @@ impl VaultContract {
         // right after moving USDC (losses, funding) into the vault, so
         // accounting can never exceed real assets (V-3 tail)
         set_total_usdc(&env, get_total_usdc(&env) + amount);
+        Self::require_cash_covers_buckets(&env)?;
 
         env.events().publish(
             (Symbol::new(&env, "loss_received"),),
             (amount,),
         );
 
+        Ok(())
+    }
+
+    /// R-4: fail-closed receipt check for market-credited inflows. The
+    /// market transfers USDC BEFORE calling a credit endpoint, so after
+    /// crediting, the physical balance must cover every cash-backed
+    /// bucket. A violation means the transfer never happened (or the
+    /// accounting drifted) — refuse to book phantom assets.
+    fn require_cash_covers_buckets(env: &Env) -> Result<(), NoetherError> {
+        let usdc_token = get_usdc_token(env);
+        let balance =
+            token::Client::new(env, &usdc_token).balance(&env.current_contract_address());
+        let backed = get_total_usdc(env)
+            + get_total_fees(env)
+            + get_buffer_balance(env)
+            + storage::get_shortfall_reserve(env);
+        if balance < backed {
+            return Err(NoetherError::InsufficientBalance);
+        }
         Ok(())
     }
 
@@ -508,6 +557,7 @@ impl VaultContract {
                 &overflow,
             );
         }
+        Self::require_cash_covers_buckets(&env)?;
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_routed"),),
             (amount, to_buffer, overflow),
@@ -774,6 +824,24 @@ impl VaultContract {
         storage::get_deposit_cap(&env)
     }
 
+    /// R-6: set the GLOBAL LP-principal cap (7 decimals; 0 = unlimited).
+    /// The wave-size lever — bounds total_usdc across ALL depositors so
+    /// absolute protocol size stays inside the soak plan. Admin only.
+    pub fn set_aum_cap(env: Env, cap: i128) -> Result<(), NoetherError> {
+        require_admin(&env)?;
+        if cap < 0 {
+            return Err(NoetherError::InvalidAmount);
+        }
+        storage::set_aum_cap(&env, cap);
+        env.events().publish((Symbol::new(&env, "aum_cap_set"),), (cap,));
+        Ok(())
+    }
+
+    /// Current global LP-principal cap (0 = unlimited).
+    pub fn get_aum_cap(env: Env) -> i128 {
+        storage::get_aum_cap(&env)
+    }
+
     /// L1-28: set the post-deposit withdraw cooldown (admin, ≤ 1 day; 0 off).
     pub fn set_withdraw_cooldown(env: Env, secs: u64) -> Result<(), NoetherError> {
         require_admin(&env)?;
@@ -856,6 +924,7 @@ impl VaultContract {
         }
         let to_reserve = Self::route_shortfall_share(&env, amount);
         set_buffer_balance(&env, get_buffer_balance(&env) + (amount - to_reserve));
+        Self::require_cash_covers_buckets(&env)?;
         env.events().publish((Symbol::new(&env, "buffer_funded"),), (amount, to_reserve));
         Ok(())
     }
@@ -946,6 +1015,10 @@ impl VaultContract {
             return Err(NoetherError::InvalidParameter);
         }
         storage::set_shortfall_inflow_bps(&env, bps);
+        env.events().publish(
+            (Symbol::new(&env, "shortfall_bps_set"),),
+            (bps,),
+        );
         Ok(())
     }
 
@@ -1067,6 +1140,10 @@ impl VaultContract {
             return Err(NoetherError::InvalidParameter);
         }
         storage::set_reserve_cap_bps(&env, bps);
+        env.events().publish(
+            (Symbol::new(&env, "reserve_cap_set"),),
+            (bps,),
+        );
         Ok(())
     }
 
@@ -1077,6 +1154,10 @@ impl VaultContract {
             return Err(NoetherError::InvalidParameter);
         }
         storage::set_asset_cap_bps(&env, &asset, bps);
+        env.events().publish(
+            (Symbol::new(&env, "asset_cap_set"),),
+            (asset, bps),
+        );
         Ok(())
     }
 
@@ -1373,10 +1454,16 @@ mod tests {
         StellarAssetClient::new(&env, &usdc).mint(&lp, &(100_000_000 * PRECISION));
 
         if initial_deposit > 0 {
-            vault.deposit(&lp, &initial_deposit);
+            vault.deposit(&lp, &initial_deposit, &0);
         }
 
         VaultTest { env, vault_id, vault, usdc, noe, market, admin, lp }
+    }
+
+    /// R-4: the real market transfers USDC into the vault BEFORE calling a
+    /// credit endpoint; tests must mirror that or the receipt check trips.
+    fn market_inflow(t: &VaultTest, amount: i128) {
+        StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &amount);
     }
 
     /// NOE withdrawals use transfer_from — the LP must approve the vault.
@@ -1399,7 +1486,7 @@ mod tests {
         let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
         let start = usdc.balance(&t.lp);
 
-        let noe_minted = t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        let noe_minted = t.vault.deposit(&t.lp, &(1_000 * PRECISION), &0);
         assert!(noe_minted > 0);
         // 0.3% deposit fee: strictly less than 1:1
         assert!(noe_minted < 1_000 * PRECISION);
@@ -1407,7 +1494,7 @@ mod tests {
 
         t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe_minted);
-        let usdc_back = t.vault.withdraw(&t.lp, &noe_minted);
+        let usdc_back = t.vault.withdraw(&t.lp, &noe_minted, &0);
         // Round trip pays both fees but can never mint value
         assert!(usdc_back > 0 && usdc_back < 1_000 * PRECISION);
         let end = usdc.balance(&t.lp);
@@ -1499,6 +1586,7 @@ mod tests {
         assert_eq!(t.vault.get_total_usdc(), 100 * PRECISION);
 
         // receive_loss credits exactly the transferred amount
+        market_inflow(&t, 40 * PRECISION);
         t.vault.receive_loss(&(40 * PRECISION));
         assert_eq!(t.vault.get_total_usdc(), 140 * PRECISION);
     }
@@ -1580,11 +1668,11 @@ mod tests {
         t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe);
         // Withdrawing everything would leave less than the 600 reserved
-        let blocked = t.vault.try_withdraw(&t.lp, &noe);
+        let blocked = t.vault.try_withdraw(&t.lp, &noe, &0);
         assert!(matches!(blocked, Err(Ok(NoetherError::InsufficientLiquidity))));
 
         // A small withdrawal that keeps the reservation covered is fine
-        let small = t.vault.withdraw(&t.lp, &(noe / 10));
+        let small = t.vault.withdraw(&t.lp, &(noe / 10), &0);
         assert!(small > 0);
     }
 
@@ -1647,16 +1735,19 @@ mod tests {
         assert_eq!(t.vault.get_shortfall(), 20 * PRECISION);
 
         // 50% of a 30 inflow = 15 → reserve; 15 → buffer.
+        market_inflow(&t, 30 * PRECISION);
         t.vault.fund_buffer(&(30 * PRECISION));
         assert_eq!(t.vault.get_shortfall_reserve(), 15 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 15 * PRECISION);
 
         // Next inflow: unreserved owed is only 5 — the split caps there.
+        market_inflow(&t, 30 * PRECISION);
         t.vault.fund_buffer(&(30 * PRECISION));
         assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 40 * PRECISION);
 
         // Fully reserved: everything flows to the buffer now.
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
         assert_eq!(t.vault.get_buffer_balance(), 50 * PRECISION);
@@ -1681,6 +1772,7 @@ mod tests {
         t.vault.settle_pnl(&w, &(30 * PRECISION)); // paid 10, owed 20
 
         // Inflow 20: reserve 10, buffer 10.
+        market_inflow(&t, 20 * PRECISION);
         t.vault.fund_buffer(&(20 * PRECISION));
         // The inflow is accounting-only here; back it with real USDC so the
         // claim transfer can settle (market transfers land separately).
@@ -1713,6 +1805,7 @@ mod tests {
         t.vault.settle_pnl(&w, &(30 * PRECISION)); // owed 20
 
         // First inflow 10 → reserve 5, buffer 5: partial claim of 10.
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(10 * PRECISION));
         let first = t.vault.claim_shortfall(&w);
@@ -1721,6 +1814,7 @@ mod tests {
         assert_eq!(t.vault.get_shortfall(), 10 * PRECISION);
 
         // Next inflow amortizes the rest.
+        market_inflow(&t, 20 * PRECISION);
         t.vault.fund_buffer(&(20 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
         let second = t.vault.claim_shortfall(&w);
@@ -1743,24 +1837,84 @@ mod tests {
         // Refill the drained pool the realistic way — a trader loss lands 100
         // USDC back in — so the LP's existing shares regain value. (A fresh
         // deposit is intentionally NOT used here: the dead-pool guard blocks
-        // minting 1:1 while AUM is 0.) Then an inflow of 40 reserves 20 for the
-        // claim, deliberately accounting-only (no backing mint) so the earmark
-        // must bind against the SAME USDC the LP wants to withdraw.
+        // minting 1:1 while AUM is 0.) Then fabricate the earmark DIRECTLY in
+        // storage, deliberately unbacked: R-4 blocks building this drifted
+        // state through fund_buffer, but the withdraw floor must still bind
+        // against the SAME USDC the LP wants to withdraw if books ever drift.
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(100 * PRECISION));
         t.vault.receive_loss(&(100 * PRECISION));
-        t.vault.fund_buffer(&(40 * PRECISION));
+        t.env.as_contract(&t.vault_id, || {
+            storage::set_shortfall_reserve(&t.env, 20 * PRECISION);
+            set_buffer_balance(&t.env, get_buffer_balance(&t.env) + 20 * PRECISION);
+        });
         assert_eq!(t.vault.get_shortfall_reserve(), 20 * PRECISION);
 
         // Withdrawing EVERYTHING would strip the earmarked 20 — blocked.
         let noe = t.vault.get_noe_balance(&t.lp);
         t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe);
-        let blocked = t.vault.try_withdraw(&t.lp, &noe);
+        let blocked = t.vault.try_withdraw(&t.lp, &noe, &0);
         assert!(matches!(blocked, Err(Ok(NoetherError::InsufficientLiquidity))));
 
         // A partial withdrawal that leaves the reserve covered is fine.
-        let small = t.vault.withdraw(&t.lp, &(noe / 4));
+        let small = t.vault.withdraw(&t.lp, &(noe / 4), &0);
         assert!(small > 0);
+    }
+
+    /// R-6: LP slippage bounds + the global principal cap.
+    #[test]
+    fn min_out_bounds_and_aum_cap_enforced() {
+        let t = setup(1_000 * PRECISION);
+
+        // Deposit demanding more NOE than the mint yields → slippage error.
+        assert!(matches!(
+            t.vault.try_deposit(&t.lp, &(100 * PRECISION), &(101 * PRECISION)),
+            Err(Ok(NoetherError::InvalidSlippageTolerance))
+        ));
+        // A satisfiable bound passes (par pool → 1:1 mint).
+        let minted = t.vault.deposit(&t.lp, &(100 * PRECISION), &(100 * PRECISION));
+        assert_eq!(minted, 100 * PRECISION);
+
+        // Withdraw demanding more USDC than the burn returns → slippage error.
+        t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28 cooldown
+        approve_noe(&t, 100 * PRECISION);
+        assert!(matches!(
+            t.vault.try_withdraw(&t.lp, &(50 * PRECISION), &(51 * PRECISION)),
+            Err(Ok(NoetherError::InvalidSlippageTolerance))
+        ));
+        let out = t.vault.withdraw(&t.lp, &(50 * PRECISION), &(50 * PRECISION));
+        assert_eq!(out, 50 * PRECISION);
+
+        // Global principal cap: total_usdc is now 1050. Cap 1060 → a 20
+        // deposit (net, zero fees in this fixture) must bounce; 10 fits.
+        t.vault.set_aum_cap(&(1_060 * PRECISION));
+        assert!(matches!(
+            t.vault.try_deposit(&t.lp, &(20 * PRECISION), &0),
+            Err(Ok(NoetherError::DepositCapExceeded))
+        ));
+        t.vault.deposit(&t.lp, &(10 * PRECISION), &0);
+        // cap = 0 lifts the limit.
+        t.vault.set_aum_cap(&0);
+        t.vault.deposit(&t.lp, &(20 * PRECISION), &0);
+    }
+
+    /// R-4: crediting without a matching USDC transfer must fail closed —
+    /// the receipt check refuses to book phantom assets.
+    #[test]
+    fn unbacked_market_credits_are_refused() {
+        let t = setup(100 * PRECISION);
+        // No transfer precedes either call → InsufficientBalance.
+        assert!(matches!(
+            t.vault.try_receive_loss(&(10 * PRECISION)),
+            Err(Ok(NoetherError::InsufficientBalance))
+        ));
+        assert!(matches!(
+            t.vault.try_fund_buffer(&(10 * PRECISION)),
+            Err(Ok(NoetherError::InsufficientBalance))
+        ));
+        // A backed credit still lands.
+        market_inflow(&t, 10 * PRECISION);
+        t.vault.receive_loss(&(10 * PRECISION));
     }
 
     #[test]
@@ -1768,6 +1922,7 @@ mod tests {
         let t = setup(10 * PRECISION);
         let w = Address::generate(&t.env);
         t.vault.settle_pnl(&w, &(30 * PRECISION)); // owed 20
+        market_inflow(&t, 20 * PRECISION);
         t.vault.fund_buffer(&(20 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
 
@@ -1783,6 +1938,7 @@ mod tests {
     #[test]
     fn draw_buffer_moves_buffer_into_lp_accounting() {
         let t = setup(100 * PRECISION);
+        market_inflow(&t, 50 * PRECISION);
         t.vault.fund_buffer(&(50 * PRECISION));
         let aum_before = t.vault.get_aum();
 
@@ -1799,6 +1955,7 @@ mod tests {
     #[test]
     fn draw_buffer_partial_cover_returns_actual() {
         let t = setup(100 * PRECISION);
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
 
         let covered = t.vault.draw_buffer(&(35 * PRECISION));
@@ -1811,6 +1968,7 @@ mod tests {
     #[test]
     fn pay_from_buffer_market_only_auth() {
         let t = setup(100 * PRECISION);
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         let someone = Address::generate(&t.env);
         t.env.set_auths(&[]);
@@ -1822,6 +1980,7 @@ mod tests {
         let t = setup(100 * PRECISION);
         let usdc = soroban_sdk::token::Client::new(&t.env, &t.usdc);
         let to = Address::generate(&t.env);
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(10 * PRECISION));
 
@@ -1835,6 +1994,7 @@ mod tests {
     #[test]
     fn draw_buffer_market_only_auth() {
         let t = setup(100 * PRECISION);
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         t.env.set_auths(&[]);
         assert!(t.vault.try_draw_buffer(&PRECISION).is_err());
@@ -1854,6 +2014,7 @@ mod tests {
         );
 
         // Repay some of w1 and re-check the invariant at every step.
+        market_inflow(&t, 20 * PRECISION);
         t.vault.fund_buffer(&(20 * PRECISION));
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
         t.vault.claim_shortfall(&w1);
@@ -1873,20 +2034,20 @@ mod tests {
         assert_eq!(t.vault.get_deposit_cap(), 500 * PRECISION);
 
         // First deposit under the cap works and records cumulative.
-        t.vault.deposit(&t.lp, &(300 * PRECISION));
+        t.vault.deposit(&t.lp, &(300 * PRECISION), &0);
         assert_eq!(t.vault.get_deposited(&t.lp), 300 * PRECISION);
 
         // A second deposit crossing the cap is rejected.
-        let over = t.vault.try_deposit(&t.lp, &(300 * PRECISION));
+        let over = t.vault.try_deposit(&t.lp, &(300 * PRECISION), &0);
         assert_eq!(over, Err(Ok(NoetherError::DepositCapExceeded)));
 
         // Exactly hitting the cap is allowed.
-        t.vault.deposit(&t.lp, &(200 * PRECISION));
+        t.vault.deposit(&t.lp, &(200 * PRECISION), &0);
         assert_eq!(t.vault.get_deposited(&t.lp), 500 * PRECISION);
 
         // Cap = 0 disables the limit.
         t.vault.set_deposit_cap(&0);
-        let ok = t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        let ok = t.vault.deposit(&t.lp, &(1_000 * PRECISION), &0);
         assert!(ok > 0);
     }
 
@@ -1894,6 +2055,7 @@ mod tests {
     fn fund_buffer_is_market_only() {
         let t = setup(100 * PRECISION);
         // Market-authed (mock_all_auths) works.
+        market_inflow(&t, 10 * PRECISION);
         t.vault.fund_buffer(&(10 * PRECISION));
         assert_eq!(t.vault.get_buffer_balance(), 10 * PRECISION);
         // Without auth, rejected.
@@ -1927,13 +2089,13 @@ mod tests {
 
         // Deposits blocked …
         assert!(matches!(
-            t.vault.try_deposit(&t.lp, &(100 * PRECISION)),
+            t.vault.try_deposit(&t.lp, &(100 * PRECISION), &0),
             Err(Ok(NoetherError::Paused))
         ));
         // … but LPs can ALWAYS exit (exit-only).
         t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe_bal);
-        assert!(t.vault.withdraw(&t.lp, &noe_bal) > 0);
+        assert!(t.vault.withdraw(&t.lp, &noe_bal, &0) > 0);
     }
 
     #[test]
@@ -1949,13 +2111,13 @@ mod tests {
         t.env.ledger().with_mut(|l| l.timestamp += 1_800); // L1-28: clear cooldown
         approve_noe(&t, noe_bal);
         assert!(matches!(
-            t.vault.try_withdraw(&t.lp, &noe_bal),
+            t.vault.try_withdraw(&t.lp, &noe_bal, &0),
             Err(Ok(NoetherError::InsufficientLiquidity))
         ));
         // A small exit within free liquidity still works while paused.
         let small = noe_bal / 20;
         approve_noe(&t, small);
-        assert!(t.vault.withdraw(&t.lp, &small) > 0);
+        assert!(t.vault.withdraw(&t.lp, &small, &0) > 0);
     }
 
     #[test]
@@ -2068,7 +2230,7 @@ mod tests {
 
         let gross = 1_000 * PRECISION;
         let fee = gross * 30 / 10_000;
-        t.vault.deposit(&t.lp, &gross);
+        t.vault.deposit(&t.lp, &gross, &0);
 
         // Invariant: AUM must equal the vault's physical USDC — the fee is
         // retained earnings already inside the balance, not new value on top.
@@ -2089,7 +2251,7 @@ mod tests {
         assert_eq!(t.vault.get_aum(), 0);
 
         // A new deposit must be refused, not minted 1:1 against dead shares.
-        let r = t.vault.try_deposit(&t.lp, &(100 * PRECISION));
+        let r = t.vault.try_deposit(&t.lp, &(100 * PRECISION), &0);
         assert!(matches!(r, Err(Ok(NoetherError::InsufficientLiquidity))));
     }
 
@@ -2101,8 +2263,12 @@ mod tests {
 
         // Winner takes 30 against a 10 pool → 10 paid, 20 booked as shortfall.
         t.vault.settle_pnl(&w, &(30 * PRECISION));
-        // Fund the buffer; 50% earmarks into the ShortfallReserve (accounting).
-        t.vault.fund_buffer(&(30 * PRECISION)); // reserve 15, buffer 15
+        // Fabricate the drifted buffer/reserve DIRECTLY (R-4 blocks building
+        // an unbacked state through fund_buffer): reserve 15, buffer 15.
+        t.env.as_contract(&t.vault_id, || {
+            storage::set_shortfall_reserve(&t.env, 15 * PRECISION);
+            set_buffer_balance(&t.env, get_buffer_balance(&t.env) + 15 * PRECISION);
+        });
         // Back only 20 USDC of it physically. Spendable-for-bounty = 20 − 15 = 5,
         // even though the buffer accounting shows 15.
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(20 * PRECISION));
@@ -2128,14 +2294,20 @@ mod tests {
         // Large outstanding shortfall so the earmarked reserve can exceed the
         // small physical balance rebuilt below.
         t.vault.settle_pnl(&w, &(1_000 * PRECISION)); // owed 1000, paid 0
-        t.vault.fund_buffer(&(2_000 * PRECISION)); // reserve 1000, buffer 1000
-        assert_eq!(t.vault.get_shortfall_reserve(), 1_000 * PRECISION);
 
         // Rebuild a small real balance / AUM via a trader loss (not a deposit,
         // which the dead-pool guard would now block): 100 USDC in.
         StellarAssetClient::new(&t.env, &t.usdc).mint(&t.vault_id, &(100 * PRECISION));
         t.vault.receive_loss(&(100 * PRECISION)); // total_usdc 100, AUM 100
         t.vault.set_asset_cap(&btc(&t.env), &10_000); // lift OI cap out of the way
+
+        // Fabricate the drifted earmark DIRECTLY (R-4 blocks building an
+        // unbacked state through fund_buffer): reserve 1000, buffer 1000.
+        t.env.as_contract(&t.vault_id, || {
+            storage::set_shortfall_reserve(&t.env, 1_000 * PRECISION);
+            set_buffer_balance(&t.env, get_buffer_balance(&t.env) + 1_000 * PRECISION);
+        });
+        assert_eq!(t.vault.get_shortfall_reserve(), 1_000 * PRECISION);
 
         // Physical balance is 100 but 1000 is earmarked for shortfall claimants,
         // so ZERO is available to back a new reservation. Even a 10-USDC reserve
@@ -2190,11 +2362,11 @@ mod tests {
     #[test]
     fn withdraw_inside_cooldown_rejected_93() {
         let t = setup(0);
-        t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        t.vault.deposit(&t.lp, &(1_000 * PRECISION), &0);
         let noe = t.vault.get_noe_balance(&t.lp);
         approve_noe(&t, noe);
         assert!(matches!(
-            t.vault.try_withdraw(&t.lp, &noe),
+            t.vault.try_withdraw(&t.lp, &noe, &0),
             Err(Ok(NoetherError::WithdrawCooldownActive))
         ));
     }
@@ -2202,23 +2374,23 @@ mod tests {
     #[test]
     fn withdraw_after_cooldown_succeeds() {
         let t = setup(0);
-        t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        t.vault.deposit(&t.lp, &(1_000 * PRECISION), &0);
         let noe = t.vault.get_noe_balance(&t.lp);
         t.env.ledger().with_mut(|l| l.timestamp += 1_800); // exactly the window
         approve_noe(&t, noe);
-        assert!(t.vault.withdraw(&t.lp, &noe) > 0);
+        assert!(t.vault.withdraw(&t.lp, &noe, &0) > 0);
     }
 
     #[test]
     fn second_deposit_resets_cooldown() {
         let t = setup(0);
-        t.vault.deposit(&t.lp, &(500 * PRECISION));
+        t.vault.deposit(&t.lp, &(500 * PRECISION), &0);
         t.env.ledger().with_mut(|l| l.timestamp += 1_800); // first window elapsed
-        t.vault.deposit(&t.lp, &(500 * PRECISION)); // re-arms the clock
+        t.vault.deposit(&t.lp, &(500 * PRECISION), &0); // re-arms the clock
         let noe = t.vault.get_noe_balance(&t.lp);
         approve_noe(&t, noe);
         assert!(matches!(
-            t.vault.try_withdraw(&t.lp, &noe),
+            t.vault.try_withdraw(&t.lp, &noe, &0),
             Err(Ok(NoetherError::WithdrawCooldownActive))
         ));
     }
@@ -2227,10 +2399,10 @@ mod tests {
     fn cooldown_zero_disables_gate() {
         let t = setup(0);
         t.vault.set_withdraw_cooldown(&0u64);
-        t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        t.vault.deposit(&t.lp, &(1_000 * PRECISION), &0);
         let noe = t.vault.get_noe_balance(&t.lp);
         approve_noe(&t, noe);
-        assert!(t.vault.withdraw(&t.lp, &noe) > 0); // instant when disabled
+        assert!(t.vault.withdraw(&t.lp, &noe, &0) > 0); // instant when disabled
     }
 
     #[test]
@@ -2238,13 +2410,13 @@ mod tests {
         // An address that never deposited post-upgrade (last==0) is exempt —
         // simulated by receiving NOE via transfer, not deposit.
         let t = setup(0);
-        t.vault.deposit(&t.lp, &(1_000 * PRECISION));
+        t.vault.deposit(&t.lp, &(1_000 * PRECISION), &0);
         let noe = t.vault.get_noe_balance(&t.lp);
         let lp2 = Address::generate(&t.env);
         let noe_client = soroban_sdk::token::Client::new(&t.env, &t.noe);
         noe_client.transfer(&t.lp, &lp2, &noe); // lp2 never deposited
         noe_client.approve(&lp2, &t.vault_id, &noe, &1_000_000);
-        assert!(t.vault.withdraw(&lp2, &noe) > 0); // immediate — last==0 exempt
+        assert!(t.vault.withdraw(&lp2, &noe, &0) > 0); // immediate — last==0 exempt
     }
 
     #[test]
@@ -2268,7 +2440,7 @@ mod tests {
         let noe = t.vault.get_noe_balance(&t.lp);
         approve_noe(&t, noe);
         assert!(matches!(
-            t.vault.try_withdraw(&t.lp, &noe),
+            t.vault.try_withdraw(&t.lp, &noe, &0),
             Err(Ok(NoetherError::InsufficientLiquidity))
         ));
     }

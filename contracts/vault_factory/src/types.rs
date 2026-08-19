@@ -122,4 +122,7 @@ pub enum FactoryError {
     TooManyOpenSlots = 19,
     /// create_vault blocked by the leader allowlist or the max-vaults cap.
     CreationRestricted = 20,
+    /// R-6: deposit/withdraw output fell below the caller's declared
+    /// min-out bound — NAV moved between signing and inclusion.
+    MinOutputNotMet = 21,
 }

@@ -29,6 +29,9 @@ pub fn require_initialized(env: &Env) -> Result<(), FactoryError> {
     if !is_initialized(env) {
         return Err(FactoryError::NotInitialized);
     }
+    // R-1: every live call re-arms the instance rent (no-op above the
+    // threshold), so an actively-used contract can never archive.
+    extend_instance_ttl(env);
     Ok(())
 }
 

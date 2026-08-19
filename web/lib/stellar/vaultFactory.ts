@@ -7,7 +7,7 @@
  */
 
 import { Address, Contract, TransactionBuilder, BASE_FEE, rpc, scValToNative } from '@stellar/stellar-sdk';
-import { buildTransaction, submitTransaction, sorobanRpc, toScVal } from './client';
+import { buildTransaction, simulateCallResult, submitTransaction, sorobanRpc, toScVal } from './client';
 import { signWithWallet, WALLETCONNECT_ID } from './walletKit';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
@@ -40,6 +40,15 @@ async function signAndSubmit(
   return submitTransaction(signedXdr);
 }
 
+// R-6: follower slippage tolerance for the on-chain min-out bounds. The
+// factory reverts (MinOutputNotMet) instead of filling below quote − 0.5%.
+const LP_SLIPPAGE_BPS = 50n;
+const BPS = 10_000n;
+
+function minOut(quoted: bigint): bigint {
+  return (quoted * (BPS - LP_SLIPPAGE_BPS)) / BPS;
+}
+
 export async function depositToVault(
   signerPublicKey: string,
   walletId: string,
@@ -47,10 +56,19 @@ export async function depositToVault(
   amount: bigint,
 ): Promise<void> {
   const factory = vaultFactoryContract();
+  // R-6: pre-quote the share mint at full NAV, bound the real call below it.
+  const probeArgs = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(vaultId, 'u32'),
+    toScVal(amount, 'i128'),
+    toScVal(0n, 'i128'),
+  ];
+  const quoted = await simulateCallResult<bigint>(signerPublicKey, factory, 'deposit', probeArgs);
   const args = [
     toScVal(signerPublicKey, 'address'),
     toScVal(vaultId, 'u32'),
     toScVal(amount, 'i128'),
+    toScVal(minOut(quoted), 'i128'),
   ];
   const xdr = await buildTransaction(signerPublicKey, factory, 'deposit', args);
   await signAndSubmit(signerPublicKey, walletId, xdr);
@@ -63,10 +81,19 @@ export async function withdrawFromVault(
   shares: bigint,
 ): Promise<void> {
   const factory = vaultFactoryContract();
+  // R-6: pre-quote the USDC payout, bound the real call below it.
+  const probeArgs = [
+    toScVal(signerPublicKey, 'address'),
+    toScVal(vaultId, 'u32'),
+    toScVal(shares, 'i128'),
+    toScVal(0n, 'i128'),
+  ];
+  const quoted = await simulateCallResult<bigint>(signerPublicKey, factory, 'withdraw', probeArgs);
   const args = [
     toScVal(signerPublicKey, 'address'),
     toScVal(vaultId, 'u32'),
     toScVal(shares, 'i128'),
+    toScVal(minOut(quoted), 'i128'),
   ];
   const xdr = await buildTransaction(signerPublicKey, factory, 'withdraw', args);
   await signAndSubmit(signerPublicKey, walletId, xdr);

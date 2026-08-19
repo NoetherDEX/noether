@@ -24,6 +24,25 @@ export interface ApiConfig {
    * requirement.
    */
   keeperHeartbeatSecret?: string;
+  /**
+   * Cloudflare Turnstile server secret for POST /v1/waitlist. Optional:
+   * unset makes the join endpoint 503 (fail loud, never silently
+   * bot-open). Cloudflare's always-pass test secret works for dev.
+   */
+  turnstileSecret?: string;
+  /**
+   * Azure Communication Services connection string + verified sender for
+   * the approval email. Optional: unset means approvals simply never
+   * email (email_sent_at stays null; admin can resend later).
+   */
+  acsConnectionString?: string;
+  acsSender?: string;
+  /**
+   * Wallets allowed into the /v1/admin/* surface (comma-separated env
+   * ADMIN_WALLETS — the founders' PERSONAL wallets, never the contract
+   * admin key). Empty = every admin route fails closed with 403.
+   */
+  adminWallets: string[];
 }
 
 /** WebSocket abuse controls (audit A-5). All overridable via env. */
@@ -76,6 +95,13 @@ export function loadConfig(): ApiConfig {
     sourceAccount: process.env.API_SOURCE_ACCOUNT ?? contracts.admin,
     databaseUrl,
     keeperHeartbeatSecret: process.env.KEEPER_HEARTBEAT_SECRET || undefined,
+    turnstileSecret: process.env.TURNSTILE_SECRET || undefined,
+    acsConnectionString: process.env.ACS_CONNECTION_STRING || undefined,
+    acsSender: process.env.ACS_SENDER || undefined,
+    adminWallets: (process.env.ADMIN_WALLETS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length === 56 && s.startsWith('G')),
     contracts,
     ws: {
       maxConnections: Number(process.env.WS_MAX_CONNECTIONS ?? 1000),

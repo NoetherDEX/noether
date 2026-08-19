@@ -185,8 +185,9 @@ impl NoeracleShimContract {
     /// liveness. (Upstream `twap` returns the bare mean; the newest entry
     /// comes from `prices(feed, 1)` — the oldest-used timestamp is not
     /// exposed upstream, and ring liveness is the operative bound.)
-    /// Mode 1 (SEP-40) delegates twap to the vendor and reports "now" —
-    /// age governance is the vendor's, documented divergence.
+    /// Mode 1 (SEP-40) delegates twap to the vendor and age-bounds it with
+    /// the feed's newest `lastprice` tick (R-7) — a fabricated "now" would
+    /// defeat the market's `twap_max_age_secs` staleness gate.
     /// None whenever the backend/ring cannot answer (<2 entries, unknown
     /// pair) — callers degrade to spot, never trap on None.
     pub fn twap(env: Env, asset: Symbol, records: u32) -> Option<(i128, u64)> {
@@ -206,9 +207,16 @@ impl NoeracleShimContract {
                 (Sep40Asset::Other(asset.clone()), records).into_val(&env);
             let mean: Option<i128> =
                 env.invoke_contract(&backend, &Symbol::new(&env, "twap"), args);
-            return mean
-                .filter(|value| *value > 0)
-                .map(|value| (Self::rescale(&env, value), env.ledger().timestamp()));
+            let mean = mean.filter(|value| *value > 0)?;
+            // R-7/ALX-03: never fabricate freshness. The vendor twap carries
+            // no timestamp, so age-bound it with the feed's newest lastprice
+            // tick; if that can't be read, return None and let callers
+            // degrade to spot rather than trust a mean of unknown age.
+            let lp_args: Vec<soroban_sdk::Val> = (Sep40Asset::Other(asset),).into_val(&env);
+            let tick: Option<Sep40PriceData> =
+                env.invoke_contract(&backend, &Symbol::new(&env, "lastprice"), lp_args);
+            let newest_ts = tick?.timestamp;
+            return Some((Self::rescale(&env, mean), newest_ts));
         }
 
         let tag = noether_common::assets::symbol_to_tag(&env, &asset).ok()?;
@@ -235,6 +243,10 @@ impl NoeracleShimContract {
     pub fn set_noeracle_oracle(env: Env, new_oracle: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::NoeracleOracle, &new_oracle);
+        env.events().publish(
+            (Symbol::new(&env, "oracle_rotated"),),
+            (new_oracle,),
+        );
         Ok(())
     }
 
@@ -260,6 +272,10 @@ impl NoeracleShimContract {
         env.storage().instance().set(&DataKey::NoeracleOracle, &oracle);
         env.storage().instance().set(&DataKey::BackendMode, &mode);
         env.storage().instance().set(&DataKey::BackendDecimals, &decimals);
+        env.events().publish(
+            (Symbol::new(&env, "backend_set"),),
+            (mode, oracle, decimals),
+        );
         Ok(())
     }
 
@@ -267,7 +283,16 @@ impl NoeracleShimContract {
     pub fn set_admin(env: Env, new_admin: Address) -> Result<(), NoetherError> {
         Self::require_admin(&env)?;
         new_admin.require_auth();
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NoetherError::NotInitialized)?;
         env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "admin_rotated"),),
+            (old_admin, new_admin),
+        );
         Ok(())
     }
 
@@ -335,6 +360,13 @@ impl NoeracleShimContract {
         if !env.storage().instance().has(&DataKey::Initialized) {
             panic_with_error!(env, NoetherError::NotInitialized);
         }
+        // R-1: every price read re-arms the instance rent (no-op above the
+        // threshold) — an archived shim would halt all trading, so the hot
+        // path itself keeps it alive.
+        env.storage().instance().extend_ttl(
+            noether_common::ttl::TTL_THRESHOLD,
+            noether_common::ttl::TTL_EXTEND_TO,
+        );
     }
 
     /// Rescale a backend price to Noether's 7-decimal fixed point. A wrong
@@ -459,6 +491,44 @@ mod tests {
         assert_eq!(client.get_noeracle(), noeracle);
     }
 
+    /// R-1: every price read must re-arm the instance rent — an archived
+    /// shim would halt all trading.
+    #[test]
+    fn lastprice_rearms_instance_ttl() {
+        use soroban_sdk::testutils::storage::Instance as _;
+        use soroban_sdk::testutils::Ledger as _;
+
+        let (env, _admin, noeracle, client) = setup();
+        let id = client.address.clone();
+
+        // Keep the MOCK backend alive across the jump — only the shim's own
+        // TTL behaviour is under test here.
+        env.as_contract(&noeracle, || {
+            env.storage().instance().extend_ttl(
+                noether_common::ttl::TTL_EXTEND_TO * 2,
+                noether_common::ttl::TTL_EXTEND_TO * 2,
+            );
+        });
+
+        env.ledger().with_mut(|li| {
+            li.sequence_number += noether_common::ttl::TTL_EXTEND_TO - 1_000
+        });
+        let before = env.as_contract(&id, || env.storage().instance().get_ttl());
+        assert!(
+            before < noether_common::ttl::TTL_THRESHOLD,
+            "precondition: inside the re-extend window"
+        );
+
+        client.lastprice(&Symbol::new(&env, "BTC"));
+
+        let after = env.as_contract(&id, || env.storage().instance().get_ttl());
+        assert_eq!(
+            after,
+            noether_common::ttl::TTL_EXTEND_TO,
+            "price read must re-arm the instance TTL"
+        );
+    }
+
     #[test]
     #[should_panic(expected = "Error(Contract, #2)")] // AlreadyInitialized
     fn initialize_twice_errors() {
@@ -560,10 +630,15 @@ mod tests {
             }
 
             /// L0-9 mode-1 passthrough target: $69,000 mean at 14 decimals.
+            /// ETH answers twap but has NO lastprice — the R-7 unknown-age
+            /// surface.
             pub fn twap(env: Env, asset: Sep40Asset, _records: u32) -> Option<i128> {
                 match asset {
                     Sep40Asset::Other(sym) if sym == Symbol::new(&env, "BTC") => {
                         Some(6_900_000_000_000_000_000)
+                    }
+                    Sep40Asset::Other(sym) if sym == Symbol::new(&env, "ETH") => {
+                        Some(1_000_000_000_000_000_000)
                     }
                     _ => None,
                 }
@@ -585,11 +660,22 @@ mod tests {
         assert_eq!(ts, 1_700_000_100);
         assert_eq!(client.get_backend(), (BACKEND_SEP40, sep40_id, 14u32));
 
-        // L0-9: mode-1 twap rescales the vendor mean the same way; the
-        // timestamp is "now" (age governance is the vendor's).
+        // L0-9/R-7: mode-1 twap rescales the vendor mean the same way; the
+        // timestamp is the feed's newest lastprice tick — never "now".
         let twap = client.twap(&Symbol::new(&env, "BTC"), &4).unwrap();
         assert_eq!(twap.0, 690_000_000_000);
-        assert_eq!(twap.1, env.ledger().timestamp());
+        assert_eq!(twap.1, 1_700_000_100);
+    }
+
+    /// R-7: a vendor mean without a readable lastprice tick has unknown
+    /// age — the shim must return None so callers degrade to spot.
+    #[test]
+    fn sep40_twap_without_lastprice_tick_returns_none() {
+        let (env, _, _, client) = setup();
+        let sep40_id = env.register_contract(None, mock_sep40::MockSep40Contract);
+        client.set_backend(&BACKEND_SEP40, &sep40_id, &14u32);
+        // Mock: ETH has a twap mean but NO lastprice.
+        assert_eq!(client.twap(&Symbol::new(&env, "ETH"), &4), None);
     }
 
     #[test]
