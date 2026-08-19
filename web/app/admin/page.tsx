@@ -32,8 +32,14 @@ const statusColor: Record<string, string> = {
 
 export default function AdminPage() {
   const wallet = useWalletStore((s) => s.address);
-  const auth = useSessionAuthStore((s) => (s.keyId && s.secret ? { keyId: s.keyId, secret: s.secret } : null));
+  // Primitive selectors + memo. An object-building selector here returns a
+  // FRESH reference on every store snapshot, which re-armed the load effect
+  // on every render — an unbounded fetch loop (~90k requests until the
+  // browser died with ERR_INSUFFICIENT_RESOURCES).
+  const keyId = useSessionAuthStore((s) => s.keyId);
+  const secret = useSessionAuthStore((s) => s.secret);
   const setAuth = useSessionAuthStore((s) => s.setAuth);
+  const auth = useMemo(() => (keyId && secret ? { keyId, secret } : null), [keyId, secret]);
 
   const [signingIn, setSigningIn] = useState(false);
   const [notAdmin, setNotAdmin] = useState(false);
@@ -247,8 +253,14 @@ export default function AdminPage() {
           Revoke
         </button>
         <button
-          onClick={downloadCsv}
+          onClick={() => void refresh()}
           className="ml-auto rounded-lg border border-white/10 px-4 py-2 text-sm text-white/70 hover:text-white"
+        >
+          Refresh
+        </button>
+        <button
+          onClick={downloadCsv}
+          className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/70 hover:text-white"
         >
           Export CSV
         </button>
