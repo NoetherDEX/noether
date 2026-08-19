@@ -74,7 +74,9 @@ export async function registerKeyRoutes(
   apiKeys: ApiKeyStore,
   wallet: WalletAuth,
   access: AccessGrantsService,
+  adminWallets: string[] = [],
 ): Promise<void> {
+  const adminSet = new Set(adminWallets);
   app.get(
     '/v1/keys/beta-status',
     {
@@ -103,7 +105,9 @@ export async function registerKeyRoutes(
       const gated = ALLOWLIST !== null;
       const allowed =
         !gated ||
-        (address ? ALLOWLIST!.has(address) || (await access.isApproved(address)) : false);
+        (address
+          ? ALLOWLIST!.has(address) || adminSet.has(address) || (await access.isApproved(address))
+          : false);
       return reply.send({ gated, allowed });
     },
   );
@@ -176,7 +180,15 @@ export async function registerKeyRoutes(
       // address that isn't on it before doing the (cheaper) signature
       // verification. Returns 403 so the UI can show a "not in beta"
       // message distinct from a bad signature.
-      if (ALLOWLIST && !ALLOWLIST.has(address) && !(await access.isApproved(address))) {
+      if (
+        ALLOWLIST &&
+        !ALLOWLIST.has(address) &&
+        // ADMIN_WALLETS are inherently in the beta — without this, an admin
+        // wallet cannot mint the session key that opens the very panel that
+        // approves wallets (chicken-and-egg).
+        !adminSet.has(address) &&
+        !(await access.isApproved(address))
+      ) {
         return reply.code(403).send({
           error: 'not_in_beta',
           message:

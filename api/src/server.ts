@@ -172,7 +172,9 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
     }),
   );
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
-  await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth, deps.access));
+  await app.register((instance) =>
+    registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth, deps.access, config.adminWallets),
+  );
   await app.register((instance) =>
     registerAccessRoutes(instance, {
       access: deps.access,
