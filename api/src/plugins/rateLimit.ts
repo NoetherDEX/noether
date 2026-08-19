@@ -47,7 +47,29 @@ async function rateLimitPluginImpl(app: FastifyInstance, opts: RateLimitPluginOp
       reply.header('Retry-After', String(decision.retryAfterSec));
       return reply.code(429).send({ error: 'rate_limited', retry_after_sec: decision.retryAfterSec });
     }
+
+    // Workstream A: the public waitlist join gets a much tighter per-IP
+    // budget than the generic 60/min — a signup is a once-per-human action,
+    // and each join costs a Turnstile verification round-trip.
+    if (
+      request.method === 'POST' &&
+      request.url.startsWith('/v1/waitlist') &&
+      !request.user
+    ) {
+      const join = await opts.limiter.checkAndConsume(
+        `join:ip:${request.ip}`,
+        'public',
+        WAITLIST_JOIN_PER_MINUTE,
+      );
+      if (!join.allowed) {
+        reply.header('Retry-After', String(join.retryAfterSec));
+        return reply.code(429).send({ error: 'rate_limited', retry_after_sec: join.retryAfterSec });
+      }
+    }
   });
 }
+
+/** Per-IP joins per minute — far below the public tier's 60. */
+const WAITLIST_JOIN_PER_MINUTE = 5;
 
 export const rateLimitPlugin = fp(rateLimitPluginImpl, { name: 'noether-rate-limit' });

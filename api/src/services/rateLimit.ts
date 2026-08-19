@@ -30,8 +30,12 @@ const WINDOW_SEC = 60;
 export class RateLimiter {
   constructor(private readonly db: Db) {}
 
-  async checkAndConsume(bucket: string, tier: RateLimitTier): Promise<RateLimitDecision> {
-    const limit = RATE_LIMIT_TIERS[tier].perMinute;
+  async checkAndConsume(
+    bucket: string,
+    tier: RateLimitTier,
+    overridePerMinute?: number,
+  ): Promise<RateLimitDecision> {
+    const limit = overridePerMinute ?? RATE_LIMIT_TIERS[tier].perMinute;
     const nowSec = Math.floor(Date.now() / 1000);
     const windowStart = nowSec - (nowSec % WINDOW_SEC);
 

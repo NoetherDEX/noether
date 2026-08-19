@@ -92,6 +92,7 @@ export const TEST_CONFIG: ApiConfig = {
     msgRate: 1000,
     maxBufferedBytes: 1_048_576,
   },
+  adminWallets: [],
 };
 
 /**
@@ -165,6 +166,36 @@ export async function seedSchema(db: Db): Promise<void> {
       scope_key TEXT NOT NULL DEFAULT 'testnet'
     );
   `);
+  // Workstream A access system — mirrors indexer/migrations/009_access_grants.sql
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS access_grants (
+      wallet        TEXT PRIMARY KEY,
+      email         TEXT,
+      status        TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'approved', 'rejected', 'revoked')),
+      source        TEXT NOT NULL
+                    CHECK (source IN ('waitlist', 'admin', 'code_migration')),
+      wave          TEXT,
+      segment       TEXT CHECK (segment IN ('trader', 'lp', 'both')),
+      attested_at   TIMESTAMPTZ,
+      tos_version   TEXT,
+      requested_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      decided_at    TIMESTAMPTZ,
+      decided_by    TEXT,
+      notes         TEXT,
+      email_sent_at TIMESTAMPTZ
+    );
+  `);
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS access_audit_log (
+      id     BIGSERIAL PRIMARY KEY,
+      at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+      actor  TEXT NOT NULL,
+      action TEXT NOT NULL,
+      wallet TEXT,
+      detail JSONB
+    );
+  `);
 }
 
 export async function setupTestServer(opts?: {
@@ -193,6 +224,10 @@ export async function setupTestServer(opts?: {
   /** Stellar network the gateway serves (leaderboard scope gate); defaults
    *  to the TEST_CONFIG testnet. */
   network?: import('@noether/types').Network;
+  /** Wallets granted the /v1/admin/* surface. */
+  adminWallets?: string[];
+  /** Workstream A: waitlist join 503s when Turnstile is unconfigured. */
+  turnstileDisabled?: boolean;
 }) {
   const reader = {
     async read<T>(_contractId: string, method: string, args: unknown[] = []): Promise<T> {
@@ -236,6 +271,20 @@ export async function setupTestServer(opts?: {
   const events = new EventsService(db);
   const apiKeys = new ApiKeyStore(db, 'test-pepper');
   const walletAuth = new WalletAuth(TEST_CONFIG_PASSPHRASE);
+  const access = new (await import('../src/services/accessGrants.js')).AccessGrantsService(db);
+  const accessWalletAuth = new WalletAuth(TEST_CONFIG_PASSPHRASE);
+  // Stub Turnstile: the literal token 'valid-token' passes, all else fails.
+  const turnstile = opts?.turnstileDisabled
+    ? { enabled: false as const, verify: async () => false }
+    : { enabled: true as const, verify: async (token: string) => token === 'valid-token' };
+  const sentEmails: Array<{ to: string; wave: string | null }> = [];
+  const approvalEmailer = {
+    enabled: true as const,
+    sendApproval: async (to: string, wave: string | null) => {
+      sentEmails.push({ to, wave });
+      return true;
+    },
+  };
   const rateLimiter = new RateLimiter(db);
   const wsBus = new (await import('../src/services/wsBus.js')).WsBus();
   const noopLogger = makeNoopLogger();
@@ -289,15 +338,21 @@ export async function setupTestServer(opts?: {
     FAKE_CONTRACT,
   );
   const deps: ServerDeps = {
-    oracle, markets, events, apiKeys, walletAuth, rateLimiter, db,
+    oracle, markets, events, apiKeys, walletAuth, access, accessWalletAuth,
+    turnstile, approvalEmailer, rateLimiter, db,
     orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats,
     adlQueue, shortfall,
   };
   const app = await buildServer(
-    { ...TEST_CONFIG, network, keeperHeartbeatSecret: opts?.keeperHeartbeatSecret },
+    {
+      ...TEST_CONFIG,
+      network,
+      keeperHeartbeatSecret: opts?.keeperHeartbeatSecret,
+      adminWallets: opts?.adminWallets ?? [],
+    },
     deps,
   );
-  return { app, db, deps };
+  return { app, db, deps, sentEmails };
 }
 
 function makeNoopLogger() {

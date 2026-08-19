@@ -11,6 +11,7 @@ import { registerOracleRoutes } from './routes/oracle.js';
 import { registerOracleHealthRoutes } from './routes/oracleHealth.js';
 import { registerEventsRoutes } from './routes/events.js';
 import { registerKeyRoutes } from './routes/keys.js';
+import { registerAccessRoutes } from './routes/access.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerOrderRoutes, type OrdersRouteDeps } from './routes/orders.js';
 import { registerTxRoutes, type TxRoutesDeps } from './routes/tx.js';
@@ -31,6 +32,9 @@ import { MarketsService } from './services/markets.js';
 import { EventsService } from './services/events.js';
 import { ApiKeyStore } from './services/apiKeys.js';
 import { WalletAuth } from './services/walletAuth.js';
+import { AccessGrantsService } from './services/accessGrants.js';
+import { CloudflareTurnstile, DisabledTurnstile, type TurnstileVerifier } from './services/turnstile.js';
+import { AcsEmailer, NoopEmailer, type ApprovalEmailer } from './services/accessEmail.js';
 import { RateLimiter } from './services/rateLimit.js';
 import { WsBus } from './services/wsBus.js';
 import { WsManager } from './services/wsManager.js';
@@ -52,6 +56,12 @@ export interface ServerDeps {
   events: EventsService;
   apiKeys: ApiKeyStore;
   walletAuth: WalletAuth;
+  access: AccessGrantsService;
+  /** Dedicated instance — WalletAuth's pending map is keyed by address, so
+   *  the unlock flow must not share the key-issuance instance. */
+  accessWalletAuth: WalletAuth;
+  turnstile: TurnstileVerifier;
+  approvalEmailer: ApprovalEmailer;
   rateLimiter: RateLimiter;
   db: Db;
   orders: OrdersRouteDeps;
@@ -162,7 +172,16 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
     }),
   );
   await app.register((instance) => registerEventsRoutes(instance, deps.events));
-  await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth));
+  await app.register((instance) => registerKeyRoutes(instance, deps.apiKeys, deps.walletAuth, deps.access));
+  await app.register((instance) =>
+    registerAccessRoutes(instance, {
+      access: deps.access,
+      walletAuth: deps.accessWalletAuth,
+      turnstile: deps.turnstile,
+      emailer: deps.approvalEmailer,
+      adminWallets: config.adminWallets,
+    }),
+  );
   await app.register((instance) => registerAccountRoutes(instance, deps.db));
   await app.register((instance) => registerOrderRoutes(instance, deps.orders, deps.stats));
   await app.register((instance) => registerTxRoutes(instance, deps.tx));
@@ -202,6 +221,15 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
   const pepper = process.env.API_HMAC_PEPPER ?? DEFAULT_HMAC_PEPPER;
   const apiKeys = new ApiKeyStore(db, pepper);
   const walletAuth = new WalletAuth(getNetworkPassphrase(config.network));
+  const access = new AccessGrantsService(db);
+  const accessWalletAuth = new WalletAuth(getNetworkPassphrase(config.network));
+  const turnstile: TurnstileVerifier = config.turnstileSecret
+    ? new CloudflareTurnstile(config.turnstileSecret)
+    : new DisabledTurnstile();
+  const approvalEmailer: ApprovalEmailer =
+    config.acsConnectionString && config.acsSender
+      ? new AcsEmailer(config.acsConnectionString, config.acsSender, log)
+      : new NoopEmailer(log);
   const rateLimiter = new RateLimiter(db);
   const txCtx = { rpcUrl: config.rpcUrl, network: config.network };
   const orders: OrdersRouteDeps = { txCtx, marketContractId: config.contracts.contracts.market };
@@ -231,5 +259,5 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
     rpcUrl: config.rpcUrl,
   });
   const shortfall = new ShortfallService(reader, config.contracts.contracts.vault);
-  return { oracle, markets, events, apiKeys, walletAuth, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall, pauseState, reader };
+  return { oracle, markets, events, apiKeys, walletAuth, access, accessWalletAuth, turnstile, approvalEmailer, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall, pauseState, reader };
 }
