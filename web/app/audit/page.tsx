@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { TeaserLogo } from '@/components/landing/TeaserLogo'
+import { WaitlistCard } from '@/components/landing/WaitlistCard'
 
 export const metadata: Metadata = {
   title: 'Audit in progress',
@@ -35,6 +36,9 @@ export default function AuditPage() {
         Trade on testnet
         <span aria-hidden>→</span>
       </a>
+      {/* Client island — everything wallet/stellar-heavy inside is lazy,
+          so the teaser's first load stays dependency-light. */}
+      <WaitlistCard />
       <div className="mt-10 flex items-center gap-6 text-sm text-white/40">
         <a
           href="https://docs.noether.exchange"

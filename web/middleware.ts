@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { GATE_COOKIE, verifyGateCookie } from '@/lib/gate';
 
 /**
  * Two request-level controls, evaluated in order:
@@ -39,38 +40,25 @@ const BLOCKED_REGIONS = new Set(['CA-ON']);
 
 const GUARDED_PREFIXES = ['/trade', '/vault', '/vaults', '/portfolio'];
 
-const GATE_COOKIE = 'noether_access';
-// Paths that stay reachable while gated: the teaser itself, the unlock flow,
-// and the geoblock landing (kept for parity).
-const GATE_OPEN_PATHS = new Set(['/audit', '/access', '/api/access', '/restricted']);
-
-// TS 5.7+ types TextEncoder output as Uint8Array<ArrayBufferLike>, which the
-// WebCrypto BufferSource signatures reject — hand over the exact ArrayBuffer.
-function utf8Bytes(value: string): ArrayBuffer {
-  return new TextEncoder().encode(value).buffer as ArrayBuffer;
-}
-
-async function hmacHex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    utf8Bytes(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, utf8Bytes(message));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
+// Paths that stay reachable while gated: the teaser itself (which now hosts
+// the waitlist form), both unlock flows, the terms the attestation links,
+// and the geoblock landing (kept for parity). Exact-match set — every new
+// open route needs its own entry.
+const GATE_OPEN_PATHS = new Set([
+  '/audit',
+  '/access',
+  '/api/access',
+  '/api/access/wallet',
+  '/terms',
+  '/restricted',
+]);
 
 async function hasValidAccessCookie(request: NextRequest): Promise<boolean> {
   const secret = process.env.ACCESS_COOKIE_SECRET ?? '';
   const raw = request.cookies.get(GATE_COOKIE)?.value ?? '';
-  const [expires, sig] = raw.split('.');
-  if (!secret || !expires || !sig || !/^\d+$/.test(expires)) return false;
-  if (Number(expires) * 1000 < Date.now()) return false;
-  return (await hmacHex(secret, `noether-access.v1.${expires}`)) === sig;
+  // Shared v1/v2 validation lives in lib/gate.ts (one implementation for
+  // middleware + both cookie-issuing routes), timing-safe compare included.
+  return verifyGateCookie(secret, raw);
 }
 
 export async function middleware(request: NextRequest): Promise<NextResponse> {
