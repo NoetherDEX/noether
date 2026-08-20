@@ -1,0 +1,65 @@
+# Continuous security lane (Workstream B / audit dossier pipeline).
+#
+# Fast scans (cargo-audit, cargo-deny, osv-scanner) run on every PR and
+# weekly; they FAIL on any advisory not explicitly triaged in
+# contracts/deny.toml / osv-scanner.toml — every ignore there carries its
+# rationale, the ledger is audit/remediation/REGISTER.md. Scout (the heavy
+# Soroban detector suite) runs weekly + on demand and uploads its report as
+# an artifact for the dossier (its findings are triage input, not a gate —
+# see audit/tools/scout-audit/*/triage.md for why).
+
+name: security
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+
+jobs:
+  dependency-scans:
+    name: Dependency advisories (cargo-audit, cargo-deny, osv-scanner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+      - name: cargo audit (RustSec, fails on vulnerabilities)
+        working-directory: contracts
+        run: cargo audit
+      - name: cargo deny (advisories, licenses, bans, sources)
+        working-directory: contracts
+        run: cargo deny check
+      - name: osv-scanner (Cargo.lock + package-lock.json)
+        run: |
+          curl -sSL -o osv-scanner \
+            https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64
+          chmod +x osv-scanner
+          ./osv-scanner scan --config osv-scanner.toml \
+            --lockfile package-lock.json \
+            --lockfile contracts/Cargo.lock
+
+  scout:
+    name: Scout (Soroban detector suite, weekly report)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+          cache-all-crates: true
+      - name: Install cargo-scout-audit
+        run: cargo install cargo-scout-audit --locked
+      - name: Run scout
+        working-directory: contracts
+        run: cargo scout-audit -o json --output-path ../scout-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scout-report-${{ github.run_number }}
+          path: scout-report.json
+          retention-days: 90

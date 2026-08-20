@@ -1,0 +1,42 @@
+# cargo-deny policy for the contracts workspace (security.yml CI lane).
+# Advisories are triaged in audit/remediation/REGISTER.md — every ignore
+# below carries its rationale inline; nothing is ignored silently.
+
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+    # paste: unmaintained (proc-macro, transitive via soroban-sdk pins) —
+    # compile-time only, no runtime surface.
+    "RUSTSEC-2024-0436",
+    # keccak: unsoundness in the OPT-IN ARMv8 assembly backend — our
+    # targets are wasm32 + x86/darwin test hosts; backend never enabled.
+    "RUSTSEC-2026-0012",
+    # rand: unsound only with a custom logger via rand::rng() — test-side
+    # dependency; contracts are no_std and never link it.
+    "RUSTSEC-2026-0097",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+[bans]
+# soroban-sdk's pin set drags duplicate transitive versions — expected.
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

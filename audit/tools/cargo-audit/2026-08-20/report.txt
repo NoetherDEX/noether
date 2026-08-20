@@ -1,0 +1,23 @@
+    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 1217 security advisories (from /Users/yahya/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (187 crate dependencies)
+Crate:     paste
+Version:   1.0.15
+Warning:   unmaintained
+Title:     paste - no longer maintained
+Date:      2024-10-07
+ID:        RUSTSEC-2024-0436
+URL:       https://rustsec.org/advisories/RUSTSEC-2024-0436
+
+Crate:     rand
+Version:   0.8.5
+Warning:   unsound
+Title:     Rand is unsound with a custom logger using `rand::rng()`
+Date:      2026-04-09
+ID:        RUSTSEC-2026-0097
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0097
+
+warning: 2 allowed warnings found
+
+advisories ok, bans ok, licenses ok, sources ok
