@@ -172,12 +172,31 @@ multisig. **Action:** add `set_admin` to all three, copying the verified
 both-sign pattern, before freeze. (Supersedes the spec's narrower "market
 `set_admin`" register item; check market WASM-size headroom when adding.)
 
-## R-12 · soroban-sdk 21 pin — DOCUMENTED DECISION
+## R-12 · soroban-sdk 21 pin — DOCUMENTED DECISION (advisories triaged 2026-08-20)
 
-**Source:** SCT `soroban_version` (8×, one per crate).
+**Source:** SCT `soroban_version` (8×, one per crate); OSV surfaces five
+GHSA advisories against the pinned stack (fixed in SDK 22.x), each triaged
+against our code and ignored WITH rationale in `osv-scanner.toml`:
+Bytes/Vec slice overflow (all slice sites pre-validated + overflow-checks
+traps), BLS Fr equality (no BLS usage), muxed-address conversions (unused),
+StringM length bypass (own length checks on every String input), and the
+HIGH contractimpl inherent-vs-trait collision (contracts implement no custom
+traits — zero collision surface, verified by grep).
 Deliberate: no SDK-major churn between now and the audited freeze; the pinned
-toolchain is part of the reproducible-build recipe. Revisit post-v1 — SDK ≥ 22
-also unlocks constructor-based init, the structural close for R-3.
+toolchain is part of the reproducible-build recipe. **Reassess at freeze with
+the firm; SDK ≥ 22 post-v1 default** — it also unlocks constructor-based
+init, the structural close for R-3.
+
+## R-14 · Dependency advisories swept + continuous lane — CLOSED 2026-08-20
+
+cargo-audit clean after in-range bumps (`time` 0.3.45→0.3.47+ DoS fix,
+yanked `keccak`/`spin` refreshed); npm runtime advisories fixed (`ws`,
+`form-data` via npm audit fix; `@fastify/static` 7.5 via
+`@fastify/swagger-ui` 5→6, 153 api tests green); dev-only toolchain majors
+(vite 6 / vitest 3 / esbuild) deferred with reasons in `osv-scanner.toml`.
+Continuous enforcement: `.github/workflows/security.yml` — cargo-audit +
+cargo-deny (`contracts/deny.toml`) + osv-scanner on every PR (fails on any
+un-triaged advisory), Scout weekly with artifact upload.
 
 ## R-13 · Lint-family postures — ACCEPTED (optional batch improvements)
 

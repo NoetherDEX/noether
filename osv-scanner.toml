@@ -1,0 +1,78 @@
+# osv-scanner ignore policy (security.yml CI lane). Every entry carries its
+# triage rationale — the authoritative ledger is audit/remediation/REGISTER.md.
+# The lane FAILS on any advisory not listed here, so new findings surface.
+
+# ── soroban-sdk 21 pin (R-12: deliberate until the audited freeze; SDK 22
+#     bump is the structural fix, deferred post-v1 — reassess at freeze) ──
+
+[[IgnoredVulns]]
+id = "GHSA-96xm-fv9w-pf3f"
+reason = "sdk Bytes/Vec::slice u64 overflow — all slice call sites use pre-validated bounded indices (router payload parsing checks lengths first); overflow-checks=true traps rather than mis-slices. R-12."
+
+[[IgnoredVulns]]
+id = "GHSA-x2hw-px52-wp4m"
+reason = "BLS12-381 Fr equality bug — no BLS/Fr usage anywhere in the contracts. R-12."
+
+[[IgnoredVulns]]
+id = "GHSA-pm4j-7r4q-ccg8"
+reason = "Muxed address<->ScVal conversion state bug — muxed addresses unused in the contracts. R-12."
+
+[[IgnoredVulns]]
+id = "GHSA-x57h-xx53-v53w"
+reason = "stellar-xdr StringM::from_str length bypass — every contract String input carries its own explicit length check (vault names, referral codes). R-12."
+
+[[IgnoredVulns]]
+id = "GHSA-4chv-4c6w-w254"
+reason = "contractimpl inherent-vs-trait name-collision — contracts implement no custom traits (only derives + one Default), so the collision surface does not exist. R-12."
+
+# ── transitive Rust pins (also ignored in contracts/deny.toml) ──
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "paste unmaintained — compile-time proc-macro via soroban pins."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0012"
+reason = "keccak ARMv8 asm unsoundness — opt-in backend, never enabled for wasm32/x86 targets."
+
+[[IgnoredVulns]]
+id = "GHSA-3288-p39f-rqpv"
+reason = "alias of RUSTSEC-2026-0012 (keccak)."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0097"
+reason = "rand custom-logger unsoundness — test-side only; contracts are no_std."
+
+[[IgnoredVulns]]
+id = "GHSA-cq8v-f236-94qc"
+reason = "alias of RUSTSEC-2026-0097 (rand)."
+
+[[IgnoredVulns]]
+id = "GHSA-7gcf-g7xr-8hxj"
+reason = "serde_with — host/test-side transitive; bumped in-range where semver allows, remainder pinned by soroban tree."
+
+# ── dev-only npm toolchain (never shipped; majors deferred deliberately) ──
+
+[[IgnoredVulns]]
+id = "GHSA-67mh-4wv8-2f99"
+reason = "esbuild dev-server request smuggling — dev tooling only, fix requires vite major."
+
+[[IgnoredVulns]]
+id = "GHSA-g7r4-m6w7-qqqr"
+reason = "esbuild dev-only — bundler toolchain, not shipped."
+
+[[IgnoredVulns]]
+id = "GHSA-4w7w-66w2-5vf9"
+reason = "vite dev-server — dev-only; vite 6 major deferred (build toolchain churn pre-freeze)."
+
+[[IgnoredVulns]]
+id = "GHSA-fx2h-pf6j-xcff"
+reason = "vite dev-server — dev-only; see above."
+
+[[IgnoredVulns]]
+id = "GHSA-v6wh-96g9-6wx3"
+reason = "vite dev-server — dev-only; see above."
+
+[[IgnoredVulns]]
+id = "GHSA-5xrq-8626-4rwp"
+reason = "vitest — test runner only, never shipped; vitest 3 major deferred (touches every workspace test config) — revisit post-freeze."

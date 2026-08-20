@@ -1,0 +1,26 @@
+Starting filesystem walk for root: /
+Scanned /Users/yahya/Desktop/Stellar/Noether/package-lock.json file and found 443 packages
+Scanned /Users/yahya/Desktop/Stellar/Noether/contracts/Cargo.lock file and found 187 packages
+End status: 0 dirs visited, 2 inodes visited, 2 Extract calls, 13.167542ms elapsed, 13.168ms wall time
+Filtered 7 local/unscannable package/s from the scan.
+RUSTSEC-2024-0436 has been filtered out because: paste unmaintained — compile-time proc-macro via soroban pins.
+GHSA-cq8v-f236-94qc and 1 alias have been filtered out because: alias of RUSTSEC-2026-0097 (rand).
+GHSA-pm4j-7r4q-ccg8 has been filtered out because: Muxed address<->ScVal conversion state bug — muxed addresses unused in the contracts. R-12.
+GHSA-96xm-fv9w-pf3f and 1 alias have been filtered out because: sdk Bytes/Vec::slice u64 overflow — all slice call sites use pre-validated bounded indices (router payload parsing checks lengths first); overflow-checks=true traps rather than mis-slices. R-12.
+GHSA-x2hw-px52-wp4m and 1 alias have been filtered out because: BLS12-381 Fr equality bug — no BLS/Fr usage anywhere in the contracts. R-12.
+GHSA-4chv-4c6w-w254 and 1 alias have been filtered out because: contractimpl inherent-vs-trait name-collision — contracts implement no custom traits (only derives + one Default), so the collision surface does not exist. R-12.
+GHSA-x57h-xx53-v53w and 1 alias have been filtered out because: stellar-xdr StringM::from_str length bypass — every contract String input carries its own explicit length check (vault names, referral codes). R-12.
+GHSA-67mh-4wv8-2f99 has been filtered out because: esbuild dev-server request smuggling — dev tooling only, fix requires vite major.
+GHSA-g7r4-m6w7-qqqr has been filtered out because: esbuild dev-only — bundler toolchain, not shipped.
+GHSA-4w7w-66w2-5vf9 and 1 alias have been filtered out because: vite dev-server — dev-only; vite 6 major deferred (build toolchain churn pre-freeze).
+GHSA-fx2h-pf6j-xcff and 1 alias have been filtered out because: vite dev-server — dev-only; see above.
+GHSA-v6wh-96g9-6wx3 and 1 alias have been filtered out because: vite dev-server — dev-only; see above.
+GHSA-5xrq-8626-4rwp and 1 alias have been filtered out because: vitest — test runner only, never shipped; vitest 3 major deferred (touches every workspace test config) — revisit post-freeze.
+Filtered 14 vulnerabilities from output
+osv-scanner.toml has unused ignores:
+ - RUSTSEC-2026-0012
+ - GHSA-3288-p39f-rqpv
+ - RUSTSEC-2026-0097
+ - GHSA-7gcf-g7xr-8hxj
+
+No issues found
