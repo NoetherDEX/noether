@@ -144,6 +144,11 @@ entries are recoverable by anyone willing to pay rent:
   `migrate_config`).
 - **Never ship an upgrade whose WASM lacks `upgrade()`** — verify the
   interface of the new build BEFORE invoking (one-way door).
+- **Every in-place upgrade (testnet included) ends with a smoke trade** —
+  tiny open + close on the upgraded stack before declaring done. Hash
+  verification proves the code, not the state: on 2026-08-20 the R-4 belt
+  correctly bricked all opens for ~24h on pre-existing vault drift that
+  hash checks could never see (see REGISTER.md R-4 incident note).
 - Full incident flow: `docs/INCIDENT_RUNBOOK.md`.
 
 ## 8 · Wave operations

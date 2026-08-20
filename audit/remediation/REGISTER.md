@@ -100,6 +100,22 @@ Caller is the audited market via `require_auth`. Add a fail-closed solvency
 assert after credits: vault physical USDC balance must cover the accounting
 buckets; revert on desync. Defense-in-depth, not a vulnerability fix.
 
+**2026-08-20 incident — the belt fired in production (testnet), correctly.**
+One day after the in-place upgrade, every `open_position` on the Batch-1
+stack reverted #42: the belt found both vaults' physical USDC short of the
+bucket sum by *exactly* `total_fees` (prod $3,012.90, staging $240.00).
+Root cause was pre-existing drift, not the new code: the pre-R-sprint
+`deposit` credited the **gross** amount to `total_usdc` AND booked the fee
+into `total_fees` — fee double-counted in accounting, cash received once
+(prod: ~$1.004M gross deposits × 30 bps ✓). The current code books net
+principal only, so the drift cannot recur. Remediation: state true-up — bare
+USDC transfer of the exact deficit into each vault (prod tx `cd4d62dd…`,
+staging tx `4a0e3dce…`), invariant re-verified deficit=0 on both, failing
+open re-simulated green. Mainnet is untouched by construction: fresh deploy,
+fixed accounting, belt live from genesis. Process fix: post-upgrade smoke
+trade is now mandatory (runbook §7) — hash verification alone missed a
+state-level break for ~24h.
+
 ## R-5 · NOE supply immutability — OPEN (ceremony, decision box)
 
 **Folds in:** ALX-08
