@@ -20,7 +20,13 @@ at the same commit `01dfdea`.
 > `b7366bb` + web `da632de` · R-7 `992d693` · R-13 events `973b406`.
 > Full workspace green (426 tests), clippy clean, market WASM 123.7KB.
 
-## R-1 · Storage TTL lifecycle & archival hygiene — CODE CLOSED `e5f2bd4` (runbook items remain)
+## R-1 · Storage TTL lifecycle & archival hygiene — **FULLY CLOSED 2026-08-20**
+
+R-1.1 hot-path code sweep `e5f2bd4` · R-1.2 keeper re-pin duty **pre-existed**
+(P3-9 `maybeBumpTtls`: 6h cadence, instance+code for EVERY contracts.json
+address incl. tokens, failure paging; verified 2026-08-20 — better than this
+register asked for) · R-1.3 restore procedure → `docs/MAINNET-RUNBOOK.md` §6 ·
+R-1.4 initial ceremony pin → runbook §4.7.
 
 **Folds in:** ALX-02, ALX-04, ALX-05, ALX-10, ALX-12, ALX-13, ALX-14, ALX-18, ALX-21
 **Severity after triage:** Low–Medium (availability), not fund loss.
@@ -236,8 +242,18 @@ un-triaged advisory), Scout weekly with artifact upload.
 
 ## Ceremony/runbook items derived from this register
 
-- [ ] R-1.2/1.4 keeper TTL re-pin duty + monitoring; initial pin at deploy
-- [ ] R-1.3 restore-procedure runbook
-- [ ] R-2 set `max_vaults` (proposal 50) / leader allowlist; record in config snapshot
-- [ ] R-3 deploy+init back-to-back; verify `get_admin` == multisig before funding
-- [ ] R-5 NOE issuer decision (recommend: pre-mint + lock issuer)
+All codified in **`docs/MAINNET-RUNBOOK.md`** (2026-08-20): R-1.3 restore
+procedure (§6), R-1.4 initial TTL pin (§4.7), R-2 factory launch gate (§4.4),
+R-3 deploy+init+admin-verify discipline (§4.2), R-5 NOE issuer decision with
+lock recommendation (§4.5). Execution happens on ceremony day per the runbook.
+
+## Stale-register corrections (2026-08-20)
+
+The launch spec's §5.4 engineering register carried July-dated items that are
+in fact DONE: **L1-18** (on-chain referral fee path — shipped `5d7dc4c`+
+`1e779d9`, live+configured on both markets since 2026-08) and **keeper
+L0-19** (router verify-then-trade execution path incl. dead-man counter,
+active-active liveness, arity-drift smokes). Remaining genuinely-open
+pre-freeze engineering: **oracle XLM source decision** (Stork entitlement vs
+Reflector/CEX path — vendor ask + config) and **mainnet config prep** (Circle
+USDC wiring, launch params — ceremony-day per the runbook).
