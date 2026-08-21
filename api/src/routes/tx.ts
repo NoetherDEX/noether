@@ -119,9 +119,12 @@ export async function registerTxRoutes(app: FastifyInstance, deps: TxRoutesDeps)
         const outcome = await service.submit(signedXdr, { pollTimeoutMs });
         return mapOutcome(outcome, reply);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        // Opaque 5xx: raw RPC error text can leak endpoint hosts or a
+        // key-in-URL credential. Full error logged; x-request-id traces it.
         reply.log.error({ err }, 'tx/submit failed');
-        return reply.code(502).send({ error: 'rpc_error', message });
+        return reply
+          .code(502)
+          .send({ error: 'rpc_error', retryable: true, message: 'Upstream RPC request failed.' });
       }
     },
   );

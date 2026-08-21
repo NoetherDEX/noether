@@ -9,6 +9,7 @@ import { requestChallenge, exchangeChallenge } from '@/lib/api/keys';
 import {
   decideGrants,
   exportGrantsCsv,
+  forgetGrantEmail,
   listGrants,
   type GrantAction,
   type GrantRow,
@@ -123,6 +124,29 @@ export default function AdminPage() {
     },
     [selected, wave, notes, refresh],
   );
+
+  // PII erasure for the selected wallets (the /privacy deletion promise).
+  const forgetEmails = useCallback(async () => {
+    const a = getSessionAuth();
+    if (!a || selected.size === 0) return;
+    setBusy(true);
+    setFlash('');
+    setError('');
+    try {
+      let n = 0;
+      for (const w of selected) {
+        const { forgotten } = await forgetGrantEmail(a, w);
+        if (forgotten) n += 1;
+      }
+      setFlash(`forgot email on ${n} wallet(s)`);
+      setSelected(new Set());
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'forget failed');
+    } finally {
+      setBusy(false);
+    }
+  }, [selected, refresh]);
 
   const downloadCsv = useCallback(async () => {
     const a = getSessionAuth();
@@ -251,6 +275,14 @@ export default function AdminPage() {
           className="rounded-lg bg-amber-500/80 px-4 py-2 text-sm font-semibold text-black hover:bg-amber-400 disabled:opacity-40"
         >
           Revoke
+        </button>
+        <button
+          onClick={() => void forgetEmails()}
+          disabled={busy || selected.size === 0}
+          title="Erase the stored email for the selected wallets (access status unchanged)"
+          className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/70 hover:text-white disabled:opacity-40"
+        >
+          Forget email
         </button>
         <button
           onClick={() => void refresh()}

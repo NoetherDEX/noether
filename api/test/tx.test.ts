@@ -140,9 +140,13 @@ describe('POST /v1/tx/submit error taxonomy', () => {
       method: 'POST', url: '/v1/tx/submit', headers, payload: { signedXdr: 'AAAAAg==' },
     });
     expect(res.statusCode).toBe(502);
-    const body = res.json() as { error: string; message: string };
+    const body = res.json() as { error: string; message: string; retryable: boolean };
     expect(body.error).toBe('rpc_error');
-    expect(body.message).toContain('socket hang up');
+    expect(body.retryable).toBe(true);
+    // Opaque 5xx: the raw transport error (which can embed RPC hosts or
+    // key-in-URL credentials) must never reach the response body.
+    expect(body.message).not.toContain('socket hang up');
+    expect(body.message).toBe('Upstream RPC request failed.');
   });
 });
 

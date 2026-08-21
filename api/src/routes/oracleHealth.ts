@@ -133,7 +133,9 @@ export async function registerOracleHealthRoutes(
               priceFloat: null as number | null,
               ageSec: null as number | null,
               stale: true,
-              error: err instanceof Error ? err.message : String(err),
+              // Public endpoint: no raw upstream error text. stale:true +
+              // this marker is all a caller needs; details live in logs.
+              error: 'read_failed' as string | null,
             };
           }
         }),

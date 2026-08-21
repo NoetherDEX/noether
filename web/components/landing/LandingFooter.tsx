@@ -45,6 +45,7 @@ const FEATURE_LINKS = [
 
 const RESOURCE_LINKS = [
   { href: '/terms', label: 'Terms of Service', external: false },
+  { href: '/privacy', label: 'Privacy Policy', external: false },
   { href: DOCS_URL, label: 'Technical Architecture', external: true },
   { href: 'https://github.com/orgs/NoetherDEX/repositories', label: 'GitHub', external: true },
 ];

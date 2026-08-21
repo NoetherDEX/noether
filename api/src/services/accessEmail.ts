@@ -13,13 +13,18 @@ export interface ApprovalEmailer {
   sendApproval(to: string, wave: string | null): Promise<boolean>;
 }
 
+/** Log addresses masked — application logs must never carry raw PII. */
+function maskEmail(email: string): string {
+  return email.replace(/^(.).*?(@.*)$/, '$1***$2');
+}
+
 export class NoopEmailer implements ApprovalEmailer {
   readonly enabled = false;
 
   constructor(private readonly log?: Logger) {}
 
   async sendApproval(to: string): Promise<boolean> {
-    this.log?.info({ to }, 'ACS not configured — approval email skipped');
+    this.log?.info({ to: maskEmail(to) }, 'ACS not configured — approval email skipped');
     return false;
   }
 }
@@ -100,10 +105,11 @@ export class AcsEmailer implements ApprovalEmailer {
       });
       void poller
         .pollUntilDone()
-        .catch((err: unknown) => this.log?.warn({ err, to }, 'approval email delivery poll failed'));
+        .catch((err: unknown) =>
+          this.log?.warn({ err, to: maskEmail(to) }, 'approval email delivery poll failed'));
       return true;
     } catch (err) {
-      this.log?.warn({ err, to }, 'approval email send failed');
+      this.log?.warn({ err, to: maskEmail(to) }, 'approval email send failed');
       return false;
     }
   }

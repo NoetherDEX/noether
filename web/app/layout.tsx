@@ -86,6 +86,43 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark scroll-smooth">
       <body className={`${inter.variable} ${sora.variable} ${jetbrainsMono.variable} ${instrumentSerif.variable} font-sans antialiased bg-background text-foreground`}>
+        {/* Organization + WebSite structured data. Static constant JSON —
+            the one sanctioned dangerouslySetInnerHTML in the codebase. */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify([
+              {
+                '@context': 'https://schema.org',
+                '@type': 'Organization',
+                name: 'Noether',
+                url: 'https://noether.exchange',
+                logo: 'https://noether.exchange/icon-512.png',
+                sameAs: [
+                  'https://x.com/Noetherdex',
+                  'https://github.com/NoetherDEX',
+                  'https://docs.noether.exchange',
+                ],
+              },
+              {
+                '@context': 'https://schema.org',
+                '@type': 'WebSite',
+                name: 'Noether',
+                url: 'https://noether.exchange',
+              },
+            ]),
+          }}
+        />
+        {/* Self-hosted, cookieless Umami analytics — inlined at build time;
+            absent env vars (local dev) render nothing. */}
+        {process.env.NEXT_PUBLIC_UMAMI_URL && process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
+          <script
+            defer
+            src={`${process.env.NEXT_PUBLIC_UMAMI_URL}/script.js`}
+            data-website-id={process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID}
+            data-domains="noether.exchange,testnet.noether.exchange"
+          />
+        )}
         <a
           href="#main-content"
           data-noether-chrome

@@ -296,6 +296,53 @@ describe('/v1/admin/waitlist surface', () => {
     expect(Number((exportAudit.rows[0] as unknown as { n: unknown }).n)).toBe(1);
   });
 
+  it('admin forget nulls the stored email but keeps status and audit trail', async () => {
+    const adminKp = Keypair.random();
+    const setup = await setupTestServer({ adminWallets: [adminKp.publicKey()] });
+    app = setup.app;
+    const adminKey = await issueKey(app, adminKp);
+    const w1 = wallet();
+
+    await app.inject({
+      method: 'POST',
+      url: '/v1/waitlist',
+      payload: joinBody({ wallet: w1, email: 'w1@example.com' }),
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/v1/admin/waitlist/decide',
+      headers: authHeaders(adminKey),
+      payload: { wallets: [w1], action: 'approve' },
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/admin/waitlist/forget',
+      headers: authHeaders(adminKey),
+      payload: { wallet: w1 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { forgotten: boolean }).forgotten).toBe(true);
+
+    // Email erased; access status untouched; the erasure itself is audited.
+    const grant = await setup.deps.access.grantOf(w1);
+    expect(grant?.email ?? null).toBeNull();
+    expect(await setup.deps.access.isApproved(w1)).toBe(true);
+    const audit = await setup.db.execute(
+      "SELECT wallet FROM access_audit_log WHERE action = 'forget_email'",
+    );
+    expect(audit.rows.length).toBe(1);
+
+    // Unknown wallet reports forgotten:false instead of erroring.
+    const missing = await app.inject({
+      method: 'POST',
+      url: '/v1/admin/waitlist/forget',
+      headers: authHeaders(adminKey),
+      payload: { wallet: wallet() },
+    });
+    expect((missing.json() as { forgotten: boolean }).forgotten).toBe(false);
+  });
+
   it('admin approval of a wallet that never joined creates an admin-source grant', async () => {
     const adminKp = Keypair.random();
     const setup = await setupTestServer({ adminWallets: [adminKp.publicKey()] });

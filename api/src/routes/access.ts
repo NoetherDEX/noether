@@ -369,6 +369,41 @@ export async function registerAccessRoutes(app: FastifyInstance, deps: AccessRou
     },
   );
 
+  app.post<{ Body: { wallet: string } }>(
+    '/v1/admin/waitlist/forget',
+    {
+      preHandler: [app.requireAuth, requireAdmin],
+      schema: {
+        description:
+          "Admin — PII erasure: null a grant's stored email (the /privacy deletion promise). Wallet access status and the wallet-level audit trail stay intact.",
+        tags: ['access'],
+        body: {
+          type: 'object',
+          properties: { wallet: { type: 'string', minLength: 56, maxLength: 56 } },
+          required: ['wallet'],
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: true,
+            properties: { forgotten: { type: 'boolean' } },
+            required: ['forgotten'],
+          },
+          400: ERROR_SCHEMA,
+          403: ERROR_SCHEMA,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { wallet } = req.body;
+      if (!StrKey.isValidEd25519PublicKey(wallet)) {
+        return reply.code(400).send({ error: 'invalid_wallet', message: wallet });
+      }
+      const forgotten = await deps.access.forget(wallet, req.user!.owner);
+      return reply.send({ forgotten });
+    },
+  );
+
   app.get<{ Querystring: { status?: string } }>(
     '/v1/admin/waitlist/export.csv',
     {

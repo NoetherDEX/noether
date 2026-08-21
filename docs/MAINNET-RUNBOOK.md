@@ -22,6 +22,9 @@ confirmed start date is the freeze deadline.
 - [ ] Seed capital in hand (~$1.5–2k: LP seed + insurance buffer + 2 jury prefunds)
 - [ ] Monitoring live: keeper heartbeat/dead-man, oracle staleness, TTL-bump failure paging (P3-9 already alerts), gateway 5xx, wallet-XLM alarm (P3-10)
 - [ ] `/terms` reviewed for public launch; waitlist + admin panel operating (live since 2026-08-20)
+- [ ] API-surface pentest pass (gateway REST/WS, key issuance, admin waitlist
+      routes) — the Audit Bank engagement scopes contracts + Noeracle only;
+      the web gateway needs its own adversarial pass before mainnet
 - [ ] Mainnet infra stood up (§5): `-mainnet` app instances + `noether_mainnet` DB
 
 ## 2 · Multisig setup (SEC-3 / P3-8)
@@ -152,6 +155,12 @@ entries are recoverable by anyone willing to pay rent:
 - Full incident flow: `docs/INCIDENT_RUNBOOK.md`.
 
 ## 8 · Wave operations
+
+**PII hygiene:** email deletion requests are honored via `/admin` → select the
+wallet → "Forget email" (audit-logged `forget_email`; access status keeps
+working). CSV exports contain raw emails — treat each export as a temporary
+working copy and delete the file after use; every export is itself
+audit-logged.
 
 1. Wave-1: approve the jury + team wallets in `/admin` (wave tag `wave-1`),
    prefund jury wallets (~100 USDC + a few XLM each), jury script: trade

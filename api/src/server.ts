@@ -125,6 +125,15 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
 
   app.addHook('onSend', async (request, reply) => {
     reply.header('x-request-id', request.id);
+    // Baseline security headers for an HTTPS-only JSON API. CSP is skipped
+    // for /docs, where Swagger UI needs its inline scripts and styles.
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('Referrer-Policy', 'no-referrer');
+    if (!request.url.startsWith('/docs')) {
+      reply.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+    }
   });
 
   await app.register(swagger, {

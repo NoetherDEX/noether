@@ -15,7 +15,8 @@ export type GrantAction = 'approve' | 'reject' | 'revoke';
 export type GrantSegment = 'trader' | 'lp' | 'both';
 
 /** Stamped server-side on every join; bump when /terms changes materially. */
-export const TOS_VERSION = 'v1-2026-08';
+// v1.1: waitlist attestation now covers the Privacy Policy alongside the ToS.
+export const TOS_VERSION = 'v1.1-2026-08';
 
 export interface AccessGrantRecord {
   wallet: string;
@@ -243,6 +244,33 @@ export class AccessGrantsService {
       throw err;
     }
     return { updated };
+  }
+
+  /**
+   * PII erasure (the /terms + /privacy deletion promise): null the stored
+   * email while keeping the wallet's access status and the wallet-level
+   * audit trail intact. Idempotent; returns false for an unknown wallet.
+   */
+  async forget(wallet: string, actor: string): Promise<boolean> {
+    const tx = await this.db.transaction('write');
+    try {
+      const result = await tx.execute({
+        sql: 'UPDATE access_grants SET email = NULL, email_sent_at = NULL WHERE wallet = ?',
+        args: [wallet],
+      });
+      const changed = Number(result.rowsAffected ?? 0) > 0;
+      if (changed) {
+        await tx.execute({
+          sql: 'INSERT INTO access_audit_log (actor, action, wallet, detail) VALUES (?, ?, ?, ?)',
+          args: [actor, 'forget_email', wallet, null],
+        });
+      }
+      await tx.commit();
+      return changed;
+    } catch (err) {
+      await tx.rollback();
+      throw err;
+    }
   }
 
   async markEmailSent(wallet: string): Promise<void> {

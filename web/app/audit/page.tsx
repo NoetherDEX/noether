@@ -9,6 +9,33 @@ export const metadata: Metadata = {
   robots: { index: false },
 }
 
+const FAQ = [
+  {
+    q: 'What is Noether?',
+    a: 'A decentralized perpetual futures exchange on Stellar. Every order, match, and settlement happens on-chain through Soroban smart contracts — the interface is just a window onto them.',
+  },
+  {
+    q: 'When does mainnet open?',
+    a: 'After the independent third-party audit of the contracts completes. Access then opens in waves from this waitlist, with deliberately conservative caps that widen as the protocol soaks.',
+  },
+  {
+    q: 'How does the waitlist work?',
+    a: 'Join with your Stellar wallet — the email is optional and only used to tell you when you are in. Approved wallets unlock noether.exchange with a signature. Eligibility rules are in the Terms.',
+  },
+  {
+    q: 'Is it non-custodial?',
+    a: 'Yes. Your funds sit in on-chain contracts controlled by your keys and the published protocol rules. Noether never holds your assets, and every action requires your wallet signature.',
+  },
+  {
+    q: 'Which wallets can I use?',
+    a: 'Freighter and LOBSTR (via WalletConnect) work today, and most Stellar wallets that can sign Soroban transactions will too.',
+  },
+  {
+    q: 'Can I try it before mainnet?',
+    a: 'Right now: the full exchange runs on the public Stellar testnet with free test funds from the built-in faucet. Same contracts, same interface, zero risk.',
+  },
+]
+
 /**
  * Pre-launch teaser. The launch-gate middleware rewrites every route here
  * while LAUNCH_GATE=1 and no access cookie is present — this page itself is
@@ -39,6 +66,46 @@ export default function AuditPage() {
       {/* Client island — everything wallet/stellar-heavy inside is lazy,
           so the teaser's first load stays dependency-light. */}
       <WaitlistCard />
+
+      {/* FAQ — native <details>, zero client JS, teaser stays static. */}
+      <section className="mt-14 w-full max-w-md text-left">
+        <h2
+          className="text-center text-lg font-semibold text-white/90"
+          style={{ fontFamily: 'var(--font-sora)' }}
+        >
+          Questions, answered
+        </h2>
+        <div className="mt-4 space-y-2">
+          {FAQ.map((f) => (
+            <details
+              key={f.q}
+              className="group rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3"
+            >
+              <summary className="cursor-pointer list-none text-sm font-medium text-white/80 transition group-open:text-white">
+                {f.q}
+              </summary>
+              <p className="mt-2 text-sm leading-relaxed text-white/50">{f.a}</p>
+            </details>
+          ))}
+        </div>
+      </section>
+
+      {/* Built by — the founders are already public on the SCF grant. */}
+      <section className="mt-12 text-sm text-white/40">
+        <p className="uppercase tracking-widest text-xs text-white/30">Built by</p>
+        <div className="mt-3 flex items-center justify-center gap-8">
+          <a href="https://github.com/y4hyya" className="transition hover:text-white/80">
+            <span className="block font-medium text-white/70">Yahya Emir Soyer</span>
+            <span className="text-xs">Co-founder · CEO · Contracts</span>
+          </a>
+          <a href="https://github.com/merth" className="transition hover:text-white/80">
+            <span className="block font-medium text-white/70">Mert Cicekci</span>
+            <span className="text-xs">Co-founder · CTO · Full-stack</span>
+          </a>
+        </div>
+        <p className="mt-3 text-xs text-white/30">Backed by the Stellar Community Fund</p>
+      </section>
+
       <div className="mt-10 flex items-center gap-6 text-sm text-white/40">
         <a
           href="https://docs.noether.exchange"

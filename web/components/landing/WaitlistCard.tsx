@@ -282,6 +282,10 @@ export function WaitlistCard() {
               <a href="/terms" target="_blank" className="text-[#eab308] hover:underline">
                 terms
               </a>{' '}
+              and{' '}
+              <a href="/privacy" target="_blank" className="text-[#eab308] hover:underline">
+                privacy policy
+              </a>{' '}
               and confirm I am not a resident of a restricted jurisdiction.
             </span>
           </label>

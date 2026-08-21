@@ -51,6 +51,39 @@ reason = "alias of RUSTSEC-2026-0097 (rand)."
 id = "GHSA-7gcf-g7xr-8hxj"
 reason = "serde_with — host/test-side transitive; bumped in-range where semver allows, remainder pinned by soroban tree."
 
+# ── web/ + scripts/keeper/ lockfiles (added to the lane 2026-08-21; all
+#     in-range fixes applied via npm overrides — axios 1.18, protobufjs 7.6,
+#     postcss 8.5, keeper tree fully clean. The four residuals below are
+#     pinned BY VERSION so any dependency bump resurfaces them for re-triage.) ──
+
+[[PackageOverrides]]
+name = "next"
+version = "14.2.35"
+ecosystem = "npm"
+ignore = true
+reason = "All open next advisories are fixed only in the 15.x major, deferred post-v1 (App Router churn pre-freeze). Mitigations: app is client-rendered with no untrusted SSR inputs, authority lives in the gateway + on-chain signatures, image optimizer unused with remote sources. Reassess at freeze."
+
+[[PackageOverrides]]
+name = "elliptic"
+version = "6.6.1"
+ecosystem = "npm"
+ignore = true
+reason = "GHSA-848j-6mx2-7j84 has NO fixed release. Deep transitive of wallets-kit's non-Stellar connectors (near/solana/trezor multi-chain paths); Noether never signs with elliptic — wallet extensions hold keys and sign externally."
+
+[[PackageOverrides]]
+name = "uuid"
+version = "8.3.2"
+ecosystem = "npm"
+ignore = true
+reason = "Fix is the 11.x major; parent is jayson inside @solana/web3.js — a Solana RPC path Noether never exercises. uuid v1 entropy advisory does not affect any Stellar flow."
+
+[[PackageOverrides]]
+name = "glob"
+version = "10.3.10"
+ecosystem = "npm"
+ignore = true
+reason = "Dev-only build tooling (ReDoS on crafted patterns); never shipped to any runtime. Pinned exact by a parent; forcing a global glob override risks major-version conflicts across build tools."
+
 # ── dev-only npm toolchain (never shipped; majors deferred deliberately) ──
 
 [[IgnoredVulns]]
