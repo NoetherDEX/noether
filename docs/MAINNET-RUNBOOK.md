@@ -17,7 +17,15 @@ confirmed start date is the freeze deadline.
 - [ ] `contracts-v1.0.0` tag: firm-audited, criticals remediated, re-tagged rcN → final
 - [ ] `audit/release/v1/` pinned: commit, per-contract WASM hashes, config snapshot, trust-model + key-management docs, known limitations
 - [ ] Public contracts mirror live with the audited tag (gitleaks history sweep BEFORE it goes public) + StellarExpert verification wired
+- [ ] **Mainnet Noeracle live**: deployed on mainnet with O-1 publisher-auth
+      ENFORCED, keeper key allowlisted and publishing, shim pointed at it,
+      fresh feeds verified for every launch pair — the ceremony deploys our
+      shim/router but assumes this dependency underneath
 - [ ] Oracle: mainnet publisher set decided **incl. the XLM source** (Stork entitlement or Reflector/CEX path), deviation bands + last-good configured
+- [ ] **Paid Soroban RPC** endpoint chosen + `SOROBAN_RPC_URLS` set for the
+      mainnet keeper/indexer/gateway (public RPC is not keeper-grade — `docs/RPC.md`)
+- [ ] **ADMIN_WALLETS rotated** off the temp wallet and set on the mainnet
+      gateway (the waitlist admin surface follows the wallet, not the env)
 - [ ] Multisig ready (§2) and **rehearsal completed on testnet (§3) with the same keys**
 - [ ] Seed capital in hand (~$1.5–2k: LP seed + insurance buffer + 2 jury prefunds)
 - [ ] Monitoring live: keeper heartbeat/dead-man, oracle staleness, TTL-bump failure paging (P3-9 already alerts), gateway 5xx, wallet-XLM alarm (P3-10)
@@ -63,27 +71,34 @@ pattern; the rehearsal adds the multisig signing path:
 
 ## 4 · Mainnet ceremony
 
-Per contract, in this order — market, vault, risk, shim, router, factory,
+Per contract, in this order — market, vault, shim, router, factory,
 referral (vault before market wiring; shim/router before market init points
-at them):
+at them). **v1 ships SIX contracts (decision 2026-08-22):** `contracts/risk`
+stays in the tree but is NOT deployed or audited — it was designed for the
+old 64KB WASM ceiling; the 128KB limit let partial-liq/ADL live in-market,
+and per-pair risk config is the market's own `set_asset_risk` ladder. It can
+be deployed and wired post-v1 through the normal upgrade path if ever needed.
 
 1. **Upload** each audited WASM: `stellar contract upload --wasm <file>` —
    record every hash; each MUST equal the dossier hash before proceeding.
 2. **Deploy + initialize back-to-back** (R-3: the arbitrary-admin init race)
    and **immediately verify `get_admin` == the multisig address** on every
-   contract. Mismatch = abort that contract, redeploy. No funding, no config,
-   no announcements before all seven admin checks pass.
+   contract. The market has no `get_admin` view (WASM-trimmed): verify its
+   admin on StellarExpert's contract-storage tab and via the multisig-signed
+   init tx itself. Mismatch = abort that contract, redeploy. No funding, no
+   config, no announcements before all six admin checks pass.
 3. **Hash-verify deployed code**: `stellar contract fetch --id <addr>` →
-   sha256 == dossier hash, all seven. (Same check pattern used 2026-08-20 on
+   sha256 == dossier hash, all six. (Same check pattern used 2026-08-20 on
    the testnet release — 6/6.)
 4. **Configure** (2-of-3 signed):
    - Market `migrate_config`/init config: launch caps table from the spec —
      leverage 5x (raise to 10x post-soak by invoke), max position $25k,
-     min collateral 10 USDC, fee tiers at mainnet thresholds.
+     min collateral 10 USDC, fee tiers at mainnet thresholds; then
+     `set_asset_risk` per launch pair (the in-market risk ladder — see
+     `deploy_batch1.sh` step 5 for the shape).
    - Vault: `set_deposit_cap` ($10k/account), `set_aum_cap` ($250k),
      `set_shortfall_inflow_bps`, withdraw cooldown; wire USDC = **Circle's
      mainnet USDC SAC**, market address, fees.
-   - Risk: `set_config` per launch pair.
    - Factory: `set_max_vaults 50` and/or `set_leader_allowlist` (R-2).
    - Router: publishers, price bands, stork/reflector guard configs.
    - Every setter now emits an event (R-13) — the ceremony is chain-auditable.
@@ -98,8 +113,9 @@ at them):
 7. **Initial TTL pin**: run one keeper `maybeBumpTtls` cycle (or manual
    `ExtendFootprintTtlOp`) over every new address; from then on the P3-9 duty
    (6h cadence, instance+code, auto-covers contracts.json) owns it.
-8. **Snapshot**: run the config-snapshot script → JSON into
-   `audit/release/v1/` next to the hashes.
+8. **Snapshot**: `./scripts/snapshot_config.sh mainnet audit/release/v1/config-snapshot.json`
+   — 49-entry JSON across all six contracts (first proven against the prod
+   testnet stack 2026-08-22, zero errors).
 9. **Smoke trades** with team wallets (tiny sizes): open → close → a forced
    liquidation → LP round-trip → referral fee event. All green before any
    external wallet is approved.
@@ -117,9 +133,19 @@ at them):
 - Web: prod build values switch to mainnet addresses + mainnet gateway URL;
   `testnet.noether.exchange` stays on the testnet stack as the free
   playground (waitlist CTA already on its teaser page).
-- Keeper: `noether-keeper-mainnet` from the monorepo keeper (the v2-repo prod
-  keeper retires at this cutover), dedicated mainnet keeper key with XLM +
-  the P3-10 refill alarm.
+- Keeper: `noether-keeper-mainnet` from the monorepo keeper image (both
+  testnet keepers already run it), with a FRESH dedicated mainnet key
+  (never a testnet key — assume those are burned), funded XLM + USDC
+  trustline + the P3-10 refill alarm.
+- Mainnet web build values (beyond addresses + gateway URL):
+  `NEXT_PUBLIC_ADMIN_ENABLED=1` (without it `/admin` 404s and §8 wave ops
+  break), `NEXT_PUBLIC_NETWORK_LABEL=mainnet` (flips leaderboard scope,
+  hides the testnet ribbon, arms the faucet 404 guard), Umami vars (same
+  site id or a separate mainnet website). Keep `web/.env.azure.mainnet.local`
+  backed up OUTSIDE the repo — these values exist nowhere else.
+- The mainnet web app gets **NO admin/faucet secrets** (`ADMIN_SECRET_KEY`
+  stays testnet-only); the faucet page and its API routes 404 on mainnet
+  builds by the `IS_MAINNET_BUILD` guard.
 
 ## 6 · Restore procedure (R-1.3 — archived-entry recovery)
 
