@@ -23,6 +23,18 @@ import { STELLAR_EXPERT_BASE, NULL_ACCOUNT } from '@/lib/utils/constants';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+/** Unique title per vault (W11) — gateway name when reachable, id otherwise. */
+export async function generateMetadata({ params }: { params: { id: string } }) {
+  const fallback = { title: `Vault #${params.id}` };
+  if (!/^\d+$/.test(params.id)) return fallback;
+  try {
+    const v = await getVault(Number(params.id));
+    return v?.name ? { title: `${v.name} — Vault #${params.id}` } : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default async function VaultDetailPage({
   params,
 }: {
