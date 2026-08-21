@@ -18,7 +18,7 @@ export default function TermsPage() {
       <h1 className="text-3xl font-semibold text-white" style={{ fontFamily: 'var(--font-sora)' }}>
         Terms of Use — Noether v1 Beta
       </h1>
-      <p className="mt-2 text-sm text-white/40">Version v1-2026-08</p>
+      <p className="mt-2 text-sm text-white/40">Version v1.1-2026-08</p>
 
       <div className="mt-8 space-y-6 text-sm leading-relaxed">
         <section>
