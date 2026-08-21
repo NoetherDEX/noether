@@ -488,6 +488,9 @@ function mapPrepareError(err: unknown, reply: FastifyReply): FastifyReply {
   if (err && typeof err === 'object' && (err as { name?: string }).name === 'TxSimulationError') {
     return reply.code(400).send({ error: 'simulation_failed', message });
   }
+  // 5xx bodies stay opaque (upstream RPC errors can embed endpoint hosts or
+  // credentialed URLs) — the full error is in the log line, keyed by the
+  // x-request-id header every response already carries.
   reply.log.error({ err }, 'orders/prepare failed');
-  return reply.code(502).send({ error: 'rpc_error', message });
+  return reply.code(502).send({ error: 'rpc_error', message: 'Upstream RPC request failed.' });
 }

@@ -18,6 +18,12 @@ const nextConfig = {
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          // 2y HSTS across *.noether.exchange (all subdomains are HTTPS-only)
+          // closes the redirect-only first-visit/downgrade window.
+          { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
+          // The app never uses these sensors; WalletConnect QR flows scan
+          // with the phone's camera, not the page's.
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
         ],
       },
     ]

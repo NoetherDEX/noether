@@ -22,6 +22,9 @@ confirmed start date is the freeze deadline.
 - [ ] Seed capital in hand (~$1.5–2k: LP seed + insurance buffer + 2 jury prefunds)
 - [ ] Monitoring live: keeper heartbeat/dead-man, oracle staleness, TTL-bump failure paging (P3-9 already alerts), gateway 5xx, wallet-XLM alarm (P3-10)
 - [ ] `/terms` reviewed for public launch; waitlist + admin panel operating (live since 2026-08-20)
+- [ ] API-surface pentest pass (gateway REST/WS, key issuance, admin waitlist
+      routes) — the Audit Bank engagement scopes contracts + Noeracle only;
+      the web gateway needs its own adversarial pass before mainnet
 - [ ] Mainnet infra stood up (§5): `-mainnet` app instances + `noether_mainnet` DB
 
 ## 2 · Multisig setup (SEC-3 / P3-8)

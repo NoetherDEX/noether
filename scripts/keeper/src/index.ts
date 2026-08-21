@@ -304,7 +304,13 @@ class KeeperBot {
 
     console.log('Configuration:');
     console.log(`  Network:           ${this.config.network}`);
-    console.log(`  RPC URLs:          ${this.config.rpcUrls.join(' → ')}`);
+    console.log(
+      // Paid RPC endpoints often carry the API key in userinfo or the query
+      // string — strip both before the URL ever reaches a log line.
+      `  RPC URLs:          ${this.config.rpcUrls
+        .map((u) => u.replace(/\/\/[^@/]*@/, '//***@').replace(/\?.+$/, '?***'))
+        .join(' → ')}`,
+    );
     console.log(`  Keeper Address:    ${this.stellar.publicKey}`);
     console.log(`  Market Contract:   ${this.config.marketContractId.slice(0, 8)}...`);
     console.log(`  Noeracle Contract: ${this.config.noeracleContractId.slice(0, 8)}...`);
