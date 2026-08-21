@@ -8,6 +8,14 @@ program design.
 *internal review*, *tool report*, or *third-party audit*. Tool output is never
 called an audit.
 
+**v1 scope (decision 2026-08-22):** the deployment and the third-party audit
+cover SIX contracts — market, vault, noeracle_shim, noether_router,
+vault_factory, referral. `contracts/risk` is in the tree but unshipped and
+out of scope: built for the old 64KB WASM ceiling, obsoleted when the 128KB
+limit let partial-liq/ADL live in-market (per-pair risk config = the market's
+`set_asset_risk` ladder). `audit/config-snapshots/` holds dated
+`snapshot_config.sh` outputs (49 config entries across the six contracts).
+
 ## Layout
 
 ```

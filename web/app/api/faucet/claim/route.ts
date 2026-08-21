@@ -1,3 +1,4 @@
+import { IS_MAINNET_BUILD } from '@/lib/utils/constants';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   Horizon,
@@ -21,6 +22,8 @@ import { NETWORK, USDC_ASSET as USDC_ASSET_CONFIG } from '@/lib/utils/constants'
 const USDC_ASSET = new Asset(USDC_ASSET_CONFIG.CODE, USDC_ASSET_CONFIG.ISSUER);
 
 export async function POST(request: NextRequest) {
+  // Testnet-only faucet: hard 404 on mainnet builds regardless of env keys.
+  if (IS_MAINNET_BUILD) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   try {
     const { address, amount } = await request.json();
 

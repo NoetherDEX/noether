@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
 
+import { IS_MAINNET_BUILD } from '@/lib/utils/constants';
 import { NextRequest, NextResponse } from 'next/server';
 import { StrKey } from '@stellar/stellar-sdk';
 import {
@@ -12,6 +13,8 @@ import {
 import { FAUCET_DAILY_LIMIT_USDC } from '@/lib/utils/constants';
 
 export async function GET(request: NextRequest) {
+  // Testnet-only faucet: hard 404 on mainnet builds regardless of env keys.
+  if (IS_MAINNET_BUILD) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   try {
     const { searchParams } = new URL(request.url);
     const address = searchParams.get('address');
