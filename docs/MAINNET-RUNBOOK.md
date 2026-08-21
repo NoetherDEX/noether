@@ -198,3 +198,11 @@ audit-logged.
    `set_*` calls, no upgrades. Approve wave-2 from the waitlist.
 4. Public: `LAUNCH_GATE=0` on the web app when it has been boring for weeks;
    caps walk toward the public targets (25x is the SCF deliverable number).
+5. **Stellar Liquidity Award** (once live + audited — the two hard gates):
+   invitation-based for SCF alumni, so Ashley should have us flagged as a
+   prospect BEFORE launch. Base $50K in XLM (convert on-chain to USDC before
+   seeding the vault — the pool is USDC-denominated), Supplemental $50K at
+   7-day consecutive TVL > $250K (the natural 6-month milestone). Winners
+   file monthly activity reports for 6 months — indexer/leaderboard/Umami
+   already produce the numbers. Rules:
+   https://stellar.gitbook.io/scf-handbook/supporting-programs/stellar-liquidity-award/official-rules
