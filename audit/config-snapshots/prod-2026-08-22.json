@@ -1,0 +1,240 @@
+{
+  "env": "prod",
+  "network": "testnet",
+  "takenAt": "2026-08-21T21:16:49.217629+00:00",
+  "gitCommit": "fa3f803",
+  "manifest": {
+    "network": "testnet",
+    "env": "prod",
+    "deployedAt": "2026-07-21 02:28:24",
+    "contracts": {
+      "market": "CBHHWFAYLB3SXJCE232DC6WNSK74IBEOROAGCI2AFBA2H5NQOH2KYKNN",
+      "vault": "CBSWA5P75NGV2LP5KOY7A7LOAX2CENI5OYBSJ5IVLHENKQJF2I3ZBSYE",
+      "noeToken": "CADEAZ3TT5SIGJVBIWMMWC4TFZKPKGPGGJ6O4JGAAZTLR6MIBDRBQ4H5",
+      "noetherRouter": "CBDVQKYEN6QMRGQZC77DFYEQXQHDMCVJ3TPBJKNERJVMIESA6GQT44LG",
+      "noeracleShim": "CDRQJDCZ2EKIVAM6D6U2YFTE7VNMN3TFUUJGZ5SKAFB5TCLMSHSSWU6N",
+      "noeracle": "CBTO5K2NLG2KYHQDL5ME4SWFQ5GRR7GVU4DFATOXGVS3OUJJDFF2YYNS",
+      "usdcToken": "CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4",
+      "vaultFactory": "CAG5E6IM32GFEXGZOXWLFHNVRMDOYGPRZKZSBFXXHVJ5Q5MNJUSNQKT7",
+      "referral": "CB4A2OHP6BKKF2RC532PPRE7K4X3UOZEVASEQTTTWMRSZGUN2AV2REND"
+    },
+    "admin": "GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN",
+    "noeAsset": {
+      "code": "NOE",
+      "issuer": "GA7PCANKNREYVUMU6CCOPJHVE5XCRUCFLZ6CGS3GX4BNDBR63QAVLVUZ"
+    }
+  },
+  "contracts": {
+    "market": {
+      "get_pause_state": [
+        0,
+        1786614860
+      ],
+      "get_asset_risk BTC": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk ETH": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk XLM": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk SOL": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk XRP": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk ADA": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk BNB": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk TRX": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk HYPE": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk DOGE": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk ZEC": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk LINK": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk BCH": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk LTC": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "instance_storage": "<instance read unavailable>"
+    },
+    "vault": {
+      "get_admin": "GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN",
+      "get_pool_info": {
+        "aum": "14047604760622",
+        "total_fees": "30159000000",
+        "total_glp": "10011489569220",
+        "total_usdc": "14337827514586",
+        "unrealized_pnl": "320381753964"
+      },
+      "get_noe_price": "14031383",
+      "get_usdc_balance": "14368306742233",
+      "get_aum": "14047504533304",
+      "get_deposit_fee": 30,
+      "get_withdraw_fee": 30,
+      "get_deposit_cap": "0",
+      "get_aum_cap": "0",
+      "get_withdraw_cooldown": 1800,
+      "get_buffer_target_bps": 1000,
+      "get_reserve_cap": 7000,
+      "get_buffer_balance": "320227647",
+      "get_shortfall_reserve": "0",
+      "get_reserved_payout": "8828451797661",
+      "get_usdc_token": "CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4",
+      "get_noe_token": "CADEAZ3TT5SIGJVBIWMMWC4TFZKPKGPGGJ6O4JGAAZTLR6MIBDRBQ4H5",
+      "get_market_contract": "CBHHWFAYLB3SXJCE232DC6WNSK74IBEOROAGCI2AFBA2H5NQOH2KYKNN"
+    },
+    "vaultFactory": {
+      "get_admin": "GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN",
+      "get_market": "CBHHWFAYLB3SXJCE232DC6WNSK74IBEOROAGCI2AFBA2H5NQOH2KYKNN",
+      "get_usdc": "CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4"
+    },
+    "referral": {
+      "get_admin": "GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN",
+      "get_market": "CBHHWFAYLB3SXJCE232DC6WNSK74IBEOROAGCI2AFBA2H5NQOH2KYKNN",
+      "get_config": [
+        400,
+        1000,
+        "0"
+      ]
+    },
+    "noetherRouter": {
+      "get_admin": "GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN",
+      "get_market": "CBHHWFAYLB3SXJCE232DC6WNSK74IBEOROAGCI2AFBA2H5NQOH2KYKNN",
+      "get_noeracle": "CBTO5K2NLG2KYHQDL5ME4SWFQ5GRR7GVU4DFATOXGVS3OUJJDFF2YYNS",
+      "get_stork_config": {
+        "enabled": true,
+        "max_age_secs": 60,
+        "max_dev_bps": 100,
+        "require_fresh": false,
+        "signer": "03c9f3c5189c43a11781a01f532111cac3d891d1",
+        "taxonomy": 1
+      },
+      "get_stork_strict_assets": null,
+      "get_reflector_config": null
+    },
+    "noeracleShim": {
+      "get_admin": "GCKIUOTK3NWD33ONH7TQERCSLECXLWQMA377HSJR4E2MV7KPQFAQLOLN",
+      "get_noeracle": "CBTO5K2NLG2KYHQDL5ME4SWFQ5GRR7GVU4DFATOXGVS3OUJJDFF2YYNS",
+      "get_backend": [
+        0,
+        "CBTO5K2NLG2KYHQDL5ME4SWFQ5GRR7GVU4DFATOXGVS3OUJJDFF2YYNS",
+        7
+      ]
+    }
+  }
+}
