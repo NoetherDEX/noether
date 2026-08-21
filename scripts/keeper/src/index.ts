@@ -339,13 +339,13 @@ class KeeperBot {
     void sendAlert(
       'info',
       'Keeper started',
-      `network=${this.config.network} keeper=${this.stellar.publicKey} market=${this.config.marketContractId.slice(0, 8)}…`,
+      `Price feed, liquidations and orders are running. (network=${this.config.network}, wallet=${this.stellar.publicKey.slice(0, 4)}…${this.stellar.publicKey.slice(-4)}, market=${this.config.marketContractId.slice(0, 8)}…)`,
     );
     if (this.config.keySource === 'ADMIN_SECRET_KEY') {
       void sendAlert(
         'warn',
-        'Keeper signing with ADMIN_SECRET_KEY fallback',
-        'Set a dedicated KEEPER_SECRET_KEY — admin key exposure on the keeper box is unnecessary blast radius.',
+        'Keeper is signing with the ADMIN key',
+        'It works, but the admin key should not live on the keeper server. Tell Claude: "give the keeper its own key".',
       );
     }
 
@@ -373,10 +373,10 @@ class KeeperBot {
         if (this.consecutiveCycleErrors >= this.config.alertErrorStreak) {
           void sendAlert(
             'critical',
-            'Keeper cycle error streak',
-            `${this.consecutiveCycleErrors} consecutive cycle errors. Latest: ${
+            'Keeper stuck in an error loop',
+            `It failed ${this.consecutiveCycleErrors} rounds in a row and cannot do its job. Latest error: ${
               error instanceof Error ? error.message : error
-            }`,
+            }\nTell Claude: "keeper error loop".`,
           );
         }
       }
@@ -410,8 +410,8 @@ class KeeperBot {
     const hardExit = setTimeout(() => process.exit(1), 6_000);
     void sendAlert(
       'critical',
-      'Keeper watchdog triggered — process exiting',
-      `No completed cycle in ${Math.round(sinceLastCycle / 1000)}s. Railway should restart the keeper; investigate if this repeats.`,
+      'Keeper froze — restarting itself now',
+      `Nothing finished for ${Math.round(sinceLastCycle / 1000)}s, so it is restarting automatically. One of these is fine. If it repeats today, tell Claude: "keeper keeps restarting".`,
     ).finally(() => {
       clearTimeout(hardExit);
       process.exit(1);
@@ -450,8 +450,8 @@ class KeeperBot {
     saveKeeperState(this.config.stateFilePath, this.state);
     await sendAlert(
       'info',
-      'Keeper shutting down (graceful)',
-      `runtime=${this.formatDuration(Date.now() - this.stats.startTime.getTime())} liquidations=${this.stats.liquidationsExecuted} errors=${this.stats.errors}`,
+      'Keeper stopped on purpose',
+      `Normal during deploys and restarts. Ran ${this.formatDuration(Date.now() - this.stats.startTime.getTime())}, did ${this.stats.liquidationsExecuted} liquidations, ${this.stats.errors} errors.`,
     );
     process.exit(0);
   }
@@ -789,9 +789,11 @@ class KeeperBot {
         void sendAlert(
           strict ? 'critical' : 'warn',
           strict
-            ? `Stork feed DARK with strict armed [${this.storkStrictAssets.join(', ')}] — opens halting`
-            : 'Stork Fast feed dark — guard fail-open',
-          `No signed frame for ${Math.round((now - (status.lastFrameAt ?? 0)) / 1000)}s (reconnects: ${status.reconnects}, last error: ${status.lastError ?? 'none'}).`,
+            ? `Backup price feed is DOWN — new trades on ${this.storkStrictAssets.join(', ')} are halted`
+            : 'Backup price feed (Stork) is quiet',
+          strict
+            ? `No signed prices for ${Math.round((now - (status.lastFrameAt ?? 0)) / 1000)}s. Opens stay blocked until it returns. Tell Claude: "stork is dark".`
+            : `No signed Stork prices for ${Math.round((now - (status.lastFrameAt ?? 0)) / 1000)}s. Trading continues on the main feed — fine unless this lasts hours.`,
         );
       }
       return;
@@ -818,8 +820,8 @@ class KeeperBot {
       if (streak === 5 || streak === 25 || streak === 100 || hourly) {
         void sendAlert(
           streak >= 100 ? 'critical' : 'warn',
-          'relay_stork failing repeatedly',
-          `${streak} consecutive failures; last: ${result.error}`,
+          'Stork price relay keeps failing',
+          `${streak} failures in a row. Latest: ${result.error}\nIf this reaches ACTION NEEDED, tell Claude: "stork relay failing".`,
         );
       }
     }
@@ -842,8 +844,8 @@ class KeeperBot {
       console.warn(`\n⚠️  ${symbol} $${priceHuman} outside sanity band [$${asset.minPrice}, $${asset.maxPrice}] — skipping push`);
       void sendAlert(
         'warn',
-        `Price push skipped: ${symbol} outside sanity band`,
-        `attestation $${priceHuman} not in [$${asset.minPrice}, $${asset.maxPrice}] (round ${attestation.round_id})`,
+        `Refused a crazy ${symbol} price`,
+        `The feed said $${priceHuman}, but anything outside $${asset.minPrice}–$${asset.maxPrice} is treated as broken data and NOT published. The guard did its job — only worry if this repeats.`,
       );
       return false;
     }
@@ -862,8 +864,8 @@ class KeeperBot {
           console.warn(`\n⚠️  ${symbol} moved ${changePercent.toFixed(1)}% ($${lastPrice.price} → $${priceHuman}) — skipping (> ${asset.maxMovePct}% per-push bound)`);
           void sendAlert(
             'warn',
-            `Price push skipped: ${symbol} jump bound tripped`,
-            `$${lastPrice.price} → $${priceHuman} (${changePercent.toFixed(1)}% > ${asset.maxMovePct}%). Repeated trips = bad upstream or real crash — check manually.`,
+            `Refused a huge ${symbol} jump`,
+            `$${lastPrice.price} → $${priceHuman} is a ${changePercent.toFixed(1)}% move in one step (limit ${asset.maxMovePct}%), so it was NOT published. If this repeats: either ${symbol} truly crashed or the feed is bad — compare with Binance.`,
           );
           return false;
         }
@@ -880,8 +882,8 @@ class KeeperBot {
         console.warn(`\n⚠️  ${symbol} attestation $${priceHuman} diverges ${divergencePct.toFixed(1)}% from reference $${reference} — skipping push`);
         void sendAlert(
           'warn',
-          `Price push skipped: ${symbol} diverges from independent reference`,
-          `attestation $${priceHuman} vs reference $${reference} (${divergencePct.toFixed(1)}% > ${this.config.referenceDivergencePct}%)`,
+          `Refused ${symbol}: two price sources disagree`,
+          `Our feed says $${priceHuman}, the independent check says $${reference} (${divergencePct.toFixed(1)}% apart) — NOT published. Compare ${symbol} on Binance; tell Claude if it keeps happening.`,
         );
         return false;
       }
@@ -903,8 +905,8 @@ class KeeperBot {
         console.warn(`\n🛑 ${symbol} attestation $${priceHuman} diverges ${storkDivergencePct.toFixed(2)}% from Stork $${stork} — skipping push`);
         void sendAlert(
           'critical',
-          `DUAL-SOURCE DISAGREEMENT: ${symbol} Noeracle vs Stork`,
-          `attestation $${priceHuman} vs Stork $${stork} (${storkDivergencePct.toFixed(2)}% > ${this.config.storkMaxDivergencePct}%). One of the two feeds is wrong — investigate before unblocking.`,
+          `${symbol} price sources seriously disagree — publishing stopped`,
+          `Noeracle says $${priceHuman}, Stork says $${stork} (${storkDivergencePct.toFixed(2)}% apart). One of them is wrong, so ${symbol} prices are frozen until they agree. Tell Claude: "price sources disagree on ${symbol}".`,
         );
         return false;
       }
@@ -1001,10 +1003,8 @@ class KeeperBot {
       // for as long as the misconfiguration persists.
       await sendAlert(
         'critical',
-        'discovery legacy views unavailable, chain walk engaged',
-        `KEEPER_DISCOVERY=${this.config.discoveryMode} but the market no longer answers ` +
-          `get_all_position_ids (${error instanceof Error ? error.message : error}). ` +
-          `Falling forward to the chain walk this cycle — set KEEPER_DISCOVERY=chain.`,
+        'Keeper switched to its backup position scanner',
+        `The usual way of listing positions stopped working (${error instanceof Error ? error.message : error}); the backup scanner took over automatically. Tell Claude: "set keeper discovery to chain".`,
       );
       const snapshot = await this.discovery!.discover();
       saveKeeperState(this.config.stateFilePath, this.state);
@@ -1030,16 +1030,15 @@ class KeeperBot {
         } else {
           await sendAlert(
             'warn',
-            'discovery shadow parity divergence',
-            `positions legacyOnly=[${positions.onlyA}] walkOnly=[${positions.onlyB}] ` +
-              `orders legacyOnly=[${orders.onlyA}] walkOnly=[${orders.onlyB}]`,
+            'Position scanners disagree (debug check)',
+            `The two scanning methods returned different lists — positions legacyOnly=[${positions.onlyA}] walkOnly=[${positions.onlyB}], orders legacyOnly=[${orders.onlyA}] walkOnly=[${orders.onlyB}]. Tell Claude if you see this.`,
           );
         }
       } catch (error) {
         await sendAlert(
           'warn',
-          'discovery shadow walk failed',
-          error instanceof Error ? error.message : String(error),
+          'Backup position scanner test failed (debug check)',
+          `${error instanceof Error ? error.message : String(error)} — trading is unaffected; this is a background self-test.`,
         );
       }
     }
@@ -1098,8 +1097,8 @@ class KeeperBot {
       if (this.consecutiveReadFailures === READ_FAILURE_ALERT_THRESHOLD) {
         void sendAlert(
           'critical',
-          'Keeper cannot read market state',
-          `${this.consecutiveReadFailures} consecutive snapshot failures — liquidation & order scanning is blind. Latest: ${message}`,
+          'Keeper is BLIND — it cannot read the market',
+          `${this.consecutiveReadFailures} failed reads in a row: liquidations and orders are NOT being watched right now. Latest error: ${message}\nTell Claude: "keeper cannot read the market".`,
         );
       }
       if (this.consecutiveReadFailures >= READ_FAILURE_ALERT_THRESHOLD) {
@@ -1158,14 +1157,13 @@ class KeeperBot {
    */
   private alertSpike(symbol: string, from: number, to: number, deltaPct: number): void {
     const last = this.spikeAlertAt.get(symbol) ?? 0;
-    if (Date.now() - last < 5 * 60 * 1000) return;
+    if (Date.now() - last < 60 * 60 * 1000) return;
     this.spikeAlertAt.set(symbol, Date.now());
     console.warn(`\n⚡ ${symbol} moved ${deltaPct.toFixed(2)}% in one push ($${from} → $${to})`);
     void sendAlert(
-      'warn',
-      `Price spike: ${symbol} ${deltaPct.toFixed(2)}% in one round`,
-      `$${from} → $${to} between consecutive pushes (> ${this.config.spikeAlertPct}%). ` +
-        `Single-round spikes are the L0-9 manipulation window — verify against reference feeds.`,
+      'info',
+      `${symbol} price moved fast`,
+      `${symbol} jumped ${deltaPct.toFixed(1)}% in one step ($${from} → $${to}). Usually just a volatile market — no action needed. Only worry if one coin does this nonstop, or price sites show something very different.`,
     );
   }
 
@@ -1747,12 +1745,12 @@ class KeeperBot {
           console.log(`\n🚨 ADL ACTIVATED for ${asset} — auto-deleveraging ranked winners`);
           await sendAlert(
             'critical',
-            `ADL activated for ${asset}`,
-            'Pool coverage fell under the trigger ratio — the keeper is force-realizing ranked winners.',
+            `Emergency deleveraging ON for ${asset}`,
+            `The pool can no longer fully cover every winner on ${asset}, so the safety valve kicked in: top winning positions get force-closed to protect everyone else. This is by design. Tell Claude: "ADL fired on ${asset}".`,
           );
         } else {
           console.log(`\n✅ ADL cleared for ${asset}`);
-          await sendAlert('warn', `ADL cleared for ${asset}`, 'Pool coverage recovered above the clear ratio.');
+          await sendAlert('info', `Emergency deleveraging OFF for ${asset}`, 'Pool coverage recovered. Everything back to normal — no action needed.');
         }
       }
       this.adlActive.set(asset, simFlag);
@@ -1798,8 +1796,8 @@ class KeeperBot {
         );
         await sendAlert(
           'critical',
-          `ADL executed on ${asset}`,
-          `Position ${candidate.position.id} force-realized (rank score ${candidate.score}).`,
+          `Force-closed a winning position on ${asset}`,
+          `Position ${candidate.position.id} was closed by emergency deleveraging to protect the pool. Automatic — nothing for you to run, but good to know it happened.`,
         );
 
         // Re-check the trigger between closes; clear on-chain and stop
@@ -1812,9 +1810,9 @@ class KeeperBot {
             this.adlActive.set(asset, false);
             console.log(`\n✅ ADL cleared for ${asset} after ${closes} close(s)`);
             await sendAlert(
-              'warn',
-              `ADL cleared for ${asset}`,
-              `Coverage recovered after ${closes} ADL close(s).`,
+              'info',
+              `Emergency deleveraging OFF for ${asset}`,
+              `Pool coverage recovered after ${closes} forced close(s). Back to normal.`,
             );
           }
           break;
@@ -1951,8 +1949,8 @@ class KeeperBot {
     if (stuck.length > 0) {
       await sendAlert(
         'critical',
-        'Triggered orders stuck pending',
-        `Orders ${stuck.join(', ')} triggered for ${this.config.triggeredStuckAlertCycles}+ consecutive cycles without executing — check RPC health, fees, and keeper sequence.`,
+        'Orders are stuck — they should have executed but did not',
+        `Orders ${stuck.join(', ')} hit their trigger a while ago and still have not executed. Tell Claude: "orders are stuck".`,
       );
     }
   }
@@ -2099,8 +2097,8 @@ class KeeperBot {
     if (xlm !== null && xlm < this.config.minKeeperXlm) {
       void sendAlert(
         'critical',
-        'Keeper wallet low on XLM',
-        `balance=${xlm.toFixed(2)} XLM < min ${this.config.minKeeperXlm} — refill ${this.stellar.publicKey}`,
+        'Keeper wallet is almost out of gas',
+        `Only ${xlm.toFixed(2)} XLM left (minimum ${this.config.minKeeperXlm}). Without gas the keeper stops working. Send XLM to ${this.stellar.publicKey} or tell Claude: "refill the keeper wallet".`,
       );
     }
 
@@ -2125,8 +2123,8 @@ class KeeperBot {
     if (failed.length > 0) {
       void sendAlert(
         'warn',
-        'TTL bump failing',
-        `could not extend: ${failed.join(', ')} (${bumped.length} succeeded)`,
+        'Contract rent renewal partly failing',
+        `Could not renew: ${failed.join(', ')} (${bumped.length} others succeeded). Harmless once — but if this repeats for days, contracts can freeze. Tell Claude: "TTL bump failing".`,
       );
     }
   }
@@ -2174,8 +2172,8 @@ class KeeperBot {
         if (this.fundingFailureStreak >= FUNDING_FAILURE_ALERT_THRESHOLD) {
           void sendAlert(
             'warn',
-            'apply_funding failing repeatedly',
-            `${this.fundingFailureStreak} consecutive failures. Latest: ${result.error}`,
+            'Hourly funding update keeps failing',
+            `${this.fundingFailureStreak} tries in a row failed. Latest: ${result.error}\nTell Claude: "funding update failing".`,
           );
         }
         break;

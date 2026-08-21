@@ -26,11 +26,18 @@ export interface AlertChannels {
 const ALERT_FETCH_TIMEOUT_MS = 5_000;
 const ALERT_DEDUPE_WINDOW_MS = 10 * 60 * 1000;
 
-const LEVEL_EMOJI: Record<AlertLevel, string> = {
-  info: 'ℹ️',
-  warn: '⚠️',
-  critical: '🚨',
+// Human tiers: the first line of every alert answers "do I need to act?"
+const LEVEL_LABEL: Record<AlertLevel, string> = {
+  info: 'ℹ️ FYI',
+  warn: '⚠️ CHECK SOON',
+  critical: '🚨 ACTION NEEDED',
 };
+
+/** keeper-prod-1 → "prod keeper", keeper-1 → "staging keeper". */
+function friendlyInstance(id: string): string {
+  if (!id) return 'keeper';
+  return id.includes('prod') ? 'prod keeper' : 'staging keeper';
+}
 
 let channels: AlertChannels = {};
 let instanceId = '';
@@ -62,8 +69,7 @@ export async function sendAlert(level: AlertLevel, title: string, details?: stri
     lastSentAt.set(key, now);
     pruneDedupeMap(now);
 
-    const instance = instanceId ? `/${instanceId}` : '';
-    const text = `${LEVEL_EMOJI[level]} [noether-keeper${instance}/${level.toUpperCase()}] ${title}${details ? `\n${details}` : ''}`;
+    const text = `${LEVEL_LABEL[level]} · ${friendlyInstance(instanceId)}\n${title}${details ? `\n${details}` : ''}`;
     console.log(`\n${text}`);
 
     const deliveries: Promise<void>[] = [];
