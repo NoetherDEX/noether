@@ -50,6 +50,7 @@ const GATE_OPEN_PATHS = new Set([
   '/api/access',
   '/api/access/wallet',
   '/terms',
+  '/privacy',
   '/restricted',
 ]);
 
