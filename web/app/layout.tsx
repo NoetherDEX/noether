@@ -113,6 +113,15 @@ export default function RootLayout({
             ]),
           }}
         />
+        {/* Self-hosted, cookieless Umami analytics — inlined at build time;
+            absent env vars (local dev) render nothing. */}
+        {process.env.NEXT_PUBLIC_UMAMI_URL && process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID && (
+          <script
+            defer
+            src={`${process.env.NEXT_PUBLIC_UMAMI_URL}/script.js`}
+            data-website-id={process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID}
+          />
+        )}
         <a
           href="#main-content"
           data-noether-chrome
