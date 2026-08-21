@@ -220,6 +220,17 @@ Continuous enforcement: `.github/workflows/security.yml` — cargo-audit +
 cargo-deny (`contracts/deny.toml`) + osv-scanner on every PR (fails on any
 un-triaged advisory), Scout weekly with artifact upload.
 
+**2026-08-21 lane extension:** the standalone lockfiles (`web/`,
+`scripts/keeper/`, `scripts/volume-bot/`) had zero advisory coverage — added
+to the osv lane. First sweep found ~60 advisories; all in-range fixes applied
+(keeper tree fully clean; web: axios 1.18 / protobufjs 7.6 / postcss 8.5
+forced past exact transitive pins via npm `overrides`). Four residuals
+triaged with VERSION-pinned ignores so any bump re-surfaces them: next@14.2.35
+(fixes are 15.x-major, deferred post-v1), elliptic@6.6.1 (no fixed release
+exists; non-Stellar wallet-connector path, never signs for us), uuid@8.3.2
+(fix is a major; dead Solana path), glob dev-tooling. Full report:
+`audit/tools/osv-scanner/2026-08-21/report.txt` — "No issues found".
+
 ## R-13 · Lint-family postures — ACCEPTED (optional batch improvements)
 
 **Source:** SCT. Verdicts with rationale, sampled against code:

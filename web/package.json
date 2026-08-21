@@ -39,11 +39,16 @@
     "dotenv": "^17.2.3",
     "eslint": "^8.51.0",
     "eslint-config-next": "14.2.35",
-    "postcss": "^8.4.31",
+    "postcss": "^8.5.23",
     "tailwindcss": "^3.3.5",
     "tailwindcss-animate": "^1.0.7",
     "tsx": "^4.21.0",
     "typescript": "^5.2.2",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "axios": "^1.18.0",
+    "protobufjs": "^7.6.5",
+    "postcss": "^8.5.23"
   }
 }

@@ -41,7 +41,10 @@ jobs:
           chmod +x osv-scanner
           ./osv-scanner scan --config osv-scanner.toml \
             --lockfile package-lock.json \
-            --lockfile contracts/Cargo.lock
+            --lockfile contracts/Cargo.lock \
+            --lockfile web/package-lock.json \
+            --lockfile scripts/keeper/package-lock.json \
+            --lockfile scripts/volume-bot/package-lock.json
 
   scout:
     name: Scout (Soroban detector suite, weekly report)
