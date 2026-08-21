@@ -62,6 +62,21 @@ export async function decideGrants(
   return (await res.json()) as { updated: string[]; emailed: string[] };
 }
 
+/** PII erasure — nulls the stored email; status + audit trail stay intact. */
+export async function forgetGrantEmail(
+  auth: AdminAuth,
+  wallet: string,
+): Promise<{ forgotten: boolean }> {
+  const res = await fetch(`${apiBase()}/v1/admin/waitlist/forget`, {
+    method: 'POST',
+    headers: { ...headers(auth), 'content-type': 'application/json' },
+    body: JSON.stringify({ wallet }),
+    cache: 'no-store',
+  });
+  if (!res.ok) throw await apiError(res, '/v1/admin/waitlist/forget');
+  return (await res.json()) as { forgotten: boolean };
+}
+
 export async function exportGrantsCsv(auth: AdminAuth, status?: string): Promise<string> {
   const params = status ? `?status=${status}` : '';
   const res = await fetch(`${apiBase()}/v1/admin/waitlist/export.csv${params}`, {

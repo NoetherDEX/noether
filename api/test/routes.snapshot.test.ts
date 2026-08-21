@@ -59,6 +59,7 @@ const EXPECTED_ROUTES = [
   'POST /v1/access/challenge',
   'POST /v1/access/verify',
   'POST /v1/admin/waitlist/decide',
+  'POST /v1/admin/waitlist/forget',
   'POST /v1/keys',
   'POST /v1/keys/challenge',
   'POST /v1/oracle/heartbeat',

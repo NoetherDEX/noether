@@ -65,7 +65,11 @@ export default function TermsPage() {
             Beta access is granted per wallet and may be revoked at any time. If you share an
             email address on the waitlist we use it solely to notify you about your access status
             and important protocol notices; ask us to delete it at any time. We keep an audit
-            trail of access decisions.
+            trail of access decisions. Details on data handling are in the{' '}
+            <a href="/privacy" className="text-[#eab308] hover:underline">
+              Privacy Policy
+            </a>
+            .
           </p>
         </section>
         <section>

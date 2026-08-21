@@ -156,6 +156,12 @@ entries are recoverable by anyone willing to pay rent:
 
 ## 8 · Wave operations
 
+**PII hygiene:** email deletion requests are honored via `/admin` → select the
+wallet → "Forget email" (audit-logged `forget_email`; access status keeps
+working). CSV exports contain raw emails — treat each export as a temporary
+working copy and delete the file after use; every export is itself
+audit-logged.
+
 1. Wave-1: approve the jury + team wallets in `/admin` (wave tag `wave-1`),
    prefund jury wallets (~100 USDC + a few XLM each), jury script: trade
    20 USDC @ 5x, optional $20–50 LP try (NOE trustline step included).

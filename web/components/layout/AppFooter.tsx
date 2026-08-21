@@ -30,6 +30,10 @@ export function AppFooter() {
           Terms
         </Link>
         <span aria-hidden="true" className="text-faint">·</span>
+        <Link href="/privacy" className="hover:text-foreground transition-colors">
+          Privacy
+        </Link>
+        <span aria-hidden="true" className="text-faint">·</span>
         <a
           href={DOCS_URL}
           target="_blank"
