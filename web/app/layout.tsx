@@ -120,6 +120,7 @@ export default function RootLayout({
             defer
             src={`${process.env.NEXT_PUBLIC_UMAMI_URL}/script.js`}
             data-website-id={process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID}
+            data-domains="noether.exchange,testnet.noether.exchange"
           />
         )}
         <a
