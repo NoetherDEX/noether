@@ -8,11 +8,11 @@
 
 ## Before you submit
 
-1. Push the Noeracle repo so the link shows auditors the deployed code (the hardened
+1. ~~Push the Noeracle repo~~ DONE 2026-08-23 (branch + main at the Almanax-remediation commit `8ee5e59`; both live instances upgraded in place, hash-verified `f9bd9b11…`).
+1. (was) Push the Noeracle repo so the link shows auditors the deployed code (the hardened
    branch was never pushed; public `main` is 9 commits behind production):
    `cd ~/Desktop/Stellar/Noeracle && git push -u origin feat/l08-l09-quorum-ring && git push origin HEAD:main`
-2. Optional (10 min, strengthens the tooling answer): add `noeracle/noeracle` to Almanax
-   and run a scan; then also tick Almanax in the tooling field.
+2. ~~Almanax~~ DONE 2026-08-23: 4 findings, 3 remediated same day + shipped via upgrade, 1 = pre-disclosed N-4. Tick BOTH `Almanax` and `Scout`.
 
 ## Project Information
 
@@ -67,8 +67,8 @@ category. Mainnet TVL is zero since we have not launched.
 
 ## Audit Information
 
-Lines of Functional Code (excl. tests): `720`
-(whole `oracle_v0/src/lib.rs`; about 150 of those lines are the feature gated benchmark
+Lines of Functional Code (excl. tests): `757`
+(whole `oracle_v0/src/lib.rs` after the Almanax remediation commit; about 150 of those lines are the feature gated benchmark
 entrypoints that are absent from production builds. Methodology matches the Noether
 application: file line count with test code excluded.)
 
@@ -79,28 +79,30 @@ Have you run your code: `Yes`
 ### Have you written and executed tests on your smart contract(s)?
 
 ```
-Yes. 41 Rust tests on the oracle contract, all passing, plus 8 host cost harness tests
+Yes. 46 Rust tests on the oracle contract, all passing, plus 8 host cost harness tests
 with committed ledger snapshots and 22 tests on the off chain attestation service's
 aggregation logic.
 
-The contract tests are behavioural: init cannot be claimed by a first caller, unknown
-and duplicate publishers are rejected, batch length mismatches are rejected, rounds
-older than 60 seconds are rejected, lagging and replayed rounds are silent no ops that
-never regress a fresher price, the quorum path enforces its threshold and stores the
-per asset median, the single publisher persistent path closes itself when the quorum
-is raised above one and reopens at one, the history ring and the prices and twap views
-behave as specified, and upgrade is admin gated.
+The contract tests are behavioural: initialization is a deploy time constructor that
+requires the admin's authorization (no post deploy claim window), unknown and
+duplicate publishers are rejected, batch length mismatches are rejected, rounds older
+than 60 seconds or stamped more than 30 seconds in the future are rejected, prices
+outside strict bounds are rejected on every path, lagging and replayed rounds are
+silent no ops that never regress a fresher price, the quorum path enforces its
+threshold and stores the per asset median, the single publisher persistent path closes
+itself when the quorum is raised above one and reopens at one, the history ring and
+the prices and twap views behave as specified, and upgrade is admin gated.
 
 The release profile compiles with overflow checks on and panic abort, so arithmetic
 traps rather than wraps. CI runs the contract tests on every push. The same build is
-deployed on testnet and has been consumed continuously by the Noether perp DEX since
-July, and we verified on chain on 21 August that the live instance exposes exactly the
-twelve hardened entrypoints and none of the benchmark only ones.
+deployed on testnet and consumed continuously by the Noether perp DEX, and we verified
+on chain on 23 August that both live instances run the exact audited build (deployed
+wasm hash equals the local build hash) and expose only the hardened entrypoints.
 ```
 
 STRIDE Threat model: upload `~/Desktop/Stellar/Noeracle/THREAT_MODEL.md` (follows the SDF template: flow + diagram, threat table with IDs, remediation table, reflection; appendices carry scope, ranking, residual risks).
 
-Security tooling: tick `Scout` (and `Almanax` only if you run it first, see above).
+Security tooling: tick `Almanax` AND `Scout`.
 
 ### Remediation / tooling detail box (next to the tooling tags)
 
@@ -109,13 +111,24 @@ Yes. We expect to remediate all critical, high and medium findings within the
 program's 20 business day window; the contract is 720 lines and changes ship through
 an admin gated upgrade entrypoint, so fixes land fast.
 
-Tooling: we ran cargo scout audit 0.3.16 (CoinFabrik Scout, Soroban detector set)
-against the full workspace at the deployed commit on 21 August 2026. Result: zero
-detections on both crates. cargo audit is clean (warnings only for yanked transitive
-crates). Both reports are in the repo under audit/. We treat a clean tool run as a
-floor, not a ceiling: the items we want human eyes on are in the threat model,
-namely the single publisher quorum of one, the missing domain separator in the signed
-message, the absence of on chain events, and the TTL by writes storage model.
+Tooling: two tools, both reports and triage committed in the repo under audit/.
+cargo scout audit 0.3.16 (CoinFabrik Scout, Soroban detector set) ran at the deployed
+commit with zero detections on both crates, and cargo audit is clean. Almanax
+(Stellar agent) then raised four findings, and we remediated three of them the same
+day and shipped the fix to both live instances through the admin gated upgrade with
+byte level hash verification: the deploy time init race is now structurally closed by
+a constructor that initializes atomically inside the deploy transaction (the separate
+init entrypoint was removed outright), future dated timestamps are rejected beyond a
+30 second clock skew allowance, and prices are bounded at write time so the twap sum
+can never overflow and consumers can never read a zero or negative price. The fourth
+finding, the missing domain separator in the signed message, was already disclosed in
+our threat model before the scan as an open design question for the auditors, and we
+deferred it deliberately because fixing it changes the signed message format and
+forces a coordinated cutover of the attestation service, the SDK and the Noether
+relay path, which is the planned v1 restructure. We treat clean or remediated tool
+runs as a floor, not a ceiling: the items we most want human eyes on are the single
+publisher quorum of one, that domain separator question, the absence of on chain
+events, and the TTL by writes storage model.
 ```
 
 ### Audit firm preference
@@ -141,10 +154,11 @@ Four things up front.
 be scoped in; Ashley asked us to file separately, which this is. We would still like
 the two reviewed against each other at the router to oracle boundary.
 
-2. Scope is small and frozen. One contract, 720 lines, 15 KB of WASM, twelve
-entrypoints on the live instance, deployed on 21 July 2026 and unchanged since. We
-will tag the audited commit and ship any fix through the upgrade entrypoint from a
-hash verified build.
+2. Scope is small and frozen. One contract, 757 lines, 16 KB of WASM, eleven
+entrypoints plus a deploy time constructor on the live instance. Deployed on 21 July
+2026 and hardened in place on 23 August 2026 through the admin gated upgrade after an
+Almanax scan, with the deployed wasm hash verified byte equal to the build. We will
+tag the audited commit and ship any fix the same way.
 
 3. Two known open risks, disclosed deliberately and declared hard mainnet gates in
 the threat model. First, the live instance runs with a single registered publisher
