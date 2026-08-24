@@ -57,6 +57,16 @@ jobs:
         with:
           workspaces: contracts
           cache-all-crates: true
+      # cargo-scout-audit does its toolchain setup (nightly + rust-src/
+      # llvm-tools/rustc-dev + dylint-link) in its build.rs, which only runs
+      # when the crate is COMPILED. On a rust-cache hit the restored binary
+      # makes `cargo install` a no-op, ~/.rustup starts empty, and rustup
+      # bare-auto-installs the nightly WITHOUT rustc-dev → E0463 "can't find
+      # crate for rustc_*" on every warm-cache run (2026-08-24). Install it
+      # explicitly. The date is scout 0.3.16's pinned detector toolchain —
+      # keep in sync with TOOLCHAIN in its build.rs if scout is ever bumped.
+      - name: Install detector toolchain (scout's build.rs skips it on warm cache)
+        run: rustup toolchain install nightly-2025-08-07 --profile minimal --component rust-src --component llvm-tools --component rustc-dev
       - name: Install cargo-scout-audit
         run: cargo install cargo-scout-audit --locked
       # --verbose matters: without it scout builds its detector suite with
