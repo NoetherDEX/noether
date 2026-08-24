@@ -34,6 +34,8 @@ jobs:
       - name: cargo deny (advisories, licenses, bans, sources)
         working-directory: contracts
         run: cargo deny check
+      # scripts/volume-bot is deliberately untracked (.git/info/exclude) — its
+      # lockfile never exists in a CI checkout, so it cannot be scanned here.
       - name: osv-scanner (Cargo.lock + package-lock.json)
         run: |
           curl -sSL -o osv-scanner \
@@ -43,8 +45,7 @@ jobs:
             --lockfile package-lock.json \
             --lockfile contracts/Cargo.lock \
             --lockfile web/package-lock.json \
-            --lockfile scripts/keeper/package-lock.json \
-            --lockfile scripts/volume-bot/package-lock.json
+            --lockfile scripts/keeper/package-lock.json
 
   scout:
     name: Scout (Soroban detector suite, weekly report)
@@ -58,9 +59,12 @@ jobs:
           cache-all-crates: true
       - name: Install cargo-scout-audit
         run: cargo install cargo-scout-audit --locked
+      # --verbose matters: without it scout builds its detector suite with
+      # stderr piped to /dev/null, so a detector-build failure is undiagnosable
+      # from the CI log (seen 2026-08-24).
       - name: Run scout
         working-directory: contracts
-        run: cargo scout-audit -o json --output-path ../scout-report.json
+        run: cargo scout-audit --verbose -o json --output-path ../scout-report.json
       - uses: actions/upload-artifact@v4
         with:
           name: scout-report-${{ github.run_number }}
