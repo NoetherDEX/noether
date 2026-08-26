@@ -4,3 +4,4 @@ export * from './network.js';
 export * from './assets.js';
 export * from './rpc.js';
 export * from './scopes.js';
+export * from './capacity.js';

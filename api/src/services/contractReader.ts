@@ -25,6 +25,8 @@ import { getNetworkPassphrase } from '@noether/shared';
 import type { Network, StellarAddress } from '@noether/types';
 
 const ACCOUNT_TTL_MS = 30_000;
+/** getLedgerEntries accepts up to 200 keys; keep requests small on the public RPC. */
+const LEDGER_KEY_CHUNK = 50;
 
 export interface ContractReaderOptions {
   rpcUrl: string;
@@ -86,6 +88,51 @@ export class ContractReader {
       }
     }
     return { chainOpenPositions, chainOpenOrders };
+  }
+
+  /**
+   * Read the market's per-asset open-interest aggregates straight from
+   * ledger storage (L1-13 capacity headroom). `AssetExposure(Symbol)` is a
+   * persistent entry holding `(long_k, long_size, short_k, short_size)`;
+   * its key is scvVec([scvSymbol('AssetExposure'), scvSymbol(asset)]). One
+   * batched getLedgerEntries per call. An absent entry is an asset nobody
+   * has traded yet — that IS zero exposure, so it decodes to zeros rather
+   * than null. Sizes are 7-decimal USDC notional, the exact values the
+   * market hands to vault.reserve_for_position.
+   */
+  async readAssetExposure(
+    marketId: StellarAddress,
+    symbols: readonly string[],
+  ): Promise<{ exposure: Map<string, { long: bigint; short: bigint }>; latestLedger: number | null }> {
+    const contract = Address.fromString(marketId).toScAddress();
+    const keys = symbols.map((symbol) =>
+      xdr.LedgerKey.contractData(
+        new xdr.LedgerKeyContractData({
+          contract,
+          key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('AssetExposure'), xdr.ScVal.scvSymbol(symbol)]),
+          durability: xdr.ContractDataDurability.persistent(),
+        }),
+      ),
+    );
+    const bySymbol = new Map<string, string>();
+    keys.forEach((k, i) => bySymbol.set(k.contractData().key().toXDR('base64'), symbols[i]!));
+
+    const exposure = new Map<string, { long: bigint; short: bigint }>();
+    for (const symbol of symbols) exposure.set(symbol, { long: 0n, short: 0n });
+    let latestLedger: number | null = null;
+    for (let i = 0; i < keys.length; i += LEDGER_KEY_CHUNK) {
+      const response = await this.server.getLedgerEntries(...keys.slice(i, i + LEDGER_KEY_CHUNK));
+      if (typeof response.latestLedger === 'number') latestLedger = response.latestLedger;
+      for (const entry of response.entries ?? []) {
+        const data = entry.val.contractData();
+        const symbol = bySymbol.get(data.key().toXDR('base64'));
+        if (!symbol) continue;
+        const tuple = scValToNative(data.val()) as unknown[];
+        if (!Array.isArray(tuple) || tuple.length < 4) continue;
+        exposure.set(symbol, { long: BigInt(tuple[1] as bigint), short: BigInt(tuple[3] as bigint) });
+      }
+    }
+    return { exposure, latestLedger };
   }
 
   /**

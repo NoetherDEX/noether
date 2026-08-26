@@ -100,6 +100,23 @@ export function MarketStatsBar({
 
   const change = ticker?.changePercent24h ?? null;
 
+  // L1-13: long/short split of open interest. Prefer the chain AssetExposure
+  // pair carried in `capacity` (the vault's exact inputs) over the indexer
+  // projection so the split and the order panel's headroom agree.
+  const oiLongUsd = assetStats ? statToUsd(assetStats.capacity?.oiLong ?? assetStats.openInterestLong) : 0;
+  const oiShortUsd = assetStats ? statToUsd(assetStats.capacity?.oiShort ?? assetStats.openInterestShort) : 0;
+  const oiTotalUsd = oiLongUsd + oiShortUsd;
+  const longPct = oiTotalUsd > 0 ? Math.round((oiLongUsd / oiTotalUsd) * 100) : null;
+  const skewTooltip = (() => {
+    const cap = assetStats?.capacity;
+    if (!cap) return 'Share of open interest on each side.';
+    const net = statToUsd(cap.netSkew);
+    const skewCap = statToUsd(cap.skewCap);
+    const used = skewCap > 0 ? Math.round((Math.abs(net) / skewCap) * 100) : null;
+    const netStr = `${net < 0 ? '−' : '+'}${formatCompactUsd(Math.abs(net))}`;
+    return `Net skew ${netStr} of ${formatCompactUsd(skewCap)} cap${used != null ? ` (${used}% used)` : ''}. Past the cap, only orders that reduce the skew go through (#89).`;
+  })();
+
   return (
     <div className="border-b border-border bg-background">
       <div className="flex items-center gap-4 lg:gap-5 px-3 sm:px-4 h-14 overflow-x-auto scrollbar-none">
@@ -158,6 +175,24 @@ export function MarketStatsBar({
                 statToUsd(assetStats.openInterestLong) + statToUsd(assetStats.openInterestShort),
               )
             : '—'}
+        </Stat>
+
+        <Stat
+          label={
+            <Tooltip content={skewTooltip}>
+              <span className="cursor-help border-b border-dotted border-faint">Long / Short</span>
+            </Tooltip>
+          }
+        >
+          {longPct == null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <>
+              <span className="text-long">{longPct}%</span>
+              <span className="text-faint"> / </span>
+              <span className="text-short">{100 - longPct}%</span>
+            </>
+          )}
         </Stat>
 
         <Stat label="24h Vol (Noether)">

@@ -43,6 +43,7 @@ import { LiveTailer } from './services/liveTailer.js';
 import { StatsService } from './services/stats.js';
 import { AdlQueueService } from './services/adlQueue.js';
 import { ShortfallService } from './services/shortfall.js';
+import { CapacityService } from './services/capacity.js';
 import { createIndexerDb } from './services/indexerDb.js';
 import { getNetworkPassphrase } from '@noether/shared';
 import { authPlugin } from './plugins/auth.js';
@@ -75,6 +76,8 @@ export interface ServerDeps {
   stats: StatsService;
   adlQueue: AdlQueueService;
   shortfall: ShortfallService;
+  /** L1-13 pool-capacity headroom folded into /v1/markets/stats. */
+  capacity: CapacityService;
   /** L0-15 pause-state probe for /v1/health — optional in test setups. */
   pauseState?: PauseStateService;
   /** Chain reader for the /v1/health open-count drift alarm (Phase 4) —
@@ -172,7 +175,7 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
       marketId: config.contracts.contracts.market,
     }),
   );
-  await app.register((instance) => registerMarketsRoutes(instance, deps.markets, deps.stats));
+  await app.register((instance) => registerMarketsRoutes(instance, deps.markets, deps.stats, deps.capacity));
   await app.register((instance) => registerOracleRoutes(instance, deps.oracle));
   await app.register((instance) =>
     registerOracleHealthRoutes(instance, {
@@ -270,5 +273,11 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
     rpcUrl: config.rpcUrl,
   });
   const shortfall = new ShortfallService(reader, config.contracts.contracts.vault);
-  return { oracle, markets, events, apiKeys, walletAuth, access, accessWalletAuth, turnstile, approvalEmailer, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall, pauseState, reader };
+  // L1-13: chain-read capacity headroom (vault views + market AssetExposure).
+  const capacity = new CapacityService({
+    reader,
+    vaultId: config.contracts.contracts.vault ?? '',
+    marketId: config.contracts.contracts.market ?? '',
+  });
+  return { oracle, markets, events, apiKeys, walletAuth, access, accessWalletAuth, turnstile, approvalEmailer, rateLimiter, db, orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats, adlQueue, shortfall, capacity, pauseState, reader };
 }

@@ -54,7 +54,8 @@ import { useNotificationStore } from '@/lib/store/notificationStore';
 import { listOpenPositions } from '@/lib/api/positions';
 import { listOrderHints } from '@/lib/api/orders';
 import { gatewayServesThisMarket } from '@/lib/api/gateway';
-import { getMarketsStats, type AssetMarketStats } from '@/lib/api/markets';
+import { selectAssetStats } from '@/lib/api/markets';
+import { useMarketsStats } from '@/lib/hooks/useMarketsStats';
 import { getPrice, priceToDisplay } from '@/lib/stellar/oracle';
 import { subscribeLivePrices } from '@/lib/stellar/noeracle';
 import { toPrecision, fromPrecision } from '@/lib/utils';
@@ -100,7 +101,6 @@ function TradePage() {
   const [lastAttestations, setLastAttestations] = useState<Record<string, { ts: number; roundId: number }>>({});
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const [pricesStale, setPricesStale] = useState(false);
-  const [assetStats, setAssetStats] = useState<AssetMarketStats | null>(null);
   const prevOrdersRef = useRef<Map<number, string>>(new Map());
 
   // Display positions are derived from raw positions + the latest prices,
@@ -137,24 +137,14 @@ function TradePage() {
       .catch(() => {});
   }, [searchParams, publicKey, setLeaderVault]);
 
-  // Real market stats (OI + 24h volume) from the indexer projection —
-  // replaces the hardcoded $1.2M / $890K. Refetch on asset change + every
-  // 30s; null result keeps the neutral placeholder.
-  useEffect(() => {
-    let active = true;
-    const load = () => {
-      getMarketsStats().then((stats) => {
-        if (!active) return;
-        setAssetStats(stats?.assets.find((a) => a.asset === selectedAsset) ?? null);
-      });
-    };
-    load();
-    const t = setInterval(load, 30_000);
-    return () => {
-      active = false;
-      clearInterval(t);
-    };
-  }, [selectedAsset]);
+  // Real market stats (OI + 24h volume + L1-13 pool capacity) from the
+  // gateway — one shared 10s poller (React Query) also feeds the order
+  // panels' capacity clamp. null keeps the neutral placeholder.
+  const { data: marketsStats } = useMarketsStats();
+  const assetStats = useMemo(
+    () => selectAssetStats(marketsStats, selectedAsset),
+    [marketsStats, selectedAsset],
+  );
 
   // B1: when a position disappears between polls WITHOUT a user-initiated
   // close, check recent on-chain liquidation events and tell the trader —

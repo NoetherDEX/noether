@@ -105,3 +105,98 @@ describe('GET /v1/markets/stats', () => {
     }
   });
 });
+
+describe('GET /v1/markets/stats — L1-13 capacity headroom', () => {
+  // The prod vault + XLM book on 2026-08-24, pre-deposit: the numbers behind
+  // the #89 the friend hit. Same fixture as packages/shared/test/capacity.test.ts.
+  const PROD_2026_08_24 = {
+    aum: 14_436_001_453_851n,
+    reservedPayout: 8_961_594_157_885n,
+    usdcBalance: 14_747_198_788_346n,
+    shortfallReserve: 0n,
+    reserveCapBps: 7_000,
+    maxPositionSize: 1_000_000_000_000n,
+    exposure: { XLM: { long: 252_541_116_930n, short: 1_614_090_000_000n } },
+    latestLedger: 4_314_754,
+  };
+
+  it('folds per-asset capacity and the pool block in when the chain reads succeed', async () => {
+    const setup = await setupTestServer({ capacity: PROD_2026_08_24 });
+    app = setup.app;
+    const res = await app.inject({ method: 'GET', url: '/v1/markets/stats' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+
+    expect(body.pool).toEqual({
+      aum: '14436001453851',
+      reservedPayout: '8961594157885',
+      usdcBalance: '14747198788346',
+      shortfallReserve: '0',
+      reserveCapBps: 7000,
+      reserveCap: '10105201017695',
+      aggregateHeadroom: '1143606859810',
+      aggregateBinding: 'aggregate',
+      asOfLedger: 4314754,
+      ts: expect.any(Number),
+      stale: false,
+    });
+
+    const xlm = body.stats.find((s: AssetStats) => s.asset === 'XLM');
+    expect(xlm.capacity).toEqual({
+      headroomLong: '1000000000000',
+      headroomShort: '803851335007',
+      bindingLong: 'maxPosition',
+      bindingShort: 'skew',
+      oiLong: '252541116930',
+      oiShort: '1614090000000',
+      netSkew: '-1361548883070',
+      sideCap: '3609000363462',
+      skewCap: '2165400218077',
+      assetCapBps: 2500,
+      capAbs: '0',
+      skewCapBps: 1500,
+      maxPositionSize: '1000000000000',
+    });
+    // The projection columns are untouched by the chain block.
+    expect(xlm.openInterestLong).toBe('0');
+
+    // An asset nobody traded has no AssetExposure entry — that is a flat book, not an error.
+    const btc = body.stats.find((s: AssetStats) => s.asset === 'BTC');
+    expect(btc.capacity.oiLong).toBe('0');
+    expect(btc.capacity.oiShort).toBe('0');
+    expect(btc.capacity.bindingLong).toBe('maxPosition');
+    expect(btc.capacity.headroomLong).toBe('1000000000000');
+  });
+
+  it('reports the per-side OI cap and an unset max position size honestly', async () => {
+    const setup = await setupTestServer({
+      capacity: {
+        ...PROD_2026_08_24,
+        maxPositionSize: null,
+        assetCaps: { XLM: [2500, 2_000_000_000_000n, 1500] }, // $200k absolute cap
+      },
+    });
+    app = setup.app;
+    const body = (await app.inject({ method: 'GET', url: '/v1/markets/stats' })).json();
+    const xlm = body.stats.find((s: AssetStats) => s.asset === 'XLM');
+    expect(xlm.capacity.maxPositionSize).toBeNull();
+    expect(xlm.capacity.sideCap).toBe('2000000000000');
+    expect(xlm.capacity.capAbs).toBe('2000000000000');
+    // short: side room 200k − 161.4k = 38.6k binds below the 80.4k skew room.
+    expect(xlm.capacity.headroomShort).toBe('385910000000');
+    expect(xlm.capacity.bindingShort).toBe('side');
+  });
+
+  it('omits capacity and pool — never zeros — when the chain reads fail', async () => {
+    const setup = await setupTestServer();
+    app = setup.app;
+    const res = await app.inject({ method: 'GET', url: '/v1/markets/stats' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.pool).toBeUndefined();
+    expect(body.stats).toHaveLength(SUPPORTED_ASSET_SYMBOLS.length);
+    for (const row of body.stats as AssetStats[]) {
+      expect((row as { capacity?: unknown }).capacity).toBeUndefined();
+    }
+  });
+});

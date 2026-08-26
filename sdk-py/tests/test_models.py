@@ -1,4 +1,5 @@
 from noether_sdk.models import (
+    AssetStats,
     HealthStatus,
     MarketSummary,
     OracleSnapshot,
@@ -93,3 +94,17 @@ def test_order_event_row_round_trip() -> None:
     assert o.trigger_price == "810000000"  # string precision preserved
     assert o.status == "open"
     assert o.tx_hash.startswith("47d906d")
+
+
+def test_asset_stats_capacity_absent_is_none_not_zero() -> None:
+    row = AssetStats.model_validate(
+        {
+            "asset": "XLM",
+            "openInterestLong": "1",
+            "openInterestShort": "2",
+            "openInterestNet": "-1",
+            "openPositions": 1,
+            "volume24h": "0",
+        }
+    )
+    assert row.capacity is None

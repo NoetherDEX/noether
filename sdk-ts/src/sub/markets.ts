@@ -19,6 +19,52 @@ export interface MarketSummary {
  * Per asset open interest and 24h traded volume. All amounts are i128
  * decimal strings with 7 decimal USDC precision.
  */
+/** Which vault gate binds first if an order grew by one more unit (L1-13). */
+export type CapacityBinding = 'aggregate' | 'side' | 'skew' | 'liquidity' | 'maxPosition';
+
+/**
+ * Pool-capacity headroom for one market (L1-13): the largest notional the
+ * vault accepts for a new long / short right now, with the chain inputs
+ * behind it. Advisory — the contract enforces (#82 / #89). 7 decimal USDC
+ * strings. Present only when the gateway's chain read succeeded.
+ */
+export interface AssetCapacity {
+  headroomLong: string;
+  headroomShort: string;
+  bindingLong: CapacityBinding;
+  bindingShort: CapacityBinding;
+  /** Chain AssetExposure: long, short, long − short. */
+  oiLong: string;
+  oiShort: string;
+  netSkew: string;
+  /** Effective per side OI cap and net skew cap, in notional. */
+  sideCap: string;
+  skewCap: string;
+  assetCapBps: number;
+  capAbs: string;
+  skewCapBps: number;
+  /** Market max_position_size; null when unset on chain. */
+  maxPositionSize: string | null;
+}
+
+/** Vault wide capacity (L1-13). Present only when the chain read succeeded. */
+export interface PoolCapacity {
+  aum: string;
+  reservedPayout: string;
+  usdcBalance: string;
+  shortfallReserve: string;
+  reserveCapBps: number;
+  reserveCap: string;
+  /** Room left for new positions on ANY market. */
+  aggregateHeadroom: string;
+  aggregateBinding: 'aggregate' | 'liquidity';
+  asOfLedger: number | null;
+  /** Unix ms the snapshot was computed. */
+  ts: number;
+  /** True when served from the last good snapshot after a failed refresh. */
+  stale: boolean;
+}
+
 export interface AssetStats {
   asset: string;
   openInterestLong: string;
@@ -26,6 +72,8 @@ export interface AssetStats {
   openInterestNet: string;
   openPositions: number;
   volume24h: string;
+  /** L1-13 headroom; absent (never zeroed) when the gateway could not read the chain. */
+  capacity?: AssetCapacity;
 }
 
 /**
@@ -41,6 +89,8 @@ export interface SolvencyStats {
 export interface MarketStatsResponse {
   stats: AssetStats[];
   solvency: SolvencyStats;
+  /** L1-13 vault wide capacity; absent when the gateway could not read the chain. */
+  pool?: PoolCapacity;
 }
 
 /** Intervals accepted by GET /v1/candles. */
@@ -87,7 +137,9 @@ export class MarketsApi {
 
   /**
    * Public. Per asset open interest and 24h volume for every supported
-   * market, plus the protocol solvency summary.
+   * market, plus the protocol solvency summary and — when the gateway could
+   * read the chain — the L1-13 pool-capacity headroom per asset (`capacity`)
+   * and vault wide (`pool`).
    */
   async stats(): Promise<MarketStatsResponse> {
     return this.transport.request<MarketStatsResponse>({ path: '/v1/markets/stats' });

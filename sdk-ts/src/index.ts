@@ -21,6 +21,9 @@ export {
   type CandlePoint,
   type CandlesQuery,
   type CandlesResponse,
+  type AssetCapacity,
+  type PoolCapacity,
+  type CapacityBinding,
 } from './sub/markets.js';
 export {
   type OracleHealth,

@@ -3,6 +3,7 @@ import { isMissingTable, type Db } from '@noether/db';
 import { resolvedContracts, type ContractKey, type ContractsManifest } from '@noether/shared';
 import type { PauseStateService } from '../services/pauseState.js';
 import { TtlCache } from '../services/cache.js';
+import { withTimeout } from '../services/timeout.js';
 
 /** How long one sampled counts block serves /v1/health hits. Uptime probes
  *  poll this route continuously; without a cache every hit costs an RPC
@@ -41,15 +42,6 @@ interface CountsBlock {
   chainOpenOrders: number | null;
   indexedOpenPositions: number | null;
   drift: boolean | null;
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms).unref?.(),
-    ),
-  ]);
 }
 
 export async function registerHealthRoutes(app: FastifyInstance, deps?: HealthDeps): Promise<void> {
