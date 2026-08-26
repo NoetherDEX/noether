@@ -1,0 +1,240 @@
+{
+  "env": "staging",
+  "network": "testnet",
+  "takenAt": "2026-08-26T01:41:29.226891+00:00",
+  "gitCommit": "87c93fb",
+  "manifest": {
+    "network": "testnet",
+    "env": "staging",
+    "deployedAt": "2026-07-21 02:04:44",
+    "contracts": {
+      "market": "CAWBRPRYOXMQNCDTJYQYVK6XYGKYSKXEFACIFHWYC5KJY5SDLSQMXBCF",
+      "vault": "CBMLLYBHACT3Y26TOITJZB4KKAOHZPE7FMA27IQGLERESUTO5WJUOVE6",
+      "noeToken": "CB64QP7W7A5EVACPXILZQKEGL6CKGJZLPH5EFHM5HN6OGHYC6EUZ4QI5",
+      "noetherRouter": "CBTJLQVVMD54YO7HZA5K4P6SEGKXZHRNDNKDOPVOKAW6VNRIQ3MYZBGX",
+      "noeracleShim": "CBHMBP2PRXZBKVMVUYAANKCTQSGBI45X2KUKWABFTCZE4C5VCS2V7T4G",
+      "noeracle": "CB2D6BDZALAMOZJMOA66EJPTNK55YCTWJ5DJDUKXE6G7XJK734GTSW5N",
+      "usdcToken": "CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4",
+      "vaultFactory": "CBFTWW3ZNTSALN5PPMXAN3D7D3I4ICBHQGDQEJK3AOPHPSIRNX3OFVUW",
+      "referral": "CC5GEHXU27DEG3TGGT4K6YWIBEMWOP3MJBGAYKVPUFY5BL2GWCEO3AXZ"
+    },
+    "admin": "GCW7CENKM65B2MVMVJOQCFBZDGZ7FEK2WAKXCHLUUQKIAYKFYWC6KEVO",
+    "noeAsset": {
+      "code": "NOE",
+      "issuer": "GAYXDAQGNIXFNSH5UYO5ZPWWXI74WMDCBCJNZ3KSADNU27UHDWZDXXTZ"
+    }
+  },
+  "contracts": {
+    "market": {
+      "get_pause_state": [
+        0,
+        1786581299
+      ],
+      "get_asset_risk BTC": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk ETH": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk XLM": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk SOL": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk XRP": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk ADA": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk BNB": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk TRX": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk HYPE": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk DOGE": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk ZEC": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk LINK": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk BCH": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "get_asset_risk LTC": {
+        "close_out_bps": 133,
+        "funding_clamp_bps": 100,
+        "im_bps": 400,
+        "max_funding_velocity_bps": 3600,
+        "max_leverage": 10,
+        "max_position_size": "1000000000000",
+        "mm_bps": 200,
+        "skew_scale": "2000000000000"
+      },
+      "instance_storage": "admin not view-exposed - verify via StellarExpert contract storage + the init tx signer"
+    },
+    "vault": {
+      "get_admin": "GCW7CENKM65B2MVMVJOQCFBZDGZ7FEK2WAKXCHLUUQKIAYKFYWC6KEVO",
+      "get_pool_info": {
+        "aum": "6999026404222",
+        "total_fees": "21000000000",
+        "total_glp": "6967844591062",
+        "total_usdc": "6981960152842",
+        "unrealized_pnl": "3933748620"
+      },
+      "get_noe_price": "10044751",
+      "get_usdc_balance": "7052915379950",
+      "get_aum": "6999026404222",
+      "get_deposit_fee": 30,
+      "get_withdraw_fee": 30,
+      "get_deposit_cap": "0",
+      "get_aum_cap": "0",
+      "get_withdraw_cooldown": 1800,
+      "get_buffer_target_bps": 1000,
+      "get_reserve_cap": 7000,
+      "get_buffer_balance": "49955227108",
+      "get_shortfall_reserve": "0",
+      "get_reserved_payout": "18750000000",
+      "get_usdc_token": "CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4",
+      "get_noe_token": "CB64QP7W7A5EVACPXILZQKEGL6CKGJZLPH5EFHM5HN6OGHYC6EUZ4QI5",
+      "get_market_contract": "CAWBRPRYOXMQNCDTJYQYVK6XYGKYSKXEFACIFHWYC5KJY5SDLSQMXBCF"
+    },
+    "vaultFactory": {
+      "get_admin": "GCW7CENKM65B2MVMVJOQCFBZDGZ7FEK2WAKXCHLUUQKIAYKFYWC6KEVO",
+      "get_market": "CAWBRPRYOXMQNCDTJYQYVK6XYGKYSKXEFACIFHWYC5KJY5SDLSQMXBCF",
+      "get_usdc": "CA63EPM4EEXUVUANF6FQUJEJ37RWRYIXCARWFXYUMPP7RLZWFNLTVNR4"
+    },
+    "referral": {
+      "get_admin": "GCW7CENKM65B2MVMVJOQCFBZDGZ7FEK2WAKXCHLUUQKIAYKFYWC6KEVO",
+      "get_market": "CAWBRPRYOXMQNCDTJYQYVK6XYGKYSKXEFACIFHWYC5KJY5SDLSQMXBCF",
+      "get_config": [
+        400,
+        1000,
+        "0"
+      ]
+    },
+    "noetherRouter": {
+      "get_admin": "GCW7CENKM65B2MVMVJOQCFBZDGZ7FEK2WAKXCHLUUQKIAYKFYWC6KEVO",
+      "get_market": "CAWBRPRYOXMQNCDTJYQYVK6XYGKYSKXEFACIFHWYC5KJY5SDLSQMXBCF",
+      "get_noeracle": "CB2D6BDZALAMOZJMOA66EJPTNK55YCTWJ5DJDUKXE6G7XJK734GTSW5N",
+      "get_stork_config": {
+        "enabled": true,
+        "max_age_secs": 60,
+        "max_dev_bps": 100,
+        "require_fresh": false,
+        "signer": "03c9f3c5189c43a11781a01f532111cac3d891d1",
+        "taxonomy": 1
+      },
+      "get_stork_strict_assets": [],
+      "get_reflector_config": null
+    },
+    "noeracleShim": {
+      "get_admin": "GCW7CENKM65B2MVMVJOQCFBZDGZ7FEK2WAKXCHLUUQKIAYKFYWC6KEVO",
+      "get_noeracle": "CB2D6BDZALAMOZJMOA66EJPTNK55YCTWJ5DJDUKXE6G7XJK734GTSW5N",
+      "get_backend": [
+        0,
+        "CB2D6BDZALAMOZJMOA66EJPTNK55YCTWJ5DJDUKXE6G7XJK734GTSW5N",
+        7
+      ]
+    }
+  }
+}
