@@ -91,9 +91,12 @@ touched. Unknown ids are skipped. Batched by the operator (~20 ids per tx).
 ### 3. Parameters
 
 `set_asset_risk` on all 14 pairs, both stacks: `funding_clamp_bps` 100 → 5
-(0.05 %/h, ≈1.2 %/day), `max_funding_velocity_bps` 3600 → 5; everything
-else unchanged. Generated from the live `get_asset_risk` values by
-`scripts/funding_params.sh` (prints the 14 invoke lines; operator runs them).
+(0.05 %/h, ≈1.2 %/day), `max_funding_velocity_bps` 3600 → 120 (the field is
+bps/**day** — 120 ≈ 5 bps/h of rate change at full skew, so the clamp is
+reached within an hour or two of a fully one-sided book instead of
+instantly); everything else unchanged. Generated from the live
+`get_asset_risk` values by `scripts/funding_params.sh` (prints the 14 invoke
+lines; `--apply` runs them).
 
 ### 4. Guardrail
 
@@ -132,9 +135,10 @@ work; not a blocker for unfreezing.)
   `total_usdc` decreases by earned (buffer-first waterfall); market USDC ≥
   remaining long's collateral. Then close the long (payer): funding lands in
   the vault; market USDC == 0 (or == escrow).
-- `test_funding_receiver_shortfall_books_claim`: tiny vault; receiver's net
-  exceeds coverage → `payout_shortfall` booked, trader paid what the vault
-  could, market custody untouched.
+- (Shortfall booking for funding income reuses the vault's existing
+  `settle_pnl` waterfall unchanged — covered by the vault's own tests; a
+  market-level variant is impractical because a vault too small to pay
+  also refuses the opens.)
 - `test_cross_receiver_pool_credit_is_backed`: cross short in a long-heavy
   book; after close the pool delta equals collateral + vault-paid amount and
   a full withdraw succeeds without dipping below other custody.
