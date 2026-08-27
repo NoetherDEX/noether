@@ -41,10 +41,56 @@ class MarketSummary(_Base):
     oracle: OracleSnapshot
 
 
+CapacityBinding = Literal["aggregate", "side", "skew", "liquidity", "maxPosition"]
+"""Which vault gate binds first if an order grew by one more unit (L1-13)."""
+
+
+class AssetCapacity(_Base):
+    """Pool-capacity headroom for one market (L1-13).
+
+    The largest notional the vault accepts for a new long / short right now,
+    with the chain inputs behind it. Advisory: the contract enforces (#82 /
+    #89). Amounts are i128 decimal strings with 7 decimal USDC precision.
+    Present on ``AssetStats`` only when the gateway's chain read succeeded.
+    """
+
+    headroom_long: str
+    headroom_short: str
+    binding_long: CapacityBinding
+    binding_short: CapacityBinding
+    oi_long: str
+    oi_short: str
+    net_skew: str
+    side_cap: str
+    skew_cap: str
+    asset_cap_bps: int
+    cap_abs: str
+    skew_cap_bps: int
+    max_position_size: str | None = None
+
+
+class PoolCapacity(_Base):
+    """Vault wide capacity (L1-13); present only when the chain read succeeded."""
+
+    aum: str
+    reserved_payout: str
+    usdc_balance: str
+    shortfall_reserve: str
+    reserve_cap_bps: int
+    reserve_cap: str
+    aggregate_headroom: str
+    aggregate_binding: Literal["aggregate", "liquidity"]
+    as_of_ledger: int | None = None
+    ts: int
+    stale: bool
+
+
 class AssetStats(_Base):
     """Per asset open interest and 24h volume (GET /v1/markets/stats).
 
     Amounts are i128 decimal strings with 7 decimal USDC precision.
+    ``capacity`` is the L1-13 headroom block — ``None`` (never zeros) when the
+    gateway could not read the chain.
     """
 
     asset: str
@@ -53,6 +99,7 @@ class AssetStats(_Base):
     open_interest_net: str
     open_positions: int
     volume_24h: str = Field(alias="volume24h")
+    capacity: AssetCapacity | None = None
 
 
 class SolvencyStats(_Base):
@@ -66,6 +113,7 @@ class SolvencyStats(_Base):
 class MarketStatsResponse(_Base):
     stats: list[AssetStats]
     solvency: SolvencyStats
+    pool: PoolCapacity | None = None
 
 
 class CandlePoint(_Base):

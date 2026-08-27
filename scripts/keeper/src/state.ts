@@ -65,14 +65,41 @@ export function loadKeeperState(filePath: string): KeeperState {
   }
 }
 
+/**
+ * Write-avoidance: the discovery walk calls saveKeeperState every poll
+ * cycle and the oracle push every 30s, while the state file lives on an
+ * Azure Files SMB mount where every mkdir/create/write/rename is a billed
+ * operation (~5M ops/month across the keepers before this guard). A write
+ * is skipped when the payload is byte-identical to the last successful
+ * write, and otherwise rate-limited to one per STATE_MIN_WRITE_MS unless
+ * `force` is set (funding submit, shutdown). Losing ≤60s of last-pushed
+ * price on a crash is harmless for the K-2 breaker, and funding replay is
+ * already idempotent on-chain (#55 FundingIntervalNotElapsed → 'not-due').
+ * Because callers keep calling every cycle, a throttled change is still
+ * persisted within one window.
+ */
+const STATE_MIN_WRITE_MS = 60_000;
+const lastWrite = new Map<string, { payload: string; at: number }>();
+
 /** Atomically persist state (tmp + rename). Non-fatal on failure. */
-export function saveKeeperState(filePath: string, state: KeeperState): void {
+export function saveKeeperState(
+  filePath: string,
+  state: KeeperState,
+  opts: { force?: boolean } = {},
+): void {
   try {
+    const payload = JSON.stringify(state, null, 2);
+    const prev = lastWrite.get(filePath);
+    if (prev) {
+      if (prev.payload === payload) return;
+      if (!opts.force && Date.now() - prev.at < STATE_MIN_WRITE_MS) return;
+    }
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmpPath = `${filePath}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+    fs.writeFileSync(tmpPath, payload, 'utf-8');
     fs.renameSync(tmpPath, filePath);
+    lastWrite.set(filePath, { payload, at: Date.now() });
   } catch (error) {
     console.warn(
       `⚠️  Failed to persist keeper state to ${filePath}: ${

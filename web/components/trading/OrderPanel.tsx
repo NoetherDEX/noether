@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { AlertCircle, Info, Loader2, AlertTriangle, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -11,6 +12,9 @@ import { openPosition, openPositionCross, placeLimitOrder, placeStopLimitOrder, 
 import { leaderOpenPosition } from '@/lib/stellar/vaultFactory';
 import { getVault } from '@/lib/api/vaults';
 import { fetchTraderVolume14d } from '@/lib/api/volume';
+import { selectCapacity, statToUsd, type CapacityBinding } from '@/lib/api/markets';
+import { gatewayServesThisMarket } from '@/lib/api/gateway';
+import { MARKETS_STATS_QUERY_KEY, useMarketsStats } from '@/lib/hooks/useMarketsStats';
 import { marketHasBatch1Features } from '@/lib/stellar/capabilities';
 import { VAULT_PRECISION } from '@/types/vault';
 import {
@@ -270,6 +274,80 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   // Position size in USD (collateral is already in USD since it's USDC)
   const positionSize = collateralNum * leverage;
 
+  // L1-13: pool-capacity headroom for THIS side — the largest notional the
+  // vault accepts before its caps reject the open (#82 aggregate / per-side
+  // OI, #89 net skew). Chain-read by the gateway every 10s. Trusted only when
+  // the gateway serves this market (staging's shared gateway indexes prod)
+  // and the payload is < 60s old; otherwise null = unknown → no clamp, and
+  // the contract's error toasts stay the backstop. Never a fabricated zero.
+  const queryClient = useQueryClient();
+  const { data: marketsStats, dataUpdatedAt: statsUpdatedAt } = useMarketsStats();
+  const [gatewayTrusted, setGatewayTrusted] = useState(false);
+  useEffect(() => {
+    let active = true;
+    gatewayServesThisMarket()
+      .then((trusted) => {
+        if (active) setGatewayTrusted(trusted);
+      })
+      .catch(() => {
+        if (active) setGatewayTrusted(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [asset, statsUpdatedAt]);
+  const capacity =
+    gatewayTrusted && marketsStats && statsUpdatedAt > 0 && Date.now() - statsUpdatedAt < 60_000
+      ? selectCapacity(marketsStats, asset)
+      : null;
+  const sideHeadroom: number | null = capacity
+    ? statToUsd(direction === 'Long' ? capacity.headroomLong : capacity.headroomShort)
+    : null;
+  const sideBinding: CapacityBinding | null = capacity
+    ? direction === 'Long'
+      ? capacity.bindingLong
+      : capacity.bindingShort
+    : null;
+  // Limit / stop orders reserve at execution time, so only market orders are
+  // clamped; conditional orders get the banner as a heads-up, never a block.
+  const capacityExceeded = sideHeadroom != null && positionSize > 0 && positionSize > sideHeadroom;
+  const capacityBlocks = capacityExceeded && orderType === 'Market';
+  const capacityMessage = (() => {
+    if (!capacity || sideHeadroom == null || !capacityExceeded) return null;
+    const room = formatUSD(Math.floor(sideHeadroom), 0);
+    const other = direction === 'Long' ? 'short' : 'long';
+    const oiLong = statToUsd(capacity.oiLong);
+    const oiShort = statToUsd(capacity.oiShort);
+    const total = oiLong + oiShort;
+    const crowded = oiShort > oiLong ? 'short' : 'long';
+    const crowdedPct = total > 0 ? Math.round((Math.max(oiLong, oiShort) / total) * 100) : null;
+    if (sideHeadroom <= 0) {
+      return `No ${direction.toLowerCase()} capacity for ${asset} right now${
+        sideBinding === 'skew' && crowdedPct != null ? ` — ${asset} is ${crowdedPct}% ${crowded}` : ''
+      }. Try the other side or wait for positions to close.`;
+    }
+    switch (sideBinding) {
+      case 'skew':
+        return `${asset} is ${crowdedPct ?? '—'}% ${crowded} right now — the pool can take ≈${room} more ${direction.toLowerCase()}. Try a smaller size or go ${other}.`;
+      case 'side':
+        return `${asset} ${direction.toLowerCase()} open interest is at its cap — ≈${room} left. Try a smaller size or the other side.`;
+      case 'aggregate':
+      case 'liquidity':
+        return `The pool is near total capacity — ≈${room} left for new positions on any market. Try a smaller size.`;
+      case 'maxPosition':
+        return `Position size exceeds the ${room} per-position maximum on ${asset}.`;
+      default:
+        return `The pool can take ≈${room} more ${direction.toLowerCase()} on ${asset} right now — try a smaller size.`;
+    }
+  })();
+  // "Use max": collateral that lands 1% under the headroom at the chosen
+  // leverage (the bound moves every ledger), never below the 10 USDC minimum.
+  const maxCollateralForCapacity =
+    sideHeadroom != null && leverage > 0 ? Math.floor((sideHeadroom * 0.99) / leverage) : 0;
+  const invalidateCapacity = () => {
+    queryClient.invalidateQueries({ queryKey: MARKETS_STATS_QUERY_KEY }).catch(() => {});
+  };
+
   // A19: risk previews are based on the EFFECTIVE entry — the price the
   // contract will actually fill at (trigger for Limit, limit price for
   // Stop-Limit, mark for Market) — never the current mark for conditional
@@ -389,6 +467,13 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           : 'Insufficient USDC balance'
       );
     if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
+    // L1-13: pre-signature capacity clamp (advisory; the vault still enforces).
+    if (capacityBlocks && sideHeadroom != null)
+      errors.push(
+        sideHeadroom > 0
+          ? `Pool capacity: max ≈ ${formatUSD(Math.floor(sideHeadroom), 0)} for ${asset} ${direction} right now`
+          : `No ${direction} capacity for ${asset} right now — try the other side`
+      );
     if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');
     if (isLeader && marginMode === 'Cross')
       errors.push('Leader trades support isolated margin only');
@@ -568,6 +653,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           error: (err) => decodeContractError(err) || 'Leader trade failed',
         });
         try { await leaderPromise; } catch {}
+        invalidateCapacity();
         setIsSubmitting(false);
         return;
       }
@@ -611,6 +697,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         });
 
         try { await openCrossPromise; } catch {}
+        invalidateCapacity();
       } else {
         // Isolated margin - direct open
         const openPositionPromise = openPosition(publicKey, sign, {
@@ -651,6 +738,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
         } catch {
           // Error handled by toast
         }
+        invalidateCapacity();
       }
     } else {
       // Limit order - conditional execution
@@ -1544,6 +1632,27 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           </div>
         )}
 
+        {/* L1-13 pool-capacity clamp: chain-read headroom for this side, so the
+            #82 / #89 rejection is explained BEFORE the signature. Advisory —
+            the vault still enforces; hidden entirely when capacity is unknown. */}
+        {capacityMessage && (
+          <div className="rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-[11px] text-primary space-y-1.5">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+              <span>{capacityMessage}</span>
+            </div>
+            {orderType === 'Market' && maxCollateralForCapacity >= 10 && (
+              <button
+                type="button"
+                onClick={() => setCollateral(String(maxCollateralForCapacity))}
+                className="ml-5 underline underline-offset-2 hover:opacity-80"
+              >
+                Use max — {formatNumber(maxCollateralForCapacity, 0)} USDC collateral at {leverage}x
+              </button>
+            )}
+          </div>
+        )}
+
         {/* L1-3 auto-net notice (Batch-1): an opposite market open nets at
             the execution price before any new exposure is created. */}
         {opposingNotional > 0 && positionSize > 0 && (
@@ -1575,6 +1684,22 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
               <span className="text-xs text-muted-foreground">Position Size</span>
               <span className="font-mono text-xs text-foreground">{formatUSD(positionSize)}</span>
             </div>
+
+            {/* L1-13: what the pool can still take on this side (advisory, 10s). */}
+            {sideHeadroom != null && (
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-muted-foreground">
+                  <Tooltip
+                    content={`Largest ${direction.toLowerCase()} the vault accepts on ${asset} right now — its caps are 70% of AUM reserved in total, 25% per side and 15% net long/short skew. Chain-read every 10s; the contract still has the final say.`}
+                  >
+                    <span className="cursor-help border-b border-dotted border-faint">Pool capacity</span>
+                  </Tooltip>
+                </span>
+                <span className={cn('font-mono text-xs', capacityExceeded ? 'text-short' : 'text-foreground')}>
+                  ≈{formatUSD(Math.floor(sideHeadroom), 0)}
+                </span>
+              </div>
+            )}
 
             {/* B6: the contract funds Cross opens from the pool and pulls only
                 the shortfall from the wallet — say so before the signature. */}

@@ -221,6 +221,21 @@ export async function setupTestServer(opts?: {
   /** L0-3: vault shortfall view values; absent = the reader throws like a
    *  pre-Batch-1 vault (supported:false path). */
   shortfall?: { owed: bigint; reserve: bigint };
+  /** L1-13: chain values behind the capacity headroom fields. Absent = every
+   *  capacity read throws and /v1/markets/stats omits `capacity` / `pool`. */
+  capacity?: {
+    aum: bigint;
+    reservedPayout: bigint;
+    usdcBalance: bigint;
+    shortfallReserve: bigint;
+    reserveCapBps: number;
+    /** [assetCapBps, capAbs, skewCapBps] per asset; default [2500, 0n, 1500]. */
+    assetCaps?: Record<string, [number, bigint, number]>;
+    /** get_asset_risk.max_position_size; null = unset on chain; default $100k. */
+    maxPositionSize?: bigint | null;
+    exposure?: Record<string, { long: bigint; short: bigint }>;
+    latestLedger?: number;
+  };
   /** Stellar network the gateway serves (leaderboard scope gate); defaults
    *  to the TEST_CONFIG testnet. */
   network?: import('@noether/types').Network;
@@ -229,8 +244,24 @@ export async function setupTestServer(opts?: {
   /** Workstream A: waitlist join 503s when Turnstile is unconfigured. */
   turnstileDisabled?: boolean;
 }) {
+  const cap = opts?.capacity;
   const reader = {
     async read<T>(_contractId: string, method: string, args: unknown[] = []): Promise<T> {
+      if (cap) {
+        if (method === 'get_aum') return cap.aum as T;
+        if (method === 'get_reserved_payout') return cap.reservedPayout as T;
+        if (method === 'get_usdc_balance') return cap.usdcBalance as T;
+        if (method === 'get_reserve_cap') return cap.reserveCapBps as T;
+        if (method === 'get_shortfall_reserve' && !opts?.shortfall) return cap.shortfallReserve as T;
+        if (method === 'get_asset_caps') {
+          const [bps, abs, skew] = cap.assetCaps?.[extractSymbol(args[0])] ?? [2500, 0n, 1500];
+          return [bps, abs, skew, (cap.aum * BigInt(bps)) / 10_000n] as T;
+        }
+        if (method === 'get_asset_risk') {
+          if (cap.maxPositionSize === null) return null as T;
+          return { max_position_size: cap.maxPositionSize ?? 1_000_000_000_000n } as T;
+        }
+      }
       if (method === 'get_shortfall_owed') {
         if (!opts?.shortfall) throw new Error('MissingValue: invoking unknown export');
         return opts.shortfall.owed as T;
@@ -243,6 +274,13 @@ export async function setupTestServer(opts?: {
       const symbol = extractSymbol(arg);
       const tuple = (opts?.oraclePrices ?? {})[symbol] ?? [0n, 0n];
       return tuple as T;
+    },
+    async readAssetExposure(_marketId: string, symbols: readonly string[]) {
+      if (!cap) throw new Error('getLedgerEntries unavailable');
+      const exposure = new Map(
+        symbols.map((s) => [s, cap.exposure?.[s] ?? { long: 0n, short: 0n }] as const),
+      );
+      return { exposure, latestLedger: cap.latestLedger ?? null };
     },
   } as unknown as ContractReader;
 
@@ -337,11 +375,16 @@ export async function setupTestServer(opts?: {
     reader,
     FAKE_CONTRACT,
   );
+  const capacity = new (await import('../src/services/capacity.js')).CapacityService({
+    reader,
+    vaultId: FAKE_CONTRACT,
+    marketId: FAKE_CONTRACT,
+  });
   const deps: ServerDeps = {
     oracle, markets, events, apiKeys, walletAuth, access, accessWalletAuth,
     turnstile, approvalEmailer, rateLimiter, db,
     orders, tx, wsBus, wsManager, oracleTicker, liveTailer, vaults, referral, stats,
-    adlQueue, shortfall,
+    adlQueue, shortfall, capacity,
   };
   const app = await buildServer(
     {

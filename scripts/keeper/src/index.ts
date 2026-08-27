@@ -447,7 +447,7 @@ class KeeperBot {
     console.log(`  Errors:                ${this.stats.errors} (read failures: ${this.stats.readFailures})`);
     console.log('═'.repeat(80) + '\n');
 
-    saveKeeperState(this.config.stateFilePath, this.state);
+    saveKeeperState(this.config.stateFilePath, this.state, { force: true });
     await sendAlert(
       'info',
       'Keeper stopped on purpose',
@@ -2141,9 +2141,14 @@ class KeeperBot {
     }
 
     const code = result.error ? extractContractErrorCode(result.error) : null;
+    // #90 Frozen (L0-15 full-freeze) pauses the funding index by design —
+    // treat it like not-due (retry next hour, no failure streak / page).
+    if (code === 90) {
+      console.log('   ⏸️  Market is frozen (#90) — funding index paused; retrying next hour');
+    }
     const outcome: FundingOutcome = result.success
       ? 'applied'
-      : code === 55 || result.error?.includes('FundingIntervalNotElapsed')
+      : code === 55 || code === 90 || result.error?.includes('FundingIntervalNotElapsed')
         ? 'not-due'
         : 'failed';
 
@@ -2152,7 +2157,7 @@ class KeeperBot {
         this.stats.fundingApplications++;
         this.fundingFailureStreak = 0;
         this.state.lastFundingSubmitTime = now;
-        saveKeeperState(this.config.stateFilePath, this.state);
+        saveKeeperState(this.config.stateFilePath, this.state, { force: true });
         this.nextFundingAttemptAt = now + FUNDING_INTERVAL_MS;
         console.log('   ✅ Funding rate applied');
         break;

@@ -95,6 +95,61 @@ async def test_markets_stats() -> None:
     assert res.solvency.bad_debt_events == 1
 
 
+async def test_markets_stats_capacity_blocks_are_optional() -> None:
+    row = {
+        "asset": "XLM",
+        "openInterestLong": "252541116930",
+        "openInterestShort": "1614090000000",
+        "openInterestNet": "-1361548883070",
+        "openPositions": 8,
+        "volume24h": "1486090000000",
+    }
+    capacity = {
+        "headroomLong": "1000000000000",
+        "headroomShort": "803851335007",
+        "bindingLong": "maxPosition",
+        "bindingShort": "skew",
+        "oiLong": "252541116930",
+        "oiShort": "1614090000000",
+        "netSkew": "-1361548883070",
+        "sideCap": "3609000363462",
+        "skewCap": "2165400218077",
+        "assetCapBps": 2500,
+        "capAbs": "0",
+        "skewCapBps": 1500,
+        "maxPositionSize": "1000000000000",
+    }
+    pool = {
+        "aum": "14436001453851",
+        "reservedPayout": "8961594157885",
+        "usdcBalance": "14747198788346",
+        "shortfallReserve": "0",
+        "reserveCapBps": 7000,
+        "reserveCap": "10105201017695",
+        "aggregateHeadroom": "1143606859810",
+        "aggregateBinding": "aggregate",
+        "asOfLedger": 4314754,
+        "ts": 1787596843664,
+        "stale": False,
+    }
+    solvency = {"cumulativeBadDebtCovered": "0", "cumulativeBadDebtLpAbsorbed": "0", "badDebtEvents": 0}
+    rec = Recorder(
+        (200, {"stats": [{**row, "capacity": capacity}], "pool": pool, "solvency": solvency}),
+        (200, {"stats": [row], "solvency": solvency}),
+    )
+    async with make_client(rec) as client:
+        with_capacity = await client.markets.stats()
+        without = await client.markets.stats()
+    assert with_capacity.stats[0].capacity is not None
+    assert with_capacity.stats[0].capacity.headroom_short == "803851335007"
+    assert with_capacity.stats[0].capacity.binding_short == "skew"
+    assert with_capacity.pool is not None
+    assert with_capacity.pool.aggregate_headroom == "1143606859810"
+    assert with_capacity.pool.stale is False
+    assert without.stats[0].capacity is None
+    assert without.pool is None
+
+
 async def test_markets_candles_forwards_params_and_uppercases() -> None:
     rec = Recorder(
         (

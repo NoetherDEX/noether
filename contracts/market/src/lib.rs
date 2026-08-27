@@ -768,11 +768,17 @@ impl MarketContract {
         );
         let pnl = calculate_pnl(&closed_view, current_price).unwrap_or(0);
 
+        // Net settlement through the vault (see settle_isolated_close).
+        let net = pnl - funding;
         let vault_address = get_vault(env);
-        let paid = Self::settle_with_vault(env, &vault_address, &position.trader, pnl);
-        Self::flag_adl_on_shortfall(env, &position.asset, pnl, paid);
+        let paid = if net > 0 {
+            Self::settle_with_vault(env, &vault_address, &position.trader, net)
+        } else {
+            0
+        };
+        Self::flag_adl_on_shortfall(env, &position.asset, net, paid);
 
-        let remaining = collateral_closed + pnl - funding;
+        let remaining = collateral_closed + net;
         if remaining < 0 {
             Self::record_bad_debt(env, &vault_address, &position.trader, &position.asset, -remaining);
         }
@@ -782,15 +788,10 @@ impl MarketContract {
         // Outflows capped by the CLOSED portion's collateral.
         let mut available = collateral_closed;
         let mut to_vault: i128 = 0;
-        if pnl < 0 {
-            let loss = if -pnl > available { available } else { -pnl };
-            to_vault += loss;
-            available -= loss;
-        }
-        if funding > 0 {
-            let f = if funding > available { available } else { funding };
-            to_vault += f;
-            available -= f;
+        if net < 0 {
+            let owed = if -net > available { available } else { -net };
+            to_vault += owed;
+            available -= owed;
         }
         let fee_paid = if keeper_fee > available { available } else { keeper_fee };
         available -= fee_paid;
@@ -804,8 +805,7 @@ impl MarketContract {
                 token_client.transfer(&env.current_contract_address(), k, &fee_paid);
             }
         }
-        let earned_funding = if funding < 0 { -funding } else { 0 };
-        let to_trader = available + paid + earned_funding;
+        let to_trader = available + paid;
         if to_trader > 0 {
             token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
         }
@@ -1310,6 +1310,35 @@ impl MarketContract {
             return Err(NoetherError::FundingIntervalNotElapsed);
         }
         Ok(())
+    }
+
+    /// Emergency admin tool (2026-08 funding-counterparty upgrade): reset the
+    /// funding baseline of the given positions to the current per-asset
+    /// index, voiding their pending funding. Refuses unless the market is in
+    /// full-freeze (mode 2) so nothing settles mid-reseed. Unknown ids are
+    /// skipped; returns the number of positions touched.
+    pub fn reseed_funding(env: Env, ids: Vec<u64>) -> Result<u32, NoetherError> {
+        require_initialized(&env)?;
+        require_admin(&env)?;
+        if storage::effective_mode(&env) != 2 {
+            return Err(NoetherError::InvalidParameter);
+        }
+        let mut touched: u32 = 0;
+        for id in ids.iter() {
+            if let Some(mut p) = get_position(&env, id) {
+                let cum = Self::cum_funding(&env, &p.asset);
+                let old = p.entry_cumulative_funding;
+                p.entry_cumulative_funding = cum;
+                save_position(&env, &p);
+                env.events().publish(
+                    (Symbol::new(&env, "funding_reseeded"),),
+                    (id, old, cum),
+                );
+                touched += 1;
+            }
+        }
+        extend_instance_ttl(&env);
+        Ok(touched)
     }
 
     /// Migrate the single global funding index into per-asset indices
@@ -1867,22 +1896,28 @@ impl MarketContract {
         );
         let pnl = calculate_pnl(pos, current_price).unwrap_or(0);
 
+        // Funding settles through the vault, symmetrically with price PnL
+        // (see settle_isolated_close): the vault pays net > 0, the account
+        // owes net < 0. The pool is only ever credited with USDC the market
+        // actually holds for this leg.
+        let net = pnl - funding;
         let vault_address = get_vault(env);
-        let paid = Self::settle_with_vault(env, &vault_address, &trader, pnl);
-        Self::flag_adl_on_shortfall(env, &pos.asset, pnl, paid);
+        let paid = if net > 0 {
+            Self::settle_with_vault(env, &vault_address, &trader, net)
+        } else {
+            0
+        };
+        Self::flag_adl_on_shortfall(env, &pos.asset, net, paid);
 
         let usdc_token = get_usdc_token(env);
         let token_client = token::Client::new(env, &usdc_token);
         let market_addr = env.current_contract_address();
 
-        // Loss + funding move to the vault, credited on receipt; capped at
-        // the account's funds AND the market's real balance.
+        // Loss + funding owed move to the vault, credited on receipt; capped
+        // at the account's funds AND the market's real balance.
         let mut to_vault: i128 = 0;
-        if pnl < 0 {
-            to_vault += -pnl;
-        }
-        if funding > 0 {
-            to_vault += funding;
+        if net < 0 {
+            to_vault += -net;
         }
         let mut transferred: i128 = 0;
         if to_vault > 0 {
@@ -1898,10 +1933,11 @@ impl MarketContract {
             }
         }
 
-        let effective_pnl = if pnl > 0 { paid } else { pnl };
+        // Backed pool credit: collateral + what the vault paid in (net > 0)
+        // or collateral less what the account owes (net < 0).
+        let effective_net = if net > 0 { paid } else { net };
         let pool_delta = pos.collateral
-            .checked_add(effective_pnl).unwrap_or(0)
-            .checked_sub(funding).unwrap_or(0);
+            .checked_add(effective_net).unwrap_or(0);
 
         Self::adjust_oi(env, &pos.asset, &pos.direction, pos.size, pos.entry_price, current_price, false);
         Self::cancel_position_orders(env, pos.id, skip_order);
@@ -3538,14 +3574,25 @@ impl MarketContract {
         );
         let pnl = calculate_pnl(position, current_price)?;
 
+        // Funding settles through the VAULT, symmetrically with price PnL:
+        // net > 0 (gain and/or funding income) is paid by the vault via the
+        // settle_pnl waterfall (shortfall booked, ADL flagged); net < 0
+        // (loss and/or funding owed) leaves this position's own collateral
+        // for the vault. The market never pays a receiver out of other
+        // traders' custody — that was the 2026-08 drain.
+        let net = pnl - funding;
         let vault_address = get_vault(env);
-        let paid = Self::settle_with_vault(env, &vault_address, &position.trader, pnl);
-        Self::flag_adl_on_shortfall(env, &position.asset, pnl, paid);
+        let paid = if net > 0 {
+            Self::settle_with_vault(env, &vault_address, &position.trader, net)
+        } else {
+            0
+        };
+        Self::flag_adl_on_shortfall(env, &position.asset, net, paid);
 
         // L0-2: the gap between owed loss+funding and this position's own
         // collateral is bad debt — book it (buffer draw + event) instead of
         // letting it land on LP NAV silently.
-        let remaining = position.collateral + pnl - funding;
+        let remaining = position.collateral + net;
         if remaining < 0 {
             Self::record_bad_debt(env, &vault_address, &position.trader, &position.asset, -remaining);
         }
@@ -3558,15 +3605,10 @@ impl MarketContract {
         // the vault is credited only for USDC that actually arrives.
         let mut available = position.collateral;
         let mut to_vault: i128 = 0;
-        if pnl < 0 {
-            let loss = if -pnl > available { available } else { -pnl };
-            to_vault += loss;
-            available -= loss;
-        }
-        if funding > 0 {
-            let f = if funding > available { available } else { funding };
-            to_vault += f;
-            available -= f;
+        if net < 0 {
+            let owed = if -net > available { available } else { -net };
+            to_vault += owed;
+            available -= owed;
         }
         let fee_paid = if keeper_fee > available { available } else { keeper_fee };
         available -= fee_paid;
@@ -3580,9 +3622,9 @@ impl MarketContract {
                 token_client.transfer(&env.current_contract_address(), k, &fee_paid);
             }
         }
-        // Negative funding = trader earned it; pays out on top as before
-        let earned_funding = if funding < 0 { -funding } else { 0 };
-        let to_trader = available + paid + earned_funding;
+        // Conservation: outflow = this position's collateral + what the
+        // vault paid in for it.
+        let to_trader = available + paid;
         if to_trader > 0 {
             token_client.transfer(&env.current_contract_address(), &position.trader, &to_trader);
         }
@@ -6287,6 +6329,165 @@ mod tests {
         let funding_credited = vault_client.get_total_usdc() - vault_before;
         assert_eq!(funding_credited, (100 * PRECISION - fee) - received);
         assert!(funding_credited > 0);
+    }
+
+    // ── Funding counterparty (2026-08): the vault pays receivers ────────
+
+    /// Long-heavy XLM book (longs pay, the short receives) with funding
+    /// accrued over `hours`. Returns (long, short, long_trader, short_trader).
+    fn long_heavy_book(test: &TestEnv, hours: u32) -> (Position, Position, Address, Address) {
+        seed_ladder(test);
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+        vault_client.set_skew_cap(&xlm, &10_000); // one-sided by design
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        let long_trader = fund_trader(test, 10_000 * PRECISION);
+        let short_trader = fund_trader(test, 10_000 * PRECISION);
+        let long = test.market.open_position(
+            &long_trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0,
+        );
+        let short = test.market.open_position(
+            &short_trader, &xlm, &(100 * PRECISION), &10, &Direction::Short, &0,
+        );
+        test.market.apply_funding(); // seed
+        for _ in 0..hours {
+            test.env.ledger().with_mut(|li| li.timestamp += 3_600);
+            oracle.set_price(&xlm, &(PRECISION / 10));
+            test.market.apply_funding();
+        }
+        (long, short, long_trader, short_trader)
+    }
+
+    /// A funding RECEIVER's income is paid by the vault, never out of other
+    /// traders' custody; a PAYER's funding lands in the vault. Market USDC
+    /// never drops below the collateral it still holds.
+    #[test]
+    fn test_funding_receiver_paid_by_vault_not_custody() {
+        let test = setup();
+        let (long, short, long_trader, short_trader) = long_heavy_book(&test, 6);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+
+        // Flat price: equity − collateral is exactly the pending funding income.
+        let earned = test.market.get_position_equity(&short.id) - short.collateral;
+        assert!(earned > 0, "short must be a funding receiver");
+
+        let market_before = usdc.balance(&test.market_id);
+        let vault_before = usdc.balance(&test.vault_id);
+        let wallet_before = usdc.balance(&short_trader);
+        let pnl = test.market.close_position(&short_trader, &short.id, &0);
+        assert_eq!(pnl, 0);
+        // Trader got collateral + income…
+        assert_eq!(usdc.balance(&short_trader) - wallet_before, short.collateral + earned);
+        // …the VAULT paid the income…
+        assert_eq!(vault_before - usdc.balance(&test.vault_id), earned);
+        // …and the market released only the short's own collateral, never
+        // the long's custody.
+        assert_eq!(market_before - usdc.balance(&test.market_id), short.collateral);
+        assert!(usdc.balance(&test.market_id) >= long.collateral);
+
+        // The payer's funding lands in the vault; custody drains to zero.
+        let vault_before = usdc.balance(&test.vault_id);
+        let wallet_before = usdc.balance(&long_trader);
+        test.market.close_position(&long_trader, &long.id, &0);
+        let received = usdc.balance(&long_trader) - wallet_before;
+        assert!(received > 0 && received < long.collateral);
+        assert_eq!(usdc.balance(&test.vault_id) - vault_before, long.collateral - received);
+        assert_eq!(usdc.balance(&test.market_id), 0);
+    }
+
+    /// Partial close of a receiver: the vault pays the closed portion's
+    /// income; the market releases only that portion's own collateral.
+    #[test]
+    fn test_partial_close_receiver_conserves_usdc() {
+        let test = setup();
+        let (long, short, _long_trader, short_trader) = long_heavy_book(&test, 6);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let m0 = usdc.balance(&test.market_id);
+        let v0 = usdc.balance(&test.vault_id);
+        let t0 = usdc.balance(&short_trader);
+        test.market.close_position_partial(&short_trader, &short.id, &(short.size / 2));
+        let got = usdc.balance(&short_trader) - t0;
+        let vault_paid = v0 - usdc.balance(&test.vault_id);
+        assert!(vault_paid > 0, "the vault pays the closed half's funding income");
+        assert_eq!(got, short.collateral / 2 + vault_paid);
+        assert_eq!(m0 - usdc.balance(&test.market_id), short.collateral / 2);
+        assert!(usdc.balance(&test.market_id) >= long.collateral + short.collateral / 2);
+    }
+
+    /// Cross-margin receiver: the pool is credited only with USDC the market
+    /// actually holds for the leg (collateral + what the vault paid), so a
+    /// full withdraw can never dip into another trader's custody.
+    #[test]
+    fn test_cross_receiver_pool_credit_is_backed() {
+        let test = setup();
+        seed_ladder(&test);
+        let vault_client = vault::Client::new(&test.env, &test.vault_id);
+        let xlm = Symbol::new(&test.env, "XLM");
+        vault_client.set_skew_cap(&xlm, &10_000);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        let long_trader = fund_trader(&test, 10_000 * PRECISION);
+        let cross_trader = fund_trader(&test, 10_000 * PRECISION);
+        let long = test.market.open_position(
+            &long_trader, &xlm, &(1_000 * PRECISION), &10, &Direction::Long, &0,
+        );
+        test.market.deposit_cross_margin(&cross_trader, &(500 * PRECISION));
+        let pos = test.market.open_position_cross(
+            &cross_trader, &xlm, &(100 * PRECISION), &10, &Direction::Short, &0,
+        );
+        test.market.apply_funding(); // seed
+        for _ in 0..6 {
+            test.env.ledger().with_mut(|li| li.timestamp += 3_600);
+            oracle.set_price(&xlm, &(PRECISION / 10));
+            test.market.apply_funding();
+        }
+        let earned = test.market.get_position_equity(&pos.id) - pos.collateral;
+        assert!(earned > 0, "cross short must be a funding receiver");
+
+        let market_before = usdc.balance(&test.market_id);
+        let vault_before = usdc.balance(&test.vault_id);
+        let pool_before = test.market.get_cross_margin_balance(&cross_trader);
+        test.market.close_position_cross(&cross_trader, &pos.id, &0);
+        assert_eq!(
+            test.market.get_cross_margin_balance(&cross_trader) - pool_before,
+            pos.collateral + earned,
+        );
+        assert_eq!(vault_before - usdc.balance(&test.vault_id), earned);
+        assert_eq!(usdc.balance(&test.market_id) - market_before, earned);
+
+        let pool = test.market.get_cross_margin_balance(&cross_trader);
+        test.market.withdraw_cross_margin(&cross_trader, &pool);
+        assert!(usdc.balance(&test.market_id) >= long.collateral);
+    }
+
+    /// reseed_funding voids pending funding on the listed positions, only
+    /// while fully frozen, skipping unknown ids.
+    #[test]
+    fn test_reseed_funding_voids_pending() {
+        let test = setup();
+        let (long, short, _long_trader, short_trader) = long_heavy_book(&test, 3);
+        let usdc = soroban_sdk::token::Client::new(&test.env, &test.usdc_token);
+        assert!(test.market.get_position_equity(&short.id) > short.collateral);
+        assert!(test.market.get_position_equity(&long.id) < long.collateral);
+
+        // Refused unless fully frozen.
+        let ids = soroban_sdk::vec![&test.env, short.id, long.id, 999_999u64];
+        let r = test.market.try_reseed_funding(&ids);
+        assert!(matches!(r, Err(Ok(NoetherError::InvalidParameter))));
+
+        test.market.pause(&2u32);
+        assert_eq!(test.market.reseed_funding(&ids), 2); // unknown id skipped
+        test.market.unpause();
+
+        // Pending funding is gone on both sides…
+        assert_eq!(test.market.get_position_equity(&short.id), short.collateral);
+        assert_eq!(test.market.get_position_equity(&long.id), long.collateral);
+        // …and a close moves no funding at all.
+        let vault_before = usdc.balance(&test.vault_id);
+        let wallet_before = usdc.balance(&short_trader);
+        test.market.close_position(&short_trader, &short.id, &0);
+        assert_eq!(usdc.balance(&short_trader) - wallet_before, short.collateral);
+        assert_eq!(usdc.balance(&test.vault_id), vault_before);
     }
 
     // ── L0-13: per-asset funding + magnitude + M-7 kill ─────────────────
