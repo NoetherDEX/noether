@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { MarketsService } from '../services/markets.js';
 import type { StatsService } from '../services/stats.js';
 import type { CapacityService } from '../services/capacity.js';
+import type { CustodyReport } from '../services/keeperStatus.js';
 
 interface AssetParam {
   asset: string;
@@ -63,6 +64,32 @@ const POOL_SCHEMA = {
   ],
 } as const;
 
+/** Custody invariant, relayed from the keeper's last self-report (2026-08 guardrail). */
+const CUSTODY_SCHEMA = {
+  type: 'object',
+  description:
+    'Market custody invariant as last reported by the keeper: the USDC the market contract holds ' +
+    'vs the collateral it holds for traders (live isolated collateral + cross pools + pending ' +
+    'entry-order escrow). deficit must be "0"; anything else means payouts are about to fail (#10). ' +
+    'Omitted when the keeper has never reported; stale:true when the last report is older than 5 minutes.',
+  properties: {
+    marketUsdcBalance: { type: 'string' },
+    trackedCustody: { type: 'string' },
+    isolatedCollateral: { type: 'string' },
+    crossBalances: { type: 'string' },
+    orderEscrow: { type: 'string' },
+    deficit: { type: 'string' },
+    positions: { type: 'integer' },
+    asOf: { type: 'integer' },
+    ageMs: { type: 'integer' },
+    stale: { type: 'boolean' },
+  },
+  required: [
+    'marketUsdcBalance', 'trackedCustody', 'isolatedCollateral', 'crossBalances', 'orderEscrow',
+    'deficit', 'positions', 'asOf', 'ageMs', 'stale',
+  ],
+} as const;
+
 const ASSET_STATS_SCHEMA = {
   type: 'object',
   properties: {
@@ -89,6 +116,7 @@ export async function registerMarketsRoutes(
   service: MarketsService,
   stats: StatsService,
   capacity?: CapacityService,
+  custody?: () => CustodyReport | null,
 ): Promise<void> {
   app.get(
     '/v1/markets/stats',
@@ -100,7 +128,8 @@ export async function registerMarketsRoutes(
           'All amounts are i128 decimal strings with 7-decimal USDC precision. The solvency object ' +
           'carries market-scoped lifetime bad debt (L0-2): how much the insurance buffer absorbed ' +
           'vs how much fell through to LP NAV. Each row may carry a `capacity` block and the response a ' +
-          '`pool` block (L1-13 headroom, chain-read; omitted — never zeroed — when the read failed).',
+          '`pool` block (L1-13 headroom, chain-read; omitted — never zeroed — when the read failed) ' +
+          'and a `custody` block (the keeper\'s last market-custody self-report; omitted until reported).',
         tags: ['markets'],
         response: {
           200: {
@@ -108,6 +137,7 @@ export async function registerMarketsRoutes(
             properties: {
               stats: { type: 'array', items: ASSET_STATS_SCHEMA },
               pool: POOL_SCHEMA,
+              custody: CUSTODY_SCHEMA,
               solvency: {
                 type: 'object',
                 properties: {
@@ -133,7 +163,9 @@ export async function registerMarketsRoutes(
         const c = snapshot?.assets[s.asset];
         return c ? { ...s, capacity: c } : s;
       });
-      return reply.send(snapshot ? { stats: rows, pool: snapshot.pool, solvency } : { stats: rows, solvency });
+      const custodyReport = custody?.() ?? null;
+      const base = snapshot ? { stats: rows, pool: snapshot.pool, solvency } : { stats: rows, solvency };
+      return reply.send(custodyReport ? { ...base, custody: custodyReport } : base);
     },
   );
 

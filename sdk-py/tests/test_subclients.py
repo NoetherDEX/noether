@@ -133,8 +133,20 @@ async def test_markets_stats_capacity_blocks_are_optional() -> None:
         "stale": False,
     }
     solvency = {"cumulativeBadDebtCovered": "0", "cumulativeBadDebtLpAbsorbed": "0", "badDebtEvents": 0}
+    custody = {
+        "marketUsdcBalance": "2649276391892",
+        "trackedCustody": "2389338300000",
+        "isolatedCollateral": "2167102500000",
+        "crossBalances": "222235800000",
+        "orderEscrow": "0",
+        "deficit": "0",
+        "positions": 59,
+        "asOf": 1787869200000,
+        "ageMs": 4200,
+        "stale": False,
+    }
     rec = Recorder(
-        (200, {"stats": [{**row, "capacity": capacity}], "pool": pool, "solvency": solvency}),
+        (200, {"stats": [{**row, "capacity": capacity}], "pool": pool, "solvency": solvency, "custody": custody}),
         (200, {"stats": [row], "solvency": solvency}),
     )
     async with make_client(rec) as client:
@@ -146,8 +158,13 @@ async def test_markets_stats_capacity_blocks_are_optional() -> None:
     assert with_capacity.pool is not None
     assert with_capacity.pool.aggregate_headroom == "1143606859810"
     assert with_capacity.pool.stale is False
+    assert with_capacity.custody is not None
+    assert with_capacity.custody.deficit == "0"
+    assert with_capacity.custody.tracked_custody == "2389338300000"
+    assert with_capacity.custody.stale is False
     assert without.stats[0].capacity is None
     assert without.pool is None
+    assert without.custody is None
 
 
 async def test_markets_candles_forwards_params_and_uppercases() -> None:

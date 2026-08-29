@@ -9,6 +9,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerMarketsRoutes } from './routes/markets.js';
 import { registerOracleRoutes } from './routes/oracle.js';
 import { registerOracleHealthRoutes } from './routes/oracleHealth.js';
+import { KeeperStatusStore } from './services/keeperStatus.js';
 import { registerEventsRoutes } from './routes/events.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerAccessRoutes } from './routes/access.js';
@@ -175,12 +176,18 @@ export async function buildServer(config: ApiConfig, depsOverride?: ServerDeps):
       marketId: config.contracts.contracts.market,
     }),
   );
-  await app.register((instance) => registerMarketsRoutes(instance, deps.markets, deps.stats, deps.capacity));
+  // Keeper self-reports land here (POST /v1/oracle/heartbeat) and feed the
+  // custody block of /v1/markets/stats — one store, two routes.
+  const keeperStatus = new KeeperStatusStore();
+  await app.register((instance) =>
+    registerMarketsRoutes(instance, deps.markets, deps.stats, deps.capacity, () => keeperStatus.custody()),
+  );
   await app.register((instance) => registerOracleRoutes(instance, deps.oracle));
   await app.register((instance) =>
     registerOracleHealthRoutes(instance, {
       oracle: deps.oracle,
       heartbeatSecret: config.keeperHeartbeatSecret,
+      keeperStatus,
     }),
   );
   await app.register((instance) => registerEventsRoutes(instance, deps.events));

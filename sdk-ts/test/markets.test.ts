@@ -101,9 +101,21 @@ describe('markets sub-client', () => {
       stale: false,
     };
     const solvency = { cumulativeBadDebtCovered: '0', cumulativeBadDebtLpAbsorbed: '0', badDebtEvents: 0 };
+    const custody = {
+      marketUsdcBalance: '2649276391892',
+      trackedCustody: '2389338300000',
+      isolatedCollateral: '2167102500000',
+      crossBalances: '222235800000',
+      orderEscrow: '0',
+      deficit: '0',
+      positions: 59,
+      asOf: 1787869200000,
+      ageMs: 4200,
+      stale: false,
+    };
     const { client } = makeClient({
       scripts: [
-        { status: 200, body: { stats: [{ ...row, capacity }], pool, solvency } },
+        { status: 200, body: { stats: [{ ...row, capacity }], pool, solvency, custody } },
         { status: 200, body: { stats: [row], solvency } },
       ],
     });
@@ -112,9 +124,13 @@ describe('markets sub-client', () => {
     expect(withCapacity.stats[0]!.capacity?.bindingShort).toBe('skew');
     expect(withCapacity.pool?.aggregateHeadroom).toBe('1143606859810');
     expect(withCapacity.pool?.stale).toBe(false);
+    expect(withCapacity.custody?.deficit).toBe('0');
+    expect(withCapacity.custody?.trackedCustody).toBe('2389338300000');
+    expect(withCapacity.custody?.stale).toBe(false);
 
     const without = await client.markets.stats();
     expect(without.stats[0]!.capacity).toBeUndefined();
+    expect(without.custody).toBeUndefined();
     expect(without.pool).toBeUndefined();
   });
 

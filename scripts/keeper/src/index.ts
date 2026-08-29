@@ -134,6 +134,26 @@ const FUNDING_FAILED_RETRY_MS = 60_000;
 const FUNDING_FAILURE_ALERT_THRESHOLD = 3;
 /** Noisy per-entity log lines are throttled to once per this window. */
 const THROTTLED_LOG_INTERVAL_MS = 10 * 60 * 1000;
+/**
+ * Custody invariant (2026-08 guardrail): once a minute is plenty — the
+ * pre-fix drain took weeks to empty the market. A deficit must be seen on
+ * two consecutive checks before it pages (a close can land between the
+ * position walk and the balance read).
+ */
+const CUSTODY_CHECK_INTERVAL_MS = 60_000;
+const CUSTODY_ALERT_STREAK = 2;
+
+/** Keeper-side custody self-report; mirrored by the gateway's MarketCustody. */
+interface CustodyReport {
+  marketUsdcBalance: string;
+  trackedCustody: string;
+  isolatedCollateral: string;
+  crossBalances: string;
+  orderEscrow: string;
+  deficit: string;
+  positions: number;
+  asOf: number;
+}
 
 /** Market state snapshot fetched once per cycle and shared by all phases (K-4). */
 interface CycleSnapshot {
@@ -180,6 +200,11 @@ class KeeperBot {
   private lastFullSweepAt: number = 0;
   private crossBalanceCache: Map<string, { balance: bigint; fetchedAt: number }> = new Map();
   private orphanedOrderIds: Set<string> = new Set();
+  // Custody invariant (2026-08 guardrail)
+  private lastCustody: CustodyReport | null = null;
+  private lastCustodyCheckAt: number = 0;
+  private custodyDeficitStreak: number = 0;
+  private custodyDisabledLogged = false;
   // ADL manager (L0-1)
   /** Last known on-chain ADL flag per asset (probe-synced). */
   private adlActive: Map<string, boolean> = new Map();
@@ -489,6 +514,9 @@ class KeeperBot {
           priceSkips: this.stats.priceSkips,
           errors: this.stats.errors,
         },
+        // Custody invariant self-report (2026-08 guardrail) — the gateway
+        // relays it as /v1/markets/stats.custody; null until first computed.
+        custody: this.lastCustody,
       });
     }
 
@@ -515,6 +543,10 @@ class KeeperBot {
       // 5.5 ADL manager (L0-1) — advisory ranking authority; quiet no-op
       //     until the deployed market exports the ADL entry points.
       await this.manageAdl(snapshot, fullSweep);
+
+      // 5.6 Custody invariant (2026-08 guardrail): market USDC ≥ what it
+      //     holds for traders. Once a minute; pages on a repeated deficit.
+      await this.checkCustody(snapshot, now);
     }
 
     // 6. Apply funding rate (hourly, tri-state — K-7)
@@ -533,6 +565,103 @@ class KeeperBot {
       .join(' | ');
 
     process.stdout.write(`\r[${this.config.instanceId} ${timestamp}] ${priceStr}    `);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Custody invariant (2026-08 guardrail)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * The market's USDC must cover every dollar it holds for traders: live
+   * isolated collateral, cross-margin pools and pending entry-order escrow.
+   * The pre-fix market paid funding receivers out of that pool (and drained
+   * it to $27k against $241k tracked), so this is the direct tripwire for
+   * that class of bug. The snapshot already carries every live position and
+   * order; only the cross pools and the SAC balance cost extra reads.
+   *
+   * Known blind spot: cross pools of accounts with NO open cross position
+   * are not enumerable on chain and are not counted (under-counts custody,
+   * never over-reports a deficit).
+   */
+  private async checkCustody(snapshot: CycleSnapshot, now: number): Promise<void> {
+    if (!this.config.usdcTokenContractId) {
+      if (!this.custodyDisabledLogged) {
+        console.log('ℹ️  Custody invariant check disabled (no USDC token id configured)');
+        this.custodyDisabledLogged = true;
+      }
+      return;
+    }
+    if (now - this.lastCustodyCheckAt < CUSTODY_CHECK_INTERVAL_MS) return;
+    this.lastCustodyCheckAt = now;
+
+    try {
+      let isolated = 0n;
+      const crossTraders = new Set<string>();
+      for (const p of snapshot.positions) {
+        if (p.margin_mode === 1) crossTraders.add(p.trader);
+        else isolated += p.collateral;
+      }
+      let cross = 0n;
+      for (const trader of crossTraders) {
+        const balance = await this.getCrossBalanceCached(trader);
+        if (balance === undefined) throw new Error(`cross pool unreadable for ${trader.slice(0, 8)}...`);
+        cross += balance;
+      }
+      let escrow = 0n;
+      for (const o of snapshot.orders) {
+        if (o.status === 'Pending' && (o.order_type === 'LimitEntry' || o.order_type === 'StopLimit')) {
+          escrow += o.collateral;
+        }
+      }
+      const balance = await this.stellar.getUsdcBalance(this.config.marketContractId);
+      const tracked = isolated + cross + escrow;
+      const deficit = tracked > balance ? tracked - balance : 0n;
+
+      this.lastCustody = {
+        marketUsdcBalance: balance.toString(),
+        trackedCustody: tracked.toString(),
+        isolatedCollateral: isolated.toString(),
+        crossBalances: cross.toString(),
+        orderEscrow: escrow.toString(),
+        deficit: deficit.toString(),
+        positions: snapshot.positions.length,
+        asOf: now,
+      };
+
+      const usd = (v: bigint) => (Number(v) / 1e7).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      if (deficit > 0n) {
+        this.custodyDeficitStreak++;
+        console.log(
+          `\n🚨 Custody DEFICIT: market $${usd(balance)} < tracked $${usd(tracked)} ` +
+            `(short $${usd(deficit)}, check ${this.custodyDeficitStreak})`,
+        );
+        if (this.custodyDeficitStreak >= CUSTODY_ALERT_STREAK) {
+          void sendAlert(
+            'critical',
+            'Market custody below tracked collateral',
+            `The market holds $${usd(balance)} USDC but is holding $${usd(tracked)} for traders ` +
+              `(isolated $${usd(isolated)}, cross $${usd(cross)}, order escrow $${usd(escrow)}) — ` +
+              `short by $${usd(deficit)}. Payouts will start failing with #10.\n` +
+              'Tell Claude: "custody deficit".',
+          );
+        }
+      } else {
+        if (this.custodyDeficitStreak >= CUSTODY_ALERT_STREAK) {
+          void sendAlert('info', 'Market custody restored', `Market $${usd(balance)} ≥ tracked $${usd(tracked)} again.`);
+        }
+        this.custodyDeficitStreak = 0;
+        this.logThrottled(
+          'custody-ok',
+          `🏦 Custody ok: market $${usd(balance)} ≥ tracked $${usd(tracked)} ` +
+            `(isolated $${usd(isolated)} + cross $${usd(cross)} + escrow $${usd(escrow)})`,
+        );
+      }
+    } catch (error) {
+      this.logThrottled(
+        'custody-err',
+        `⚠️  Custody check failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════
