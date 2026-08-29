@@ -707,6 +707,22 @@ export class StellarClient {
     return BigInt(result ?? 0);
   }
 
+  /**
+   * USDC SAC balance of `owner` (custody invariant, 2026-08 guardrail).
+   * THROWS on read failure or when no USDC token id is configured.
+   */
+  async getUsdcBalance(owner: string): Promise<bigint> {
+    if (!this.config.usdcTokenContractId) {
+      throw new Error('usdcTokenContractId not configured');
+    }
+    const result = await this.invokeContractRead<bigint | number>(
+      new Contract(this.config.usdcTokenContractId),
+      'balance',
+      [new Address(owner).toScVal()],
+    );
+    return BigInt(result ?? 0);
+  }
+
   // ═══════════════════════════════════════════════════════════════════════
   // ADL Functions (L0-1)
   // ═══════════════════════════════════════════════════════════════════════

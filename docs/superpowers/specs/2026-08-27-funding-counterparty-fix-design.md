@@ -100,10 +100,17 @@ lines; `--apply` runs them).
 
 ### 4. Guardrail
 
-Gateway `GET /v1/markets/stats.pool` gains `marketUsdcBalance`,
-`trackedCustody` (Σ live isolated collateral + Σ cross balances + Σ pending
-entry-order escrow) and `custodyDeficit`; the keeper's health loop alerts
-(`warn`, dedup 10 min) when `marketUsdcBalance < trackedCustody`.
+The keeper already walks every live position each cycle, so it computes the
+invariant once a minute — `marketUsdcBalance` (USDC SAC balance of the
+market) vs `trackedCustody` (Σ live isolated collateral + Σ cross-margin
+pools of accounts with open cross positions + Σ pending LimitEntry/StopLimit
+escrow) — logs it, pages (`critical`, dedup 10 min) when a deficit is seen
+on two consecutive checks, and ships the numbers in its heartbeat. The
+gateway relays the last report as a top-level `custody` block on
+`GET /v1/markets/stats` (`stale:true` past 5 min; omitted — never
+zero-filled — until reported), sourced from the heartbeat store rather than
+the chain-read `pool` block. Known blind spot: cross pools of accounts with
+no open cross position are not enumerable on chain and are not counted.
 `docs/MAINNET-RUNBOOK.md` §1 gets a gate line: conservation test green,
 funding clamp ≤ 10 bps/h, custody monitor live. (Shipped after the contract
 work; not a blocker for unfreezing.)

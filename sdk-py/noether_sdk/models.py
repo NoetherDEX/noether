@@ -110,10 +110,33 @@ class SolvencyStats(_Base):
     bad_debt_events: int
 
 
+class MarketCustody(_Base):
+    """Market custody invariant as last self-reported by the keeper.
+
+    The USDC the market contract holds vs the collateral it holds for traders
+    (live isolated collateral + cross pools + pending entry-order escrow).
+    ``deficit`` must be ``"0"``; anything else means payouts are about to fail.
+    ``stale`` is True when the report is older than 5 minutes (unknown, not
+    healthy). 7 decimal USDC strings.
+    """
+
+    market_usdc_balance: str
+    tracked_custody: str
+    isolated_collateral: str
+    cross_balances: str
+    order_escrow: str
+    deficit: str
+    positions: int
+    as_of: int
+    age_ms: int
+    stale: bool
+
+
 class MarketStatsResponse(_Base):
     stats: list[AssetStats]
     solvency: SolvencyStats
     pool: PoolCapacity | None = None
+    custody: MarketCustody | None = None
 
 
 class CandlePoint(_Base):

@@ -17,6 +17,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { SUPPORTED_ASSETS } from '@noether/shared';
 import type { OracleService } from '../services/oracle.js';
+import { KeeperStatusStore } from '../services/keeperStatus.js';
 
 /**
  * Constant-time secret comparison.
@@ -47,18 +48,15 @@ export interface OracleHealthDeps {
   oracle: OracleService;
   /** Shared secret for the keeper heartbeat; undefined disables the POST. */
   heartbeatSecret?: string;
-}
-
-interface HeartbeatRecord {
-  receivedAt: number;
-  body: Record<string, unknown>;
+  /** Where accepted heartbeats land; shared with /v1/markets/stats (custody). */
+  keeperStatus?: KeeperStatusStore;
 }
 
 export async function registerOracleHealthRoutes(
   app: FastifyInstance,
   deps: OracleHealthDeps,
 ): Promise<void> {
-  let lastHeartbeat: HeartbeatRecord | null = null;
+  const store = deps.keeperStatus ?? new KeeperStatusStore();
 
   app.post(
     '/v1/oracle/heartbeat',
@@ -86,10 +84,7 @@ export async function registerOracleHealthRoutes(
       if (typeof presented !== 'string' || !secretsMatch(presented, deps.heartbeatSecret)) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
-      lastHeartbeat = {
-        receivedAt: Date.now(),
-        body: (req.body ?? {}) as Record<string, unknown>,
-      };
+      store.record((req.body ?? {}) as Record<string, unknown>);
       return reply.code(204).send();
     },
   );
@@ -143,6 +138,7 @@ export async function registerOracleHealthRoutes(
 
       const staleCount = assets.filter((a) => a.stale).length;
       const keeperConfigured = Boolean(deps.heartbeatSecret);
+      const lastHeartbeat = store.latest();
       const keeperAgeMs = lastHeartbeat ? Date.now() - lastHeartbeat.receivedAt : null;
       const keeperStale =
         keeperConfigured && (keeperAgeMs === null || keeperAgeMs > KEEPER_STALE_MS);

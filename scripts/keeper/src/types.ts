@@ -147,6 +147,8 @@ export interface KeeperConfig {
   /** Noeracle on-chain contract — destination for update_batch_ed25519_persistent. */
   noeracleContractId: string;
   vaultContractId: string;
+  /** USDC SAC — custody invariant check (2026-08 guardrail); empty disables it. */
+  usdcTokenContractId: string;
   /** Vault factory — L0-20 reconcile duty. Empty = duty disabled. */
   vaultFactoryContractId: string;
   /** Router — extended by the TTL job (P3-9). */

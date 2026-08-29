@@ -86,11 +86,35 @@ export interface SolvencyStats {
   badDebtEvents: number;
 }
 
+/**
+ * Market custody invariant as last self-reported by the keeper: the USDC the
+ * market contract holds vs the collateral it holds for traders (live isolated
+ * collateral + cross pools + pending entry-order escrow). `deficit` must be
+ * "0"; anything else means payouts are about to fail. 7 decimal USDC strings.
+ */
+export interface MarketCustody {
+  marketUsdcBalance: string;
+  trackedCustody: string;
+  isolatedCollateral: string;
+  crossBalances: string;
+  orderEscrow: string;
+  deficit: string;
+  positions: number;
+  /** Unix ms the keeper computed it. */
+  asOf: number;
+  /** Age of the report when served. */
+  ageMs: number;
+  /** True when the last report is older than 5 minutes — unknown, not healthy. */
+  stale: boolean;
+}
+
 export interface MarketStatsResponse {
   stats: AssetStats[];
   solvency: SolvencyStats;
   /** L1-13 vault wide capacity; absent when the gateway could not read the chain. */
   pool?: PoolCapacity;
+  /** Keeper custody self-report; absent until the keeper has reported one. */
+  custody?: MarketCustody;
 }
 
 /** Intervals accepted by GET /v1/candles. */

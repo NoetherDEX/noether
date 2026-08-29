@@ -106,6 +106,59 @@ describe('GET /v1/markets/stats', () => {
   });
 });
 
+describe('GET /v1/markets/stats — custody invariant (keeper self-report)', () => {
+  const CUSTODY = {
+    marketUsdcBalance: '2649276391892',
+    trackedCustody: '2389338300000',
+    isolatedCollateral: '2167102500000',
+    crossBalances: '222235800000',
+    orderEscrow: '0',
+    deficit: '0',
+    positions: 59,
+    asOf: 1787869200000,
+  };
+
+  it('relays the keeper custody block once a heartbeat carried one, stale:false', async () => {
+    const setup = await setupTestServer({ keeperHeartbeatSecret: 's3cret' });
+    app = setup.app;
+    const before = await app.inject({ method: 'GET', url: '/v1/markets/stats' });
+    expect(before.json().custody).toBeUndefined();
+
+    const post = await app.inject({
+      method: 'POST',
+      url: '/v1/oracle/heartbeat',
+      headers: { 'x-keeper-secret': 's3cret' },
+      payload: { ts: 1, pushed: [], custody: CUSTODY },
+    });
+    expect(post.statusCode).toBe(204);
+
+    const res = await app.inject({ method: 'GET', url: '/v1/markets/stats' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().custody).toEqual({ ...CUSTODY, ageMs: expect.any(Number), stale: false });
+  });
+
+  it('omits the block (never zero-fills) when the report is malformed or absent', async () => {
+    const setup = await setupTestServer({ keeperHeartbeatSecret: 's3cret' });
+    app = setup.app;
+    // A keeper build without the custody duty: heartbeat, no block.
+    await app.inject({
+      method: 'POST',
+      url: '/v1/oracle/heartbeat',
+      headers: { 'x-keeper-secret': 's3cret' },
+      payload: { ts: 1, pushed: [] },
+    });
+    expect((await app.inject({ method: 'GET', url: '/v1/markets/stats' })).json().custody).toBeUndefined();
+    // Malformed amounts are rejected wholesale rather than defaulted to "0".
+    await app.inject({
+      method: 'POST',
+      url: '/v1/oracle/heartbeat',
+      headers: { 'x-keeper-secret': 's3cret' },
+      payload: { ts: 2, pushed: [], custody: { ...CUSTODY, deficit: 'n/a' } },
+    });
+    expect((await app.inject({ method: 'GET', url: '/v1/markets/stats' })).json().custody).toBeUndefined();
+  });
+});
+
 describe('GET /v1/markets/stats — L1-13 capacity headroom', () => {
   // The prod vault + XLM book on 2026-08-24, pre-deposit: the numbers behind
   // the #89 the friend hit. Same fixture as packages/shared/test/capacity.test.ts.

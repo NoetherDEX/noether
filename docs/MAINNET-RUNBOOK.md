@@ -29,6 +29,7 @@ confirmed start date is the freeze deadline.
 - [ ] Multisig ready (§2) and **rehearsal completed on testnet (§3) with the same keys**
 - [ ] Seed capital in hand (~$1.5–2k: LP seed + insurance buffer + 2 jury prefunds)
 - [ ] Monitoring live: keeper heartbeat/dead-man, oracle staleness, TTL-bump failure paging (P3-9 already alerts), gateway 5xx, wallet-XLM alarm (P3-10)
+- [ ] **Custody invariant** (2026-08 funding-drain class): `GET /v1/markets/stats` → `custody.deficit == "0"` and `custody.stale == false` on the mainnet gateway; the keeper's "Market custody below tracked collateral" alert wired to the pager; `funding_clamp_bps ≤ 10` and `max_funding_velocity_bps ≤ 240` on every pair (`scripts/funding_params.sh <market> <admin>` prints the ladder); market conservation tests green (`cargo test -p market -- receiver reseed_funding`)
 - [ ] `/terms` reviewed for public launch; waitlist + admin panel operating (live since 2026-08-20)
 - [ ] API-surface pentest pass (gateway REST/WS, key issuance, admin waitlist
       routes) — the Audit Bank engagement scopes contracts + Noeracle only;

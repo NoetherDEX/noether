@@ -175,6 +175,12 @@ export function loadConfig(): KeeperConfig {
       process.env.NEXT_PUBLIC_VAULT_ID ||
       contracts.contracts?.vault ||
       '',
+    // USDC SAC — the custody invariant check reads the market's balance
+    // through it (2026-08 guardrail). Empty disables the check, loudly once.
+    usdcTokenContractId:
+      process.env.NEXT_PUBLIC_USDC_TOKEN_ID ||
+      contracts.contracts?.usdcToken ||
+      '',
     // Vault factory — enables the L0-20 order-reconcile duty; empty is
     // fine on stacks without user vaults (duty stays disabled).
     vaultFactoryContractId:
