@@ -268,10 +268,29 @@ class PreparedTransaction(_Base):
     min_resource_fee: str | None = None
 
 
+class ContractErrorInfo(_Base):
+    """Decoded ``Error(Contract, #N)`` when the contract reverted."""
+
+    code: int
+    name: str | None = None
+    message: str | None = None
+
+
+class HostErrorInfo(_Base):
+    """Decoded non-contract host error, e.g. ``storage`` / ``exceeded_limit``
+    (the network state moved between simulation and apply — re-prepare and
+    resubmit once; never a contract revert)."""
+
+    type: str
+    code: str
+
+
 class SubmittedTx(_Base):
     hash: str
     status: Literal["SUCCESS", "FAILED", "PENDING", "NOT_FOUND"]
     ledger: int | None = None
+    contract_error: ContractErrorInfo | None = None
+    host_error: HostErrorInfo | None = None
 
 
 # ─── positions ─────────────────────────────────────────────────────────────

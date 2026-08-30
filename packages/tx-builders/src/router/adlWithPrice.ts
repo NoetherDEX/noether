@@ -35,5 +35,8 @@ export async function buildAdlWithPriceTx(
   routerContractId: string,
   params: AdlWithPriceParams,
 ): Promise<PreparedTx> {
-  return buildContractTx(ctx, params.caller, routerContractId, METHOD, buildAdlWithPriceArgs(params));
+  return buildContractTx(ctx, params.caller, routerContractId, METHOD, buildAdlWithPriceArgs(params), {
+    op: 'adl',
+    keyCtx: { asset: params.attestation.asset, positionId: BigInt(params.positionId) },
+  });
 }

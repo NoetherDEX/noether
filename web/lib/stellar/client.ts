@@ -20,6 +20,15 @@ import {
   txResultCodeMessage,
   type ContractErrorContext,
 } from '@/lib/utils/contractErrors';
+import { conditionalWriteKeys, padFootprint, type KeyCtx, type TradeOp } from './footprintGuard';
+import { TxFailedError } from './txErrors';
+import { feeChargedXlm, genericFailureMessage, staleFootprintMessage, tryAgainLaterMessage } from '@/lib/utils/txCopy';
+
+/** Per-call hints for the footprint guard (see footprintGuard.ts). */
+export interface BuildTxOptions {
+  op?: TradeOp;
+  keyCtx?: Partial<Omit<KeyCtx, 'vault' | 'market' | 'trader'>>;
+}
 
 // Horizon server for account queries (balances, etc.)
 const horizonServer = new Horizon.Server(NETWORK.HORIZON_URL);
@@ -93,7 +102,8 @@ export async function buildTransaction(
   sourcePublicKey: string,
   contract: Contract,
   method: string,
-  args: xdr.ScVal[]
+  args: xdr.ScVal[],
+  opts: BuildTxOptions = {}
 ): Promise<string> {
   const account = await sorobanRpc.getAccount(sourcePublicKey);
 
@@ -118,9 +128,22 @@ export async function buildTransaction(
     );
   }
 
-  // Prepare the transaction with the simulation results, then widen the
-  // declared resources before the user ever sees the signing prompt.
-  const prepared = withResourceHeadroom(rpc.assembleTransaction(transaction, simulated).build());
+  // Prepare the transaction with the simulation results, declare the keys
+  // the contracts MAY write (footprint guard — the 2026-08-30 stale-footprint
+  // trap), then widen the declared resources before the user ever sees the
+  // signing prompt.
+  const guardKeys =
+    opts.op && CONTRACTS.VAULT && CONTRACTS.MARKET
+      ? conditionalWriteKeys(opts.op, {
+          ...opts.keyCtx,
+          vault: CONTRACTS.VAULT,
+          market: CONTRACTS.MARKET,
+          trader: sourcePublicKey,
+        })
+      : [];
+  const prepared = withResourceHeadroom(
+    padFootprint(rpc.assembleTransaction(transaction, simulated).build(), guardKeys),
+  );
 
   // Convert to XDR string for Freighter
   // Use toXDR() which returns base64 string in browser environment
@@ -229,9 +252,9 @@ function contractErrorFromDiagnostics(
  * on a retry. Distinguishing the two is the difference between "try again" and
  * "something is wrong with this market".
  */
-function hostErrorFromDiagnostics(
+export function hostErrorFromDiagnostics(
   events: xdr.DiagnosticEvent[] | undefined | null
-): string | null {
+): { type: string; code: string } | null {
   for (const ev of events ?? []) {
     try {
       const body = ev.event().body().v0();
@@ -239,19 +262,51 @@ function hostErrorFromDiagnostics(
         if (val.switch() !== xdr.ScValType.scvError()) continue;
         const err = val.error();
         if (err.switch() === xdr.ScErrorType.sceContract()) continue; // handled elsewhere
-        if (err.code().name === 'scecExceededLimit') {
-          return (
-            'The network moved on before your transaction landed — its resource ' +
-            'estimate went stale. Nothing was charged and no position was opened. ' +
-            'Please try again.'
-          );
-        }
+        // Mirrors api/src/services/contractErrors.ts findHostError: the
+        // subsystem ("storage", "budget", …) and code ("exceeded_limit", …)
+        // as snake_case names, so the flow layer can classify the failure.
+        return {
+          type: err.switch().name.replace(/^sce/, '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase(),
+          code: err.code().name.replace(/^scec/, '').replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase(),
+        };
       }
     } catch {
       // malformed / unexpected event shape — keep scanning
     }
   }
   return null;
+}
+
+/** First Error(Contract, #N) code in the diagnostic events, or null. */
+function contractCodeFromDiagnostics(events: xdr.DiagnosticEvent[] | undefined | null): number | null {
+  for (const ev of events ?? []) {
+    try {
+      const body = ev.event().body().v0();
+      for (const val of [...body.topics(), body.data()]) {
+        const code = scErrorContractCode(val);
+        if (code !== null) return code;
+      }
+    } catch {
+      // keep scanning
+    }
+  }
+  return null;
+}
+
+function txResultCodeName(txResult: xdr.TransactionResult | undefined | null): string | null {
+  try {
+    return txResult ? txResult.result().switch().name : null;
+  } catch {
+    return null;
+  }
+}
+
+function feeChargedFrom(txResult: xdr.TransactionResult | undefined | null): bigint | null {
+  try {
+    return txResult ? BigInt(txResult.feeCharged().toString()) : null;
+  } catch {
+    return null;
+  }
 }
 
 function scErrorContractCode(val: xdr.ScVal): number | null {
@@ -297,7 +352,10 @@ export class TxStillPendingError extends Error {
 /**
  * Submit a signed transaction
  */
-export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetTransactionResponse> {
+export async function submitTransaction(
+  signedXdr: string,
+  op?: TradeOp,
+): Promise<rpc.Api.GetTransactionResponse> {
   debugLog('[DEBUG] Submitting signed XDR (first 100 chars):', signedXdr.substring(0, 100));
   debugLog('[DEBUG] Full signed XDR length:', signedXdr.length);
 
@@ -309,6 +367,16 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
 
   debugLog('[DEBUG] Send response:', response.status, response.hash);
 
+  if (response.status === 'TRY_AGAIN_LATER') {
+    // The RPC's queue is full; the tx was NOT accepted. Retryable as-is.
+    throw new TxFailedError(tryAgainLaterMessage(op), {
+      op,
+      stage: 'send',
+      hash: response.hash,
+      sendStatus: response.status,
+    });
+  }
+
   if (response.status === 'ERROR') {
     debugError('[submitTransaction] send ERROR:', response.errorResult, response.diagnosticEvents);
     // Prefer a decoded contract error, then a transaction-level reason, then a
@@ -317,7 +385,15 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
       contractErrorFromDiagnostics(response.diagnosticEvents) ??
       txResultMessage(response.errorResult) ??
       'Transaction could not be submitted — please try again';
-    throw new Error(message);
+    throw new TxFailedError(message, {
+      op,
+      stage: 'send',
+      hash: response.hash,
+      sendStatus: response.status,
+      txResultCode: txResultCodeName(response.errorResult),
+      hostError: hostErrorFromDiagnostics(response.diagnosticEvents),
+      contractCode: contractCodeFromDiagnostics(response.diagnosticEvents),
+    });
   }
 
   // Wait for confirmation - poll until we get a final status
@@ -343,12 +419,27 @@ export async function submitTransaction(signedXdr: string): Promise<rpc.Api.GetT
         : undefined;
     const txResult =
       'resultXdr' in result ? (result.resultXdr as xdr.TransactionResult) : undefined;
+    const hostError = hostErrorFromDiagnostics(events);
+    const contractCode = contractCodeFromDiagnostics(events);
+    const feeCharged = feeChargedFrom(txResult);
+    const feeXlm = feeChargedXlm(feeCharged);
+    // A contract revert keeps its decoded message. A footprint/resource trap
+    // (state moved between simulate and apply) gets copy that names what the
+    // user was doing and admits the fee — the network DID charge it.
     const message =
       contractErrorFromDiagnostics(events) ??
-      hostErrorFromDiagnostics(events) ??
+      (hostError?.code === 'exceeded_limit' ? staleFootprintMessage(op, feeXlm) : null) ??
       txResultMessage(txResult) ??
-      'Transaction failed on-chain — please try again';
-    throw new Error(message);
+      genericFailureMessage(op, feeXlm);
+    throw new TxFailedError(message, {
+      op,
+      stage: 'apply',
+      hash: response.hash,
+      txResultCode: txResultCodeName(txResult),
+      hostError,
+      contractCode,
+      feeChargedStroops: feeCharged,
+    });
   }
 
   if (result.status !== 'SUCCESS') {

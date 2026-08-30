@@ -62,6 +62,7 @@ export {
   type PreparedTransaction,
 } from './sub/orders.js';
 export { type SubmitRequest, type SubmittedTx } from './sub/tx.js';
+export { classifySubmitFailure, type SubmitFailureShape, type TradeFailureClass } from './retry.js';
 export { type OpenPositionRow, type OpenPositionsQuery } from './sub/positions.js';
 export {
   type VaultRow,

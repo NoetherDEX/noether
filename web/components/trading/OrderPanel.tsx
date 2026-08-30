@@ -5,6 +5,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { AlertCircle, Info, Loader2, AlertTriangle, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { retryProgressMessage } from '@/lib/utils/txCopy';
+import type { RunTradeTxOptions, TradeOp } from '@/lib/stellar/txFlow';
 import { useWallet } from '@/lib/hooks/useWallet';
 import { useTradeStore, useLeaderModeStore } from '@/lib/store';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
@@ -32,6 +34,19 @@ import { Tooltip } from '@/components/ui';
 import { WalletModal } from '@/components/wallet';
 import { TRADING, FEE_TIERS, IS_MAINNET_BUILD } from '@/lib/utils/constants';
 import type { TriggerCondition, DisplayPosition } from '@/types';
+
+/**
+ * One automatic rebuild when the network state moves between simulation and
+ * apply (footprint guard + txFlow): the wallet prompts a second time, so tell
+ * the user why before the popup appears.
+ */
+function tradeFlow(op: TradeOp): RunTradeTxOptions {
+  return {
+    onProgress: (p) => {
+      if (p === 'retrying') toast(retryProgressMessage(op), { id: `retry-${op}`, icon: '⟳' });
+    },
+  };
+}
 
 interface OrderPanelProps {
   asset: string;
@@ -680,7 +695,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           leverage,
           direction,
           acceptablePrice: openBound,
-        });
+        }, tradeFlow('open_cross'));
 
         toast.promise(openCrossPromise, {
           loading: `Opening Cross ${direction} ${asset}...`,
@@ -706,7 +721,7 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
           leverage,
           direction,
           acceptablePrice: openBound,
-        });
+        }, tradeFlow('open'));
 
         toast.promise(openPositionPromise, {
           loading: `Opening ${direction} ${asset} position...`,

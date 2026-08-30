@@ -35,5 +35,8 @@ export async function buildClosePositionTx(
   marketContractId: string,
   params: ClosePositionParams,
 ): Promise<PreparedTx> {
-  return buildContractTx(ctx, params.trader, marketContractId, METHOD, buildClosePositionArgs(params));
+  return buildContractTx(ctx, params.trader, marketContractId, METHOD, buildClosePositionArgs(params), {
+    op: 'close',
+    keyCtx: { positionId: BigInt(params.positionId) },
+  });
 }

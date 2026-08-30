@@ -1852,14 +1852,15 @@ impl MarketContract {
         }
 
         // Return remaining equity to the cross pool (NOT trader wallet).
-        if credited != 0 {
-            let current_balance = get_cross_margin_balance(env, &trader);
-            let mut new_balance = current_balance.checked_add(credited).unwrap_or(current_balance);
-            if new_balance < 0 {
-                new_balance = 0;
-            }
-            set_cross_margin_balance(env, &trader, new_balance);
+        // Always written (a zero delta writes the balance back) so the pool
+        // key's footprint class never depends on the settlement outcome at
+        // simulation time (footprint stability).
+        let current_balance = get_cross_margin_balance(env, &trader);
+        let mut new_balance = current_balance.checked_add(credited).unwrap_or(current_balance);
+        if new_balance < 0 {
+            new_balance = 0;
         }
+        set_cross_margin_balance(env, &trader, new_balance);
 
         env.events().publish(
             (Symbol::new(env, "position_closed"),),
@@ -3425,6 +3426,10 @@ impl MarketContract {
 
         if fresh {
             set_last_good_price(env, asset, price, now); // last-good tracks the RAW feed
+        } else if let Some((last, last_ts)) = get_last_good_price(env, asset) {
+            // Write-back so the key's footprint class does not depend on feed
+            // freshness at simulation time (footprint stability).
+            set_last_good_price(env, asset, last, last_ts);
         }
         Ok(result)
     }
@@ -3832,12 +3837,18 @@ impl MarketContract {
     /// (L0-1). reason=1 distinguishes the shortfall path from the
     /// coverage-ratio trigger (reason=0).
     fn flag_adl_on_shortfall(env: &Env, asset: &Symbol, pnl: i128, paid: i128) {
-        if pnl > 0 && paid < pnl && !get_adl_active(env, asset) {
+        // Read unconditionally and write the flag back when it exists, so
+        // the AdlActive key's footprint class never depends on the vault's
+        // coverage at simulation time (footprint stability, 2026-08-30).
+        let active = get_adl_active(env, asset);
+        if pnl > 0 && paid < pnl && !active {
             set_adl_active(env, asset, true);
             env.events().publish(
                 (Symbol::new(env, "adl_triggered"),),
                 (asset.clone(), 1u32, 0i128, 0i128),
             );
+        } else {
+            touch_adl_active(env, asset);
         }
     }
 
@@ -6488,6 +6499,54 @@ mod tests {
         test.market.close_position(&short_trader, &short.id, &0);
         assert_eq!(usdc.balance(&short_trader) - wallet_before, short.collateral);
         assert_eq!(usdc.balance(&test.vault_id), vault_before);
+    }
+
+    // ── Footprint stability (2026-08-30) ────────────────────────────────
+
+    /// A winning close on a vault whose buffer has never been touched must
+    /// still write the vault's BufferBalance entry (the zero-draw path) —
+    /// exactly the key whose read-only footprint trapped the incident tx.
+    #[test]
+    fn winning_close_writes_vault_buffer_key_on_zero_draw() {
+        let test = setup();
+        // The vault's DataKey enum is private to the vault crate; a unit
+        // variant serialises as a one-symbol vec, which a 1-tuple matches.
+        let vault_has = |name: &str| {
+            let key = (Symbol::new(&test.env, name),);
+            test.env.as_contract(&test.vault_id, || test.env.storage().persistent().has(&key))
+        };
+        assert!(!vault_has("BufferBalance"));
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 11 / 100)); // +10%
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
+        assert!(pnl > 0);
+        assert!(vault_has("BufferBalance"));
+        assert!(vault_has("TotalFees"));
+        // ADL flag is only touched when it exists — never created by a close.
+        let adl_exists = test.env.as_contract(&test.market_id, || {
+            test.env.storage().persistent().has(&DataKey::AdlActive(xlm.clone()))
+        });
+        assert!(!adl_exists);
+    }
+
+    /// A close on a STALE feed writes the last-good price back unchanged, so
+    /// the LastGoodPrice key is read-write whether or not the feed is fresh.
+    #[test]
+    fn stale_close_writes_last_good_price_back_unchanged() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        let before = test.env.as_contract(&test.market_id, || get_last_good_price(&test.env, &xlm));
+        assert!(before.is_some());
+        // Let the feed go stale (max_price_staleness = 60s by default).
+        test.env.ledger().with_mut(|li| li.timestamp += 3_600);
+        test.market.close_position(&trader, &pos.id, &0); // lenient path: no #30
+        let after = test.env.as_contract(&test.market_id, || get_last_good_price(&test.env, &xlm));
+        assert_eq!(after, before, "write-back must not move last-good on a stale read");
     }
 
     // ── L0-13: per-asset funding + magnitude + M-7 kill ─────────────────

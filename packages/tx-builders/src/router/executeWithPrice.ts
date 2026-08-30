@@ -38,5 +38,8 @@ export async function buildExecuteWithPriceTx(
   routerContractId: string,
   params: ExecuteWithPriceParams,
 ): Promise<PreparedTx> {
-  return buildContractTx(ctx, params.keeper, routerContractId, METHOD, buildExecuteWithPriceArgs(params));
+  return buildContractTx(ctx, params.keeper, routerContractId, METHOD, buildExecuteWithPriceArgs(params), {
+    op: 'execute_order',
+    keyCtx: { asset: params.attestation.asset },
+  });
 }
