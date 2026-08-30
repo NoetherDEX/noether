@@ -47,5 +47,6 @@ export async function buildClosePartialWithPriceTx(
     routerContractId,
     METHOD,
     buildClosePartialWithPriceArgs(params),
+    { op: 'close_partial', keyCtx: { asset: params.attestation.asset, positionId: BigInt(params.positionId) } },
   );
 }

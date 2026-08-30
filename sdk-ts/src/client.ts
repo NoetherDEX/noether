@@ -13,6 +13,7 @@ import { TxApi, type SubmittedTx } from './sub/tx.js';
 import { VaultsApi } from './sub/vaults.js';
 import { ReferralApi } from './sub/referral.js';
 import { WsClient, type WsClientOptions } from './sub/ws.js';
+import { classifySubmitFailure } from './retry.js';
 
 export interface NoetherClientOptions {
   /** Base URL of the Noether API gateway (e.g. https://api.noether.exchange). */
@@ -33,6 +34,13 @@ export interface ExecuteTradeOptions {
   request: PrepareRequest;
   signer: XdrSigner;
   pollTimeoutMs?: number;
+  /**
+   * Rebuild (fresh simulation + footprint), re-sign and resubmit ONCE when
+   * the submission fails because the network state moved between our
+   * simulation and our apply (a Storage/ExceededLimit trap) or the RPC
+   * queue was full. Contract reverts are never retried. Default true.
+   */
+  retryOnStaleFootprint?: boolean;
 }
 
 export interface ExecuteTradeResult {
@@ -92,10 +100,38 @@ export class NoetherClient {
    */
   async executeTrade(opts: ExecuteTradeOptions): Promise<ExecuteTradeResult> {
     if (!this.hasAuth) throw new Error('executeTrade requires an authenticated client');
-    const prepared = await this.orders.prepare(opts.request);
-    const signedXdr = await opts.signer(prepared.xdr);
-    const submitted = await this.tx.submit({ signedXdr, pollTimeoutMs: opts.pollTimeoutMs });
-    return { prepared, submitted };
+    const retry = opts.retryOnStaleFootprint ?? true;
+    let attempt = 0;
+    for (;;) {
+      const prepared = await this.orders.prepare(opts.request);
+      const signedXdr = await opts.signer(prepared.xdr);
+      let submitted: SubmittedTx;
+      try {
+        submitted = await this.tx.submit({ signedXdr, pollTimeoutMs: opts.pollTimeoutMs });
+      } catch (err) {
+        // A 503 from the gateway is an RPC TRY_AGAIN_LATER: same intent, fresh build.
+        const httpStatus = (err as { status?: number } | null)?.status;
+        if (retry && attempt === 0 && classifySubmitFailure({ httpStatus }) === 'try_again_later') {
+          attempt++;
+          await new Promise((r) => setTimeout(r, 2_000));
+          continue;
+        }
+        throw err;
+      }
+      if (
+        retry &&
+        attempt === 0 &&
+        classifySubmitFailure({
+          status: submitted.status,
+          contractError: submitted.contractError,
+          hostError: submitted.hostError,
+        }) === 'stale_footprint'
+      ) {
+        attempt++;
+        continue;
+      }
+      return { prepared, submitted };
+    }
   }
 
   /**

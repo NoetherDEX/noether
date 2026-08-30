@@ -47,5 +47,9 @@ export async function buildLiquidateCrossWithPricesTx(
     routerContractId,
     METHOD,
     buildLiquidateCrossWithPricesArgs(params),
+    {
+      op: 'liquidate_cross',
+      keyCtx: { trader: params.trader, assets: params.attestations.map((a) => a.asset) },
+    },
   );
 }

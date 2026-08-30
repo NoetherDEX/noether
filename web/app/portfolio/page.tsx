@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
+import { retryProgressMessage } from '@/lib/utils/txCopy';
+import type { TradeProgress } from '@/lib/stellar/txFlow';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Header } from '@/components/layout';
 import { WalletProvider } from '@/components/wallet';
@@ -231,11 +233,16 @@ function PortfolioPage() {
       const bound = pos
         ? closeAcceptableBound(pos.direction, pos.currentPrice)
         : BigInt(0);
+      const flow = {
+        onProgress: (p: TradeProgress) => {
+          if (p === 'retrying') toast(retryProgressMessage('close'), { id: `retry-close-${positionId}`, icon: '⟳' });
+        },
+      };
       if (pos?.marginMode === 'Cross') {
-        const result = await closePositionCross(publicKey, sign, positionId, bound);
+        const result = await closePositionCross(publicKey, sign, positionId, bound, flow);
         return result.pnl;
       }
-      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? 'BTC', bound);
+      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? 'BTC', bound, flow);
       return result.pnl;
     })();
 

@@ -1,4 +1,5 @@
 import { marketContract, routerContract, buildTransaction, submitTransaction, toScVal, rpc as sorobanRpc } from './client';
+import { runTradeTx, type RunTradeTxOptions } from './txFlow';
 import { fetchAttestation, priceTailArgs, attestationStructArg } from './noeracle';
 import { marketHasBatch1Features } from './capabilities';
 import type { Position, DisplayPosition, MarketConfig, Direction, Trade, Order, DisplayOrder, OrderType, TriggerCondition, OrderStatus } from '@/types';
@@ -95,7 +96,8 @@ export async function openPosition(
     direction: Direction;
     /** L0-10 worst-fill bound (7dp). Omit/0 = unbounded. Batch-1 only. */
     acceptablePrice?: bigint;
-  }
+  },
+  flow: RunTradeTxOptions = {},
 ): Promise<Position> {
   debugLog('[DEBUG] Opening position...');
 
@@ -109,45 +111,50 @@ export async function openPosition(
     toScVal(params.direction, 'direction'), // direction: Direction enum (Long=0, Short=1)
   ];
 
-  let xdrStr: string;
-  const batch1 = await marketHasBatch1Features();
-  if (routerContract) {
-    // Router path (Pattern B): fetch a fresh signed Noeracle price and open
-    // atomically via noether_router.open_with_price, so the market reads a
-    // sub-second-fresh price and can't reject with #30 PriceStale.
-    // Batch-1 (L0-8): struct-tail quorum bundle, asset inside the struct,
-    // plus the L0-10 acceptable_price bound (0 = unbounded until the order
-    // panel threads a bound). Legacy router: flattened single-price tail.
-    const att = await fetchAttestation(params.asset);
-    if (!att) throw new Error('Noeracle price unavailable — cannot open position');
-    xdrStr = await buildTransaction(
-      signerPublicKey,
-      routerContract,
-      'open_with_price',
-      batch1
-        ? [
-            toScVal(signerPublicKey, 'address'),
-            toScVal(params.collateral, 'i128'),
-            toScVal(params.leverage, 'u32'),
-            toScVal(params.direction, 'direction'),
-            toScVal(params.acceptablePrice ?? BigInt(0), 'i128'),
-            attestationStructArg(params.asset, att),
-          ]
-        : [...tradeArgs, ...priceTailArgs(att)],
-    );
-  } else {
+  // Everything that depends on the current ledger — the signed price round,
+  // the simulation, the footprint — lives inside `build` so the one
+  // automatic retry (txFlow) rebuilds against fresh state.
+  const build = async (): Promise<string> => {
+    const batch1 = await marketHasBatch1Features();
+    const guard = { op: 'open' as const, keyCtx: { asset: params.asset } };
+    if (routerContract) {
+      // Router path (Pattern B): fetch a fresh signed Noeracle price and open
+      // atomically via noether_router.open_with_price, so the market reads a
+      // sub-second-fresh price and can't reject with #30 PriceStale.
+      // Batch-1 (L0-8): struct-tail quorum bundle, asset inside the struct,
+      // plus the L0-10 acceptable_price bound (0 = unbounded until the order
+      // panel threads a bound). Legacy router: flattened single-price tail.
+      const att = await fetchAttestation(params.asset);
+      if (!att) throw new Error('Noeracle price unavailable — cannot open position');
+      return buildTransaction(
+        signerPublicKey,
+        routerContract,
+        'open_with_price',
+        batch1
+          ? [
+              toScVal(signerPublicKey, 'address'),
+              toScVal(params.collateral, 'i128'),
+              toScVal(params.leverage, 'u32'),
+              toScVal(params.direction, 'direction'),
+              toScVal(params.acceptablePrice ?? BigInt(0), 'i128'),
+              attestationStructArg(params.asset, att),
+            ]
+          : [...tradeArgs, ...priceTailArgs(att)],
+        guard,
+      );
+    }
     // Direct path (default): straight to the market. Batch-1 open_position
     // gained the acceptable_price arg.
-    xdrStr = await buildTransaction(
+    return buildTransaction(
       signerPublicKey,
       marketContract,
       'open_position',
       batch1 ? [...tradeArgs, toScVal(params.acceptablePrice ?? BigInt(0), 'i128')] : tradeArgs,
+      guard,
     );
-  }
+  };
 
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx('open', build, signTransaction, (s) => submitTransaction(s, 'open'), flow);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     debugLog('[DEBUG] Position opened successfully!');
@@ -166,54 +173,57 @@ export async function closePosition(
   positionId: number,
   asset: string,
   acceptablePrice: bigint = BigInt(0),
+  flow: RunTradeTxOptions = {},
 ): Promise<{ pnl: bigint; fee: bigint }> {
   debugLog('[DEBUG] Closing position...');
 
-  let xdrStr: string;
-  const batch1 = await marketHasBatch1Features();
-  if (routerContract) {
-    // Router path (Pattern B): mirror openPosition — fetch a fresh signed
-    // Noeracle price and close atomically via noether_router.close_with_price,
-    // so the market reads a sub-second-fresh price for `asset` and can't
-    // reject with #30 PriceStale (oracle_adapter no longer exists).
-    // Batch-1: close_with_price(trader, position_id, acceptable_price, att).
-    // Legacy: close_with_price(trader, position_id, asset, ...flattened tail).
-    const att = await fetchAttestation(asset);
-    if (!att) throw new Error('Noeracle price unavailable — cannot close position');
-    xdrStr = await buildTransaction(
-      signerPublicKey,
-      routerContract,
-      'close_with_price',
-      batch1
-        ? [
-            toScVal(signerPublicKey, 'address'),
-            toScVal(positionId, 'u64'),
-            toScVal(acceptablePrice, 'i128'), // 0 = unbounded
-            attestationStructArg(asset, att),
-          ]
-        : [
-            toScVal(signerPublicKey, 'address'), // trader: Address
-            toScVal(positionId, 'u64'),          // position_id: u64
-            toScVal(asset, 'symbol'),            // asset: Symbol
-            ...priceTailArgs(att),
-          ],
-    );
-  } else {
+  const build = async (): Promise<string> => {
+    const batch1 = await marketHasBatch1Features();
+    const guard = { op: 'close' as const, keyCtx: { asset, positionId: BigInt(positionId) } };
+    if (routerContract) {
+      // Router path (Pattern B): mirror openPosition — fetch a fresh signed
+      // Noeracle price and close atomically via noether_router.close_with_price,
+      // so the market reads a sub-second-fresh price for `asset` and can't
+      // reject with #30 PriceStale (oracle_adapter no longer exists).
+      // Batch-1: close_with_price(trader, position_id, acceptable_price, att).
+      // Legacy: close_with_price(trader, position_id, asset, ...flattened tail).
+      const att = await fetchAttestation(asset);
+      if (!att) throw new Error('Noeracle price unavailable — cannot close position');
+      return buildTransaction(
+        signerPublicKey,
+        routerContract,
+        'close_with_price',
+        batch1
+          ? [
+              toScVal(signerPublicKey, 'address'),
+              toScVal(positionId, 'u64'),
+              toScVal(acceptablePrice, 'i128'), // 0 = unbounded
+              attestationStructArg(asset, att),
+            ]
+          : [
+              toScVal(signerPublicKey, 'address'), // trader: Address
+              toScVal(positionId, 'u64'),          // position_id: u64
+              toScVal(asset, 'symbol'),            // asset: Symbol
+              ...priceTailArgs(att),
+            ],
+        guard,
+      );
+    }
     // Direct path (default). Batch-1 close_position gained acceptable_price.
     const args = [
       toScVal(signerPublicKey, 'address'),  // trader: Address
       toScVal(positionId, 'u64'),            // position_id: u64 (not u32!)
     ];
-    xdrStr = await buildTransaction(
+    return buildTransaction(
       signerPublicKey,
       marketContract,
       'close_position',
       batch1 ? [...args, toScVal(acceptablePrice, 'i128')] : args,
+      guard,
     );
-  }
+  };
 
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx('close', build, signTransaction, (s) => submitTransaction(s, 'close'), flow);
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     debugLog('[DEBUG] Position closed successfully!');
@@ -242,43 +252,49 @@ export async function closePositionPartial(
   positionId: number,
   closeSize: bigint,
   asset: string,
+  flow: RunTradeTxOptions = {},
 ): Promise<bigint> {
-  let xdrStr: string;
-  const batch1 = await marketHasBatch1Features();
-  if (routerContract) {
-    // Batch-1: close_partial_with_price(trader, position_id, close_size, att).
-    // Legacy: ...(trader, position_id, close_size, asset, flattened tail).
-    const att = await fetchAttestation(asset);
-    if (!att) throw new Error('Noeracle price unavailable — cannot close position');
-    xdrStr = await buildTransaction(
+  const build = async (): Promise<string> => {
+    const batch1 = await marketHasBatch1Features();
+    const guard = { op: 'close_partial' as const, keyCtx: { asset, positionId: BigInt(positionId) } };
+    if (routerContract) {
+      // Batch-1: close_partial_with_price(trader, position_id, close_size, att).
+      // Legacy: ...(trader, position_id, close_size, asset, flattened tail).
+      const att = await fetchAttestation(asset);
+      if (!att) throw new Error('Noeracle price unavailable — cannot close position');
+      return buildTransaction(
+        signerPublicKey,
+        routerContract,
+        'close_partial_with_price',
+        batch1
+          ? [
+              toScVal(signerPublicKey, 'address'),
+              toScVal(positionId, 'u64'),
+              toScVal(closeSize, 'i128'),
+              attestationStructArg(asset, att),
+            ]
+          : [
+              toScVal(signerPublicKey, 'address'), // trader: Address
+              toScVal(positionId, 'u64'),          // position_id: u64
+              toScVal(closeSize, 'i128'),          // close_size: i128
+              toScVal(asset, 'symbol'),            // asset: Symbol
+              ...priceTailArgs(att),
+            ],
+        guard,
+      );
+    }
+    return buildTransaction(
       signerPublicKey,
-      routerContract,
-      'close_partial_with_price',
-      batch1
-        ? [
-            toScVal(signerPublicKey, 'address'),
-            toScVal(positionId, 'u64'),
-            toScVal(closeSize, 'i128'),
-            attestationStructArg(asset, att),
-          ]
-        : [
-            toScVal(signerPublicKey, 'address'), // trader: Address
-            toScVal(positionId, 'u64'),          // position_id: u64
-            toScVal(closeSize, 'i128'),          // close_size: i128
-            toScVal(asset, 'symbol'),            // asset: Symbol
-            ...priceTailArgs(att),
-          ],
+      marketContract,
+      'close_position_partial',
+      [toScVal(signerPublicKey, 'address'), toScVal(positionId, 'u64'), toScVal(closeSize, 'i128')],
+      guard,
     );
-  } else {
-    xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_partial', [
-      toScVal(signerPublicKey, 'address'),
-      toScVal(positionId, 'u64'),
-      toScVal(closeSize, 'i128'),
-    ]);
-  }
+  };
 
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx(
+    'close_partial', build, signTransaction, (s) => submitTransaction(s, 'close_partial'), flow,
+  );
   if (result.status === 'SUCCESS' && result.returnValue) {
     return scValToNative(result.returnValue) as bigint;
   }
@@ -300,8 +316,12 @@ export async function addCollateral(
     toScVal(positionId, 'u64'),
     toScVal(amount, 'i128'),
   ];
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'add_collateral', args);
-  const result = await submitTransaction(await signTransaction(xdrStr));
+  const result = await runTradeTx(
+    'other',
+    () => buildTransaction(signerPublicKey, marketContract, 'add_collateral', args, { op: 'other' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'other'),
+  );
   if (result.status !== 'SUCCESS') throw new Error('Failed to add collateral');
 }
 
@@ -321,8 +341,12 @@ export async function removeCollateral(
     toScVal(positionId, 'u64'),
     toScVal(amount, 'i128'),
   ];
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'remove_collateral', args);
-  const result = await submitTransaction(await signTransaction(xdrStr));
+  const result = await runTradeTx(
+    'other',
+    () => buildTransaction(signerPublicKey, marketContract, 'remove_collateral', args, { op: 'other' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'other'),
+  );
   if (result.status !== 'SUCCESS') throw new Error('Failed to remove collateral');
 }
 
@@ -1054,9 +1078,12 @@ export async function placeLimitOrder(
     toScVal(params.timeInForce ?? 0, 'u32'),
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'place_limit_order', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx(
+    'place_order',
+    () => buildTransaction(signerPublicKey, marketContract, 'place_limit_order', args, { op: 'place_order' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'place_order'),
+  );
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     debugLog('[DEBUG] Limit order placed successfully!');
@@ -1089,9 +1116,12 @@ export async function setStopLoss(
     toScVal(params.slippageToleranceBps, 'u32'),
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'set_stop_loss', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx(
+    'place_order',
+    () => buildTransaction(signerPublicKey, marketContract, 'set_stop_loss', args, { op: 'place_order' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'place_order'),
+  );
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     debugLog('[DEBUG] Stop-loss set successfully!');
@@ -1126,9 +1156,12 @@ export async function setTakeProfit(
     toScVal(params.limitPrice ?? BigInt(0), 'i128'),
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'set_take_profit', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx(
+    'place_order',
+    () => buildTransaction(signerPublicKey, marketContract, 'set_take_profit', args, { op: 'place_order' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'place_order'),
+  );
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     debugLog('[DEBUG] Take-profit set successfully!');
@@ -1155,9 +1188,12 @@ export async function cancelOrder(
     toScVal(orderId, 'u64'),
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'cancel_order', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx(
+    'cancel_order',
+    () => buildTransaction(signerPublicKey, marketContract, 'cancel_order', args, { op: 'cancel_order' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'cancel_order'),
+  );
 
   if (result.status === 'SUCCESS') {
     debugLog('[DEBUG] Order cancelled successfully!');
@@ -1556,9 +1592,12 @@ export async function depositCrossMargin(
     toScVal(amount, 'i128'),
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'deposit_cross_margin', args);
-  const signedXdr = await signTransaction(xdrStr);
-  await submitTransaction(signedXdr);
+  await runTradeTx(
+    'other',
+    () => buildTransaction(signerPublicKey, marketContract, 'deposit_cross_margin', args, { op: 'other' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'other'),
+  );
 }
 
 /**
@@ -1574,9 +1613,12 @@ export async function withdrawCrossMargin(
     toScVal(amount, 'i128'),
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'withdraw_cross_margin', args);
-  const signedXdr = await signTransaction(xdrStr);
-  await submitTransaction(signedXdr);
+  await runTradeTx(
+    'other',
+    () => buildTransaction(signerPublicKey, marketContract, 'withdraw_cross_margin', args, { op: 'other' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'other'),
+  );
 }
 
 /**
@@ -1592,23 +1634,29 @@ export async function openPositionCross(
     direction: Direction;
     /** L0-10 worst-fill bound (7dp). Omit/0 = unbounded. Batch-1 only. */
     acceptablePrice?: bigint;
-  }
+  },
+  flow: RunTradeTxOptions = {},
 ): Promise<Position> {
-  const args = [
-    toScVal(signerPublicKey, 'address'),
-    toScVal(params.asset, 'symbol'),
-    toScVal(params.collateral, 'i128'),
-    toScVal(params.leverage, 'u32'),
-    toScVal(params.direction, 'direction'),
-  ];
-
-  // Batch-1 open_position_cross gained the L0-10 acceptable_price arg.
-  if (await marketHasBatch1Features()) {
-    args.push(toScVal(params.acceptablePrice ?? BigInt(0), 'i128'));
-  }
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'open_position_cross', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const build = async (): Promise<string> => {
+    const args = [
+      toScVal(signerPublicKey, 'address'),
+      toScVal(params.asset, 'symbol'),
+      toScVal(params.collateral, 'i128'),
+      toScVal(params.leverage, 'u32'),
+      toScVal(params.direction, 'direction'),
+    ];
+    // Batch-1 open_position_cross gained the L0-10 acceptable_price arg.
+    if (await marketHasBatch1Features()) {
+      args.push(toScVal(params.acceptablePrice ?? BigInt(0), 'i128'));
+    }
+    return buildTransaction(signerPublicKey, marketContract, 'open_position_cross', args, {
+      op: 'open_cross',
+      keyCtx: { asset: params.asset },
+    });
+  };
+  const result = await runTradeTx(
+    'open_cross', build, signTransaction, (s) => submitTransaction(s, 'open_cross'), flow,
+  );
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     return scValToNative(result.returnValue) as Position;
@@ -1624,19 +1672,25 @@ export async function closePositionCross(
   signTransaction: (xdr: string) => Promise<string>,
   positionId: number,
   acceptablePrice: bigint = BigInt(0),
+  flow: RunTradeTxOptions = {},
 ): Promise<{ pnl: bigint }> {
-  const args = [
-    toScVal(signerPublicKey, 'address'),
-    toScVal(positionId, 'u64'),
-  ];
-
-  // Batch-1 close_position_cross gained the L0-10 acceptable_price arg.
-  if (await marketHasBatch1Features()) {
-    args.push(toScVal(acceptablePrice, 'i128'));
-  }
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'close_position_cross', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const build = async (): Promise<string> => {
+    const args = [
+      toScVal(signerPublicKey, 'address'),
+      toScVal(positionId, 'u64'),
+    ];
+    // Batch-1 close_position_cross gained the L0-10 acceptable_price arg.
+    if (await marketHasBatch1Features()) {
+      args.push(toScVal(acceptablePrice, 'i128'));
+    }
+    return buildTransaction(signerPublicKey, marketContract, 'close_position_cross', args, {
+      op: 'close_cross',
+      keyCtx: { positionId: BigInt(positionId) },
+    });
+  };
+  const result = await runTradeTx(
+    'close_cross', build, signTransaction, (s) => submitTransaction(s, 'close_cross'), flow,
+  );
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     return { pnl: scValToNative(result.returnValue) as bigint };
@@ -1719,9 +1773,12 @@ export async function placeStopLimitOrder(
     toScVal(params.timeInForce ?? 0, 'u32'),
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'place_stop_limit_order', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx(
+    'place_order',
+    () => buildTransaction(signerPublicKey, marketContract, 'place_stop_limit_order', args, { op: 'place_order' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'place_order'),
+  );
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     return scValToNative(result.returnValue) as Order;
@@ -1748,9 +1805,12 @@ export async function placeTrailingStop(
     toScVal(params.slippageToleranceBps, 'u32'),
   ];
 
-  const xdrStr = await buildTransaction(signerPublicKey, marketContract, 'place_trailing_stop', args);
-  const signedXdr = await signTransaction(xdrStr);
-  const result = await submitTransaction(signedXdr);
+  const result = await runTradeTx(
+    'place_order',
+    () => buildTransaction(signerPublicKey, marketContract, 'place_trailing_stop', args, { op: 'place_order' }),
+    signTransaction,
+    (s) => submitTransaction(s, 'place_order'),
+  );
 
   if (result.status === 'SUCCESS' && result.returnValue) {
     return scValToNative(result.returnValue) as Order;

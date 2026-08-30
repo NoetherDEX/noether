@@ -38,5 +38,8 @@ export async function buildCloseWithPriceTx(
   routerContractId: string,
   params: CloseWithPriceParams,
 ): Promise<PreparedTx> {
-  return buildContractTx(ctx, params.trader, routerContractId, METHOD, buildCloseWithPriceArgs(params));
+  return buildContractTx(ctx, params.trader, routerContractId, METHOD, buildCloseWithPriceArgs(params), {
+    op: 'close',
+    keyCtx: { asset: params.attestation.asset, positionId: BigInt(params.positionId) },
+  });
 }

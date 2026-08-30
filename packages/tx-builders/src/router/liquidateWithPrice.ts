@@ -38,5 +38,8 @@ export async function buildLiquidateWithPriceTx(
   routerContractId: string,
   params: LiquidateWithPriceParams,
 ): Promise<PreparedTx> {
-  return buildContractTx(ctx, params.keeper, routerContractId, METHOD, buildLiquidateWithPriceArgs(params));
+  return buildContractTx(ctx, params.keeper, routerContractId, METHOD, buildLiquidateWithPriceArgs(params), {
+    op: 'liquidate',
+    keyCtx: { asset: params.attestation.asset, positionId: BigInt(params.positionId) },
+  });
 }

@@ -41,5 +41,8 @@ export async function buildOpenPositionTx(
   marketContractId: string,
   params: OpenPositionParams,
 ): Promise<PreparedTx> {
-  return buildContractTx(ctx, params.trader, marketContractId, METHOD, buildOpenPositionArgs(params));
+  return buildContractTx(ctx, params.trader, marketContractId, METHOD, buildOpenPositionArgs(params), {
+    op: 'open',
+    keyCtx: { asset: params.asset },
+  });
 }

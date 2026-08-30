@@ -252,7 +252,12 @@ function buildDefaultDeps(config: ApiConfig, log: import('pino').Logger): Server
       ? new AcsEmailer(config.acsConnectionString, config.acsSender, log)
       : new NoopEmailer(log);
   const rateLimiter = new RateLimiter(db);
-  const txCtx = { rpcUrl: config.rpcUrl, network: config.network };
+  const txCtx = {
+    rpcUrl: config.rpcUrl,
+    network: config.network,
+    // Footprint guard inputs (stale-footprint hardening, 2026-08-30).
+    contracts: { market: config.contracts.contracts.market, vault: config.contracts.contracts.vault },
+  };
   const orders: OrdersRouteDeps = { txCtx, marketContractId: config.contracts.contracts.market };
   const tx: TxRoutesDeps = { txCtx };
   const wsBus = new WsBus();

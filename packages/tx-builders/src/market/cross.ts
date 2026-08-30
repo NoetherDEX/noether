@@ -25,7 +25,10 @@ export async function buildOpenPositionCrossTx(
     toScVal(params.direction, 'direction'),
     toScVal(params.acceptablePrice ?? 0n, 'i128'),
   ];
-  return buildContractTx(ctx, params.trader, marketContractId, 'open_position_cross', args);
+  return buildContractTx(ctx, params.trader, marketContractId, 'open_position_cross', args, {
+    op: 'open_cross',
+    keyCtx: { asset: params.asset },
+  });
 }
 
 export interface ClosePositionCrossParams {
@@ -45,5 +48,8 @@ export async function buildClosePositionCrossTx(
     toScVal(params.positionId, 'u64'),
     toScVal(params.acceptablePrice ?? 0n, 'i128'),
   ];
-  return buildContractTx(ctx, params.trader, marketContractId, 'close_position_cross', args);
+  return buildContractTx(ctx, params.trader, marketContractId, 'close_position_cross', args, {
+    op: 'close_cross',
+    keyCtx: { positionId: BigInt(params.positionId) },
+  });
 }

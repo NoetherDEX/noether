@@ -24,10 +24,22 @@ import {
   xdr,
 } from '@stellar/stellar-sdk';
 import type { Network } from '@noether/types';
+import { conditionalWriteKeys, padFootprint, type KeyCtx, type TradeOp } from './footprintGuard.js';
 
 export interface TxBuildContext {
   rpcUrl: string;
   network: Network;
+  /**
+   * Contract ids the footprint guard needs. Optional: without them
+   * buildContractTx skips key padding (older callers keep working).
+   */
+  contracts?: { market?: string; vault?: string };
+}
+
+/** Per-call hints for the footprint guard (see footprintGuard.ts). */
+export interface TxBuildOptions {
+  op?: TradeOp;
+  keyCtx?: Partial<Omit<KeyCtx, 'vault' | 'market'>>;
 }
 
 export interface PreparedTx {
@@ -76,6 +88,7 @@ export async function buildContractTx(
   contractId: string,
   method: string,
   args: xdr.ScVal[],
+  opts: TxBuildOptions = {},
 ): Promise<PreparedTx> {
   const server = rpcServer(ctx.rpcUrl);
   const account = await server.getAccount(sourcePublicKey);
@@ -91,11 +104,25 @@ export async function buildContractTx(
   if (rpc.Api.isSimulationError(sim)) {
     throw new TxSimulationError(`Simulation failed: ${sim.error}`, contractId, method, sim);
   }
-  const prepared = withResourceHeadroom(rpc.assembleTransaction(tx, sim).build());
+  // Footprint guard first (declares the keys the contracts MAY write), then
+  // the size margin, so the 1.25× headroom wraps the padded declaration.
+  const assembled = padFootprint(
+    rpc.assembleTransaction(tx, sim).build(),
+    guardKeys(ctx, sourcePublicKey, opts),
+  );
+  const prepared = withResourceHeadroom(assembled);
   return {
     xdr: prepared.toXDR(),
     simulation: sim as rpc.Api.SimulateTransactionSuccessResponse,
   };
+}
+
+/** Keys to pad for this call; empty when the op or the contract ids are unknown. */
+export function guardKeys(ctx: TxBuildContext, trader: string, opts: TxBuildOptions): xdr.LedgerKey[] {
+  const market = ctx.contracts?.market;
+  const vault = ctx.contracts?.vault;
+  if (!opts.op || !market || !vault) return [];
+  return conditionalWriteKeys(opts.op, { ...opts.keyCtx, vault, market, trader });
 }
 
 /**

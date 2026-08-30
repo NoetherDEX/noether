@@ -500,6 +500,17 @@ pub fn set_adl_active(env: &Env, asset: &Symbol, active: bool) {
     extend_persistent_ttl(env, &key);
 }
 
+/// Write the ADL flag back unchanged when the entry exists — footprint
+/// stability for settlement paths that only sometimes flip it. Never creates
+/// the entry (no new per-asset ledger entries, no archival exposure).
+pub fn touch_adl_active(env: &Env, asset: &Symbol) {
+    let key = DataKey::AdlActive(asset.clone());
+    if let Some(active) = env.storage().persistent().get::<DataKey, bool>(&key) {
+        env.storage().persistent().set(&key, &active);
+        extend_persistent_ttl(env, &key);
+    }
+}
+
 pub fn get_asset_risk(env: &Env, asset: &Symbol) -> Option<AssetRiskParams> {
     env.storage().persistent().get(&DataKey::AssetRisk(asset.clone()))
 }

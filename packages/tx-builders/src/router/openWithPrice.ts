@@ -43,5 +43,8 @@ export async function buildOpenWithPriceTx(
   routerContractId: string,
   params: OpenWithPriceParams,
 ): Promise<PreparedTx> {
-  return buildContractTx(ctx, params.trader, routerContractId, METHOD, buildOpenWithPriceArgs(params));
+  return buildContractTx(ctx, params.trader, routerContractId, METHOD, buildOpenWithPriceArgs(params), {
+    op: 'open',
+    keyCtx: { asset: params.attestation.asset },
+  });
 }

@@ -63,6 +63,8 @@ import { formatUSD } from '@/lib/utils/format';
 import { decodeContractError } from '@/lib/utils/contractErrors';
 import type { Position, DisplayPosition, DisplayOrder } from '@/types';
 import toast from 'react-hot-toast';
+import { retryProgressMessage } from '@/lib/utils/txCopy';
+import type { TradeProgress } from '@/lib/stellar/txFlow';
 
 function TradePage() {
   const [selectedAsset, setSelectedAsset] = useState('BTC');
@@ -655,11 +657,18 @@ function TradePage() {
       const bound = pos
         ? closeAcceptableBound(pos.direction, pos.currentPrice)
         : BigInt(0);
+      // One automatic rebuild if the network state moves mid-flight
+      // (footprint guard + txFlow); the wallet prompts a second time, so say so.
+      const flow = {
+        onProgress: (p: TradeProgress) => {
+          if (p === 'retrying') toast(retryProgressMessage('close'), { id: `retry-close-${positionId}`, icon: '⟳' });
+        },
+      };
       if (pos?.marginMode === 'Cross') {
-        const result = await closePositionCross(publicKey, sign, positionId, bound);
+        const result = await closePositionCross(publicKey, sign, positionId, bound, flow);
         return result.pnl;
       }
-      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? selectedAsset, bound);
+      const result = await closePosition(publicKey, sign, positionId, pos?.asset ?? selectedAsset, bound, flow);
       return result.pnl;
     })();
 

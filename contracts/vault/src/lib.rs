@@ -379,6 +379,14 @@ impl VaultContract {
         let market_contract = get_market_contract(&env);
         market_contract.require_auth();
 
+        // Footprint stability across a sign flip (2026-08-30): a close that
+        // simulated as a win must already carry every bucket the loss path
+        // reads (receive_loss → require_cash_covers_buckets), so write them
+        // back unchanged. Soroban freezes the read/write footprint at
+        // simulation; a key first touched at apply time traps the whole tx.
+        storage::set_total_fees(&env, storage::get_total_fees(&env));
+        storage::set_shortfall_reserve(&env, storage::get_shortfall_reserve(&env));
+
         let mut paid: i128 = 0;
         if pnl > 0 {
             // Trader WON. Waterfall (P5-6): the insurance BUFFER pays first,
@@ -408,16 +416,17 @@ impl VaultContract {
 
             if paid > 0 {
                 token_client.transfer(&env.current_contract_address(), &market_contract, &paid);
-                // Draw from the buffer first, then LP value.
-                let from_buffer = if paid > buffer { buffer } else { paid };
-                if from_buffer > 0 {
-                    set_buffer_balance(&env, buffer - from_buffer);
-                }
-                let from_lp = paid - from_buffer;
-                if from_lp > 0 {
-                    set_total_usdc(&env, total_usdc - from_lp);
-                }
             }
+            // Draw from the buffer first, then LP value. Both writes are
+            // UNCONDITIONAL (a zero draw writes the value back): the set of
+            // keys a close writes must not depend on whether the buffer
+            // happened to be empty at simulation time. A buffer refilled by
+            // another transaction between simulate and apply used to turn a
+            // read-only footprint entry into a write and trap the whole
+            // close with Storage/ExceededLimit (2026-08-30 incident).
+            let from_buffer = if paid > buffer { buffer } else { paid };
+            set_buffer_balance(&env, buffer - from_buffer);
+            set_total_usdc(&env, total_usdc - (paid - from_buffer));
             if paid < pnl {
                 let short = pnl - paid;
                 storage::set_shortfall_owed(&env, &trader, storage::get_shortfall_owed(&env, &trader) + short);
@@ -470,6 +479,11 @@ impl VaultContract {
         // right after moving USDC (losses, funding) into the vault, so
         // accounting can never exceed real assets (V-3 tail)
         set_total_usdc(&env, get_total_usdc(&env) + amount);
+        // Footprint stability across a sign flip (see settle_pnl): the win
+        // path writes these; a close simulated as a loss must carry them too.
+        storage::set_buffer_balance(&env, storage::get_buffer_balance(&env));
+        storage::set_total_fees(&env, storage::get_total_fees(&env));
+        storage::set_shortfall_reserve(&env, storage::get_shortfall_reserve(&env));
         Self::require_cash_covers_buckets(&env)?;
 
         env.events().publish(
@@ -518,12 +532,13 @@ impl VaultContract {
         // outside buffer + LP accounting) — a bounty may never physically spend
         // it. Mirror the settle_pnl / claim_shortfall spendable cap.
         let spendable = bal - storage::get_shortfall_reserve(&env);
-        let paid = amount.min(buffer).min(spendable);
+        let paid = amount.min(buffer).min(spendable).max(0);
+        // Written back even when nothing is paid (footprint stability).
+        set_buffer_balance(&env, buffer - paid);
         if paid <= 0 {
             env.events().publish((Symbol::new(&env, "bounty_paid"),), (keeper, amount, 0i128));
             return Ok(0);
         }
-        set_buffer_balance(&env, buffer - paid);
         token_client.transfer(&env.current_contract_address(), &keeper, &paid);
         env.events().publish((Symbol::new(&env, "bounty_paid"),), (keeper, amount, paid));
         Ok(paid)
@@ -545,18 +560,17 @@ impl VaultContract {
         let buffer = get_buffer_balance(&env);
         let room = if target > buffer { target - buffer } else { 0 };
         let to_buffer = if amount < room { amount } else { room };
-        if to_buffer > 0 {
-            set_buffer_balance(&env, buffer + to_buffer);
-        }
+        // Unconditional write + unconditional (possibly zero) treasury
+        // transfer: an open's footprint must not depend on how full the
+        // buffer is at simulation time (footprint stability, see settle_pnl).
+        set_buffer_balance(&env, buffer + to_buffer);
         let overflow = amount - to_buffer;
-        if overflow > 0 {
-            let usdc_token = get_usdc_token(&env);
-            token::Client::new(&env, &usdc_token).transfer(
-                &env.current_contract_address(),
-                &overflow_to,
-                &overflow,
-            );
-        }
+        let usdc_token = get_usdc_token(&env);
+        token::Client::new(&env, &usdc_token).transfer(
+            &env.current_contract_address(),
+            &overflow_to,
+            &overflow,
+        );
         Self::require_cash_covers_buckets(&env)?;
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_routed"),),
@@ -936,16 +950,18 @@ impl VaultContract {
         let outstanding = get_shortfall(env);
         let reserve = storage::get_shortfall_reserve(env);
         let unreserved = outstanding - reserve;
-        if unreserved <= 0 {
-            return 0;
-        }
+        // Read and write unconditionally so the footprint of a buffer inflow
+        // never depends on whether a shortfall happens to be outstanding.
         let bps = storage::get_shortfall_inflow_bps(env) as i128;
-        let mut to_reserve = amount * bps / (BASIS_POINTS as i128);
-        if to_reserve > unreserved {
-            to_reserve = unreserved;
-        }
-        if to_reserve <= 0 {
-            return 0;
+        let mut to_reserve: i128 = 0;
+        if unreserved > 0 {
+            to_reserve = amount * bps / (BASIS_POINTS as i128);
+            if to_reserve > unreserved {
+                to_reserve = unreserved;
+            }
+            if to_reserve < 0 {
+                to_reserve = 0;
+            }
         }
         storage::set_shortfall_reserve(env, reserve + to_reserve);
         to_reserve
@@ -987,13 +1003,10 @@ impl VaultContract {
 
         // Reserve first, buffer for the remainder.
         let from_reserve = if pay > reserve { reserve } else { pay };
-        if from_reserve > 0 {
-            storage::set_shortfall_reserve(&env, reserve - from_reserve);
-        }
+        // Both written unconditionally (footprint stability, see settle_pnl).
+        storage::set_shortfall_reserve(&env, reserve - from_reserve);
         let from_buffer = pay - from_reserve;
-        if from_buffer > 0 {
-            set_buffer_balance(&env, buffer - from_buffer);
-        }
+        set_buffer_balance(&env, buffer - from_buffer);
 
         storage::set_shortfall_owed(&env, &trader, owed - pay);
         set_shortfall(&env, get_shortfall(&env) - pay);
@@ -1069,10 +1082,9 @@ impl VaultContract {
 
         let buffer = get_buffer_balance(&env);
         let covered = if amount > buffer { buffer } else { amount };
-        if covered > 0 {
-            set_buffer_balance(&env, buffer - covered);
-            set_total_usdc(&env, get_total_usdc(&env) + covered);
-        }
+        // Unconditional write-back (footprint stability, see settle_pnl).
+        set_buffer_balance(&env, buffer - covered);
+        set_total_usdc(&env, get_total_usdc(&env) + covered);
         storage::set_cum_bad_debt_covered(
             &env, storage::get_cum_bad_debt_covered(&env) + covered,
         );
@@ -1111,10 +1123,11 @@ impl VaultContract {
         }
         if pay > 0 {
             token_client.transfer(&env.current_contract_address(), &to, &pay);
-            set_buffer_balance(&env, buffer - pay);
         } else {
             pay = 0;
         }
+        // Written back even for a zero payout (footprint stability).
+        set_buffer_balance(&env, buffer - pay);
 
         env.events().publish(
             (Symbol::new(&env, "buffer_paid"),),
@@ -2049,6 +2062,69 @@ mod tests {
         t.vault.set_deposit_cap(&0);
         let ok = t.vault.deposit(&t.lp, &(1_000 * PRECISION), &0);
         assert!(ok > 0);
+    }
+
+    // ── Footprint stability (2026-08-30): the set of keys a settlement
+    // writes must not depend on transient balances. A zero-delta path still
+    // writes the key back, so a simulation never records it read-only.
+
+    fn vault_has(t: &VaultTest, key: DataKey) -> bool {
+        t.env.as_contract(&t.vault_id, || t.env.storage().persistent().has(&key))
+    }
+
+    #[test]
+    fn settle_pnl_writes_buffer_and_buckets_even_on_a_zero_draw() {
+        let t = setup(1_000 * PRECISION);
+        // Fresh vault: nothing has ever touched the buffer entry.
+        assert!(!vault_has(&t, DataKey::BufferBalance));
+        let trader = Address::generate(&t.env);
+        // Winner paid entirely from LP value: from_buffer == 0.
+        let paid = t.vault.settle_pnl(&trader, &(10 * PRECISION));
+        assert_eq!(paid, 10 * PRECISION);
+        assert!(vault_has(&t, DataKey::BufferBalance), "zero draw must still write BufferBalance");
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert!(vault_has(&t, DataKey::TotalFees));
+        assert!(vault_has(&t, DataKey::ShortfallReserve));
+        assert_eq!(t.vault.get_total_usdc(), 990 * PRECISION);
+    }
+
+    #[test]
+    fn receive_loss_touches_the_buckets_the_win_path_writes() {
+        let t = setup(1_000 * PRECISION);
+        assert!(!vault_has(&t, DataKey::BufferBalance));
+        market_inflow(&t, 5 * PRECISION);
+        t.vault.receive_loss(&(5 * PRECISION));
+        assert!(vault_has(&t, DataKey::BufferBalance));
+        assert!(vault_has(&t, DataKey::TotalFees));
+        assert!(vault_has(&t, DataKey::ShortfallReserve));
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert_eq!(t.vault.get_total_usdc(), 1_005 * PRECISION);
+    }
+
+    #[test]
+    fn route_protocol_fee_writes_the_buffer_even_when_it_all_overflows() {
+        // Empty book → target 0 → nothing goes to the buffer, everything to
+        // the treasury; the buffer key must still be written.
+        let t = setup(1_000 * PRECISION);
+        let treasury = Address::generate(&t.env);
+        market_inflow(&t, PRECISION);
+        assert!(!vault_has(&t, DataKey::BufferBalance));
+        t.vault.route_protocol_fee(&PRECISION, &treasury);
+        assert!(vault_has(&t, DataKey::BufferBalance));
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert_eq!(soroban_sdk::token::Client::new(&t.env, &t.usdc).balance(&treasury), PRECISION);
+    }
+
+    #[test]
+    fn draw_buffer_and_pay_bounty_write_back_on_the_zero_path() {
+        let t = setup(1_000 * PRECISION);
+        let keeper = Address::generate(&t.env);
+        assert!(!vault_has(&t, DataKey::BufferBalance));
+        assert_eq!(t.vault.pay_bounty(&keeper, &PRECISION), 0);
+        assert!(vault_has(&t, DataKey::BufferBalance));
+        assert_eq!(t.vault.draw_buffer(&(3 * PRECISION)), 0);
+        assert_eq!(t.vault.get_buffer_balance(), 0);
+        assert_eq!(t.vault.get_total_usdc(), 1_000 * PRECISION);
     }
 
     #[test]
