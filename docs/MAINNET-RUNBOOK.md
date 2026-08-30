@@ -179,6 +179,11 @@ entries are recoverable by anyone willing to pay rent:
   verification proves the code, not the state: on 2026-08-20 the R-4 belt
   correctly bricked all opens for ~24h on pre-existing vault drift that
   hash checks could never see (see REGISTER.md R-4 incident note).
+- **…and with a footprint check** — `npx tsx packages/tx-builders/scripts/footprint-check.ts <env> <positionId> <trader> <ASSET> --raw --expect post`
+  on a live position proves the upgraded vault/market declare their
+  balance-gated keys read-write (the 2026-08-30 stale-footprint trap,
+  KNOWN_ISSUES C-4). A pre-fix shape (`TotalFees` absent, `ShortfallReserve`
+  read-only) means the wrong WASM is live.
 - Full incident flow: `docs/INCIDENT_RUNBOOK.md`.
 
 ## 8 · Wave operations
