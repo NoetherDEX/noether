@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0 — 2026-08-31
+
+* Pool-capacity headroom (L1-13): each `markets.stats()` row may carry a `capacity` block (`AssetCapacity` — `headroom_long`/`headroom_short` with the binding gate, chain open interest, side/skew caps, `max_position_size`) and the response a vault-wide `pool` block (`PoolCapacity` — AUM, reserved payouts, aggregate headroom). Both are `None` — never zeroed — when the gateway could not read the chain; `CapacityBinding` literal exported.
+* `markets.stats()` also gains an optional `custody` block (`MarketCustody`) — the keeper's market-custody invariant self-report (market USDC balance vs tracked custody, isolated/cross/escrow split, deficit); `None` until the keeper has reported one.
+* Richer submit-failure payloads: `ContractErrorInfo` and `HostErrorInfo` models decode the gateway's contract-error / host-error details on failed submissions.
+
 ## 0.1.2 — 2026-07-04
 
 * Gateway parity: added `markets.stats()`, `markets.candles()`, `oracle.health()`, `trades.list()`, `adl.queue()`, `account.volume()` and `account.shortfall()`. The leaderboard endpoints are intentionally left out while their shape is reworked.
