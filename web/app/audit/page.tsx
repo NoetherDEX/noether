@@ -44,6 +44,16 @@ const FAQ = [
 export default function AuditPage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
+      {/* Full-viewport backdrop. A position:fixed layer, not
+          background-attachment:fixed (broken on iOS), and pure CSS so the
+          teaser keeps its zero client JS. Cover-cropping keeps the helmets
+          in the corners at any aspect ratio; on narrow screens they crop
+          away and the plain dark field remains. */}
+      <div
+        aria-hidden
+        className="fixed inset-0 -z-10 bg-cover bg-center"
+        style={{ backgroundImage: "url('/waitlist-bg.jpg')" }}
+      />
       <TeaserLogo />
       <h1
         className="mt-8 text-4xl font-semibold tracking-tight sm:text-5xl"
