@@ -23,7 +23,7 @@ export function TeaserLogo() {
 
   return (
     <button type="button" onClick={onClick} aria-label="Noether" className="select-none">
-      <NoetherLogo className="h-9 w-auto" />
+      <NoetherLogo className="h-10 w-auto" />
     </button>
   )
 }

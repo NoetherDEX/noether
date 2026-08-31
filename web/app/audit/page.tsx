@@ -32,7 +32,7 @@ export default function AuditPage() {
       <div className="flex w-full flex-1 flex-col items-center justify-center">
         <TeaserLogo />
         <h1
-          className="mt-8 max-w-xl text-4xl font-semibold tracking-tight [text-wrap:balance] sm:text-5xl"
+          className="mt-12 max-w-xl text-4xl font-semibold tracking-tight [text-wrap:balance] sm:text-5xl"
           style={{ fontFamily: 'var(--font-sora)' }}
         >
           Mainnet perks are reserved for the waitlist
