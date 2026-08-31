@@ -26,7 +26,7 @@ export function FeedbackButton() {
   const [isSending, setIsSending] = useState(false);
   const [sendFailed, setSendFailed] = useState(false);
 
-  if (pathname === '/') return null;
+  if (pathname === '/' || pathname === '/audit') return null;
 
   // On /trade below lg the fixed MobileTradeBar owns the bottom edge — hide the
   // FAB there so it can never cover the Short button's tap zone (bottom-chrome

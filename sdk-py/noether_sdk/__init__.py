@@ -56,7 +56,7 @@ from .models import (
 
 # Single source of truth for the package version — pyproject.toml reads
 # this via [tool.hatch.version].
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 __all__ = [
     "NoetherClient",
     # Errors

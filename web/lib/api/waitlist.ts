@@ -24,7 +24,6 @@ export async function joinWaitlist(input: {
   wallet: string;
   email?: string;
   segment?: WaitlistSegment;
-  turnstileToken: string;
 }): Promise<{ status: string }> {
   return fetchJson<{ status: string }>('/v1/waitlist', {
     method: 'POST',

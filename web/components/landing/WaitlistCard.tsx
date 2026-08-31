@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useWalletStore } from '@/lib/store/walletStore';
 import {
   joinWaitlist,
@@ -25,30 +25,6 @@ const ConnectButton = dynamic(
   { ssr: false, loading: () => <p className="text-sm text-white/40">Loading wallet options…</p> },
 );
 
-// Cloudflare's public always-pass sitekey keeps local dev working without a
-// real widget; production requires the env var.
-const SITE_KEY =
-  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ??
-  (process.env.NODE_ENV === 'production' ? '' : '1x00000000000000000000AA');
-
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (
-        el: HTMLElement,
-        opts: {
-          sitekey: string;
-          callback: (token: string) => void;
-          'expired-callback'?: () => void;
-          'error-callback'?: () => void;
-          theme?: string;
-        },
-      ) => string;
-      reset: (id?: string) => void;
-    };
-  }
-}
-
 const G_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
 
 type Phase = 'form' | 'submitting' | 'pending' | 'approved';
@@ -59,44 +35,10 @@ export function WaitlistCard() {
   const [email, setEmail] = useState('');
   const [segment, setSegment] = useState<'' | WaitlistSegment>('');
   const [attest, setAttest] = useState(false);
-  const [token, setToken] = useState('');
   const [phase, setPhase] = useState<Phase>('form');
   const [message, setMessage] = useState('');
   const [unlocking, setUnlocking] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
-  const turnstileRef = useRef<HTMLDivElement>(null);
-  const rendered = useRef(false);
-
-  // Mount the Turnstile widget once the script is available.
-  useEffect(() => {
-    if (!SITE_KEY || rendered.current) return;
-    const tryRender = () => {
-      if (rendered.current || !turnstileRef.current || !window.turnstile) return;
-      rendered.current = true;
-      window.turnstile.render(turnstileRef.current, {
-        sitekey: SITE_KEY,
-        theme: 'dark',
-        callback: setToken,
-        'expired-callback': () => setToken(''),
-        'error-callback': () => setToken(''),
-      });
-    };
-    if (window.turnstile) {
-      tryRender();
-      return;
-    }
-    const existing = document.getElementById('cf-turnstile-script');
-    if (!existing) {
-      const script = document.createElement('script');
-      script.id = 'cf-turnstile-script';
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-      script.async = true;
-      script.onload = tryRender;
-      document.head.appendChild(script);
-    } else {
-      existing.addEventListener('load', tryRender, { once: true });
-    }
-  }, []);
 
   // A connected wallet pre-fills the field and quietly checks status.
   useEffect(() => {
@@ -121,26 +63,19 @@ export function WaitlistCard() {
       setMessage('Please accept the terms and confirm eligibility.');
       return;
     }
-    if (!token) {
-      setMessage('Please complete the human check.');
-      return;
-    }
     setPhase('submitting');
     try {
       const { status } = await joinWaitlist({
         wallet: w,
         email: email.trim() || undefined,
         segment: segment || undefined,
-        turnstileToken: token,
       });
       setPhase(status === 'approved' ? 'approved' : 'pending');
     } catch (err) {
       setPhase('form');
-      setMessage(err instanceof Error ? err.message : 'Something went wrong — try again.');
-      window.turnstile?.reset();
-      setToken('');
+      setMessage(err instanceof Error ? err.message : 'Something went wrong. Try again.');
     }
-  }, [wallet, email, segment, attest, token]);
+  }, [wallet, email, segment, attest]);
 
   const unlock = useCallback(async () => {
     const address = connected ?? wallet.trim();
@@ -165,23 +100,21 @@ export function WaitlistCard() {
           ? 'This wallet is not approved yet.'
           : err instanceof Error
             ? err.message
-            : 'Unlock failed — try again.',
+            : 'Unlock failed. Try again.',
       );
     }
   }, [connected, wallet]);
-
-  if (!SITE_KEY) return null; // waitlist not configured for this deployment
 
   const inputCls =
     'w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-white/30 outline-none focus:border-[#eab308]/60';
 
   return (
-    <div className="mt-10 w-full max-w-md text-left">
+    <div className="mt-8 w-full max-w-md text-left">
       {phase === 'pending' && (
         <div className="rounded-xl border border-white/10 bg-white/5 px-5 py-6 text-center">
           <p className="text-sm font-semibold text-white">You&apos;re on the waitlist.</p>
           <p className="mt-2 text-sm leading-relaxed text-white/60">
-            We approve wallets in waves — you&apos;ll get an email when yours is in
+            We approve wallets in waves. You&apos;ll get an email when yours is in
             (if you shared one). Meanwhile, trading is open on{' '}
             <a href="https://testnet.noether.exchange/trade" className="text-[#eab308] hover:underline">
               testnet
@@ -256,7 +189,7 @@ export function WaitlistCard() {
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Email (optional — we'll tell you when you're in)"
+            placeholder="Email (optional, we'll tell you when you're in)"
             type="email"
             className={inputCls}
           />
@@ -289,7 +222,6 @@ export function WaitlistCard() {
               and confirm I am not a resident of a restricted jurisdiction.
             </span>
           </label>
-          <div ref={turnstileRef} className="flex justify-center" />
           {message && <p className="text-sm text-red-400">{message}</p>}
           <button
             type="submit"

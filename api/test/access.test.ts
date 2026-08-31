@@ -40,7 +40,7 @@ function authHeaders(k: { keyId: string; secret: string }): Record<string, strin
 }
 
 function joinBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return { wallet: wallet(), attest: true, turnstileToken: 'valid-token', ...overrides };
+  return { wallet: wallet(), attest: true, ...overrides };
 }
 
 describe('POST /v1/waitlist', () => {
@@ -69,14 +69,13 @@ describe('POST /v1/waitlist', () => {
     expect(grant?.source).toBe('waitlist');
   });
 
-  it('rejects missing attestation, bad wallets, bad emails, bad tokens', async () => {
+  it('rejects missing attestation, bad wallets, bad emails', async () => {
     const setup = await setupTestServer();
     app = setup.app;
     const cases: Array<[Record<string, unknown>, string]> = [
       [joinBody({ attest: false }), 'attestation_required'],
       [joinBody({ wallet: 'G'.padEnd(56, 'A') }), 'invalid_wallet'],
       [joinBody({ email: 'not-an-email' }), 'invalid_email'],
-      [joinBody({ turnstileToken: 'bogus' }), 'turnstile_failed'],
     ];
     for (const [payload, error] of cases) {
       const res = await app.inject({ method: 'POST', url: '/v1/waitlist', payload });
@@ -85,12 +84,12 @@ describe('POST /v1/waitlist', () => {
     }
   });
 
-  it('503s loudly when Turnstile is not configured', async () => {
+  it('joins without a captcha token even when Turnstile is not configured', async () => {
     const setup = await setupTestServer({ turnstileDisabled: true });
     app = setup.app;
     const res = await app.inject({ method: 'POST', url: '/v1/waitlist', payload: joinBody() });
-    expect(res.statusCode).toBe(503);
-    expect((res.json() as { error: string }).error).toBe('waitlist_not_configured');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: 'pending' });
   });
 
   it('enforces the tighter per-IP join budget (5/min)', async () => {

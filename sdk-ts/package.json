@@ -1,6 +1,6 @@
 {
   "name": "noether-sdk",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Official TypeScript SDK for the Noether decentralized perpetual exchange on Stellar / Soroban.",
   "license": "MIT",
   "author": "Noether Team",
