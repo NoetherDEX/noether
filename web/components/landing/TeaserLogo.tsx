@@ -2,6 +2,7 @@
 
 import { useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { NoetherLogo } from './NoetherLogo'
 
 /**
  * Wordmark on the audit teaser — and the easter egg: five quick taps within
@@ -21,14 +22,8 @@ export function TeaserLogo() {
   }
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label="Noether"
-      className="select-none text-2xl font-bold tracking-[0.3em] text-white/90"
-      style={{ fontFamily: 'var(--font-sora)' }}
-    >
-      NOETHER
+    <button type="button" onClick={onClick} aria-label="Noether" className="select-none">
+      <NoetherLogo className="h-9 w-auto" />
     </button>
   )
 }

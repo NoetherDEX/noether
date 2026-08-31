@@ -3,9 +3,9 @@ import { TeaserLogo } from '@/components/landing/TeaserLogo'
 import { WaitlistCard } from '@/components/landing/WaitlistCard'
 
 export const metadata: Metadata = {
-  title: 'Audit in progress',
+  title: 'Mainnet waitlist',
   description:
-    "Noether's mainnet contracts are being audited. Trade on the public testnet while you wait.",
+    'Mainnet perks are reserved for the waitlist. Access opens in waves — trade on the public testnet while you wait.',
   robots: { index: false },
 }
 
@@ -55,24 +55,27 @@ export default function AuditPage() {
         style={{ backgroundImage: "url('/waitlist-bg.jpg')" }}
       />
       <TeaserLogo />
+      <p className="mt-8 inline-flex items-center rounded-full border border-[#eab308]/30 bg-[#eab308]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#eab308]">
+        Independent audit in progress
+      </p>
       <h1
-        className="mt-8 text-4xl font-semibold tracking-tight sm:text-5xl"
+        className="mt-5 max-w-xl text-4xl font-semibold tracking-tight [text-wrap:balance] sm:text-5xl"
         style={{ fontFamily: 'var(--font-sora)' }}
       >
-        Audit in progress<span className="text-[#eab308]">.</span>
+        Mainnet perks are reserved for the waitlist
+        <span className="text-[#eab308]">.</span>
       </h1>
       <p className="mt-4 max-w-md text-base leading-relaxed text-white/60">
-        Noether&apos;s mainnet contracts are being audited. Mainnet opens when
-        the audit clears — until then, trade with test funds on our public
-        testnet.
+        Access opens in waves — early wallets get in first. Until then, prove
+        your edge on{' '}
+        <a
+          href="https://testnet.noether.exchange/trade"
+          className="font-medium text-[#eab308] underline-offset-4 transition hover:underline"
+        >
+          testnet.noether.exchange
+        </a>{' '}
+        with free test funds.
       </p>
-      <a
-        href="https://testnet.noether.exchange/trade"
-        className="mt-8 inline-flex items-center gap-2 rounded-xl bg-[#eab308] px-6 py-3 text-sm font-semibold text-black transition hover:bg-[#facc15]"
-      >
-        Trade on testnet
-        <span aria-hidden>→</span>
-      </a>
       {/* Client island — everything wallet/stellar-heavy inside is lazy,
           so the teaser's first load stays dependency-light. */}
       <WaitlistCard />
