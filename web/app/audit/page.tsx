@@ -55,11 +55,8 @@ export default function AuditPage() {
         style={{ backgroundImage: "url('/waitlist-bg.jpg')" }}
       />
       <TeaserLogo />
-      <p className="mt-8 inline-flex items-center rounded-full border border-[#eab308]/30 bg-[#eab308]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#eab308]">
-        Independent audit in progress
-      </p>
       <h1
-        className="mt-5 max-w-xl text-4xl font-semibold tracking-tight [text-wrap:balance] sm:text-5xl"
+        className="mt-8 max-w-xl text-4xl font-semibold tracking-tight [text-wrap:balance] sm:text-5xl"
         style={{ fontFamily: 'var(--font-sora)' }}
       >
         Mainnet perks are reserved for the waitlist
@@ -103,23 +100,7 @@ export default function AuditPage() {
         </div>
       </section>
 
-      {/* Built by — the founders are already public on the SCF grant. */}
-      <section className="mt-12 text-sm text-white/40">
-        <p className="uppercase tracking-widest text-xs text-white/30">Built by</p>
-        <div className="mt-3 flex items-center justify-center gap-8">
-          <a href="https://github.com/y4hyya" className="transition hover:text-white/80">
-            <span className="block font-medium text-white/70">Yahya Emir Soyer</span>
-            <span className="text-xs">Co-founder · CEO · Contracts</span>
-          </a>
-          <a href="https://github.com/merth" className="transition hover:text-white/80">
-            <span className="block font-medium text-white/70">Mert Cicekci</span>
-            <span className="text-xs">Co-founder · CTO · Full-stack</span>
-          </a>
-        </div>
-        <p className="mt-3 text-xs text-white/30">Backed by the Stellar Community Fund</p>
-      </section>
-
-      <div className="mt-10 flex items-center gap-6 text-sm text-white/40">
+      <div className="mt-12 flex items-center gap-6 text-sm text-white/40">
         <a
           href="https://docs.noether.exchange"
           className="transition hover:text-white/80"

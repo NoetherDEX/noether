@@ -69,7 +69,8 @@ interface JoinBody {
   email?: string;
   segment?: string;
   attest: boolean;
-  turnstileToken: string;
+  /** Legacy clients still send this; it is ignored. */
+  turnstileToken?: string;
 }
 
 interface VerifyBody {
@@ -102,7 +103,7 @@ export async function registerAccessRoutes(app: FastifyInstance, deps: AccessRou
       schema: {
         description:
           'Public — join the mainnet v1 waitlist. Idempotent: re-submitting returns the current status. ' +
-          'Requires the eligibility attestation and a Cloudflare Turnstile token.',
+          'Requires the eligibility attestation.',
         tags: ['access'],
         body: {
           type: 'object',
@@ -111,9 +112,11 @@ export async function registerAccessRoutes(app: FastifyInstance, deps: AccessRou
             email: { type: 'string', maxLength: 254 },
             segment: { type: 'string', enum: ['trader', 'lp', 'both'] },
             attest: { type: 'boolean' },
+            // Kept so older web builds that still send a captcha token pass
+            // schema validation; the value is ignored.
             turnstileToken: { type: 'string', maxLength: 4096 },
           },
-          required: ['wallet', 'attest', 'turnstileToken'],
+          required: ['wallet', 'attest'],
         },
         response: {
           200: {
@@ -127,10 +130,7 @@ export async function registerAccessRoutes(app: FastifyInstance, deps: AccessRou
       },
     },
     async (req, reply) => {
-      if (!deps.turnstile.enabled) {
-        return reply.code(503).send({ error: 'waitlist_not_configured' });
-      }
-      const { wallet, email, segment, attest, turnstileToken } = req.body;
+      const { wallet, email, segment, attest } = req.body;
       if (attest !== true) {
         return reply.code(400).send({
           error: 'attestation_required',
@@ -145,9 +145,6 @@ export async function registerAccessRoutes(app: FastifyInstance, deps: AccessRou
       }
       if (segment !== undefined && !SEGMENTS.has(segment as GrantSegment)) {
         return reply.code(400).send({ error: 'invalid_segment' });
-      }
-      if (!(await deps.turnstile.verify(turnstileToken, req.ip))) {
-        return reply.code(400).send({ error: 'turnstile_failed' });
       }
       const { status } = await deps.access.join({
         wallet,
