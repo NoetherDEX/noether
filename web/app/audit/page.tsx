@@ -17,6 +17,12 @@ export const metadata: Metadata = {
 export default function AuditPage() {
   return (
     <main className="flex min-h-screen flex-col items-center px-6 text-center">
+      {/* Hide every piece of global chrome (testnet ribbon, notification
+          bell, banners) on the teaser — same mechanism as error.tsx and
+          not-found.tsx, and immune to the launch gate's URL rewrites. */}
+      <style
+        dangerouslySetInnerHTML={{ __html: '[data-noether-chrome]{display:none !important;}' }}
+      />
       {/* Full-viewport backdrop. A position:fixed layer, not
           background-attachment:fixed (broken on iOS), and pure CSS so the
           teaser keeps its zero client JS. Cover-cropping keeps the helmets
@@ -90,7 +96,7 @@ export default function AuditPage() {
             rel="noopener noreferrer"
             className="transition hover:text-white/80"
           >
-            X / Twitter
+            X
           </a>
           <span aria-hidden className="text-white/20">·</span>
           <span>© 2026 Noether · Testnet</span>
