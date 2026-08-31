@@ -8,11 +8,12 @@ import { DOCS_URL } from './nav';
 
 /**
  * One-line legal footer for app pages (Terms · Docs · Discord · ©).
- * The landing page renders its own LandingFooter, so this hides on '/'.
+ * The landing page renders its own LandingFooter and the audit teaser
+ * renders its own in-viewport footer, so this hides on both.
  */
 export function AppFooter() {
   const pathname = usePathname();
-  if (pathname === '/') return null;
+  if (pathname === '/' || pathname === '/audit') return null;
 
   const isTrade = pathname === '/trade';
 

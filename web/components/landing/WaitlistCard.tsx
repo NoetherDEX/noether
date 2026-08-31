@@ -73,7 +73,7 @@ export function WaitlistCard() {
       setPhase(status === 'approved' ? 'approved' : 'pending');
     } catch (err) {
       setPhase('form');
-      setMessage(err instanceof Error ? err.message : 'Something went wrong — try again.');
+      setMessage(err instanceof Error ? err.message : 'Something went wrong. Try again.');
     }
   }, [wallet, email, segment, attest]);
 
@@ -100,7 +100,7 @@ export function WaitlistCard() {
           ? 'This wallet is not approved yet.'
           : err instanceof Error
             ? err.message
-            : 'Unlock failed — try again.',
+            : 'Unlock failed. Try again.',
       );
     }
   }, [connected, wallet]);
@@ -109,12 +109,12 @@ export function WaitlistCard() {
     'w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder-white/30 outline-none focus:border-[#eab308]/60';
 
   return (
-    <div className="mt-10 w-full max-w-md text-left">
+    <div className="mt-8 w-full max-w-md text-left">
       {phase === 'pending' && (
         <div className="rounded-xl border border-white/10 bg-white/5 px-5 py-6 text-center">
           <p className="text-sm font-semibold text-white">You&apos;re on the waitlist.</p>
           <p className="mt-2 text-sm leading-relaxed text-white/60">
-            We approve wallets in waves — you&apos;ll get an email when yours is in
+            We approve wallets in waves. You&apos;ll get an email when yours is in
             (if you shared one). Meanwhile, trading is open on{' '}
             <a href="https://testnet.noether.exchange/trade" className="text-[#eab308] hover:underline">
               testnet
@@ -189,7 +189,7 @@ export function WaitlistCard() {
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Email (optional — we'll tell you when you're in)"
+            placeholder="Email (optional, we'll tell you when you're in)"
             type="email"
             className={inputCls}
           />
