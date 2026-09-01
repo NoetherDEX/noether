@@ -378,7 +378,7 @@ check('adlWalk: score ties break by lower id', tie[0].position.id, 3n);
     buildSubscribeMessage([3, 4]),
     '{"type":"subscribe","assets":[3,4]}',
   );
-  check('fast id map: 13 pairs, XLM absent (no Fast feed)', STORK_DEFAULT_ID_SYMBOLS.length, 13);
+  check('fast id map: 17 pairs, XLM absent (no Fast feed)', STORK_DEFAULT_ID_SYMBOLS.length, 17);
   check(
     'fast id map: no XLM entry',
     STORK_DEFAULT_ID_SYMBOLS.some(([, s]) => s === 'XLM'),

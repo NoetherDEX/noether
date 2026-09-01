@@ -32,6 +32,16 @@ const DEFAULT_ASSETS: AssetConfig[] = [
   { symbol: 'LINK', decimals: 7, maxMovePct: 20, minPrice: 0.1, maxPrice: 10_000 },
   { symbol: 'BCH', decimals: 7, maxMovePct: 20, minPrice: 1, maxPrice: 100_000 },
   { symbol: 'LTC', decimals: 7, maxMovePct: 20, minPrice: 1, maxPrice: 100_000 },
+  // Sub-cent asset: at ~$0.004 the 1e7 scale still carries ~5 significant
+  // digits, and the floor sits far below any plausible print.
+  { symbol: 'PUMP', decimals: 7, maxMovePct: 20, minPrice: 0.000001, maxPrice: 1 },
+  { symbol: 'UNI', decimals: 7, maxMovePct: 20, minPrice: 0.1, maxPrice: 10_000 },
+  // Tokenized gold (PAXG = Paxos, XAUT = Tether). These price the TOKENS,
+  // not LBMA spot. Publishing starts now so the PAXG/XAUT basis is
+  // measurable on-chain; trading stays closed until each pair gets its
+  // set_asset_risk config (gold enable ~2026-09-08 after review).
+  { symbol: 'PAXG', decimals: 7, maxMovePct: 10, minPrice: 100, maxPrice: 100_000 },
+  { symbol: 'XAUT', decimals: 7, maxMovePct: 10, minPrice: 100, maxPrice: 100_000 },
 ];
 
 function parseStorkAssetIds(raw: string | undefined): number[] {

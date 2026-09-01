@@ -32,10 +32,17 @@ export const STORK_DEFAULT_ID_SYMBOLS: ReadonlyArray<readonly [number, string]> 
   [19, 'HYPE'],
   [21, 'LINK'],
   [22, 'LTC'],
+  // PAXG/XAUT are the tokenized-gold TOKEN feeds — cross-validate them
+  // against Noeracle PAXGUSD/XAUTUSD only, never spot XAUUSD (a different
+  // instrument with a real basis).
+  [26, 'PAXG'],
+  [27, 'PUMP'],
   [32, 'TRX'],
+  [33, 'UNI'],
   [38, 'XRP'],
   [39, 'ZEC'],
   [40, 'SOL'],
+  [407, 'XAUT'],
 ];
 
 const HEADER_LEN = 65 + 2 + 8;
