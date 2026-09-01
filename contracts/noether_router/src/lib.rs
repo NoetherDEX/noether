@@ -1000,6 +1000,14 @@ fn price_bounds(env: &Env, asset: &Symbol) -> Result<(i128, i128), NoetherError>
         ("LINK", P / 10, 10_000 * P),
         ("BCH", P, 100_000 * P),
         ("LTC", P, 100_000 * P),
+        // Sub-cent asset: 7-dec fixed point still gives ~5 significant
+        // digits at PUMP's ~$0.004 (43_000 units), so the floor sits well
+        // below any plausible price without losing resolution.
+        ("PUMP", P / 1_000_000, P),
+        ("UNI", P / 10, 10_000 * P),
+        // Tokenized gold (the tokens, not LBMA spot).
+        ("PAXG", 100 * P, 100_000 * P),
+        ("XAUT", 100 * P, 100_000 * P),
     ];
     for (sym, lo, hi) in BANDS {
         if asset == &Symbol::new(env, sym) {

@@ -29,6 +29,14 @@ pub const PAIR_TAGS: &[(&str, &[u8; 8])] = &[
     ("LINK", b"LINKUSD\0"),
     ("BCH", b"BCHUSD\0\0"),
     ("LTC", b"LTCUSD\0\0"),
+    ("PUMP", b"PUMPUSD\0"),
+    ("UNI", b"UNIUSD\0\0"),
+    // Tokenized gold (Paxos / Tether). These price the TOKENS, not LBMA
+    // spot XAU — they carry a real basis to spot and to each other. Listed
+    // in the tag table ahead of launch; trading stays closed until each
+    // gets its set_asset_risk config (unconfigured pairs cannot open).
+    ("PAXG", b"PAXGUSD\0"),
+    ("XAUT", b"XAUTUSD\0"),
 ];
 
 pub fn symbol_to_tag(env: &Env, asset: &Symbol) -> Result<BytesN<8>, NoetherError> {
