@@ -16,6 +16,8 @@ const TOKEN_LOGOS: Record<string, string> = {
   LINK: '/linklogo.svg',
   BCH: '/bchlogo.svg',
   LTC: '/ltclogo.svg',
+  PUMP: '/pumplogo.png',
+  UNI: '/unilogo.svg',
 };
 
 interface TokenIconProps {
