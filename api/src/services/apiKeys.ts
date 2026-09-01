@@ -145,6 +145,24 @@ export class ApiKeyStore {
     return Number(result.rows[0]?.n ?? 0);
   }
 
+  /**
+   * Revoke every active key this owner holds under one label. The admin
+   * panel mints a fresh session key per sign-in under a well-known label;
+   * retiring the previous ones on issue keeps repeat sign-ins from marching
+   * the wallet into the per-owner issuance cap.
+   */
+  async revokeAllWithLabel(owner: string, label: string): Promise<number> {
+    const result = await this.db.execute({
+      sql: `
+        UPDATE api_keys
+        SET revoked_at = ?
+        WHERE owner = ? AND label = ? AND revoked_at IS NULL
+      `,
+      args: [Date.now(), owner, label],
+    });
+    return Number(result.rowsAffected ?? 0);
+  }
+
   async revoke(keyId: string, owner: string): Promise<boolean> {
     const result = await this.db.execute({
       sql: `
