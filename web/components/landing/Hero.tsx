@@ -19,7 +19,7 @@ import { formatUSD, formatPercent, priceDecimals } from '@/lib/utils';
      All 13 listed pairs; the panel scrolls. ── */
 const MARKETS = [
   'BTC', 'ETH', 'XLM', 'SOL', 'XRP', 'ADA', 'BNB',
-  'TRX', 'DOGE', 'ZEC', 'LINK', 'BCH', 'LTC',
+  'TRX', 'DOGE', 'ZEC', 'LINK', 'BCH', 'LTC', 'PUMP', 'UNI',
 ] as const;
 
 function LiveMarkets() {

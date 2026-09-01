@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { formatPrice, formatPercent } from '@/lib/utils';
+import { ASSETS } from '@/lib/utils/constants';
 import { TokenIcon } from '@/components/ui/TokenIcon';
 import { fetchTicker } from '@/lib/hooks/usePriceData';
 
@@ -27,21 +28,8 @@ interface AssetSelectorDropdownProps {
   markPrices?: Record<string, number>;
 }
 
-const ASSETS = [
-  { symbol: 'BTC', name: 'Bitcoin' },
-  { symbol: 'ETH', name: 'Ethereum' },
-  { symbol: 'XLM', name: 'Stellar' },
-  { symbol: 'SOL', name: 'Solana' },
-  { symbol: 'XRP', name: 'XRP' },
-  { symbol: 'ADA', name: 'Cardano' },
-  { symbol: 'BNB', name: 'BNB' },
-  { symbol: 'TRX', name: 'Tron' },
-  { symbol: 'DOGE', name: 'Dogecoin' },
-  { symbol: 'ZEC', name: 'Zcash' },
-  { symbol: 'LINK', name: 'Chainlink' },
-  { symbol: 'BCH', name: 'Bitcoin Cash' },
-  { symbol: 'LTC', name: 'Litecoin' },
-];
+// The pair list comes from the ONE canonical source — a local copy here is
+// exactly how PUMP/UNI shipped everywhere except this menu (2026-09-01).
 
 export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: AssetSelectorDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
