@@ -46,6 +46,7 @@ const ASSETS = [
 export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: AssetSelectorDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   const openMenu = () => {
@@ -64,6 +65,14 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
   useEffect(() => {
     if (!isOpen) return;
     const close = () => setIsOpen(false);
+    const onScroll = (e: globalThis.Event) => {
+      // The scroll listener is capture-phase, so it also sees the menu's OWN
+      // overflow-y-auto scrolling — which must not close it (the whole list
+      // is reachable only by scrolling). Only page/ancestor scrolls that
+      // move the fixed-position anchor should close.
+      if (e.target instanceof Node && menuRef.current?.contains(e.target)) return;
+      setIsOpen(false);
+    };
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsOpen(false);
@@ -71,11 +80,11 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
       }
     };
     window.addEventListener('resize', close);
-    window.addEventListener('scroll', close, true);
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('resize', close);
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('keydown', onKey);
     };
   }, [isOpen]);
@@ -199,6 +208,7 @@ export function AssetSelectorDropdown({ selectedAsset, onSelect, markPrices }: A
               on short/mobile viewports; overscroll-contain stops the page
               behind from scrolling when the list hits its edge. */}
           <div
+            ref={menuRef}
             style={{ top: menuPos.top, left: menuPos.left }}
             className="fixed z-50 min-w-[220px] max-h-[min(60vh,480px)] bg-surface-2 border border-border-strong rounded-md overflow-y-auto overscroll-contain custom-scrollbar divide-y divide-border shadow-2xl">
             {displayAssets.map((asset) => (
