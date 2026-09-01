@@ -22,7 +22,7 @@ afterEach(async () => {
   app = undefined;
 });
 
-async function tryIssue(server: FastifyInstance, kp: Keypair): Promise<number> {
+async function tryIssue(server: FastifyInstance, kp: Keypair, label?: string): Promise<number> {
   const ch = await server.inject({
     method: 'POST',
     url: '/v1/keys/challenge',
@@ -36,6 +36,7 @@ async function tryIssue(server: FastifyInstance, kp: Keypair): Promise<number> {
       address: kp.publicKey(),
       challenge: challengeHex,
       signature: helpers.signChallengeXdr(kp, challengeHex),
+      ...(label !== undefined ? { label } : {}),
     },
   });
   return res.statusCode;
@@ -75,5 +76,41 @@ describe('closed-beta issuance gate (env ∪ access_grants ∪ ADMIN_WALLETS)', 
     expect(await probe(Keypair.random().publicKey())).toEqual({ gated: true, allowed: false });
     expect(await probe(adminKp.publicKey())).toEqual({ gated: true, allowed: true });
     expect(await probe(approvedKp.publicKey())).toEqual({ gated: true, allowed: true });
+  });
+});
+
+describe('per-owner issuance cap and session-key labels', () => {
+  it('plain keys hit the cap; the sixth issuance 409s', async () => {
+    const adminKp = Keypair.random();
+    const setup = await helpers.setupTestServer({ adminWallets: [adminKp.publicKey()] });
+    app = setup.app;
+    for (let i = 0; i < 5; i++) {
+      expect(await tryIssue(app, adminKp)).toBe(201);
+    }
+    expect(await tryIssue(app, adminKp)).toBe(409);
+  });
+
+  it('admin-panel keys never march into the cap: prior ones retire on issue', async () => {
+    const adminKp = Keypair.random();
+    const setup = await helpers.setupTestServer({ adminWallets: [adminKp.publicKey()] });
+    app = setup.app;
+    // Seven consecutive sign-ins, two past the cap, all succeed.
+    for (let i = 0; i < 7; i++) {
+      expect(await tryIssue(app, adminKp, 'admin-panel')).toBe(201);
+    }
+    // Only the newest session key stays active.
+    expect(await setup.deps.apiKeys.countActiveForOwner(adminKp.publicKey())).toBe(1);
+  });
+
+  it('a wallet stuck at the cap with stale admin-panel keys can still sign in', async () => {
+    const adminKp = Keypair.random();
+    const setup = await helpers.setupTestServer({ adminWallets: [adminKp.publicKey()] });
+    app = setup.app;
+    // Reproduce the incident: five stale admin-panel session keys.
+    for (let i = 0; i < 5; i++) {
+      await setup.deps.apiKeys.issue(adminKp.publicKey(), 'admin-panel');
+    }
+    expect(await tryIssue(app, adminKp, 'admin-panel')).toBe(201);
+    expect(await setup.deps.apiKeys.countActiveForOwner(adminKp.publicKey())).toBe(1);
   });
 });

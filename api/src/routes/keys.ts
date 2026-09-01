@@ -27,6 +27,14 @@ function loadAllowlist(): Set<string> | null {
 /** Active keys one wallet may hold at once. Override with API_MAX_KEYS_PER_OWNER. */
 const MAX_KEYS_PER_OWNER = Number(process.env.API_MAX_KEYS_PER_OWNER ?? 5);
 
+/**
+ * Labels that behave as single-active session keys: issuing under one of
+ * these first retires the owner's previous keys with the same label. The
+ * admin panel mints one per sign-in, and without this the fifth sign-in
+ * locks the wallet out of its own admin page (key_limit_reached).
+ */
+const SESSION_KEY_LABELS = new Set(['admin-panel']);
+
 const ALLOWLIST = loadAllowlist();
 
 interface ChallengeBody {
@@ -198,6 +206,10 @@ export async function registerKeyRoutes(
       }
       const ok = wallet.verify(address, challenge, signature);
       if (!ok) return reply.code(401).send({ error: 'invalid_signature' });
+
+      if (label !== undefined && SESSION_KEY_LABELS.has(label)) {
+        await apiKeys.revokeAllWithLabel(address, label);
+      }
 
       // Checked only AFTER signature verification, so the endpoint cannot be
       // used to probe how many keys an arbitrary wallet holds.
