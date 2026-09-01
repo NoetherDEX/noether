@@ -239,6 +239,15 @@ export function TradingChart({
     setSeriesEpoch((e) => e + 1);
   }, [chartType]);
 
+  // Per-asset price scale: lightweight-charts defaults to 2dp precision,
+  // which flattens sub-dollar pairs (PUMP at ~$0.004 would chart as 0.00).
+  useEffect(() => {
+    const p = priceDecimals(asset);
+    seriesRef.current?.applyOptions({
+      priceFormat: { type: 'price', precision: p, minMove: 10 ** -p },
+    });
+  }, [asset, seriesEpoch]);
+
   // 3) Load history when asset / interval / chartType changes
   const loadData = useCallback(async () => {
     const series = seriesRef.current;

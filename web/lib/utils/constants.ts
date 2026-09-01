@@ -166,6 +166,14 @@ export const ASSETS = [
   { symbol: 'LINK', name: 'Chainlink', decimals: 7 },
   { symbol: 'BCH', name: 'Bitcoin Cash', decimals: 7 },
   { symbol: 'LTC', name: 'Litecoin', decimals: 7 },
+  { symbol: 'PUMP', name: 'Pump.fun', decimals: 7 },
+  { symbol: 'UNI', name: 'Uniswap', decimals: 7 },
+  // STAGED (do not enable before ~2026-09-08, Yahya reviews the basis
+  // first): tokenized gold, prices the tokens rather than LBMA spot.
+  // Uncomment together with the packages/shared SUPPORTED_ASSETS rows
+  // once each pair has its on-chain set_asset_risk config.
+  // { symbol: 'PAXG', name: 'PAX Gold', decimals: 7 },
+  // { symbol: 'XAUT', name: 'Tether Gold', decimals: 7 },
 ] as const;
 
 // Chart timeframes

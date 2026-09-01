@@ -15,6 +15,11 @@ const BINANCE_SYMBOLS: Record<string, string> = {
   LINK: 'LINKUSDT',
   BCH: 'BCHUSDT',
   LTC: 'LTCUSDT',
+  PUMP: 'PUMPUSDT',
+  UNI: 'UNIUSDT',
+  // Tokenized gold — reachable once the pairs enter ASSETS (~2026-09-08).
+  PAXG: 'PAXGUSDT',
+  XAUT: 'XAUTUSDT',
 };
 
 /**

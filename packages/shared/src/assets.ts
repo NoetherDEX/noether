@@ -22,6 +22,15 @@ export const SUPPORTED_ASSETS: readonly Asset[] = [
   { symbol: 'LINK', name: 'Chainlink', decimals: 7 },
   { symbol: 'BCH', name: 'Bitcoin Cash', decimals: 7 },
   { symbol: 'LTC', name: 'Litecoin', decimals: 7 },
+  { symbol: 'PUMP', name: 'Pump.fun', decimals: 7 },
+  { symbol: 'UNI', name: 'Uniswap', decimals: 7 },
+  // STAGED tokenized gold (PAXG = Paxos, XAUT = Tether): the contracts and
+  // keeper already carry both pairs, but they stay out of this list (and
+  // the web ASSETS mirror) until trading opens ~2026-09-08 after the
+  // PAXG/XAUT basis review. Enable = uncomment here + web constants, then
+  // rebuild gateway + web.
+  // { symbol: 'PAXG', name: 'PAX Gold', decimals: 7 },
+  // { symbol: 'XAUT', name: 'Tether Gold', decimals: 7 },
 ] as const;
 
 export const SUPPORTED_ASSET_SYMBOLS: readonly string[] = SUPPORTED_ASSETS.map(

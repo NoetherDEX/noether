@@ -16,7 +16,15 @@ function isMissing(value: number | null | undefined): value is null | undefined 
  * readable (e.g. DOGE at $0.0792); majors read fine at 2dp.
  */
 const SUB_DOLLAR_ASSETS = new Set(['XLM', 'XRP', 'ADA', 'TRX', 'DOGE']);
+
+/**
+ * Sub-CENT assets need 6dp: at PUMP's ~$0.0043 the oracle's 1e7 scale still
+ * carries ~5 significant digits, while 4dp would hide a 1% move entirely.
+ */
+const SUB_CENT_ASSETS = new Set(['PUMP']);
+
 export function priceDecimals(asset: string): number {
+  if (SUB_CENT_ASSETS.has(asset)) return 6;
   return SUB_DOLLAR_ASSETS.has(asset) ? 4 : 2;
 }
 
