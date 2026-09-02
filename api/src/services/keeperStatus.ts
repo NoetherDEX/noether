@@ -36,13 +36,18 @@ export interface MarketCustody {
 }
 
 export interface CustodyReport extends MarketCustody {
-  /** Age of the report when served. */
+  /** Age of the report when served, measured from the keeper's own asOf (NOT the heartbeat that relayed it). */
   ageMs: number;
-  /** True past CUSTODY_STALE_MS — the keeper stopped reporting; treat as unknown, not healthy. */
+  /** True past CUSTODY_STALE_MS — the custody check stopped producing reports; treat as unknown, not healthy. */
   stale: boolean;
 }
 
-/** Keeper reports every minute; five missed reports is a dead keeper, not a slow one. */
+/**
+ * Keeper computes custody every minute; five missed computations is a dead
+ * check, not a slow one. Measured from asOf because the keeper re-posts its
+ * LAST report on every ~30s heartbeat, including when its chain reads are
+ * failing — a live heartbeat says nothing about how old the custody data is.
+ */
 export const CUSTODY_STALE_MS = 5 * 60_000;
 
 const INT_RE = /^-?\d+$/;
@@ -91,7 +96,10 @@ export class KeeperStatusStore {
       optional[key] = v;
     }
     if (!Number.isInteger(c.positions) || !Number.isInteger(c.asOf)) return null;
-    const ageMs = Math.max(0, now - this.last.receivedAt);
+    // A report is never fresher than its arrival: a keeper clock running
+    // ahead (or a bad asOf) must not read as fresh forever.
+    const anchor = Math.min(c.asOf as number, this.last.receivedAt);
+    const ageMs = Math.max(0, now - anchor);
     return {
       ...(amounts as Record<(typeof AMOUNT_FIELDS)[number], string>),
       ...optional,

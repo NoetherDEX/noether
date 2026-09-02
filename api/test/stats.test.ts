@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { Keypair } from '@stellar/stellar-sdk';
 import { FAKE_CONTRACT, setupTestServer } from './helpers.js';
 import { SUPPORTED_ASSET_SYMBOLS } from '@noether/shared';
+import { CUSTODY_STALE_MS } from '../src/services/keeperStatus.js';
 
 let app: Awaited<ReturnType<typeof setupTestServer>>['app'] | null = null;
 
@@ -116,7 +117,7 @@ describe('GET /v1/markets/stats — custody invariant (keeper self-report)', () 
     orderEscrow: '0',
     deficit: '0',
     positions: 59,
-    asOf: 1787869200000,
+    asOf: Date.now() - 5_000,
   };
 
   it('relays the keeper custody block once a heartbeat carried one, stale:false', async () => {
@@ -136,6 +137,41 @@ describe('GET /v1/markets/stats — custody invariant (keeper self-report)', () 
     const res = await app.inject({ method: 'GET', url: '/v1/markets/stats' });
     expect(res.statusCode).toBe(200);
     expect(res.json().custody).toEqual({ ...CUSTODY, ageMs: expect.any(Number), stale: false });
+  });
+
+  it('measures staleness from the report asOf, not the heartbeat that relayed it', async () => {
+    const setup = await setupTestServer({ keeperHeartbeatSecret: 's3cret' });
+    app = setup.app;
+    // A keeper whose custody check is failing keeps re-posting its LAST
+    // report on every live heartbeat; the data is old even though the
+    // heartbeat is seconds old.
+    const asOf = Date.now() - 6 * 60_000;
+    await app.inject({
+      method: 'POST',
+      url: '/v1/oracle/heartbeat',
+      headers: { 'x-keeper-secret': 's3cret' },
+      payload: { ts: Date.now(), pushed: ['BTC'], custody: { ...CUSTODY, asOf } },
+    });
+    const custody = (await app.inject({ method: 'GET', url: '/v1/markets/stats' })).json().custody;
+    expect(custody.stale).toBe(true);
+    expect(custody.ageMs).toBeGreaterThanOrEqual(6 * 60_000);
+  });
+
+  it('never trusts an asOf ahead of the heartbeat that delivered it', async () => {
+    const setup = await setupTestServer({ keeperHeartbeatSecret: 's3cret' });
+    app = setup.app;
+    await app.inject({
+      method: 'POST',
+      url: '/v1/oracle/heartbeat',
+      headers: { 'x-keeper-secret': 's3cret' },
+      payload: { ts: Date.now(), pushed: [], custody: { ...CUSTODY, asOf: Date.now() + 60 * 60_000 } },
+    });
+    const custody = (await app.inject({ method: 'GET', url: '/v1/markets/stats' })).json().custody;
+    // Anchored on arrival, so the age is real (small, non-negative) rather
+    // than pinned at 0 by a clock an hour ahead.
+    expect(custody.stale).toBe(false);
+    expect(custody.ageMs).toBeGreaterThanOrEqual(0);
+    expect(custody.ageMs).toBeLessThan(CUSTODY_STALE_MS);
   });
 
   it('omits the block (never zero-fills) when the report is malformed or absent', async () => {
