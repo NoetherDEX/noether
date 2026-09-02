@@ -20,6 +20,7 @@ import {
   padFootprint,
   type KeyCtx,
 } from '../src/footprintGuard.js';
+import { guardKeys } from '../src/client.js';
 
 const VAULT = 'CBSWA5P75NGV2LP5KOY7A7LOAX2CENI5OYBSJ5IVLHENKQJF2I3ZBSYE';
 const MARKET = 'CBHHWFAYLB3SXJCE232DC6WNSK74IBEOROAGCI2AFBA2H5NQOH2KYKNN';
@@ -100,11 +101,40 @@ describe('conditionalWriteKeys', () => {
     expect(cross).toContain('CrossPartialLiqTs');
   });
 
+  it('partial closes declare the entries the exact-size full-close delegation writes', () => {
+    const keys = names(conditionalWriteKeys('close_partial', ctx));
+    expect(keys).toContain('PartialLiqTs');
+    expect(keys).toContain('ClosedProceeds');
+    expect(names(conditionalWriteKeys('close_partial', { ...ctx, positionId: undefined }))).not.toContain(
+      'ClosedProceeds',
+    );
+  });
+
   it('never repeats a key', () => {
-    for (const op of ['close', 'open', 'execute_order', 'liquidate', 'liquidate_cross', 'adl'] as const) {
+    for (const op of ['close', 'close_partial', 'open', 'execute_order', 'liquidate', 'liquidate_cross', 'adl'] as const) {
       const keys = conditionalWriteKeys(op, { ...ctx, assets: ['BTC', 'ETH'] });
       expect(new Set(keys.map(id)).size).toBe(keys.length);
     }
+  });
+});
+
+describe('guardKeys', () => {
+  const buildCtx = { rpcUrl: 'http://rpc.test', network: 'testnet' as const, contracts: { market: MARKET, vault: VAULT } };
+  const ownerOf = (keys: xdr.LedgerKey[], name: string) => {
+    const vec = keys.find((k) => names([k])[0] === name)!.contractData().key().vec()!;
+    return Address.fromScVal(vec[1]!).toString();
+  };
+
+  it('lets an explicit keyCtx.trader win over the tx source (a keeper settles for the liquidated trader)', () => {
+    const keeper = Keypair.random().publicKey();
+    const keys = guardKeys(buildCtx, keeper, { op: 'liquidate_cross', keyCtx: { trader: TRADER, assets: ['BTC'] } });
+    expect(ownerOf(keys, 'ShortfallOwed')).toBe(TRADER);
+    expect(ownerOf(keys, 'CrossPartialLiqTs')).toBe(TRADER);
+  });
+
+  it('falls back to the tx source when keyCtx names no trader', () => {
+    const keys = guardKeys(buildCtx, TRADER, { op: 'close', keyCtx: { positionId: 1n } });
+    expect(ownerOf(keys, 'ShortfallOwed')).toBe(TRADER);
   });
 });
 
