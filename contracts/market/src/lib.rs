@@ -6525,11 +6525,12 @@ mod tests {
         assert!(pnl > 0);
         assert!(vault_has("BufferBalance"));
         assert!(vault_has("TotalFees"));
-        // ADL flag is only touched when it exists — never created by a close.
-        let adl_exists = test.env.as_contract(&test.market_id, || {
-            test.env.storage().persistent().has(&DataKey::AdlActive(xlm.clone()))
+        // The ADL flag is written back (created as false) by every close, so
+        // the first-ever flip on an asset never lands outside the footprint.
+        let adl = test.env.as_contract(&test.market_id, || {
+            test.env.storage().persistent().get::<DataKey, bool>(&DataKey::AdlActive(xlm.clone()))
         });
-        assert!(!adl_exists);
+        assert_eq!(adl, Some(false));
     }
 
     /// A close on a STALE feed writes the last-good price back unchanged, so

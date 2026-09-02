@@ -386,6 +386,17 @@ impl VaultContract {
         // simulation; a key first touched at apply time traps the whole tx.
         storage::set_total_fees(&env, storage::get_total_fees(&env));
         storage::set_shortfall_reserve(&env, storage::get_shortfall_reserve(&env));
+        // Same class for the shortfall books: a winning close simulated while
+        // the vault covers in full carries none of these keys, so a
+        // settlement that drains coverage between simulate and apply turns
+        // the booking below into an out-of-footprint trap — at exactly the
+        // moment liquidations matter, and on every caller that runs without
+        // the client-side footprint guard (keeper, vault-factory leaders).
+        // Written back for both signs so settle_pnl's key set never depends
+        // on vault state.
+        storage::set_shortfall_owed(&env, &trader, storage::get_shortfall_owed(&env, &trader));
+        set_shortfall(&env, get_shortfall(&env));
+        storage::set_cum_shortfall(&env, storage::get_cum_shortfall(&env));
 
         let mut paid: i128 = 0;
         if pnl > 0 {
@@ -2099,6 +2110,29 @@ mod tests {
         assert!(vault_has(&t, DataKey::ShortfallReserve));
         assert_eq!(t.vault.get_buffer_balance(), 0);
         assert_eq!(t.vault.get_total_usdc(), 1_005 * PRECISION);
+    }
+
+    #[test]
+    fn settle_pnl_writes_the_shortfall_books_on_a_fully_covered_win() {
+        let t = setup(1_000 * PRECISION);
+        let trader = Address::generate(&t.env);
+        assert!(!vault_has(&t, DataKey::ShortfallOwed(trader.clone())));
+        assert!(!vault_has(&t, DataKey::Shortfall));
+        assert!(!vault_has(&t, DataKey::CumShortfall));
+        // Covered in full: nothing is booked, but every key the booking
+        // path writes must already be in the footprint.
+        assert_eq!(t.vault.settle_pnl(&trader, &(10 * PRECISION)), 10 * PRECISION);
+        assert!(vault_has(&t, DataKey::ShortfallOwed(trader.clone())));
+        assert!(vault_has(&t, DataKey::Shortfall));
+        assert!(vault_has(&t, DataKey::CumShortfall));
+        assert_eq!(t.vault.get_shortfall_owed(&trader), 0);
+        assert_eq!(t.vault.get_shortfall(), 0);
+        assert_eq!(t.vault.get_cum_shortfall(), 0);
+        // And a loss carries the same key set (sign flips between simulate
+        // and apply must not change what settle_pnl writes).
+        let loser = Address::generate(&t.env);
+        t.vault.settle_pnl(&loser, &(-(5 * PRECISION)));
+        assert!(vault_has(&t, DataKey::ShortfallOwed(loser.clone())));
     }
 
     #[test]
