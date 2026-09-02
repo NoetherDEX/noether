@@ -41,6 +41,10 @@ const HOST_ERROR_SCHEMA = {
   },
 } as const;
 
+/** Outer transaction result code (txFailed, txSorobanInvalid, txInsufficientRefundableFee, …).
+ *  The stale-resource codes carry no diagnostic event; a fresh build fixes them. */
+const TX_RESULT_CODE_SCHEMA = { type: ['string', 'null'] } as const;
+
 export async function registerTxRoutes(app: FastifyInstance, deps: TxRoutesDeps): Promise<void> {
   const service = deps.submitService ?? new TxSubmitService(deps.txCtx);
 
@@ -75,6 +79,7 @@ export async function registerTxRoutes(app: FastifyInstance, deps: TxRoutesDeps)
               ledger: { type: 'integer' },
               contractError: CONTRACT_ERROR_SCHEMA,
               hostError: HOST_ERROR_SCHEMA,
+              txResultCode: TX_RESULT_CODE_SCHEMA,
               resultXdr: { type: 'string' },
             },
             required: ['hash', 'status'],
@@ -87,6 +92,7 @@ export async function registerTxRoutes(app: FastifyInstance, deps: TxRoutesDeps)
               message: { type: 'string' },
               contractError: CONTRACT_ERROR_SCHEMA,
               hostError: HOST_ERROR_SCHEMA,
+              txResultCode: TX_RESULT_CODE_SCHEMA,
             },
             required: ['error'],
           },
@@ -142,6 +148,7 @@ function mapOutcome(outcome: TxSubmitOutcome, reply: FastifyReply): FastifyReply
         status: 'FAILED',
         contractError: outcome.contractError,
         hostError: outcome.hostError ?? null,
+        txResultCode: outcome.txResultCode ?? null,
         resultXdr: outcome.resultXdr,
       });
     case 'try_again_later':
@@ -158,6 +165,7 @@ function mapOutcome(outcome: TxSubmitOutcome, reply: FastifyReply): FastifyReply
         message: outcome.message,
         contractError: outcome.contractError,
         hostError: outcome.hostError ?? null,
+        txResultCode: outcome.txResultCode ?? null,
       });
   }
 }

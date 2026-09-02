@@ -212,7 +212,33 @@ describe('TxSubmitService', () => {
       contractError: { code: 25, name: 'InsufficientMargin' },
       // A contract error is not a host error, so this stays null.
       hostError: null,
+      // The fake resultXdr is not a decodable TransactionResult.
+      txResultCode: null,
       resultXdr: 'RESULTB64==',
+    });
+  });
+
+  it('names the outer result code so stale-resource failures are retryable without a diagnostic event', async () => {
+    // txSorobanInvalid / txInsufficientRefundableFee abort before any contract
+    // code runs, so there is no diagnostic event to decode — the result code
+    // is the only signal that a fresh build fixes it (web parity).
+    const sorobanInvalid = new xdr.TransactionResult({
+      feeCharged: xdr.Int64.fromString('100'),
+      result: xdr.TransactionResultResult.txSorobanInvalid(),
+      ext: new xdr.TransactionResultExt(0),
+    });
+    const { server } = fakeRpc(
+      { status: 'PENDING', hash: 'invalid-hash' },
+      [{ status: rpc.Api.GetTransactionStatus.FAILED, diagnosticEventsXdr: [], resultXdr: sorobanInvalid }],
+    );
+    const service = new TxSubmitService(ctx, server);
+    const outcome = await service.submit(signedXdr, { pollTimeoutMs: 1000, pollIntervalMs: 1 });
+    expect(outcome).toMatchObject({
+      kind: 'failed',
+      hash: 'invalid-hash',
+      contractError: null,
+      hostError: null,
+      txResultCode: 'txSorobanInvalid',
     });
   });
 
@@ -254,6 +280,7 @@ describe('TxSubmitService', () => {
       message: 'Submission rejected by RPC',
       contractError: { code: 3, name: 'Unauthorized' },
       hostError: null,
+      txResultCode: null,
     });
     expect(calls.get).toEqual([]);
   });

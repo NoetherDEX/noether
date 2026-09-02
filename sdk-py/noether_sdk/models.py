@@ -281,8 +281,9 @@ class ContractErrorInfo(_Base):
 
 class HostErrorInfo(_Base):
     """Decoded non-contract host error, e.g. ``storage`` / ``exceeded_limit``
-    (the network state moved between simulation and apply — re-prepare and
-    resubmit once; never a contract revert)."""
+    (the network state moved between simulation and apply; never a contract
+    revert). ``NoetherClient.execute_trade`` re-prepares and resubmits once
+    on this class automatically."""
 
     type: str
     code: str
@@ -294,6 +295,10 @@ class SubmittedTx(_Base):
     ledger: int | None = None
     contract_error: ContractErrorInfo | None = None
     host_error: HostErrorInfo | None = None
+    #: Outer transaction result code (txFailed, txSorobanInvalid,
+    #: txInsufficientRefundableFee, …). The stale-resource codes carry no
+    #: diagnostic event, so this is the only signal that a rebuild fixes them.
+    tx_result_code: str | None = None
 
 
 # ─── positions ─────────────────────────────────────────────────────────────

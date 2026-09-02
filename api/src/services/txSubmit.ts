@@ -1,4 +1,4 @@
-import { rpc, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk';
+import { rpc, TransactionBuilder, type Transaction, type xdr } from '@stellar/stellar-sdk';
 import { getNetworkPassphrase } from '@noether/shared';
 import type { TxBuildContext } from '@noether/tx-builders';
 import {
@@ -22,6 +22,12 @@ export type TxSubmitOutcome =
       contractError: ContractErrorInfo | null;
       /** Set when the host aborted outside contract code, e.g. a resource overrun. */
       hostError?: HostErrorInfo | null;
+      /**
+       * Outer transaction result code (txFailed, txSorobanInvalid,
+       * txInsufficientRefundableFee, …). The stale-resource codes carry no
+       * diagnostic event, so this is the only signal that a rebuild fixes them.
+       */
+      txResultCode?: string | null;
       resultXdr?: string;
     }
   | { kind: 'try_again_later'; hash: string }
@@ -31,6 +37,7 @@ export type TxSubmitOutcome =
       message: string;
       contractError: ContractErrorInfo | null;
       hostError?: HostErrorInfo | null;
+      txResultCode?: string | null;
     };
 
 export interface RpcLike {
@@ -72,6 +79,7 @@ export class TxSubmitService {
         message: 'Submission rejected by RPC',
         contractError: findContractError(send.diagnosticEvents),
         hostError: findHostError(send.diagnosticEvents),
+        txResultCode: txResultCodeName(send.errorResult),
       };
     }
     if (send.status === 'TRY_AGAIN_LATER') {
@@ -96,6 +104,7 @@ export class TxSubmitService {
           hash,
           contractError: findContractError(res.diagnosticEventsXdr),
           hostError: findHostError(res.diagnosticEventsXdr),
+          txResultCode: txResultCodeName(res.resultXdr),
           resultXdr: safeResultXdr(res),
         };
       }
@@ -104,6 +113,15 @@ export class TxSubmitService {
       }
       await new Promise((r) => setTimeout(r, pollIntervalMs));
     }
+  }
+}
+
+/** Outer result code name (txFailed, txSorobanInvalid, …); null when undecodable. */
+function txResultCodeName(result: xdr.TransactionResult | undefined | null): string | null {
+  try {
+    return result ? result.result().switch().name : null;
+  } catch {
+    return null;
   }
 }
 

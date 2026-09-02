@@ -16,6 +16,12 @@ export interface SubmittedTx {
    * — the state moved between simulation and apply); null otherwise.
    */
   hostError?: { type: string; code: string } | null;
+  /**
+   * Outer transaction result code (txFailed, txSorobanInvalid,
+   * txInsufficientRefundableFee, …). The stale-resource codes carry no
+   * diagnostic event, so this is the only signal that a rebuild fixes them.
+   */
+  txResultCode?: string | null;
 }
 
 export class TxApi {
