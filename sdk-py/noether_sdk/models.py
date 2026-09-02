@@ -114,15 +114,18 @@ class MarketCustody(_Base):
     """Market custody invariant as last self-reported by the keeper.
 
     The USDC the market contract holds vs the collateral it holds for traders
-    (live isolated collateral + cross pools + pending entry-order escrow).
-    ``deficit`` must be ``"0"``; anything else means payouts are about to fail.
-    ``stale`` is True when the report is older than 5 minutes (unknown, not
-    healthy). 7 decimal USDC strings.
+    (live isolated collateral + open cross-position collateral + cross pools +
+    pending entry-order escrow). ``deficit`` must be ``"0"``; anything else
+    means payouts are about to fail. ``stale`` is True when the report is older
+    than 5 minutes (unknown, not healthy). 7 decimal USDC strings.
+    ``cross_position_collateral`` is absent from keeper builds before
+    2026-09-02.
     """
 
     market_usdc_balance: str
     tracked_custody: str
     isolated_collateral: str
+    cross_position_collateral: str | None = None
     cross_balances: str
     order_escrow: str
     deficit: str

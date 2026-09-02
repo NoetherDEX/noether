@@ -89,13 +89,16 @@ export interface SolvencyStats {
 /**
  * Market custody invariant as last self-reported by the keeper: the USDC the
  * market contract holds vs the collateral it holds for traders (live isolated
- * collateral + cross pools + pending entry-order escrow). `deficit` must be
- * "0"; anything else means payouts are about to fail. 7 decimal USDC strings.
+ * collateral + open cross-position collateral + cross pools + pending
+ * entry-order escrow). `deficit` must be "0"; anything else means payouts are
+ * about to fail. 7 decimal USDC strings.
  */
 export interface MarketCustody {
   marketUsdcBalance: string;
   trackedCustody: string;
   isolatedCollateral: string;
+  /** Collateral locked in open cross positions. Absent from keeper builds before 2026-09-02. */
+  crossPositionCollateral?: string;
   crossBalances: string;
   orderEscrow: string;
   deficit: string;

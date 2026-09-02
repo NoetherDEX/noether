@@ -69,13 +69,18 @@ const CUSTODY_SCHEMA = {
   type: 'object',
   description:
     'Market custody invariant as last reported by the keeper: the USDC the market contract holds ' +
-    'vs the collateral it holds for traders (live isolated collateral + cross pools + pending ' +
-    'entry-order escrow). deficit must be "0"; anything else means payouts are about to fail (#10). ' +
-    'Omitted when the keeper has never reported; stale:true when the last report is older than 5 minutes.',
+    'vs the collateral it holds for traders (live isolated collateral + open cross-position collateral + ' +
+    'cross pools + pending entry-order escrow). deficit must be "0"; anything else means payouts are ' +
+    'about to fail (#10). Omitted when the keeper has never reported; stale:true when the last report ' +
+    'is older than 5 minutes.',
   properties: {
     marketUsdcBalance: { type: 'string' },
     trackedCustody: { type: 'string' },
     isolatedCollateral: { type: 'string' },
+    crossPositionCollateral: {
+      type: 'string',
+      description: 'Collateral locked in open cross positions. Absent from keeper builds before 2026-09-02.',
+    },
     crossBalances: { type: 'string' },
     orderEscrow: { type: 'string' },
     deficit: { type: 'string' },

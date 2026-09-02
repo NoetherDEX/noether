@@ -13,9 +13,18 @@
 export interface MarketCustody {
   /** USDC SAC balance of the market contract. */
   marketUsdcBalance: string;
-  /** Σ live isolated collateral + Σ cross-margin pools + Σ pending entry-order escrow. */
+  /**
+   * Σ live isolated collateral + Σ open cross-position collateral + Σ cross-margin
+   * pools + Σ pending entry-order escrow.
+   */
   trackedCustody: string;
   isolatedCollateral: string;
+  /**
+   * Collateral locked in open cross positions (debited from the pool at open,
+   * credited back at close). Absent from keeper builds before 2026-09-02,
+   * whose trackedCustody under-counts by exactly this amount.
+   */
+  crossPositionCollateral?: string;
   crossBalances: string;
   orderEscrow: string;
   /** max(0, trackedCustody − marketUsdcBalance). Anything but "0" means payouts will start failing. */
@@ -45,6 +54,7 @@ const AMOUNT_FIELDS = [
   'orderEscrow',
   'deficit',
 ] as const;
+const OPTIONAL_AMOUNT_FIELDS = ['crossPositionCollateral'] as const;
 
 export class KeeperStatusStore {
   private last: { receivedAt: number; body: Record<string, unknown> } | null = null;
@@ -73,10 +83,18 @@ export class KeeperStatusStore {
       if (typeof v !== 'string' || !INT_RE.test(v)) return null;
       amounts[key] = v;
     }
+    const optional: Partial<Record<(typeof OPTIONAL_AMOUNT_FIELDS)[number], string>> = {};
+    for (const key of OPTIONAL_AMOUNT_FIELDS) {
+      const v = c[key];
+      if (v === undefined) continue;
+      if (typeof v !== 'string' || !INT_RE.test(v)) return null;
+      optional[key] = v;
+    }
     if (!Number.isInteger(c.positions) || !Number.isInteger(c.asOf)) return null;
     const ageMs = Math.max(0, now - this.last.receivedAt);
     return {
       ...(amounts as Record<(typeof AMOUNT_FIELDS)[number], string>),
+      ...optional,
       positions: c.positions as number,
       asOf: c.asOf as number,
       ageMs,

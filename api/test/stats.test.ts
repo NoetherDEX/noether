@@ -111,6 +111,7 @@ describe('GET /v1/markets/stats — custody invariant (keeper self-report)', () 
     marketUsdcBalance: '2649276391892',
     trackedCustody: '2389338300000',
     isolatedCollateral: '2167102500000',
+    crossPositionCollateral: '150000000000',
     crossBalances: '222235800000',
     orderEscrow: '0',
     deficit: '0',

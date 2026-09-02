@@ -148,6 +148,8 @@ interface CustodyReport {
   marketUsdcBalance: string;
   trackedCustody: string;
   isolatedCollateral: string;
+  /** Collateral locked in OPEN cross positions — debited from the pool at open, credited back at close. */
+  crossPositionCollateral: string;
   crossBalances: string;
   orderEscrow: string;
   deficit: string;
@@ -573,7 +575,9 @@ class KeeperBot {
 
   /**
    * The market's USDC must cover every dollar it holds for traders: live
-   * isolated collateral, cross-margin pools and pending entry-order escrow.
+   * position collateral (isolated AND cross — a cross open moves the
+   * collateral out of the pool balance and into the position until close),
+   * cross-margin pools and pending entry-order escrow.
    * The pre-fix market paid funding receivers out of that pool (and drained
    * it to $27k against $241k tracked), so this is the direct tripwire for
    * that class of bug. The snapshot already carries every live position and
@@ -596,10 +600,15 @@ class KeeperBot {
 
     try {
       let isolated = 0n;
+      let crossPositions = 0n;
       const crossTraders = new Set<string>();
       for (const p of snapshot.positions) {
-        if (p.margin_mode === 1) crossTraders.add(p.trader);
-        else isolated += p.collateral;
+        if (p.margin_mode === 1) {
+          crossTraders.add(p.trader);
+          crossPositions += p.collateral;
+        } else {
+          isolated += p.collateral;
+        }
       }
       let cross = 0n;
       for (const trader of crossTraders) {
@@ -614,13 +623,14 @@ class KeeperBot {
         }
       }
       const balance = await this.stellar.getUsdcBalance(this.config.marketContractId);
-      const tracked = isolated + cross + escrow;
+      const tracked = isolated + crossPositions + cross + escrow;
       const deficit = tracked > balance ? tracked - balance : 0n;
 
       this.lastCustody = {
         marketUsdcBalance: balance.toString(),
         trackedCustody: tracked.toString(),
         isolatedCollateral: isolated.toString(),
+        crossPositionCollateral: crossPositions.toString(),
         crossBalances: cross.toString(),
         orderEscrow: escrow.toString(),
         deficit: deficit.toString(),
@@ -640,7 +650,8 @@ class KeeperBot {
             'critical',
             'Market custody below tracked collateral',
             `The market holds $${usd(balance)} USDC but is holding $${usd(tracked)} for traders ` +
-              `(isolated $${usd(isolated)}, cross $${usd(cross)}, order escrow $${usd(escrow)}) — ` +
+              `(isolated $${usd(isolated)}, cross positions $${usd(crossPositions)}, cross pools $${usd(cross)}, ` +
+              `order escrow $${usd(escrow)}) — ` +
               `short by $${usd(deficit)}. Payouts will start failing with #10.\n` +
               'Tell Claude: "custody deficit".',
           );
@@ -653,7 +664,7 @@ class KeeperBot {
         this.logThrottled(
           'custody-ok',
           `🏦 Custody ok: market $${usd(balance)} ≥ tracked $${usd(tracked)} ` +
-            `(isolated $${usd(isolated)} + cross $${usd(cross)} + escrow $${usd(escrow)})`,
+            `(isolated $${usd(isolated)} + cross positions $${usd(crossPositions)} + cross pools $${usd(cross)} + escrow $${usd(escrow)})`,
         );
       }
     } catch (error) {
