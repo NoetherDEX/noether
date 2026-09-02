@@ -24,6 +24,7 @@ export {
   type AssetCapacity,
   type PoolCapacity,
   type CapacityBinding,
+  type MarketCustody,
 } from './sub/markets.js';
 export {
   type OracleHealth,
