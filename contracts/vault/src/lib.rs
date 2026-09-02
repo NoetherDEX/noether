@@ -392,11 +392,9 @@ impl VaultContract {
         // the booking below into an out-of-footprint trap — at exactly the
         // moment liquidations matter, and on every caller that runs without
         // the client-side footprint guard (keeper, vault-factory leaders).
-        // Written back for both signs so settle_pnl's key set never depends
-        // on vault state.
-        storage::set_shortfall_owed(&env, &trader, storage::get_shortfall_owed(&env, &trader));
-        set_shortfall(&env, get_shortfall(&env));
-        storage::set_cum_shortfall(&env, storage::get_cum_shortfall(&env));
+        // The loss path (receive_loss_for) writes the same set, so a close's
+        // vault key set never depends on the sign of its PnL at simulation.
+        Self::touch_shortfall_books(&env, &trader);
 
         let mut paid: i128 = 0;
         if pnl > 0 {
@@ -503,6 +501,27 @@ impl VaultContract {
         );
 
         Ok(())
+    }
+
+    /// Trader-keyed loss receipt (market-only): `receive_loss` plus the
+    /// write-backs of the trader's shortfall books. A close simulated as a
+    /// LOSS never enters settle_pnl, so without this a sign flip between
+    /// simulate and apply (common near break-even) lands the win path's
+    /// ShortfallOwed / Shortfall / CumShortfall writes outside the frozen
+    /// footprint and traps every caller without the client-side guard.
+    /// `receive_loss` stays for markets that predate this entrypoint —
+    /// upgrade the vault BEFORE a market that calls this.
+    pub fn receive_loss_for(env: Env, trader: Address, amount: i128) -> Result<(), NoetherError> {
+        Self::receive_loss(env.clone(), amount)?;
+        Self::touch_shortfall_books(&env, &trader);
+        Ok(())
+    }
+
+    /// Write the shortfall books back unchanged (footprint stability).
+    fn touch_shortfall_books(env: &Env, trader: &Address) {
+        storage::set_shortfall_owed(env, trader, storage::get_shortfall_owed(env, trader));
+        set_shortfall(env, get_shortfall(env));
+        storage::set_cum_shortfall(env, storage::get_cum_shortfall(env));
     }
 
     /// R-4: fail-closed receipt check for market-credited inflows. The
@@ -2147,6 +2166,24 @@ mod tests {
         let loser = Address::generate(&t.env);
         t.vault.settle_pnl(&loser, &(-(5 * PRECISION)));
         assert!(vault_has(&t, DataKey::ShortfallOwed(loser.clone())));
+    }
+
+    #[test]
+    fn receive_loss_for_writes_the_trader_shortfall_books() {
+        // The market's loss path never enters settle_pnl; the trader-keyed
+        // receipt must carry the win path's shortfall keys itself.
+        let t = setup(1_000 * PRECISION);
+        let trader = Address::generate(&t.env);
+        assert!(!vault_has(&t, DataKey::ShortfallOwed(trader.clone())));
+        market_inflow(&t, 5 * PRECISION);
+        t.vault.receive_loss_for(&trader, &(5 * PRECISION));
+        assert!(vault_has(&t, DataKey::ShortfallOwed(trader.clone())));
+        assert!(vault_has(&t, DataKey::Shortfall));
+        assert!(vault_has(&t, DataKey::CumShortfall));
+        assert_eq!(t.vault.get_shortfall_owed(&trader), 0);
+        assert_eq!(t.vault.get_total_usdc(), 1_005 * PRECISION);
+        // Same receipt semantics as receive_loss: nothing to receive is an error.
+        assert!(t.vault.try_receive_loss_for(&trader, &0).is_err());
     }
 
     #[test]

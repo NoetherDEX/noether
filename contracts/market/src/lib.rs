@@ -806,7 +806,7 @@ impl MarketContract {
 
         if to_vault > 0 {
             token_client.transfer(&env.current_contract_address(), &vault_address, &to_vault);
-            Self::credit_vault_receipt(env, &vault_address, to_vault);
+            Self::credit_vault_receipt_for(env, &vault_address, &position.trader, to_vault);
         }
         if fee_paid > 0 {
             if let Some(k) = keeper {
@@ -1938,7 +1938,7 @@ impl MarketContract {
             }
             if transferred > 0 {
                 token_client.transfer(&market_addr, &vault_address, &transferred);
-                Self::credit_vault_receipt(env, &vault_address, transferred);
+                Self::credit_vault_receipt_for(env, &vault_address, &trader, transferred);
             }
         }
 
@@ -3628,7 +3628,7 @@ impl MarketContract {
 
         if to_vault > 0 {
             token_client.transfer(&env.current_contract_address(), &vault_address, &to_vault);
-            Self::credit_vault_receipt(env, &vault_address, to_vault);
+            Self::credit_vault_receipt_for(env, &vault_address, &position.trader, to_vault);
         }
         if fee_paid > 0 {
             if let Some(k) = keeper {
@@ -3805,6 +3805,18 @@ impl MarketContract {
         if amount > 0 {
             let args: Vec<soroban_sdk::Val> = (amount,).into_val(env);
             let _: () = env.invoke_contract(vault, &Symbol::new(env, "receive_loss"), args);
+        }
+    }
+
+    /// Settlement-loss credit keyed by the trader: the vault also writes the
+    /// trader's shortfall books back, so a close simulated as a LOSS carries
+    /// every vault key the win path (settle_pnl) writes and a sign flip
+    /// between simulate and apply cannot land outside the footprint.
+    /// ⚠️ ABI: needs a vault with receive_loss_for — upgrade the vault first.
+    fn credit_vault_receipt_for(env: &Env, vault: &Address, trader: &Address, amount: i128) {
+        if amount > 0 {
+            let args: Vec<soroban_sdk::Val> = (trader.clone(), amount).into_val(env);
+            let _: () = env.invoke_contract(vault, &Symbol::new(env, "receive_loss_for"), args);
         }
     }
 
@@ -6539,6 +6551,29 @@ mod tests {
             test.env.storage().persistent().get::<DataKey, bool>(&DataKey::AdlActive(xlm.clone()))
         });
         assert_eq!(adl, Some(false));
+    }
+
+    /// A LOSING close never enters settle_pnl, yet a sign flip between
+    /// simulate and apply lands there — so the loss receipt must carry the
+    /// trader's shortfall books too (vault receive_loss_for).
+    #[test]
+    fn losing_close_writes_the_vault_shortfall_books() {
+        let test = setup();
+        let trader = fund_trader(&test, 1_000 * PRECISION);
+        let xlm = Symbol::new(&test.env, "XLM");
+        let pos = test.market.open_position(&trader, &xlm, &(100 * PRECISION), &5, &Direction::Long, &0);
+        let oracle = mock_oracle::Client::new(&test.env, &test.oracle_id);
+        oracle.set_price(&xlm, &(PRECISION * 9 / 100)); // -10%
+        let pnl = test.market.close_position(&trader, &pos.id, &0);
+        assert!(pnl < 0);
+        let has_owed = test.env.as_contract(&test.vault_id, || {
+            test.env.storage().persistent().has(&(Symbol::new(&test.env, "ShortfallOwed"), trader.clone()))
+        });
+        assert!(has_owed, "loss receipt must write ShortfallOwed(trader) back");
+        let has_cum = test.env.as_contract(&test.vault_id, || {
+            test.env.storage().persistent().has(&(Symbol::new(&test.env, "CumShortfall"),))
+        });
+        assert!(has_cum);
     }
 
     /// A close on a STALE feed writes the last-good price back unchanged, so
