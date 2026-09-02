@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isRetryableTradeFailure, runTradeTx } from './txFlow';
+import { isRetryableTradeFailure, runTradeTx, setDefaultTradeProgress } from './txFlow';
 import { TxFailedError } from './txErrors';
 
 const stale = () =>
@@ -84,5 +84,25 @@ describe('runTradeTx', () => {
     expect(isRetryableTradeFailure(tryAgain())).toBe(true);
     expect(isRetryableTradeFailure(contractRevert())).toBe(false);
     expect(isRetryableTradeFailure(new Error('x'))).toBe(false);
+  });
+
+  it('reports through the app-wide handler when the caller passes no onProgress, and only then', async () => {
+    const seen: string[] = [];
+    setDefaultTradeProgress((op, p) => seen.push(`${op}:${p}`));
+    try {
+      const h = harness([stale(), 'ok']);
+      await runTradeTx('place_order', h.build, h.sign, h.submit, { sleep: h.sleep });
+      // The retry — the second wallet prompt — is announced, not silent.
+      expect(seen).toEqual([
+        'place_order:building', 'place_order:signing', 'place_order:submitting',
+        'place_order:retrying', 'place_order:signing', 'place_order:submitting',
+      ]);
+      seen.length = 0;
+      const own = harness(['ok']);
+      await runTradeTx('place_order', own.build, own.sign, own.submit, { onProgress: () => {} });
+      expect(seen).toEqual([]);
+    } finally {
+      setDefaultTradeProgress(null);
+    }
   });
 });

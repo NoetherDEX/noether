@@ -500,15 +500,14 @@ pub fn set_adl_active(env: &Env, asset: &Symbol, active: bool) {
     extend_persistent_ttl(env, &key);
 }
 
-/// Write the ADL flag back unchanged when the entry exists — footprint
-/// stability for settlement paths that only sometimes flip it. Never creates
-/// the entry (no new per-asset ledger entries, no archival exposure).
+/// Write the ADL flag back unchanged — footprint stability for settlement
+/// paths that only sometimes flip it. Creates the entry (as `false`) when it
+/// has never existed: a touch that skipped the missing entry left it out of
+/// the simulated footprint, so the FIRST flip on an asset trapped every
+/// close whose builder had not padded the key (one new per-asset entry, a
+/// price worth paying).
 pub fn touch_adl_active(env: &Env, asset: &Symbol) {
-    let key = DataKey::AdlActive(asset.clone());
-    if let Some(active) = env.storage().persistent().get::<DataKey, bool>(&key) {
-        env.storage().persistent().set(&key, &active);
-        extend_persistent_ttl(env, &key);
-    }
+    set_adl_active(env, asset, get_adl_active(env, asset));
 }
 
 pub fn get_asset_risk(env: &Env, asset: &Symbol) -> Option<AssetRiskParams> {

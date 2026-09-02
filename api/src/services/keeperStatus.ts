@@ -13,9 +13,18 @@
 export interface MarketCustody {
   /** USDC SAC balance of the market contract. */
   marketUsdcBalance: string;
-  /** Σ live isolated collateral + Σ cross-margin pools + Σ pending entry-order escrow. */
+  /**
+   * Σ live isolated collateral + Σ open cross-position collateral + Σ cross-margin
+   * pools + Σ pending entry-order escrow.
+   */
   trackedCustody: string;
   isolatedCollateral: string;
+  /**
+   * Collateral locked in open cross positions (debited from the pool at open,
+   * credited back at close). Absent from keeper builds before 2026-09-02,
+   * whose trackedCustody under-counts by exactly this amount.
+   */
+  crossPositionCollateral?: string;
   crossBalances: string;
   orderEscrow: string;
   /** max(0, trackedCustody − marketUsdcBalance). Anything but "0" means payouts will start failing. */
@@ -27,13 +36,18 @@ export interface MarketCustody {
 }
 
 export interface CustodyReport extends MarketCustody {
-  /** Age of the report when served. */
+  /** Age of the report when served, measured from the keeper's own asOf (NOT the heartbeat that relayed it). */
   ageMs: number;
-  /** True past CUSTODY_STALE_MS — the keeper stopped reporting; treat as unknown, not healthy. */
+  /** True past CUSTODY_STALE_MS — the custody check stopped producing reports; treat as unknown, not healthy. */
   stale: boolean;
 }
 
-/** Keeper reports every minute; five missed reports is a dead keeper, not a slow one. */
+/**
+ * Keeper computes custody every minute; five missed computations is a dead
+ * check, not a slow one. Measured from asOf because the keeper re-posts its
+ * LAST report on every ~30s heartbeat, including when its chain reads are
+ * failing — a live heartbeat says nothing about how old the custody data is.
+ */
 export const CUSTODY_STALE_MS = 5 * 60_000;
 
 const INT_RE = /^-?\d+$/;
@@ -45,6 +59,7 @@ const AMOUNT_FIELDS = [
   'orderEscrow',
   'deficit',
 ] as const;
+const OPTIONAL_AMOUNT_FIELDS = ['crossPositionCollateral'] as const;
 
 export class KeeperStatusStore {
   private last: { receivedAt: number; body: Record<string, unknown> } | null = null;
@@ -73,10 +88,21 @@ export class KeeperStatusStore {
       if (typeof v !== 'string' || !INT_RE.test(v)) return null;
       amounts[key] = v;
     }
+    const optional: Partial<Record<(typeof OPTIONAL_AMOUNT_FIELDS)[number], string>> = {};
+    for (const key of OPTIONAL_AMOUNT_FIELDS) {
+      const v = c[key];
+      if (v === undefined) continue;
+      if (typeof v !== 'string' || !INT_RE.test(v)) return null;
+      optional[key] = v;
+    }
     if (!Number.isInteger(c.positions) || !Number.isInteger(c.asOf)) return null;
-    const ageMs = Math.max(0, now - this.last.receivedAt);
+    // A report is never fresher than its arrival: a keeper clock running
+    // ahead (or a bad asOf) must not read as fresh forever.
+    const anchor = Math.min(c.asOf as number, this.last.receivedAt);
+    const ageMs = Math.max(0, now - anchor);
     return {
       ...(amounts as Record<(typeof AMOUNT_FIELDS)[number], string>),
+      ...optional,
       positions: c.positions as number,
       asOf: c.asOf as number,
       ageMs,

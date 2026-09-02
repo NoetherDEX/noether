@@ -276,6 +276,14 @@ impl MarketContract {
         if bps > 5_000 {
             return Err(NoetherError::InvalidParameter);
         }
+        // The vault pays this address on every fee-bearing open with an
+        // unconditional (possibly zero) USDC transfer, and the SAC loads the
+        // recipient's trustline before it looks at the amount. Prove the
+        // treasury can receive USDC here, where a missing trustline fails one
+        // admin call, and refuse a frozen one outright.
+        if !token::StellarAssetClient::new(&env, &get_usdc_token(&env)).authorized(&treasury) {
+            return Err(NoetherError::InvalidParameter);
+        }
         set_treasury(&env, &treasury);
         set_protocol_fee_bps(&env, bps);
         env.events().publish(
@@ -6525,11 +6533,12 @@ mod tests {
         assert!(pnl > 0);
         assert!(vault_has("BufferBalance"));
         assert!(vault_has("TotalFees"));
-        // ADL flag is only touched when it exists — never created by a close.
-        let adl_exists = test.env.as_contract(&test.market_id, || {
-            test.env.storage().persistent().has(&DataKey::AdlActive(xlm.clone()))
+        // The ADL flag is written back (created as false) by every close, so
+        // the first-ever flip on an asset never lands outside the footprint.
+        let adl = test.env.as_contract(&test.market_id, || {
+            test.env.storage().persistent().get::<DataKey, bool>(&DataKey::AdlActive(xlm.clone()))
         });
-        assert!(!adl_exists);
+        assert_eq!(adl, Some(false));
     }
 
     /// A close on a STALE feed writes the last-good price back unchanged, so

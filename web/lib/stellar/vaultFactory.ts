@@ -9,6 +9,7 @@
 import { Address, Contract, TransactionBuilder, BASE_FEE, rpc, scValToNative } from '@stellar/stellar-sdk';
 import { buildTransaction, simulateCallResult, submitTransaction, sorobanRpc, toScVal } from './client';
 import { signWithWallet, WALLETCONNECT_ID } from './walletKit';
+import { runTradeTx, type RunTradeTxOptions } from './txFlow';
 import { NETWORK, CONTRACTS } from '@/lib/utils/constants';
 
 function getVaultFactoryAddress(): string {
@@ -145,6 +146,12 @@ export async function claimLeaderFees(
   await signAndSubmit(signerPublicKey, walletId, xdr);
 }
 
+/**
+ * Leader trades are market open/close calls proxied by the factory, so they
+ * carry the same stale-footprint exposure as a direct trade: guard the keys
+ * and take the one automatic rebuild (txFlow). The market settles for the
+ * FACTORY (it is the position's trader), so its keys are the ones padded.
+ */
 export async function leaderOpenPosition(
   signerPublicKey: string,
   walletId: string,
@@ -155,8 +162,10 @@ export async function leaderOpenPosition(
     leverage: number;
     direction: 'Long' | 'Short';
   },
+  flow: RunTradeTxOptions = {},
 ): Promise<void> {
   const factory = vaultFactoryContract();
+  const factoryAddress = getVaultFactoryAddress();
   const args = [
     toScVal(signerPublicKey, 'address'),
     toScVal(params.vaultId, 'u32'),
@@ -165,8 +174,18 @@ export async function leaderOpenPosition(
     toScVal(params.leverage, 'u32'),
     toScVal(params.direction === 'Long' ? 0 : 1, 'u32'),
   ];
-  const xdr = await buildTransaction(signerPublicKey, factory, 'leader_open_position', args);
-  await signAndSubmit(signerPublicKey, walletId, xdr);
+  void walletId; // future: per-wallet flow tweaks
+  await runTradeTx(
+    'open',
+    () =>
+      buildTransaction(signerPublicKey, factory, 'leader_open_position', args, {
+        op: 'open',
+        keyCtx: { asset: params.asset, trader: factoryAddress },
+      }),
+    (xdr) => signWithWallet(xdr, { networkPassphrase: NETWORK.PASSPHRASE, address: signerPublicKey }),
+    (signed) => submitTransaction(signed, 'open'),
+    flow,
+  );
 }
 
 export async function leaderClosePosition(
@@ -174,15 +193,27 @@ export async function leaderClosePosition(
   walletId: string,
   vaultId: number,
   positionId: number,
+  flow: RunTradeTxOptions = {},
 ): Promise<void> {
   const factory = vaultFactoryContract();
+  const factoryAddress = getVaultFactoryAddress();
   const args = [
     toScVal(signerPublicKey, 'address'),
     toScVal(vaultId, 'u32'),
     toScVal(positionId, 'u64'),
   ];
-  const xdr = await buildTransaction(signerPublicKey, factory, 'leader_close_position', args);
-  await signAndSubmit(signerPublicKey, walletId, xdr);
+  void walletId;
+  await runTradeTx(
+    'close',
+    () =>
+      buildTransaction(signerPublicKey, factory, 'leader_close_position', args, {
+        op: 'close',
+        keyCtx: { positionId: BigInt(positionId), trader: factoryAddress },
+      }),
+    (xdr) => signWithWallet(xdr, { networkPassphrase: NETWORK.PASSPHRASE, address: signerPublicKey }),
+    (signed) => submitTransaction(signed, 'close'),
+    flow,
+  );
 }
 
 export const VAULT_FACTORY_CONFIGURED = (): boolean =>

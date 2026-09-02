@@ -58,4 +58,13 @@ describe('txCopy', () => {
     expect(retryProgressMessage('open')).toContain('your trade');
     expect(retryProgressMessage('place_order')).toContain('your order');
   });
+
+  it('a busy-network failure never promises a retry the caller may not make', () => {
+    for (const op of [...OPS, undefined]) {
+      const msg = tryAgainLaterMessage(op);
+      expect(msg, `${op}: ${msg}`).not.toMatch(/retrying/i);
+      expect(msg).toContain('was not submitted');
+      expect(msg).toContain('try again');
+    }
+  });
 });

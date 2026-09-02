@@ -29,6 +29,20 @@ export interface RunTradeTxOptions {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+type DefaultProgressHandler = (op: TradeOp, progress: TradeProgress) => void;
+let defaultProgress: DefaultProgressHandler | null = null;
+
+/**
+ * App-wide fallback for callers that pass no `onProgress`. The automatic
+ * rebuild asks the wallet to sign a SECOND time; without an explanation the
+ * re-prompt reads as a bug or an attack and gets rejected. Installed once by
+ * the UI (TradeRetryToasts) so every op — orders, SL/TP, cancel, collateral,
+ * cross-margin, leader trades — announces its retry, not only open/close.
+ */
+export function setDefaultTradeProgress(handler: DefaultProgressHandler | null): void {
+  defaultProgress = handler;
+}
+
 export async function runTradeTx<T>(
   op: TradeOp,
   build: () => Promise<string>,
@@ -38,13 +52,14 @@ export async function runTradeTx<T>(
 ): Promise<T> {
   const maxRetries = opts.maxRetries ?? 1;
   const sleep = opts.sleep ?? defaultSleep;
+  const report = opts.onProgress ?? ((p: TradeProgress) => defaultProgress?.(op, p));
   let attempt = 0;
   for (;;) {
-    opts.onProgress?.(attempt === 0 ? 'building' : 'retrying');
+    report(attempt === 0 ? 'building' : 'retrying');
     const xdr = await build();
-    opts.onProgress?.('signing');
+    report('signing');
     const signed = await sign(xdr); // a wallet rejection propagates unchanged
-    opts.onProgress?.('submitting');
+    report('submitting');
     try {
       return await submit(signed);
     } catch (err) {

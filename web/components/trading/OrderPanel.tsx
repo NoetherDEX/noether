@@ -325,8 +325,14 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
     : null;
   // Limit / stop orders reserve at execution time, so only market orders are
   // clamped; conditional orders get the banner as a heads-up, never a block.
-  const capacityExceeded = sideHeadroom != null && positionSize > 0 && positionSize > sideHeadroom;
+  // L1-3: a market open nets against opposite exposure at the execution price
+  // FIRST and only the remainder reserves new capacity, so the clamp tests the
+  // remainder — a direction flip must never be blocked by the side it leaves.
+  const netNewExposure = Math.max(0, positionSize - opposingNotional);
+  const capacityExceeded = sideHeadroom != null && positionSize > 0 && netNewExposure > sideHeadroom;
   const capacityBlocks = capacityExceeded && orderType === 'Market';
+  // Largest order the pool accepts on this side right now, netting included.
+  const maxOrderNotional = sideHeadroom != null ? sideHeadroom + opposingNotional : null;
   const capacityMessage = (() => {
     if (!capacity || sideHeadroom == null || !capacityExceeded) return null;
     const room = formatUSD(Math.floor(sideHeadroom), 0);
@@ -357,8 +363,11 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
   })();
   // "Use max": collateral that lands 1% under the headroom at the chosen
   // leverage (the bound moves every ledger), never below the 10 USDC minimum.
+  // The netted notional does not reserve capacity, so it rides on top.
   const maxCollateralForCapacity =
-    sideHeadroom != null && leverage > 0 ? Math.floor((sideHeadroom * 0.99) / leverage) : 0;
+    sideHeadroom != null && leverage > 0
+      ? Math.floor((sideHeadroom * 0.99 + opposingNotional) / leverage)
+      : 0;
   const invalidateCapacity = () => {
     queryClient.invalidateQueries({ queryKey: MARKETS_STATS_QUERY_KEY }).catch(() => {});
   };
@@ -483,10 +492,10 @@ export function OrderPanel({ asset, positions = [], onSubmit, onPositionOpened, 
       );
     if (positionSize > 100000) errors.push('Position size exceeds $100,000 maximum');
     // L1-13: pre-signature capacity clamp (advisory; the vault still enforces).
-    if (capacityBlocks && sideHeadroom != null)
+    if (capacityBlocks && sideHeadroom != null && maxOrderNotional != null)
       errors.push(
         sideHeadroom > 0
-          ? `Pool capacity: max ≈ ${formatUSD(Math.floor(sideHeadroom), 0)} for ${asset} ${direction} right now`
+          ? `Pool capacity: max ≈ ${formatUSD(Math.floor(maxOrderNotional), 0)} for ${asset} ${direction} right now`
           : `No ${direction} capacity for ${asset} right now — try the other side`
       );
     if (xlmBalance != null && xlmBalance < 1) errors.push('Need XLM for gas fees');

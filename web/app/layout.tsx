@@ -77,6 +77,7 @@ import { AppFooter } from '@/components/layout/AppFooter'
 import { TestnetRibbon } from '@/components/TestnetRibbon'
 import { PauseBanner } from '@/components/PauseBanner'
 import { NotificationBell } from '@/components/NotificationBell'
+import { TradeRetryToasts } from '@/components/trading/TradeRetryToasts'
 
 export default function RootLayout({
   children,
@@ -139,6 +140,7 @@ export default function RootLayout({
         </Providers>
         <FeedbackButton />
         <NotificationBell />
+        <TradeRetryToasts />
         <Toaster
           position="bottom-center"
           toastOptions={{

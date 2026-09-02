@@ -149,10 +149,24 @@ export function conditionalWriteKeys(op: TradeOp, ctx: KeyCtx): xdr.LedgerKey[] 
     case 'open_cross':
       return openKeys(ctx);
     case 'close':
-    case 'close_partial':
     case 'close_cross':
     case 'adl':
       return closeKeys(ctx);
+    case 'close_partial': {
+      // A partial close whose size equals the live position size delegates
+      // to the full-close path (market close_position_partial), which writes
+      // ClosedProceeds and removes PartialLiqTs. The position can shrink to
+      // exactly close_size between simulate and apply (a keeper tranche, a
+      // double-submitted "close 50%"), so both are declared up front.
+      const keys = closeKeys(ctx);
+      if (ctx.positionId !== undefined) {
+        keys.push(
+          contractDataKey(ctx.market, 'PartialLiqTs', [u64(ctx.positionId)]),
+          contractDataKey(ctx.market, 'ClosedProceeds', [u64(ctx.positionId)], 'temporary'),
+        );
+      }
+      return dedupe(keys);
+    }
     case 'execute_order': {
       const keys = [...openKeys(ctx), ...closeKeys(ctx)];
       if (ctx.asset) {

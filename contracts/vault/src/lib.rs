@@ -386,6 +386,17 @@ impl VaultContract {
         // simulation; a key first touched at apply time traps the whole tx.
         storage::set_total_fees(&env, storage::get_total_fees(&env));
         storage::set_shortfall_reserve(&env, storage::get_shortfall_reserve(&env));
+        // Same class for the shortfall books: a winning close simulated while
+        // the vault covers in full carries none of these keys, so a
+        // settlement that drains coverage between simulate and apply turns
+        // the booking below into an out-of-footprint trap — at exactly the
+        // moment liquidations matter, and on every caller that runs without
+        // the client-side footprint guard (keeper, vault-factory leaders).
+        // Written back for both signs so settle_pnl's key set never depends
+        // on vault state.
+        storage::set_shortfall_owed(&env, &trader, storage::get_shortfall_owed(&env, &trader));
+        set_shortfall(&env, get_shortfall(&env));
+        storage::set_cum_shortfall(&env, storage::get_cum_shortfall(&env));
 
         let mut paid: i128 = 0;
         if pnl > 0 {
@@ -566,15 +577,29 @@ impl VaultContract {
         set_buffer_balance(&env, buffer + to_buffer);
         let overflow = amount - to_buffer;
         let usdc_token = get_usdc_token(&env);
-        token::Client::new(&env, &usdc_token).transfer(
-            &env.current_contract_address(),
-            &overflow_to,
-            &overflow,
-        );
+        let token_client = token::Client::new(&env, &usdc_token);
+        // The SAC loads the recipient's trustline before it looks at the
+        // amount, so a treasury that cannot receive USDC (trustline missing,
+        // or frozen by the issuer) would trap every fee-bearing open here.
+        // Fee routing must never halt trading: park the overflow in the
+        // buffer instead (over target is harmless — later fees all overflow)
+        // and say so in an event. The sub-call's rollback does not touch the
+        // simulated footprint, so both paths stay footprint-stable.
+        let sent = match token_client.try_transfer(&env.current_contract_address(), &overflow_to, &overflow) {
+            Ok(Ok(())) => overflow,
+            _ => {
+                set_buffer_balance(&env, buffer + amount);
+                env.events().publish(
+                    (Symbol::new(&env, "treasury_unreachable"),),
+                    (overflow_to.clone(), overflow),
+                );
+                0
+            }
+        };
         Self::require_cash_covers_buckets(&env)?;
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_routed"),),
-            (amount, to_buffer, overflow),
+            (amount, amount - sent, sent),
         );
         Ok(())
     }
@@ -2102,6 +2127,29 @@ mod tests {
     }
 
     #[test]
+    fn settle_pnl_writes_the_shortfall_books_on_a_fully_covered_win() {
+        let t = setup(1_000 * PRECISION);
+        let trader = Address::generate(&t.env);
+        assert!(!vault_has(&t, DataKey::ShortfallOwed(trader.clone())));
+        assert!(!vault_has(&t, DataKey::Shortfall));
+        assert!(!vault_has(&t, DataKey::CumShortfall));
+        // Covered in full: nothing is booked, but every key the booking
+        // path writes must already be in the footprint.
+        assert_eq!(t.vault.settle_pnl(&trader, &(10 * PRECISION)), 10 * PRECISION);
+        assert!(vault_has(&t, DataKey::ShortfallOwed(trader.clone())));
+        assert!(vault_has(&t, DataKey::Shortfall));
+        assert!(vault_has(&t, DataKey::CumShortfall));
+        assert_eq!(t.vault.get_shortfall_owed(&trader), 0);
+        assert_eq!(t.vault.get_shortfall(), 0);
+        assert_eq!(t.vault.get_cum_shortfall(), 0);
+        // And a loss carries the same key set (sign flips between simulate
+        // and apply must not change what settle_pnl writes).
+        let loser = Address::generate(&t.env);
+        t.vault.settle_pnl(&loser, &(-(5 * PRECISION)));
+        assert!(vault_has(&t, DataKey::ShortfallOwed(loser.clone())));
+    }
+
+    #[test]
     fn route_protocol_fee_writes_the_buffer_even_when_it_all_overflows() {
         // Empty book → target 0 → nothing goes to the buffer, everything to
         // the treasury; the buffer key must still be written.
@@ -2113,6 +2161,22 @@ mod tests {
         assert!(vault_has(&t, DataKey::BufferBalance));
         assert_eq!(t.vault.get_buffer_balance(), 0);
         assert_eq!(soroban_sdk::token::Client::new(&t.env, &t.usdc).balance(&treasury), PRECISION);
+    }
+
+    #[test]
+    fn route_protocol_fee_parks_the_overflow_in_the_buffer_when_the_treasury_cannot_receive() {
+        // Empty book → everything overflows. A classic account with no USDC
+        // trustline: the SAC rejects even a zero-amount receive, which used
+        // to trap the whole open. Trading must go on; the buffer absorbs it.
+        let t = setup(1_000 * PRECISION);
+        let treasury = Address::from_string(&soroban_sdk::String::from_str(
+            &t.env,
+            "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ",
+        ));
+        market_inflow(&t, PRECISION);
+        t.vault.route_protocol_fee(&PRECISION, &treasury);
+        // Everything landed in the buffer; require_cash_covers_buckets held.
+        assert_eq!(t.vault.get_buffer_balance(), PRECISION);
     }
 
     #[test]

@@ -13,7 +13,7 @@ import { TxApi, type SubmittedTx } from './sub/tx.js';
 import { VaultsApi } from './sub/vaults.js';
 import { ReferralApi } from './sub/referral.js';
 import { WsClient, type WsClientOptions } from './sub/ws.js';
-import { classifySubmitFailure } from './retry.js';
+import { classifySubmitFailure, type SubmitFailureShape } from './retry.js';
 
 export interface NoetherClientOptions {
   /** Base URL of the Noether API gateway (e.g. https://api.noether.exchange). */
@@ -41,6 +41,8 @@ export interface ExecuteTradeOptions {
    * queue was full. Contract reverts are never retried. Default true.
    */
   retryOnStaleFootprint?: boolean;
+  /** Pause before resubmitting after a full RPC queue (default 2 000 ms). */
+  retryDelayMs?: number;
 }
 
 export interface ExecuteTradeResult {
@@ -109,11 +111,25 @@ export class NoetherClient {
       try {
         submitted = await this.tx.submit({ signedXdr, pollTimeoutMs: opts.pollTimeoutMs });
       } catch (err) {
-        // A 503 from the gateway is an RPC TRY_AGAIN_LATER: same intent, fresh build.
-        const httpStatus = (err as { status?: number } | null)?.status;
-        if (retry && attempt === 0 && classifySubmitFailure({ httpStatus }) === 'try_again_later') {
+        // The gateway rejects at send time with a 400 (never accepted, facts
+        // in the body) or reports a full RPC queue as 503 try_again_later.
+        // Only those are rebuilt — see retry.ts for why a generic 503 is not.
+        const e = err as { status?: number; code?: string | null; body?: Record<string, unknown> | null } | null;
+        const body = (e?.body ?? null) as {
+          hostError?: SubmitFailureShape['hostError'];
+          contractError?: SubmitFailureShape['contractError'];
+          txResultCode?: string | null;
+        } | null;
+        const cls = classifySubmitFailure({
+          httpStatus: e?.status,
+          errorCode: e?.code ?? null,
+          hostError: body?.hostError,
+          contractError: body?.contractError,
+          txResultCode: body?.txResultCode,
+        });
+        if (retry && attempt === 0 && cls !== 'none') {
           attempt++;
-          await new Promise((r) => setTimeout(r, 2_000));
+          if (cls === 'try_again_later') await new Promise((r) => setTimeout(r, opts.retryDelayMs ?? 2_000));
           continue;
         }
         throw err;
@@ -125,6 +141,7 @@ export class NoetherClient {
           status: submitted.status,
           contractError: submitted.contractError,
           hostError: submitted.hostError,
+          txResultCode: submitted.txResultCode,
         }) === 'stale_footprint'
       ) {
         attempt++;

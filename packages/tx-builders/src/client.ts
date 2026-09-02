@@ -122,7 +122,10 @@ export function guardKeys(ctx: TxBuildContext, trader: string, opts: TxBuildOpti
   const market = ctx.contracts?.market;
   const vault = ctx.contracts?.vault;
   if (!opts.op || !market || !vault) return [];
-  return conditionalWriteKeys(opts.op, { ...opts.keyCtx, vault, market, trader });
+  // The tx source is the default settlement account, but a keeper-sourced
+  // liquidation settles for the liquidated trader — an explicit keyCtx.trader
+  // must win over the source, or the guard pads the keeper's keys.
+  return conditionalWriteKeys(opts.op, { ...opts.keyCtx, vault, market, trader: opts.keyCtx?.trader ?? trader });
 }
 
 /**
