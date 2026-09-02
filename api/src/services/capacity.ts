@@ -13,7 +13,14 @@
  *
  * Money-truth rule: a failed read yields `null`, and the route omits the
  * fields. Nothing here is ever rendered as a zero it did not read. A recent
- * good snapshot is served for a short grace window flagged `stale: true`.
+ * good snapshot is served for a short grace window, flagged `stale: true`
+ * once a refresh has failed.
+ *
+ * Serving is stale-while-revalidate: past the hot TTL the last good snapshot
+ * is returned at once and the chain read runs in the background. The trade
+ * page polls every 10s against a 5s TTL, so blocking on the read put every
+ * poll on the RPC's p99 — and, whenever the admin-params TTL lapsed, on
+ * 1 + 2N simulations — even though a valid set was already in hand.
  */
 
 import { nativeToScVal } from '@stellar/stellar-sdk';
@@ -90,6 +97,8 @@ export interface CapacityServiceOptions {
   readTimeoutMs?: number;
   /** Simulations issued concurrently while (re)loading the per-asset params. */
   paramsConcurrency?: number;
+  /** Pause after a failed refresh before the next attempt. */
+  refreshCooldownMs?: number;
 }
 
 const HOT_TTL_MS = 5_000;
@@ -98,6 +107,9 @@ const STALE_GRACE_MS = 30_000;
 const READ_TIMEOUT_MS = 2_500;
 const PARAMS_TIMEOUT_MS = 15_000;
 const PARAMS_CONCURRENCY = 4;
+const REFRESH_COOLDOWN_MS = 5_000;
+/** Pause after a failed background params reload (1 + 2N simulations) before retrying it. */
+const PARAMS_RETRY_MS = 30_000;
 
 export class CapacityService {
   private readonly reader: ContractReader;
@@ -109,10 +121,16 @@ export class CapacityService {
   private readonly staleGraceMs: number;
   private readonly readTimeoutMs: number;
   private readonly paramsConcurrency: number;
+  private readonly refreshCooldownMs: number;
 
   private last: { value: CapacitySnapshot; at: number } | null = null;
   private inflight: Promise<CapacitySnapshot | null> | null = null;
+  /** Unix ms of the last failed refresh; 0 after a success. */
+  private lastFailureAt = 0;
   private params: { value: VaultParams; at: number } | null = null;
+  private paramsInflight: Promise<VaultParams> | null = null;
+  /** Earliest time a background params reload may be attempted again. */
+  private paramsRetryAt = 0;
 
   constructor(opts: CapacityServiceOptions) {
     this.reader = opts.reader;
@@ -124,32 +142,48 @@ export class CapacityService {
     this.staleGraceMs = opts.staleGraceMs ?? STALE_GRACE_MS;
     this.readTimeoutMs = opts.readTimeoutMs ?? READ_TIMEOUT_MS;
     this.paramsConcurrency = opts.paramsConcurrency ?? PARAMS_CONCURRENCY;
+    this.refreshCooldownMs = opts.refreshCooldownMs ?? REFRESH_COOLDOWN_MS;
   }
 
   /**
-   * Current snapshot: fresh (≤ hot TTL), else refreshed, else the last good
-   * one within the stale grace window (flagged), else null.
+   * Current snapshot: fresh (≤ hot TTL), else the last good one inside the
+   * grace window served immediately while a refresh runs in the background
+   * (`stale: true` once a refresh has failed), else the awaited refresh,
+   * else null.
    */
   async snapshot(): Promise<CapacitySnapshot | null> {
     const now = Date.now();
-    if (this.last && now - this.last.at < this.hotTtlMs) return this.last.value;
-    if (!this.inflight) {
-      this.inflight = this.refresh().finally(() => {
-        this.inflight = null;
-      });
+    const age = this.last ? now - this.last.at : Infinity;
+    if (this.last && age < this.hotTtlMs) return this.last.value;
+    const refresh = this.startRefresh(now);
+    if (this.last && age < this.hotTtlMs + this.staleGraceMs) {
+      return { ...this.last.value, pool: { ...this.last.value.pool, stale: this.lastFailureAt > 0 } };
     }
-    const fresh = await this.inflight;
-    if (fresh) return fresh;
-    if (this.last && now - this.last.at < this.hotTtlMs + this.staleGraceMs) {
-      return { ...this.last.value, pool: { ...this.last.value.pool, stale: true } };
-    }
-    return null;
+    return refresh;
   }
 
   /** Drop every cached value (tests, admin cap changes). */
   invalidate(): void {
     this.last = null;
     this.params = null;
+    this.lastFailureAt = 0;
+    this.paramsRetryAt = 0;
+  }
+
+  /**
+   * One refresh at a time. After a failure, hold off for the cooldown:
+   * withTimeout abandons rather than cancels, so back-to-back attempts
+   * during an RPC brownout stack whole read batches on top of each other.
+   */
+  private startRefresh(now: number): Promise<CapacitySnapshot | null> {
+    if (this.inflight) return this.inflight;
+    if (this.lastFailureAt && now - this.lastFailureAt < this.refreshCooldownMs) {
+      return Promise.resolve(null);
+    }
+    this.inflight = this.refresh().finally(() => {
+      this.inflight = null;
+    });
+    return this.inflight;
   }
 
   private async refresh(): Promise<CapacitySnapshot | null> {
@@ -216,32 +250,54 @@ export class CapacityService {
           stale: false,
         };
       }
-      if (!pool) return null;
+      if (!pool) {
+        this.lastFailureAt = Date.now();
+        return null;
+      }
       const snapshot: CapacitySnapshot = { pool, assets };
       this.last = { value: snapshot, at: Date.now() };
+      this.lastFailureAt = 0;
       return snapshot;
     } catch {
+      this.lastFailureAt = Date.now();
       return null;
     }
   }
 
   /**
    * Admin parameters (get_reserve_cap, get_asset_caps ×N, get_asset_risk ×N)
-   * with a long TTL. A failed reload falls back to the last good set — caps
-   * only move by admin invoke, so old params beat no params — and throws only
-   * when nothing was ever loaded.
+   * with a long TTL. Caps only move by admin invoke, so old params beat no
+   * params: an expired set is returned at once and reloaded in the
+   * background (one reload at a time, with a pause after a failure). Only a
+   * cold service, with nothing ever loaded, waits on the reload.
    */
   private async loadParams(): Promise<VaultParams> {
     const now = Date.now();
     if (this.params && now - this.params.at < this.paramsTtlMs) return this.params.value;
-    try {
-      const value = await withTimeout(this.fetchParams(), PARAMS_TIMEOUT_MS);
-      this.params = { value, at: now };
-      return value;
-    } catch (err) {
-      if (this.params) return this.params.value;
-      throw err;
+    if (this.params) {
+      if (now >= this.paramsRetryAt) this.reloadParams().catch(() => {});
+      return this.params.value;
     }
+    return this.reloadParams();
+  }
+
+  private reloadParams(): Promise<VaultParams> {
+    if (!this.paramsInflight) {
+      this.paramsInflight = withTimeout(this.fetchParams(), PARAMS_TIMEOUT_MS)
+        .then((value) => {
+          this.params = { value, at: Date.now() };
+          this.paramsRetryAt = 0;
+          return value;
+        })
+        .catch((err: unknown) => {
+          this.paramsRetryAt = Date.now() + PARAMS_RETRY_MS;
+          throw err;
+        })
+        .finally(() => {
+          this.paramsInflight = null;
+        });
+    }
+    return this.paramsInflight;
   }
 
   private async fetchParams(): Promise<VaultParams> {
