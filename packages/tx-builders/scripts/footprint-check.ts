@@ -14,8 +14,16 @@
  *   (default): with the client footprint guard — proves the CLIENT side:
  *             every conditional key is read-write regardless of state.
  *
+ * Expectations:
+ *   pre  : the 2026-08-30 pre-fix shape (raw)
+ *   post : the 2026-08-30 fix — vault buckets read-write (raw)
+ *   full : the 2026-09-02 completion — EVERY watched key read-write on a raw
+ *          simulation, whichever sign the position's PnL has right now
+ *          (shortfall books via settle_pnl / receive_loss_for, AdlActive
+ *          created on touch). This is the runbook gate after an upgrade.
+ *
  * Usage (from the repo root):
- *   npx tsx packages/tx-builders/scripts/footprint-check.ts staging <positionId> <traderG> <ASSET> [--raw] [--expect pre|post]
+ *   npx tsx packages/tx-builders/scripts/footprint-check.ts staging <positionId> <traderG> <ASSET> [--raw] [--expect pre|post|full]
  */
 
 import { readFileSync } from 'node:fs';
@@ -25,7 +33,7 @@ import { Router, type TxBuildContext } from '../src/index.js';
 
 const [, , env, positionIdArg, trader, asset, ...flags] = process.argv;
 if (!env || !positionIdArg || !trader || !asset) {
-  console.error('usage: footprint-check.ts <staging|prod> <positionId> <traderG> <ASSET> [--raw] [--expect pre|post]');
+  console.error('usage: footprint-check.ts <staging|prod> <positionId> <traderG> <ASSET> [--raw] [--expect pre|post|full]');
   process.exit(2);
 }
 const raw = flags.includes('--raw');
@@ -92,6 +100,9 @@ async function main() {
       ok = !cls.has('vault:TotalFees') && cls.get('vault:ShortfallReserve') === 'RO';
     } else if (raw && expect === 'post') {
       ok = rw('vault:BufferBalance') && rw('vault:TotalUsdc') && rw('vault:TotalFees') && rw('vault:ShortfallReserve');
+    } else if (raw && expect === 'full') {
+      // Contract side alone must declare the whole set — no client padding.
+      ok = watch.every((w) => rw(w));
     } else {
       ok = watch.every((w) => rw(w));
     }
