@@ -27,7 +27,12 @@ import { feeChargedXlm, genericFailureMessage, staleFootprintMessage, tryAgainLa
 /** Per-call hints for the footprint guard (see footprintGuard.ts). */
 export interface BuildTxOptions {
   op?: TradeOp;
-  keyCtx?: Partial<Omit<KeyCtx, 'vault' | 'market' | 'trader'>>;
+  /**
+   * Key hints for the footprint guard. `trader` defaults to the tx source;
+   * pass it when the market settles for someone else (vault-factory leader
+   * trades settle for the FACTORY, which is the position's trader).
+   */
+  keyCtx?: Partial<Omit<KeyCtx, 'vault' | 'market'>>;
 }
 
 // Horizon server for account queries (balances, etc.)
@@ -138,7 +143,7 @@ export async function buildTransaction(
           ...opts.keyCtx,
           vault: CONTRACTS.VAULT,
           market: CONTRACTS.MARKET,
-          trader: sourcePublicKey,
+          trader: opts.keyCtx?.trader ?? sourcePublicKey,
         })
       : [];
   const prepared = withResourceHeadroom(
