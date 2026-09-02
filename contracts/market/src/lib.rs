@@ -276,6 +276,14 @@ impl MarketContract {
         if bps > 5_000 {
             return Err(NoetherError::InvalidParameter);
         }
+        // The vault pays this address on every fee-bearing open with an
+        // unconditional (possibly zero) USDC transfer, and the SAC loads the
+        // recipient's trustline before it looks at the amount. Prove the
+        // treasury can receive USDC here, where a missing trustline fails one
+        // admin call, and refuse a frozen one outright.
+        if !token::StellarAssetClient::new(&env, &get_usdc_token(&env)).authorized(&treasury) {
+            return Err(NoetherError::InvalidParameter);
+        }
         set_treasury(&env, &treasury);
         set_protocol_fee_bps(&env, bps);
         env.events().publish(

@@ -577,15 +577,29 @@ impl VaultContract {
         set_buffer_balance(&env, buffer + to_buffer);
         let overflow = amount - to_buffer;
         let usdc_token = get_usdc_token(&env);
-        token::Client::new(&env, &usdc_token).transfer(
-            &env.current_contract_address(),
-            &overflow_to,
-            &overflow,
-        );
+        let token_client = token::Client::new(&env, &usdc_token);
+        // The SAC loads the recipient's trustline before it looks at the
+        // amount, so a treasury that cannot receive USDC (trustline missing,
+        // or frozen by the issuer) would trap every fee-bearing open here.
+        // Fee routing must never halt trading: park the overflow in the
+        // buffer instead (over target is harmless — later fees all overflow)
+        // and say so in an event. The sub-call's rollback does not touch the
+        // simulated footprint, so both paths stay footprint-stable.
+        let sent = match token_client.try_transfer(&env.current_contract_address(), &overflow_to, &overflow) {
+            Ok(Ok(())) => overflow,
+            _ => {
+                set_buffer_balance(&env, buffer + amount);
+                env.events().publish(
+                    (Symbol::new(&env, "treasury_unreachable"),),
+                    (overflow_to.clone(), overflow),
+                );
+                0
+            }
+        };
         Self::require_cash_covers_buckets(&env)?;
         env.events().publish(
             (Symbol::new(&env, "protocol_fee_routed"),),
-            (amount, to_buffer, overflow),
+            (amount, amount - sent, sent),
         );
         Ok(())
     }
@@ -2147,6 +2161,22 @@ mod tests {
         assert!(vault_has(&t, DataKey::BufferBalance));
         assert_eq!(t.vault.get_buffer_balance(), 0);
         assert_eq!(soroban_sdk::token::Client::new(&t.env, &t.usdc).balance(&treasury), PRECISION);
+    }
+
+    #[test]
+    fn route_protocol_fee_parks_the_overflow_in_the_buffer_when_the_treasury_cannot_receive() {
+        // Empty book → everything overflows. A classic account with no USDC
+        // trustline: the SAC rejects even a zero-amount receive, which used
+        // to trap the whole open. Trading must go on; the buffer absorbs it.
+        let t = setup(1_000 * PRECISION);
+        let treasury = Address::from_string(&soroban_sdk::String::from_str(
+            &t.env,
+            "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ",
+        ));
+        market_inflow(&t, PRECISION);
+        t.vault.route_protocol_fee(&PRECISION, &treasury);
+        // Everything landed in the buffer; require_cash_covers_buckets held.
+        assert_eq!(t.vault.get_buffer_balance(), PRECISION);
     }
 
     #[test]
