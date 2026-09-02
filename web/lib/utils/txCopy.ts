@@ -67,10 +67,16 @@ export function retryProgressMessage(op: TradeOp | undefined): string {
   return `Network state changed mid-flight — re-checking ${n.action} and asking your wallet to sign once more.`;
 }
 
-/** The RPC's queue was full; we wait a moment and resubmit the same intent. */
+/**
+ * The RPC's queue was full; the transaction was NOT accepted. Thrown at the
+ * submit site, which does not know whether its caller retries (txFlow does,
+ * once; vault deposits, referral and shortfall flows do not) — so the copy
+ * never promises a retry. The retrying layer announces its own retry via
+ * `retryProgressMessage`.
+ */
 export function tryAgainLaterMessage(op: TradeOp | undefined): string {
   const n = nouns(op);
-  return `The network is busy — ${n.action} was not submitted. Retrying in a moment.`;
+  return `The network is busy — ${n.action} was not submitted. ${n.untouched} Please try again in a moment.`;
 }
 
 /** Generic on-chain failure with no decodable reason. */
